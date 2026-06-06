@@ -1,0 +1,39 @@
+import type { EngineServices, OrgContext } from "@kingsmaker/engine"
+import { and, eq } from "drizzle-orm"
+import type { Effect } from "effect"
+import { auth } from "./auth"
+import { member } from "./auth-schema"
+import { db } from "./db"
+import type { Role } from "./policy"
+import { runEngine, type UseCaseResult } from "./runtime"
+
+/** Resolve a user's role within an org from the BetterAuth `member` table. */
+export const roleOf = async (userId: string, orgId: string): Promise<Role | null> => {
+  const rows = await db
+    .select({ role: member.role })
+    .from(member)
+    .where(and(eq(member.userId, userId), eq(member.organizationId, orgId)))
+    .limit(1)
+  return (rows[0]?.role as Role | undefined) ?? null
+}
+
+/**
+ * The single server↔engine chokepoint: read the BetterAuth session, build an
+ * OrgContext (org_id + actor), run the engine effect, map typed errors. Every
+ * `/api/*` handler is a thin adapter over this.
+ */
+export const runScoped = async <A, E>(
+  request: Request,
+  effect: Effect.Effect<A, E, OrgContext | EngineServices>,
+): Promise<UseCaseResult<A>> => {
+  const session = await auth.api.getSession({ headers: request.headers })
+  if (!session?.user) return { ok: false, status: 401, code: "UNAUTHENTICATED" }
+
+  const orgId = session.session.activeOrganizationId
+  if (!orgId) return { ok: false, status: 409, code: "NO_ACTIVE_ORG" }
+
+  const role = await roleOf(session.user.id, orgId)
+  if (!role) return { ok: false, status: 403, code: "NOT_A_MEMBER" }
+
+  return runEngine({ orgId, actor: session.user.id }, effect)
+}

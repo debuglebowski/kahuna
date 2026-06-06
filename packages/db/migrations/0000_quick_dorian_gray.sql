@@ -1,6 +1,6 @@
 CREATE TABLE "attachments" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
-	"org_id" uuid NOT NULL,
+	"org_id" text NOT NULL,
 	"instance_id" uuid NOT NULL,
 	"filename" text NOT NULL,
 	"content_ref" text NOT NULL,
@@ -11,7 +11,7 @@ CREATE TABLE "attachments" (
 --> statement-breakpoint
 CREATE TABLE "concepts" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
-	"org_id" uuid NOT NULL,
+	"org_id" text NOT NULL,
 	"name" text NOT NULL,
 	"description" text,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
@@ -19,7 +19,7 @@ CREATE TABLE "concepts" (
 --> statement-breakpoint
 CREATE TABLE "events" (
 	"id" bigserial PRIMARY KEY NOT NULL,
-	"org_id" uuid NOT NULL,
+	"org_id" text NOT NULL,
 	"occurred_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"actor" text,
 	"subject_kind" text NOT NULL,
@@ -30,7 +30,7 @@ CREATE TABLE "events" (
 --> statement-breakpoint
 CREATE TABLE "fields" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
-	"org_id" uuid NOT NULL,
+	"org_id" text NOT NULL,
 	"concept_id" uuid NOT NULL,
 	"name" text NOT NULL,
 	"kind" text NOT NULL,
@@ -40,7 +40,7 @@ CREATE TABLE "fields" (
 --> statement-breakpoint
 CREATE TABLE "instances" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
-	"org_id" uuid NOT NULL,
+	"org_id" text NOT NULL,
 	"concept_id" uuid NOT NULL,
 	"state" jsonb DEFAULT '{}'::jsonb NOT NULL,
 	"version" bigint DEFAULT 0 NOT NULL,
@@ -50,7 +50,7 @@ CREATE TABLE "instances" (
 --> statement-breakpoint
 CREATE TABLE "relations" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
-	"org_id" uuid NOT NULL,
+	"org_id" text NOT NULL,
 	"relation_type" text NOT NULL,
 	"from_id" uuid NOT NULL,
 	"to_id" uuid NOT NULL,

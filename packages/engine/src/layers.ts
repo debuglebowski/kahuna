@@ -20,3 +20,13 @@ export const EngineLive = Layer.mergeAll(
   QueryService.Default,
   ComputedFields.Default,
 )
+
+/** Union of all engine service tags — the requirements an engine effect may carry. */
+export type EngineServices =
+  | EventStore
+  | ConceptService
+  | FieldService
+  | InstanceService
+  | RelationService
+  | QueryService
+  | ComputedFields

@@ -16,7 +16,7 @@ export {
 } from "./computed/momentum"
 export * from "./domain/types"
 export * from "./errors"
-export { EngineLive } from "./layers"
+export { EngineLive, type EngineServices } from "./layers"
 export { foldEvents, foldUntil } from "./projection/fold"
 export { applyEvent, type FoldState } from "./projection/reducer"
 export { ComputedFields } from "./services/ComputedFields"

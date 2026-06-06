@@ -25,7 +25,7 @@ export const concepts = pgTable(
   "concepts",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    orgId: uuid("org_id").notNull(),
+    orgId: text("org_id").notNull(),
     name: text("name").notNull(),
     description: text("description"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -37,7 +37,7 @@ export const fields = pgTable(
   "fields",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    orgId: uuid("org_id").notNull(),
+    orgId: text("org_id").notNull(),
     conceptId: uuid("concept_id")
       .notNull()
       .references(() => concepts.id),
@@ -53,7 +53,7 @@ export const instances = pgTable(
   "instances",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    orgId: uuid("org_id").notNull(),
+    orgId: text("org_id").notNull(),
     conceptId: uuid("concept_id")
       .notNull()
       .references(() => concepts.id),
@@ -69,7 +69,7 @@ export const relations = pgTable(
   "relations",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    orgId: uuid("org_id").notNull(),
+    orgId: text("org_id").notNull(),
     relationType: text("relation_type").notNull(),
     fromId: uuid("from_id")
       .notNull()
@@ -91,7 +91,7 @@ export const events = pgTable(
   "events",
   {
     id: bigserial("id", { mode: "number" }).primaryKey(),
-    orgId: uuid("org_id").notNull(),
+    orgId: text("org_id").notNull(),
     occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull().defaultNow(),
     actor: text("actor"),
     subjectKind: text("subject_kind").notNull(),
@@ -107,7 +107,7 @@ export const events = pgTable(
 
 export const attachments = pgTable("attachments", {
   id: uuid("id").primaryKey().defaultRandom(),
-  orgId: uuid("org_id").notNull(),
+  orgId: text("org_id").notNull(),
   instanceId: uuid("instance_id")
     .notNull()
     .references(() => instances.id),

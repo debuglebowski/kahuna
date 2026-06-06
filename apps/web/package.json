@@ -5,7 +5,10 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "echo '(no web tests yet)'",
+    "test": "vitest run",
+    "auth:generate": "drizzle-kit generate",
+    "auth:migrate": "drizzle-kit migrate",
+    "seed": "bun server/seed/run.ts",
     "dev": "vite",
     "build": "vite build",
     "serve": "bun server/index.ts",
@@ -13,14 +16,21 @@
   },
   "dependencies": {
     "@kingsmaker/engine": "workspace:*",
+    "better-auth": "1.6.14",
+    "drizzle-orm": "0.45.2",
     "effect": "3.21.3",
+    "pg": "8.21.0",
     "react": "19.2.7",
     "react-dom": "19.2.7"
   },
   "devDependencies": {
+    "@effect/vitest": "0.29.0",
+    "@types/pg": "8.20.0",
     "@types/react": "19.2.17",
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "6.0.2",
-    "vite": "8.0.16"
+    "drizzle-kit": "0.31.10",
+    "vite": "8.0.16",
+    "vitest": "3.2.6"
   }
 }
