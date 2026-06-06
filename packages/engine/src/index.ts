@@ -1,1 +1,33 @@
+// Pure core
+
+export {
+  DEFAULT_DECAY_BANDS,
+  type DecayBand,
+  type DecayParams,
+  type DecayResult,
+  decay,
+} from "./computed/decay"
+export {
+  DEFAULT_WINDOW_DAYS,
+  type MomentumLabel,
+  type MomentumParams,
+  type MomentumResult,
+  momentum,
+} from "./computed/momentum"
+export * from "./domain/types"
+export * from "./errors"
+export { EngineLive } from "./layers"
+export { foldEvents, foldUntil } from "./projection/fold"
+export { applyEvent, type FoldState } from "./projection/reducer"
+export { ComputedFields } from "./services/ComputedFields"
+export { ConceptService } from "./services/ConceptService"
+export { type AppendInput, EventStore } from "./services/EventStore"
+export { type AddFieldInput, FieldService } from "./services/FieldService"
+export { InstanceService } from "./services/InstanceService"
+// Services
+export { OrgContext, type OrgScope } from "./services/OrgContext"
+export { type FindInstancesInput, QueryService } from "./services/QueryService"
+export { type CreateRelationInput, RelationService } from "./services/RelationService"
+
+// Infrastructure
 export { healthCheck, PgLive } from "./services/Sql"

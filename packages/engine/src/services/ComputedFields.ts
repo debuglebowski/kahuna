@@ -1,0 +1,66 @@
+import { PgClient } from "@effect/sql-pg"
+import { Clock, Effect } from "effect"
+import { type DecayParams, decay } from "../computed/decay"
+import { type MomentumParams, momentum } from "../computed/momentum"
+import type { Instance } from "../domain/types"
+import { FieldService } from "./FieldService"
+import { OrgContext } from "./OrgContext"
+
+/**
+ * Read-time computed fields (decay, momentum). Never stored — merged into a
+ * COPY of the instance using `now` from the Effect Clock (so they always
+ * reflect the current moment, and TestClock makes them deterministic in tests).
+ */
+export class ComputedFields extends Effect.Service<ComputedFields>()("engine/ComputedFields", {
+  effect: Effect.gen(function* () {
+    const sql = yield* PgClient.PgClient
+    const fields = yield* FieldService
+
+    /** Deal --forRel--> Account; Interactions --onRel--> Account; collect their dateField. */
+    const gatherDates = (instanceId: string, forRel: string, onRel: string, dateField: string) =>
+      Effect.gen(function* () {
+        const { orgId } = yield* OrgContext
+        const rows = yield* sql<{ readonly occurred_on: string | null }>`
+          SELECT (i.state->>${dateField}) AS occurred_on
+          FROM relations r_for
+          JOIN relations r_on
+            ON r_on.to_id = r_for.to_id AND r_on.org_id = r_for.org_id
+            AND r_on.relation_type = ${onRel} AND r_on.deleted_at IS NULL
+          JOIN instances i
+            ON i.id = r_on.from_id AND i.org_id = r_for.org_id AND i.deleted_at IS NULL
+          WHERE r_for.org_id = ${orgId} AND r_for.from_id = ${instanceId}
+            AND r_for.relation_type = ${forRel} AND r_for.deleted_at IS NULL
+            AND (i.state->>${dateField}) IS NOT NULL`
+        return rows
+          .map((r) => r.occurred_on)
+          .filter((s): s is string => !!s)
+          .map((s) => new Date(s))
+      })
+
+    const decorate = (instance: Instance) =>
+      Effect.gen(function* () {
+        const defs = yield* fields.listFields(instance.conceptId)
+        const computed = defs.filter((d) => d.kind === "computed")
+        if (computed.length === 0) return instance
+
+        const now = new Date(yield* Clock.currentTimeMillis)
+        const state = { ...instance.state }
+        for (const def of computed) {
+          const params = def.config.params ?? {}
+          const forRel = (params.forRelation as string | undefined) ?? "for"
+          const onRel = (params.onRelation as string | undefined) ?? "on"
+          const dateField = (params.dateField as string | undefined) ?? "occurred_on"
+          const dates = yield* gatherDates(instance.id, forRel, onRel, dateField)
+          if (def.config.computedKind === "decay") {
+            state[def.name] = decay(dates, now, params as DecayParams, instance.createdAt)
+          } else if (def.config.computedKind === "momentum") {
+            state[def.name] = momentum(dates, now, params as MomentumParams)
+          }
+        }
+        return { ...instance, state } satisfies Instance
+      })
+
+    return { decorate } as const
+  }),
+  dependencies: [FieldService.Default],
+}) {}

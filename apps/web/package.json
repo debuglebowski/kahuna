@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
+    "test": "echo '(no web tests yet)'",
     "dev": "vite",
     "build": "vite build",
     "serve": "bun server/index.ts",

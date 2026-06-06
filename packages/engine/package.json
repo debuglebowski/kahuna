@@ -20,6 +20,8 @@
   },
   "devDependencies": {
     "@effect/vitest": "0.29.0",
+    "@types/pg": "8.20.0",
+    "pg": "8.21.0",
     "vitest": "3.2.6"
   }
 }
