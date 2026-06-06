@@ -1,4 +1,6 @@
 import {
+  type Attachment,
+  AttachmentService,
   ComputedFields,
   ConceptService,
   type EngineServices,
@@ -56,19 +58,23 @@ export const getAccountHub = (accountId: string): UC<unknown> =>
     const instances = yield* InstanceService
     const query = yield* QueryService
     const computed = yield* ComputedFields
+    const attachments = yield* AttachmentService
     const account = yield* instances.get(accountId)
     const related = (conceptName: string, relationType: string, orderBy?: ListOpts["orderBy"]) =>
       query.findInstances({ conceptName, relatedToTo: { relationType, toId: accountId }, orderBy })
     const dealsRaw = yield* related("Deal", "for")
+    const artifactsRaw = yield* related("Artifact", "belongs_to")
     return {
       account,
       contacts: yield* related("Contact", "works_at"),
       owners: yield* related("TeamMember", "owns"),
       interactions: yield* related("Interaction", "on", { field: "occurred_on", dir: "desc" }),
       signals: yield* related("Signal", "from"),
-      artifacts: yield* related("Artifact", "belongs_to"),
       tasks: yield* related("Task", "on"),
       deals: yield* Effect.forEach(dealsRaw, (d) => computed.decorate(d)),
+      artifacts: yield* Effect.forEach(artifactsRaw, (a) =>
+        attachments.list(a.id).pipe(Effect.map((atts) => ({ ...a, attachments: atts }))),
+      ),
     }
   })
 
@@ -198,6 +204,25 @@ export const logSignal = (accountId: string, fields: Record<string, unknown>) =>
 
 export const createTask = (accountId: string, fields: Record<string, unknown>) =>
   createLinked("Task", "on", accountId, { done: false, ...fields })
+
+export const createArtifact = (accountId: string, fields: Record<string, unknown>) =>
+  createLinked("Artifact", "belongs_to", accountId, fields)
+
+export const uploadAttachment = (
+  instanceId: string,
+  filename: string,
+  mimeType: string | undefined,
+  data: Uint8Array,
+): UC<Attachment> =>
+  Effect.flatMap(AttachmentService, (a) => a.upload({ instanceId, filename, mimeType, data }))
+
+export const listAttachments = (instanceId: string): UC<ReadonlyArray<Attachment>> =>
+  Effect.flatMap(AttachmentService, (a) => a.list(instanceId))
+
+export const downloadAttachment = (
+  attachmentId: string,
+): UC<{ attachment: Attachment; data: Uint8Array }> =>
+  Effect.flatMap(AttachmentService, (a) => a.download(attachmentId))
 
 export const logInteraction = (
   accountId: string,

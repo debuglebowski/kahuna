@@ -90,6 +90,7 @@ export type EventPayload =
       readonly properties: Record<string, unknown>
     }
   | { readonly _tag: "RelationDeleted"; readonly relationId: Id }
+  | { readonly _tag: "AttachmentAdded"; readonly attachmentId: Id; readonly filename: string }
   | { readonly _tag: "ConceptCreated"; readonly name: string }
   | {
       readonly _tag: "FieldAdded"
@@ -97,6 +98,17 @@ export type EventPayload =
       readonly name: string
       readonly kind: string
     }
+
+export interface Attachment {
+  readonly id: Id
+  readonly orgId: OrgId
+  readonly instanceId: Id
+  readonly filename: string
+  readonly contentRef: string
+  readonly mimeType: string | null
+  readonly sizeBytes: number | null
+  readonly createdAt: Date
+}
 
 export type SubjectKind = "instance" | "relation" | "concept" | "field"
 

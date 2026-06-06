@@ -1,17 +1,32 @@
 import {
   EngineLive,
   type EngineServices,
+  LocalFsBlobStore,
   OrgContext,
   type OrgScope,
   PgLive,
 } from "@kingsmaker/engine"
 import { Cause, Effect, type Exit, Layer, ManagedRuntime, Option } from "effect"
+import { S3BlobStore } from "./blob-s3"
+
+const BlobLive =
+  process.env.BLOB_DRIVER === "s3"
+    ? S3BlobStore({
+        accessKeyId: process.env.S3_ACCESS_KEY_ID ?? "",
+        secretAccessKey: process.env.S3_SECRET_ACCESS_KEY ?? "",
+        bucket: process.env.S3_BUCKET ?? "",
+        region: process.env.S3_REGION,
+        endpoint: process.env.S3_ENDPOINT,
+      })
+    : LocalFsBlobStore(process.env.BLOB_LOCAL_DIR ?? "./.blobstore")
 
 /**
- * The base runtime: PgClient pool + all engine services, built ONCE for the
- * process. Per-request OrgContext is provided at call time (cheap), not baked in.
+ * The base runtime: PgClient pool + BlobStore + all engine services, built ONCE
+ * for the process. Per-request OrgContext is provided at call time (cheap).
  */
-export const AppRuntime = ManagedRuntime.make(Layer.provide(EngineLive, PgLive))
+export const AppRuntime = ManagedRuntime.make(
+  Layer.provide(EngineLive, Layer.merge(PgLive, BlobLive)),
+)
 
 export type UseCaseResult<A> =
   | { readonly ok: true; readonly status: number; readonly data: A }

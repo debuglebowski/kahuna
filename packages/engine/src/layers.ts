@@ -1,4 +1,5 @@
 import { Layer } from "effect"
+import { AttachmentService } from "./services/AttachmentService"
 import { ComputedFields } from "./services/ComputedFields"
 import { ConceptService } from "./services/ConceptService"
 import { EventStore } from "./services/EventStore"
@@ -19,6 +20,7 @@ export const EngineLive = Layer.mergeAll(
   RelationService.Default,
   QueryService.Default,
   ComputedFields.Default,
+  AttachmentService.Default,
 )
 
 /** Union of all engine service tags — the requirements an engine effect may carry. */
@@ -30,3 +32,4 @@ export type EngineServices =
   | RelationService
   | QueryService
   | ComputedFields
+  | AttachmentService

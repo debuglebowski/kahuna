@@ -60,6 +60,10 @@ export const applyEvent = (
         version: acc.version + 1,
         deletedAt: event.occurredAt,
       })
+    case "AttachmentAdded":
+      // Attachments are recorded against the instance but do not change its
+      // projected state or version.
+      return Either.right(acc)
     default:
       // Non-instance payloads should never appear in an instance stream.
       return Either.left(

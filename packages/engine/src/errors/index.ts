@@ -70,6 +70,11 @@ export class OrgScopeViolation extends Schema.TaggedError<OrgScopeViolation>()(
   },
 ) {}
 
+export class AttachmentNotFound extends Schema.TaggedError<AttachmentNotFound>()(
+  "AttachmentNotFound",
+  { attachmentId: Schema.String },
+) {}
+
 export class EventCorruption extends Schema.TaggedError<EventCorruption>()("EventCorruption", {
   reason: Schema.String,
   eventId: Schema.Number,
@@ -87,4 +92,5 @@ export type EngineError =
   | RelationTargetMismatch
   | RelationNotFound
   | OrgScopeViolation
+  | AttachmentNotFound
   | EventCorruption

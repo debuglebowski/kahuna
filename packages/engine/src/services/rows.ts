@@ -1,4 +1,5 @@
 import type {
+  Attachment,
   Concept,
   EngineEvent,
   EventPayload,
@@ -98,6 +99,28 @@ export const toRelation = (r: RelationRow): Relation => ({
   properties: r.properties ?? {},
   createdAt: r.created_at,
   deletedAt: r.deleted_at,
+})
+
+export interface AttachmentRow {
+  readonly id: string
+  readonly org_id: string
+  readonly instance_id: string
+  readonly filename: string
+  readonly content_ref: string
+  readonly mime_type: string | null
+  readonly size_bytes: number | string | null
+  readonly created_at: Date
+}
+
+export const toAttachment = (r: AttachmentRow): Attachment => ({
+  id: r.id,
+  orgId: r.org_id,
+  instanceId: r.instance_id,
+  filename: r.filename,
+  contentRef: r.content_ref,
+  mimeType: r.mime_type,
+  sizeBytes: r.size_bytes == null ? null : Number(r.size_bytes),
+  createdAt: r.created_at,
 })
 
 export const toEvent = (r: EventRow): EngineEvent => ({

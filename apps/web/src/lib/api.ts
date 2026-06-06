@@ -26,13 +26,24 @@ export interface MomentumValue {
   readonly prior: number
 }
 
+export interface Attachment {
+  readonly id: string
+  readonly instanceId: string
+  readonly filename: string
+  readonly mimeType: string | null
+  readonly sizeBytes: number | null
+  readonly createdAt: string
+}
+
+export type ArtifactWithFiles = Instance & { readonly attachments: Attachment[] }
+
 export interface AccountHub {
   readonly account: Instance
   readonly contacts: Instance[]
   readonly owners: Instance[]
   readonly interactions: Instance[]
   readonly signals: Instance[]
-  readonly artifacts: Instance[]
+  readonly artifacts: ArtifactWithFiles[]
   readonly tasks: Instance[]
   readonly deals: Instance[]
 }

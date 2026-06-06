@@ -1,5 +1,7 @@
 // Pure core
 
+export { BlobError, BlobStore, type BlobStoreApi } from "./blob/BlobStore"
+export { LocalFsBlobStore } from "./blob/local"
 export {
   DEFAULT_DECAY_BANDS,
   type DecayBand,
@@ -19,6 +21,7 @@ export * from "./errors"
 export { EngineLive, type EngineServices } from "./layers"
 export { foldEvents, foldUntil } from "./projection/fold"
 export { applyEvent, type FoldState } from "./projection/reducer"
+export { AttachmentService, type UploadInput } from "./services/AttachmentService"
 export { ComputedFields } from "./services/ComputedFields"
 export { ConceptService } from "./services/ConceptService"
 export { type AppendInput, EventStore } from "./services/EventStore"

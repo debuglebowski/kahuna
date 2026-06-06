@@ -3,22 +3,26 @@ import type { UseCaseResult } from "./runtime"
 import { seedKingsmaker } from "./seed/seed"
 import { roleOf, runScoped } from "./session"
 import {
+  createArtifact,
   createContact,
   createDeal,
   createInstance,
   createTask,
+  downloadAttachment,
   getAccountHub,
   getChanged,
   getDemand,
   getInstance,
   getOwed,
   linkRelation,
+  listAttachments,
   listConcepts,
   listInstances,
   logInteraction,
   logSignal,
   transitionInstance,
   updateInstance,
+  uploadAttachment,
 } from "./use-cases"
 
 const json = (r: UseCaseResult<unknown>) =>
@@ -90,9 +94,42 @@ export const handleApi = async (req: Request): Promise<Response | null> => {
           return json(await runScoped(req, logSignal(id, fields)))
         case "tasks":
           return json(await runScoped(req, createTask(id, fields)))
+        case "artifacts":
+          return json(await runScoped(req, createArtifact(id, fields)))
         case "interactions":
           return json(await runScoped(req, logInteraction(id, fields, b.contactId)))
       }
+    }
+  }
+
+  // /api/attachments/:id/download (binary)
+  if (seg[1] === "attachments" && seg[2] && seg[3] === "download" && m === "GET") {
+    const result = await runScoped(req, downloadAttachment(seg[2]))
+    if (!result.ok) return Response.json({ error: result.code }, { status: result.status })
+    const { attachment, data } = result.data as {
+      attachment: { filename: string; mimeType: string | null }
+      data: Uint8Array
+    }
+    return new Response(data as unknown as BodyInit, {
+      headers: {
+        "content-type": attachment.mimeType ?? "application/octet-stream",
+        "content-disposition": `attachment; filename="${attachment.filename}"`,
+      },
+    })
+  }
+
+  // /api/instances/:id/attachments (multipart upload + list)
+  if (seg[1] === "instances" && seg[2] && seg[3] === "attachments") {
+    if (m === "GET") return json(await runScoped(req, listAttachments(seg[2])))
+    if (m === "POST") {
+      const form = await req.formData().catch(() => null)
+      const file = form?.get("file")
+      if (!(file instanceof File))
+        return Response.json({ error: "file field required" }, { status: 400 })
+      const data = new Uint8Array(await file.arrayBuffer())
+      return json(
+        await runScoped(req, uploadAttachment(seg[2], file.name, file.type || undefined, data)),
+      )
     }
   }
 

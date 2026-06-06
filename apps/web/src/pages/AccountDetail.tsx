@@ -73,6 +73,24 @@ export function AccountDetail() {
       apiPost(`/api/instances/${p.taskId}`, { expectedVersion: p.version, patch: { done: true } }),
     onSuccess: invalidate,
   })
+  const addArtifact = useMutation({
+    mutationFn: (fields: Record<string, unknown>) =>
+      apiPost(`/api/accounts/${id}/artifacts`, { fields }),
+    onSuccess: invalidate,
+  })
+  const uploadFile = useMutation({
+    mutationFn: async (p: { artifactId: string; file: File }) => {
+      const fd = new FormData()
+      fd.append("file", p.file)
+      const res = await fetch(`/api/instances/${p.artifactId}/attachments`, {
+        method: "POST",
+        body: fd,
+      })
+      if (!res.ok) throw new Error("upload failed")
+      return res.json()
+    },
+    onSuccess: invalidate,
+  })
 
   if (hub.isLoading) return <Spinner />
   if (hub.isError || !hub.data)
@@ -274,13 +292,56 @@ export function AccountDetail() {
             <Empty />
           ) : (
             artifacts.map((a) => (
-              <Row key={a.id}>
-                <span className="text-gray-700">{showValue(a.state.doc_type)}</span>
-                <Badge>{showValue(a.state.status)}</Badge>
-              </Row>
+              <div key={a.id} className="rounded border border-gray-100 p-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-gray-700">{showValue(a.state.doc_type)}</span>
+                  <Badge>{showValue(a.state.status)}</Badge>
+                </div>
+                <div className="mt-2 space-y-1">
+                  {a.attachments.length === 0 ? (
+                    <p className="text-xs text-gray-400">No files.</p>
+                  ) : (
+                    a.attachments.map((att) => (
+                      <a
+                        key={att.id}
+                        href={`/api/attachments/${att.id}/download`}
+                        className="block text-sm text-blue-600 hover:underline"
+                      >
+                        ⬇ {att.filename}
+                        {att.sizeBytes != null ? (
+                          <span className="text-xs text-gray-400"> · {att.sizeBytes} B</span>
+                        ) : null}
+                      </a>
+                    ))
+                  )}
+                </div>
+                <input
+                  type="file"
+                  className="mt-2 text-xs"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0]
+                    if (file) uploadFile.mutate({ artifactId: a.id, file })
+                    e.target.value = ""
+                  }}
+                />
+              </div>
             ))
           )}
-          <p className="text-xs text-gray-400">File uploads arrive in Phase 4.</p>
+          <div className="border-t border-gray-100 pt-3">
+            <InlineForm
+              fields={[
+                {
+                  name: "doc_type",
+                  label: "Type",
+                  options: ["contract", "dpa", "sow", "questionnaire"],
+                },
+                { name: "status", label: "Status", options: ["draft", "active", "expired"] },
+              ]}
+              submitLabel="Add artifact"
+              pending={addArtifact.isPending}
+              onSubmit={(v) => addArtifact.mutate(v)}
+            />
+          </div>
         </Section>
       </div>
     </div>
