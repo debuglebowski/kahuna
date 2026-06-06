@@ -34,6 +34,7 @@ export const kingsmakerSpec: ReadonlyArray<ConceptSpec> = [
     name: "Account",
     description: "A customer or prospect — the hub of the graph.",
     fields: [
+      { name: "name", kind: "text" },
       {
         name: "lifecycle_phase",
         kind: "enum",

@@ -1,0 +1,113 @@
+import type {
+  ButtonHTMLAttributes,
+  InputHTMLAttributes,
+  ReactNode,
+  SelectHTMLAttributes,
+} from "react"
+import { cn } from "../lib/utils"
+
+export function Button({
+  className,
+  variant = "primary",
+  ...props
+}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: "primary" | "ghost" | "danger" }) {
+  const styles = {
+    primary: "bg-gray-900 text-white hover:bg-gray-700",
+    ghost: "bg-white text-gray-700 border border-gray-300 hover:bg-gray-50",
+    danger: "bg-red-600 text-white hover:bg-red-500",
+  }[variant]
+  return (
+    <button
+      className={cn(
+        "inline-flex items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition disabled:opacity-50",
+        styles,
+        className,
+      )}
+      {...props}
+    />
+  )
+}
+
+export function Card({ className, children }: { className?: string; children: ReactNode }) {
+  return (
+    <div className={cn("rounded-lg border border-gray-200 bg-white shadow-sm", className)}>
+      {children}
+    </div>
+  )
+}
+
+export function CardHeader({ title, action }: { title: ReactNode; action?: ReactNode }) {
+  return (
+    <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3">
+      <h3 className="text-sm font-semibold text-gray-700">{title}</h3>
+      {action}
+    </div>
+  )
+}
+
+export function Input({ className, ...props }: InputHTMLAttributes<HTMLInputElement>) {
+  return (
+    <input
+      className={cn(
+        "w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm outline-none focus:border-gray-500",
+        className,
+      )}
+      {...props}
+    />
+  )
+}
+
+export function Select({ className, children, ...props }: SelectHTMLAttributes<HTMLSelectElement>) {
+  return (
+    <select
+      className={cn(
+        "w-full rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-gray-500",
+        className,
+      )}
+      {...props}
+    >
+      {children}
+    </select>
+  )
+}
+
+export function Field({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="block space-y-1">
+      <span className="text-xs font-medium text-gray-500">{label}</span>
+      {children}
+    </div>
+  )
+}
+
+export function Badge({ children, tone = "gray" }: { children: ReactNode; tone?: Tone }) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium",
+        TONES[tone],
+      )}
+    >
+      {children}
+    </span>
+  )
+}
+
+type Tone = "gray" | "green" | "amber" | "red" | "blue"
+const TONES: Record<Tone, string> = {
+  gray: "bg-gray-100 text-gray-700",
+  green: "bg-green-100 text-green-700",
+  amber: "bg-amber-100 text-amber-800",
+  red: "bg-red-100 text-red-700",
+  blue: "bg-blue-100 text-blue-700",
+}
+
+export const decayTone = (band?: string): Tone =>
+  band === "fresh" ? "green" : band === "warm" ? "blue" : band === "cooling" ? "amber" : "red"
+
+export const momentumTone = (label?: string): Tone =>
+  label === "heating" ? "green" : label === "cooling" ? "red" : "gray"
+
+export function Spinner() {
+  return <div className="p-8 text-sm text-gray-400">Loading…</div>
+}
