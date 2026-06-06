@@ -1,0 +1,25 @@
+{
+  "name": "@kingsmaker/engine",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@effect/experimental": "0.60.0",
+    "@effect/platform": "0.96.1",
+    "@effect/sql": "0.51.1",
+    "@effect/sql-pg": "0.52.1",
+    "effect": "3.21.3"
+  },
+  "devDependencies": {
+    "@effect/vitest": "0.29.0",
+    "vitest": "3.2.6"
+  }
+}
