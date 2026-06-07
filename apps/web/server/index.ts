@@ -1,12 +1,17 @@
+import "./env" // Load repo-root .env into process.env before any DB-touching import.
 import path from "node:path"
 import { healthCheck, PgLive } from "@kingsmaker/engine"
 import { Effect } from "effect"
 import { auth } from "./auth"
 import { handleApi } from "./router"
 import { rpcHandler } from "./rpc"
+import { startHub, streamHandler } from "./stream"
 
 const port = Number(process.env.PORT ?? 3000)
 const DIST = path.resolve(import.meta.dirname, "../dist")
+
+// Boot the single process-wide LISTEN that powers the live-sync SSE stream.
+startHub()
 
 const server = Bun.serve({
   port,
@@ -18,6 +23,9 @@ const server = Bun.serve({
 
     // Typed RPC endpoint (the application API).
     if (url.pathname === "/api/rpc") return rpcHandler(req)
+
+    // Live/reactive sync: per-org SSE feed of event envelopes.
+    if (url.pathname === "/api/stream") return streamHandler(req)
 
     if (url.pathname === "/api/health") {
       const ok = await Effect.runPromise(healthCheck.pipe(Effect.provide(PgLive))).catch(

@@ -17,15 +17,16 @@ export const roleOf = async (userId: string, orgId: string): Promise<Role | null
   return (rows[0]?.role as Role | undefined) ?? null
 }
 
+export type OrgResolution =
+  | { readonly ok: true; readonly orgId: string; readonly actor: string }
+  | { readonly ok: false; readonly status: number; readonly code: string }
+
 /**
- * The single server↔engine chokepoint: read the BetterAuth session, build an
- * OrgContext (org_id + actor), run the engine effect, map typed errors. Every
- * `/api/*` handler is a thin adapter over this.
+ * Resolve the BetterAuth session into an org scope (org_id + actor), or an
+ * auth error. Shared by `runScoped` (RPC/attachments) and the SSE stream — the
+ * stream NEVER trusts the client for its org; it comes from the session here.
  */
-export const runScoped = async <A, E>(
-  request: Request,
-  effect: Effect.Effect<A, E, OrgContext | EngineServices>,
-): Promise<UseCaseResult<A>> => {
+export const resolveOrg = async (request: Request): Promise<OrgResolution> => {
   const session = await auth.api.getSession({ headers: request.headers })
   if (!session?.user) return { ok: false, status: 401, code: "UNAUTHENTICATED" }
 
@@ -35,5 +36,19 @@ export const runScoped = async <A, E>(
   const role = await roleOf(session.user.id, orgId)
   if (!role) return { ok: false, status: 403, code: "NOT_A_MEMBER" }
 
-  return runEngine({ orgId, actor: session.user.id }, effect)
+  return { ok: true, orgId, actor: session.user.id }
+}
+
+/**
+ * The single server↔engine chokepoint: read the BetterAuth session, build an
+ * OrgContext (org_id + actor), run the engine effect, map typed errors. Every
+ * `/api/*` handler is a thin adapter over this.
+ */
+export const runScoped = async <A, E>(
+  request: Request,
+  effect: Effect.Effect<A, E, OrgContext | EngineServices>,
+): Promise<UseCaseResult<A>> => {
+  const org = await resolveOrg(request)
+  if (!org.ok) return { ok: false, status: org.status, code: org.code }
+  return runEngine({ orgId: org.orgId, actor: org.actor }, effect)
 }

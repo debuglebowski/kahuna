@@ -20,8 +20,12 @@ const BlobLive =
       })
     : LocalFsBlobStore(process.env.BLOB_LOCAL_DIR ?? "./.blobstore")
 
-/** Engine services + Postgres pool + BlobStore, built once (no OrgContext). */
-export const EngineBase = Layer.provide(EngineLive, Layer.merge(PgLive, BlobLive))
+/**
+ * Engine services + Postgres pool + BlobStore, built once (no OrgContext).
+ * `provideMerge` (not `provide`) so the runtime ALSO surfaces `PgClient` — the
+ * SSE stream's LISTEN + replay run directly on it. Mirrors the test harness.
+ */
+export const EngineBase = Layer.provideMerge(EngineLive, Layer.merge(PgLive, BlobLive))
 
 /**
  * The base runtime, built ONCE for the process. Per-request OrgContext is

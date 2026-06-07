@@ -16,6 +16,7 @@
       "dependencies": {
         "@effect/platform": "0.96.1",
         "@effect/rpc": "0.75.1",
+        "@effect/sql-pg": "0.52.1",
         "@kingsmaker/engine": "workspace:*",
         "@tanstack/react-query": "5.101.0",
         "better-auth": "1.6.14",
