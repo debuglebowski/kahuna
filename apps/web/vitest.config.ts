@@ -25,7 +25,7 @@ if (process.env.TEST_DATABASE_URL) {
 export default defineConfig({
   test: {
     globalSetup: ["./test/global-setup.ts"],
-    include: ["server/**/*.test.ts"],
+    include: ["server/**/*.test.ts", "src/**/*.test.{ts,tsx}"],
     testTimeout: 30000,
     hookTimeout: 60000,
     fileParallelism: false,
