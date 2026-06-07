@@ -26,11 +26,17 @@ export const concepts = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     orgId: text("org_id").notNull(),
+    // Stable, immutable system key (derived from the initial name); the app pins
+    // specific concepts by slug, so `name` is freely renameable.
+    slug: text("slug").notNull(),
     name: text("name").notNull(),
     description: text("description"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [uniqueIndex("concepts_org_name_uq").on(t.orgId, t.name)],
+  (t) => [
+    uniqueIndex("concepts_org_name_uq").on(t.orgId, t.name),
+    uniqueIndex("concepts_org_slug_uq").on(t.orgId, t.slug),
+  ],
 )
 
 export const fields = pgTable(

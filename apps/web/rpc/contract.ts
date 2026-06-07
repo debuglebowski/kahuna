@@ -24,6 +24,7 @@ export type Instance = typeof Instance.Type
 
 export const Concept = Schema.Struct({
   id: Schema.String,
+  slug: Schema.String,
   name: Schema.String,
   description: Schema.NullOr(Schema.String),
 })
@@ -48,6 +49,7 @@ export const FieldConfig = Schema.Struct({
     Schema.Record({ key: Schema.String, value: Schema.Array(Schema.String) }),
   ),
   relationType: Schema.optional(Schema.String),
+  /** relation: the target concept's id. */
   target: Schema.optional(Schema.String),
   cardinality: Schema.optional(Schema.Literal("one", "many")),
   computedKind: Schema.optional(Schema.Literal("decay", "momentum")),
@@ -119,7 +121,11 @@ export class KingsmakerRpcs extends RpcGroup.make(
     error: RpcError,
   }),
   Rpc.make("updateConcept", {
-    payload: { id: Schema.String, description: Schema.NullOr(Schema.String) },
+    payload: {
+      id: Schema.String,
+      description: Schema.NullOr(Schema.String),
+      name: Schema.optional(Schema.String),
+    },
     success: Concept,
     error: RpcError,
   }),
@@ -159,7 +165,7 @@ export class KingsmakerRpcs extends RpcGroup.make(
     error: RpcError,
   }),
   Rpc.make("listInstances", {
-    payload: { conceptName: Schema.String },
+    payload: { conceptId: Schema.String },
     success: Schema.Array(Instance),
     error: RpcError,
   }),
@@ -167,7 +173,7 @@ export class KingsmakerRpcs extends RpcGroup.make(
   Rpc.make("getChanged", { success: Schema.Array(FeedItem), error: RpcError }),
   Rpc.make("getDemand", { success: Schema.Array(DemandItem), error: RpcError }),
   Rpc.make("createInstance", {
-    payload: { conceptName: Schema.String, fields: Fields },
+    payload: { conceptId: Schema.String, fields: Fields },
     success: Instance,
     error: RpcError,
   }),

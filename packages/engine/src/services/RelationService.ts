@@ -19,27 +19,31 @@ export class RelationService extends Effect.Service<RelationService>()("engine/R
     const sql = yield* PgClient.PgClient
     const events = yield* EventStore
 
-    const conceptNameOf = (orgId: string, instanceId: string) =>
+    const conceptIdOf = (orgId: string, instanceId: string) =>
       Effect.gen(function* () {
         const rows = yield* sql<{ readonly concept_id: string }>`
           SELECT concept_id FROM instances
           WHERE id = ${instanceId} AND org_id = ${orgId} AND deleted_at IS NULL LIMIT 1`
         const row = rows[0]
         if (!row) return yield* Effect.fail(new InstanceNotFound({ instanceId }))
-        const c = yield* sql<{ readonly name: string }>`
-          SELECT name FROM concepts WHERE id = ${row.concept_id} AND org_id = ${orgId} LIMIT 1`
-        return c[0]?.name ?? null
+        return row.concept_id
       })
+
+    const nameOfConcept = (orgId: string, conceptId: string) =>
+      sql<{ readonly name: string }>`
+        SELECT name FROM concepts WHERE id = ${conceptId} AND org_id = ${orgId} LIMIT 1`.pipe(
+        Effect.map((rows) => rows[0]?.name ?? conceptId),
+      )
 
     const create = (input: CreateRelationInput) =>
       sql.withTransaction(
         Effect.gen(function* () {
           const { orgId } = yield* OrgContext
-          yield* conceptNameOf(orgId, input.fromId)
-          const toName = yield* conceptNameOf(orgId, input.toId)
+          yield* conceptIdOf(orgId, input.fromId)
+          const toConceptId = yield* conceptIdOf(orgId, input.toId)
 
-          // If this relation type is declared (a kind=relation field with a target),
-          // enforce that the target's concept matches.
+          // If this relation type is declared (a kind=relation field with a target
+          // concept id), enforce that the target's concept matches.
           const decl = yield* sql<{ readonly target: string | null }>`
             SELECT (config->>'target') AS target FROM fields
             WHERE org_id = ${orgId} AND kind = 'relation'
@@ -47,12 +51,16 @@ export class RelationService extends Effect.Service<RelationService>()("engine/R
               AND (config->>'target') IS NOT NULL
             LIMIT 1`
           const expected = decl[0]?.target
-          if (expected && toName && expected !== toName) {
+          if (expected && expected !== toConceptId) {
+            const [expectedName, actualName] = yield* Effect.all([
+              nameOfConcept(orgId, expected),
+              nameOfConcept(orgId, toConceptId),
+            ])
             return yield* Effect.fail(
               new RelationTargetMismatch({
                 relationType: input.relationType,
-                expected,
-                actual: toName,
+                expected: expectedName,
+                actual: actualName,
               }),
             )
           }

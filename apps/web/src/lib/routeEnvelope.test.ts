@@ -8,6 +8,7 @@ const env = (over: Partial<LiveEnvelope>): LiveEnvelope => ({
   kind: "instance",
   subjectId: "x",
   type: "InstanceUpdated",
+  conceptId: null,
   concept: null,
   ...over,
 })
@@ -24,14 +25,17 @@ describe("routeEnvelope", () => {
     expect(routeEnvelope(env({ concept: "Deal" }), [])).toEqual([])
   })
 
-  it("Deal change refetches owed (dashboard aggregate)", () => {
-    const keys = new Set(routeEnvelope(env({ concept: "Deal" }), GLOBALS))
-    expect(keys).toEqual(new Set([KEY.changed, KEY.owed]))
+  it("any instance change nudges owed + demand generically (when mounted)", () => {
+    // No concept-name special-casing: every instance event can affect the
+    // dashboard aggregates, so both are candidates (filtered to what's mounted).
+    const keys = new Set(routeEnvelope(env({ concept: "Deal", conceptId: "deal-id" }), GLOBALS))
+    expect(keys).toEqual(new Set([KEY.changed, KEY.owed, KEY.demand]))
   })
 
-  it("Signal change refetches demand (dashboard aggregate)", () => {
-    const keys = new Set(routeEnvelope(env({ concept: "Signal" }), GLOBALS))
-    expect(keys).toEqual(new Set([KEY.changed, KEY.demand]))
+  it("instance change does not nudge owed/demand when they aren't mounted", () => {
+    expect(routeEnvelope(env({ concept: "Signal", conceptId: "sig-id" }), [KEY.changed])).toEqual([
+      KEY.changed,
+    ])
   })
 
   it("relation change refetches owed + demand", () => {
@@ -45,15 +49,24 @@ describe("routeEnvelope", () => {
     )
   })
 
-  it("generic concept routes to its mounted ConceptView", () => {
-    const mounted = [KEY.changed, KEY.instances("Widget")]
-    const keys = new Set(routeEnvelope(env({ concept: "Widget" }), mounted))
-    expect(keys).toEqual(new Set([KEY.changed, KEY.instances("Widget")]))
+  it("generic concept routes to its mounted ConceptView (by concept id)", () => {
+    const mounted = [KEY.changed, KEY.instances("widget-id")]
+    const keys = new Set(
+      routeEnvelope(env({ concept: "Widget", conceptId: "widget-id" }), mounted),
+    )
+    expect(keys).toEqual(new Set([KEY.changed, KEY.instances("widget-id")]))
   })
 
-  it("Account is now just a generic concept (no special aggregates)", () => {
-    const mounted = [...GLOBALS, KEY.instances("Account")]
-    const keys = new Set(routeEnvelope(env({ concept: "Account", subjectId: "acc1" }), mounted))
-    expect(keys).toEqual(new Set([KEY.changed, KEY.instances("Account")]))
+  it("instance change with the dashboard mounted refetches its collection + aggregates", () => {
+    const mounted = [...GLOBALS, KEY.instances("account-id")]
+    const keys = new Set(
+      routeEnvelope(
+        env({ concept: "Account", conceptId: "account-id", subjectId: "acc1" }),
+        mounted,
+      ),
+    )
+    expect(keys).toEqual(
+      new Set([KEY.changed, KEY.owed, KEY.demand, KEY.instances("account-id")]),
+    )
   })
 })

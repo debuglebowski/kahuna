@@ -18,7 +18,7 @@ const GLOBAL: ReadonlyArray<readonly [string, string]> = [
 ]
 
 /** A concept's nav target — every concept browses through the generic view. */
-const conceptHref = (name: string) => `/concepts/${encodeURIComponent(name)}`
+const conceptHref = (id: string) => `/concepts/${id}`
 
 function NavItem({ to, label, active }: { to: string; label: string; active: boolean }) {
   return (
@@ -77,7 +77,7 @@ export function Layout({ children }: { children: ReactNode }) {
       void conceptsCollection.utils.refetch()
       setCreating(false)
       setName("")
-      navigate(conceptHref(c.name))
+      navigate(conceptHref(c.id))
     },
   })
 
@@ -130,7 +130,7 @@ export function Layout({ children }: { children: ReactNode }) {
             <p className="px-3 py-1 text-xs text-gray-400">No concepts yet.</p>
           )}
           {concepts?.map((c) => {
-            const href = conceptHref(c.name)
+            const href = conceptHref(c.id)
             return <NavItem key={c.id} to={href} label={c.name} active={loc.pathname === href} />
           })}
         </nav>

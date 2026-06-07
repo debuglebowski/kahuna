@@ -2,21 +2,31 @@ import { useLiveQuery } from "@tanstack/react-db"
 import { useMemo, useState } from "react"
 import { useParams } from "react-router-dom"
 import { Card, CardHeader, Input, Spinner } from "../components/ui"
-import { instancesByConcept, KEY, useRegisterCollection } from "../lib/collections"
+import {
+  conceptsCollection,
+  instancesByConcept,
+  KEY,
+  useRegisterCollection,
+} from "../lib/collections"
 import { showValue } from "../lib/utils"
 
 /** Generic instance browser for a single concept (filter + click-to-sort). */
 export function ConceptView() {
-  const { name = "" } = useParams()
+  const { id = "" } = useParams()
   const [filter, setFilter] = useState("")
   const [sortKey, setSortKey] = useState<string | null>(null)
   const [asc, setAsc] = useState(true)
 
-  const collection = instancesByConcept(name)
-  useRegisterCollection(KEY.instances(name), collection)
+  // Resolve the display name from the (live) concepts collection so a rename
+  // reflects immediately while the id-based route stays stable.
+  const { data: concepts } = useLiveQuery((q) => q.from({ c: conceptsCollection }))
+  const name = concepts?.find((c) => c.id === id)?.name ?? ""
+
+  const collection = instancesByConcept(id)
+  useRegisterCollection(KEY.instances(id), collection)
   const instances = useLiveQuery(
-    (q) => (name ? q.from({ i: collection }) : undefined),
-    [name, collection],
+    (q) => (id ? q.from({ i: collection }) : undefined),
+    [id, collection],
   )
 
   const columns = useMemo(() => {

@@ -87,21 +87,21 @@ export const owedCollection = createCollection(
 // ── lazy, per-scope collections (memoised so the instance is stable) ───────────
 
 const conceptCollections = new Map<string, ReturnType<typeof makeConcept>>()
-const makeConcept = (name: string) =>
+const makeConcept = (conceptId: string) =>
   createCollection(
     queryCollectionOptions({
-      queryKey: ["live", "instances", name],
-      queryFn: async (): Promise<Instance[]> => [...(await api.listInstances(name))],
+      queryKey: ["live", "instances", conceptId],
+      queryFn: async (): Promise<Instance[]> => [...(await api.listInstances(conceptId))],
       queryClient,
       getKey: (i: Instance) => i.id,
     }),
   )
 
-export const instancesByConcept = (name: string) => {
-  let c = conceptCollections.get(name)
+export const instancesByConcept = (conceptId: string) => {
+  let c = conceptCollections.get(conceptId)
   if (!c) {
-    c = makeConcept(name)
-    conceptCollections.set(name, c)
+    c = makeConcept(conceptId)
+    conceptCollections.set(conceptId, c)
   }
   return c
 }

@@ -104,18 +104,19 @@ const ServerRpcs = KingsmakerRpcs.middleware(AuthMiddleware)
 const HandlersLive = ServerRpcs.toLayer({
   listConcepts: () => as<ReadonlyArray<Concept>>(uc.listConcepts),
   createConcept: ({ name }) => as<Concept>(uc.createConcept(name)),
-  updateConcept: ({ id, description }) => admin<Concept>(uc.updateConcept(id, description)),
+  updateConcept: ({ id, name, description }) =>
+    admin<Concept>(uc.updateConcept(id, { name, description })),
   deleteConcept: ({ id }) => admin<Concept>(uc.deleteConcept(id)),
   listFields: ({ conceptId }) => as<ReadonlyArray<Field>>(uc.listFields(conceptId)),
   addField: ({ conceptId, name, kind, config, formula }) =>
     admin<Field>(uc.addField({ conceptId, name, kind, config, formula })),
   updateField: ({ id, config, formula }) => admin<Field>(uc.updateField({ id, config, formula })),
   deleteField: ({ id }) => admin<Field>(uc.deleteField(id)),
-  listInstances: ({ conceptName }) => mapErr(uc.listInstances(conceptName, { decorate: true })),
+  listInstances: ({ conceptId }) => mapErr(uc.listInstances(conceptId, { decorate: true })),
   getOwed: () => as<Owed>(uc.getOwed),
   getChanged: () => mapErr(uc.getChanged),
   getDemand: () => as<ReadonlyArray<DemandItem>>(uc.getDemand),
-  createInstance: ({ conceptName, fields }) => mapErr(uc.createInstance(conceptName, fields)),
+  createInstance: ({ conceptId, fields }) => mapErr(uc.createInstance(conceptId, fields)),
   updateInstance: ({ id, expectedVersion, patch }) =>
     mapErr(uc.updateInstance(id, expectedVersion, patch)),
   transitionInstance: ({ id, expectedVersion, field, to }) =>

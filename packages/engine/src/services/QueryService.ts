@@ -1,11 +1,12 @@
 import { PgClient } from "@effect/sql-pg"
 import { Effect } from "effect"
+import type { ConceptRef } from "../domain/types"
 import { ConceptService } from "./ConceptService"
 import { OrgContext } from "./OrgContext"
 import { type InstanceRow, toInstance } from "./rows"
 
-export interface FindInstancesInput {
-  readonly conceptName: string
+/** Identify the concept by id or name (exactly one), plus the query options. */
+export type FindInstancesInput = ConceptRef & {
   /** JSONB containment filter: `state @> where`. */
   readonly where?: Record<string, unknown>
   /** Restrict to instances that are the `from` of a relation pointing at `toId`. */
@@ -25,7 +26,10 @@ export class QueryService extends Effect.Service<QueryService>()("engine/QuerySe
     const findInstances = (input: FindInstancesInput) =>
       Effect.gen(function* () {
         const { orgId } = yield* OrgContext
-        const concept = yield* concepts.getByName(input.conceptName)
+        const concept =
+          "conceptId" in input
+            ? yield* concepts.getById(input.conceptId)
+            : yield* concepts.getByName(input.conceptName)
         const limit = input.limit ?? 100
 
         const whereExtra = input.where ? sql` AND state @> ${sql.json(input.where)}` : sql``

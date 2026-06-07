@@ -10,19 +10,24 @@ import { AppRuntime } from "./runtime"
  * become an automation hook. Single in-process scheduler, supervised.
  *
  * recomputeBands no-ops on instances whose concept has no decay field, so the
- * scan only needs to narrow to concepts that do (seeded: Deal). Bands are
- * day-resolution, so an hourly default is plenty.
+ * scan narrows to concepts that declare one — discovered generically from the
+ * field defs (no hardcoded concept names). Bands are day-resolution, so an
+ * hourly default is plenty.
  */
 
 const TICK_ACTOR = "system:decay-tick"
-const DECAY_CONCEPTS = ["Deal"] as const
 
 const runForOrg = (orgId: string) =>
   Effect.gen(function* () {
+    const sql = yield* PgClient.PgClient
     const query = yield* QueryService
     const instances = yield* InstanceService
-    for (const conceptName of DECAY_CONCEPTS) {
-      const rows = yield* query.findInstances({ conceptName, limit: 1000 })
+    // Every concept that declares a decay computed field, whatever it's named.
+    const decayConcepts = yield* sql<{ readonly concept_id: string }>`
+      SELECT DISTINCT concept_id FROM fields
+      WHERE org_id = ${orgId} AND kind = 'computed' AND (config->>'computedKind') = 'decay'`
+    for (const { concept_id } of decayConcepts) {
+      const rows = yield* query.findInstances({ conceptId: concept_id, limit: 1000 })
       const active = rows.filter((r) => r.state.status !== "won" && r.state.status !== "lost")
       for (const r of active) {
         yield* instances.recomputeBands(r.id).pipe(Effect.catchAllCause(() => Effect.void))
@@ -30,7 +35,7 @@ const runForOrg = (orgId: string) =>
     }
   }).pipe(
     Effect.provideService(OrgContext, { orgId, actor: TICK_ACTOR }),
-    // An org without the Deal concept (etc.) just gets skipped.
+    // An org with no decay concepts just gets skipped.
     Effect.catchAllCause(() => Effect.void),
   )
 

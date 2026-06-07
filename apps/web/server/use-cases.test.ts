@@ -4,7 +4,14 @@ import type { Effect } from "effect"
 import { describe, expect, it } from "vitest"
 import { runEngineOrThrow } from "./runtime"
 import { seedKingsmaker } from "./seed/seed"
-import { createInstance, getChanged, getDemand, getOwed, linkRelation } from "./use-cases"
+import {
+  createInstance,
+  getChanged,
+  getDemand,
+  getOwed,
+  linkRelation,
+  listConcepts,
+} from "./use-cases"
 
 const run = <A, E>(orgId: string, eff: Effect.Effect<A, E, OrgContext | EngineServices>) =>
   runEngineOrThrow({ orgId, actor: "system" }, eff)
@@ -14,30 +21,46 @@ describe("use-cases (UI backbone)", () => {
     const org = randomUUID()
     await run(org, seedKingsmaker)
 
+    // The app identifies concepts by id; resolve the seeded names → ids once.
+    const concepts = (await run(org, listConcepts)) as ReadonlyArray<{ id: string; name: string }>
+    const idOf = (name: string) => concepts.find((c) => c.name === name)!.id
+
     // Everything is created via the generic createInstance + linkRelation — no
     // account-specific helpers. Relation types match the seeded schema.
     const account = await run(
       org,
-      createInstance("Account", { name: "Acme", lifecycle_phase: "deal", contract_value: 75000 }),
+      createInstance(idOf("Account"), {
+        name: "Acme",
+        lifecycle_phase: "deal",
+        contract_value: 75000,
+      }),
     )
-    const deal = await run(org, createInstance("Deal", { status: "lead", is_renewal: false }))
+    const deal = await run(org, createInstance(idOf("Deal"), { status: "lead", is_renewal: false }))
     await run(org, linkRelation("for", deal.id, account.id))
 
     // A stale interaction (40 days ago) on the account -> the deal reads "cold".
     const fortyDaysAgo = new Date(Date.now() - 40 * 86_400_000).toISOString()
     const interaction = await run(
       org,
-      createInstance("Interaction", { occurred_on: fortyDaysAgo, kind: "call", note: "kickoff" }),
+      createInstance(idOf("Interaction"), {
+        occurred_on: fortyDaysAgo,
+        kind: "call",
+        note: "kickoff",
+      }),
     )
     await run(org, linkRelation("on", interaction.id, account.id))
 
     const signal = await run(
       org,
-      createInstance("Signal", { kind: "request", description: "SSO please", status: "captured" }),
+      createInstance(idOf("Signal"), {
+        kind: "request",
+        description: "SSO please",
+        status: "captured",
+      }),
     )
     await run(org, linkRelation("from", signal.id, account.id))
 
-    await run(org, createInstance("Task", { title: "Send proposal", done: false }))
+    await run(org, createInstance(idOf("Task"), { title: "Send proposal", done: false }))
 
     // "What's owed": the cold deal + the open task surface.
     const owed = (await run(org, getOwed)) as {

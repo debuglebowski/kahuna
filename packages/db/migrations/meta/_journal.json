@@ -8,6 +8,20 @@
       "when": 1780787079449,
       "tag": "0000_quick_dorian_gray",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1780871982075,
+      "tag": "0001_relation_target_to_id",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1780873041903,
+      "tag": "0002_add_concept_slug",
+      "breakpoints": true
     }
   ]
 }

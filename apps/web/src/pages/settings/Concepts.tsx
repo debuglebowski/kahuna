@@ -15,12 +15,13 @@ function msgOf(e: unknown): string {
   return err?.message ?? "Something went wrong."
 }
 
-function summarize(f: Field): string {
+/** Render a field's config summary; `nameOf` resolves a relation target id → name. */
+function summarize(f: Field, nameOf: (id: string) => string): string {
   switch (f.kind) {
     case "enum":
       return (f.config.options ?? []).join(", ")
     case "relation":
-      return `${f.config.relationType ?? "?"} → ${f.config.target ?? "?"} (${f.config.cardinality ?? "many"})`
+      return `${f.config.relationType ?? "?"} → ${f.config.target ? nameOf(f.config.target) : "?"} (${f.config.cardinality ?? "many"})`
     case "computed":
       return f.config.computedKind ?? ""
     default:
@@ -32,6 +33,7 @@ export function Concepts() {
   const qc = useQueryClient()
   const concepts = useQuery({ queryKey: ["concepts"], queryFn: () => api.listConcepts() })
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [name, setName] = useState("")
   const [description, setDescription] = useState("")
   const [adding, setAdding] = useState(false)
   const [editingFieldId, setEditingFieldId] = useState<string | null>(null)
@@ -45,10 +47,14 @@ export function Concepts() {
     if (!selectedId && concepts.data?.length) setSelectedId(concepts.data[0]!.id)
   }, [concepts.data, selectedId])
   useEffect(() => {
+    setName(selected?.name ?? "")
     setDescription(selected?.description ?? "")
     setAdding(false)
     setEditingFieldId(null)
   }, [selected])
+
+  // Resolve a relation target concept id → its display name for field summaries.
+  const conceptName = (id: string) => concepts.data?.find((c) => c.id === id)?.name ?? id
 
   const fields = useQuery({
     queryKey: ["fields", selectedId],
@@ -72,8 +78,12 @@ export function Concepts() {
     if (trimmed) createConcept.mutate(trimmed)
   }
 
-  const saveDesc = useMutation({
-    mutationFn: () => api.updateConcept(selectedId!, description.trim() || null),
+  const saveConcept = useMutation({
+    mutationFn: () =>
+      api.updateConcept(selectedId!, {
+        name: name.trim(),
+        description: description.trim() || null,
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["concepts"] }),
   })
   const delConcept = useMutation({
@@ -182,8 +192,11 @@ export function Concepts() {
               title={selected.name}
               action={
                 <div className="flex gap-2">
-                  <Button onClick={() => saveDesc.mutate()} disabled={saveDesc.isPending}>
-                    {saveDesc.isPending ? "Saving…" : "Save"}
+                  <Button
+                    onClick={() => saveConcept.mutate()}
+                    disabled={saveConcept.isPending || !name.trim()}
+                  >
+                    {saveConcept.isPending ? "Saving…" : "Save"}
                   </Button>
                   <Button
                     variant="danger"
@@ -199,6 +212,8 @@ export function Concepts() {
               }
             />
             <div className="space-y-2 p-4">
+              <span className="text-xs font-medium text-gray-500">Name</span>
+              <Input value={name} onChange={(e) => setName(e.target.value)} />
               <span className="text-xs font-medium text-gray-500">Description</span>
               <textarea
                 value={description}
@@ -206,8 +221,8 @@ export function Concepts() {
                 rows={2}
                 className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm outline-none focus:border-gray-500"
               />
-              {delConcept.error && (
-                <p className="text-sm text-red-600">{msgOf(delConcept.error)}</p>
+              {(saveConcept.error || delConcept.error) && (
+                <p className="text-sm text-red-600">{msgOf(saveConcept.error ?? delConcept.error)}</p>
               )}
             </div>
           </Card>
@@ -253,7 +268,9 @@ export function Concepts() {
                         {f.name}
                       </span>
                       <Badge>{f.kind}</Badge>
-                      <span className="flex-1 truncate text-xs text-gray-500">{summarize(f)}</span>
+                      <span className="flex-1 truncate text-xs text-gray-500">
+                        {summarize(f, conceptName)}
+                      </span>
                       <Button variant="ghost" onClick={() => setEditingFieldId(f.id)}>
                         Edit
                       </Button>

@@ -14,6 +14,9 @@ export interface LiveEnvelope {
   readonly kind: "instance" | "relation" | "concept" | "field"
   readonly subjectId: string
   readonly type: string
+  /** Concept id for instance events — routes to the id-keyed instance collection. */
+  readonly conceptId: string | null
+  /** Concept name for instance events — informational (mirrors the wire envelope). */
   readonly concept: string | null
 }
 
@@ -39,11 +42,12 @@ export const routeEnvelope = (env: LiveEnvelope, mounted: ReadonlyArray<string>)
     candidates.add(KEY.owed)
     candidates.add(KEY.demand)
   } else {
-    // instance — keep the dashboard's owed/demand aggregates live.
-    const c = env.concept
-    if (c === "Deal" || c === "Task") candidates.add(KEY.owed)
-    else if (c === "Signal") candidates.add(KEY.demand)
-    if (c) candidates.add(KEY.instances(c))
+    // instance — the dashboard aggregates (owed/demand) are global, so any instance
+    // change can affect them; nudge both (the `mounted` filter below means they only
+    // actually refetch when the dashboard is open). No concept-name special-casing.
+    candidates.add(KEY.owed)
+    candidates.add(KEY.demand)
+    if (env.conceptId) candidates.add(KEY.instances(env.conceptId))
   }
 
   const mountedSet = new Set(mounted)

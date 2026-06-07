@@ -30,14 +30,14 @@ export interface ListOpts {
 }
 
 export const listInstances = (
-  conceptName: string,
+  conceptId: string,
   opts: ListOpts = {},
 ): UC<ReadonlyArray<Instance>> =>
   Effect.gen(function* () {
     const query = yield* QueryService
     const computed = yield* ComputedFields
     const rows = yield* query.findInstances({
-      conceptName,
+      conceptId,
       where: opts.where,
       orderBy: opts.orderBy,
       relatedToTo: opts.relatedToTo,
@@ -59,8 +59,11 @@ export const listConcepts: UC<unknown> = Effect.flatMap(ConceptService, (c) => c
 export const createConcept = (name: string, description?: string): UC<unknown> =>
   Effect.flatMap(ConceptService, (c) => c.create({ name, description }))
 
-export const updateConcept = (id: string, description: string | null): UC<unknown> =>
-  Effect.flatMap(ConceptService, (c) => c.update({ id, description }))
+export const updateConcept = (
+  id: string,
+  patch: { readonly name?: string; readonly description: string | null },
+): UC<unknown> =>
+  Effect.flatMap(ConceptService, (c) => c.update({ id, name: patch.name, description: patch.description }))
 
 export const deleteConcept = (id: string): UC<unknown> =>
   Effect.flatMap(ConceptService, (c) => c.remove(id))
@@ -87,12 +90,24 @@ export const deleteField = (id: string): UC<unknown> =>
 
 const decayBand = (d: Instance) => (d.state.decay as { band?: string } | undefined)?.band
 
+/**
+ * List instances for the concept pinned by `slug` — the dashboard's stable handle
+ * (decoupled from the renameable display name). An org missing that concept (e.g.
+ * never seeded) yields an empty list rather than failing.
+ */
+const instancesBySlug = (slug: string, opts: { readonly limit?: number } = {}) =>
+  Effect.gen(function* () {
+    const concepts = yield* ConceptService
+    const query = yield* QueryService
+    const concept = yield* concepts.getBySlug(slug)
+    return yield* query.findInstances({ conceptId: concept.id, limit: opts.limit })
+  }).pipe(Effect.catchTag("ConceptNotFound", () => Effect.succeed([] as ReadonlyArray<Instance>)))
+
 export const getOwed: UC<unknown> = Effect.gen(function* () {
-  const query = yield* QueryService
   const computed = yield* ComputedFields
-  const tasks = yield* query.findInstances({ conceptName: "Task", limit: 200 })
+  const tasks = yield* instancesBySlug("task", { limit: 200 })
   const openTasks = tasks.filter((t) => t.state.done !== true)
-  const dealsRaw = yield* query.findInstances({ conceptName: "Deal", limit: 200 })
+  const dealsRaw = yield* instancesBySlug("deal", { limit: 200 })
   const deals = yield* Effect.forEach(dealsRaw, (d) => computed.decorate(d))
   const open = deals.filter((d) => d.state.status !== "won" && d.state.status !== "lost")
   return {
@@ -133,10 +148,9 @@ export const getChanged: UC<ReadonlyArray<FeedItem>> = Effect.flatMap(EventStore
 )
 
 export const getDemand: UC<unknown> = Effect.gen(function* () {
-  const query = yield* QueryService
   const relations = yield* RelationService
   const instances = yield* InstanceService
-  const signals = yield* query.findInstances({ conceptName: "Signal", limit: 200 })
+  const signals = yield* instancesBySlug("signal", { limit: 200 })
   const open = signals.filter((s) => s.state.status !== "shipped")
   const items = yield* Effect.forEach(open, (signal) =>
     Effect.gen(function* () {
@@ -156,9 +170,9 @@ export const getDemand: UC<unknown> = Effect.gen(function* () {
 // ── commands ──────────────────────────────────────────────────────────────────
 
 export const createInstance = (
-  conceptName: string,
+  conceptId: string,
   fields: Record<string, unknown>,
-): UC<Instance> => Effect.flatMap(InstanceService, (i) => i.create({ conceptName, fields }))
+): UC<Instance> => Effect.flatMap(InstanceService, (i) => i.create({ conceptId, fields }))
 
 export const updateInstance = (
   id: string,

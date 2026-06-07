@@ -42,10 +42,17 @@ export type InstanceState = Record<string, unknown>
 export interface Concept {
   readonly id: Id
   readonly orgId: OrgId
+  /** Stable, immutable system key (derived from the initial name). Code that must
+   *  pin a specific concept (dashboards, computed scans) refers to this, never the
+   *  display name — so the name is free to be renamed. */
+  readonly slug: string
   readonly name: string
   readonly description: string | null
   readonly createdAt: Date
 }
+
+/** Identify a concept by exactly one handle (compile-time exclusive). */
+export type ConceptRef = { readonly conceptId: string } | { readonly conceptName: string }
 
 export interface Field {
   readonly id: Id
@@ -112,7 +119,11 @@ export type EventPayload =
   // Concept/field schema edits (settings → concept configuration). These are
   // subjectKind "concept"/"field" events — they NEVER appear in an instance
   // stream, so the instance reducer (projection/reducer.ts) ignores them.
-  | { readonly _tag: "ConceptUpdated"; readonly description: string | null }
+  | {
+      readonly _tag: "ConceptUpdated"
+      readonly description: string | null
+      readonly name?: string
+    }
   | { readonly _tag: "ConceptDeleted" }
   | {
       readonly _tag: "FieldUpdated"

@@ -75,9 +75,11 @@ const replayEventsSince = (orgId: string, since: number) =>
       readonly subject_kind: string
       readonly subject_id: string
       readonly event_type: string
+      readonly concept_id: string | null
       readonly concept: string | null
     }>`
-      SELECT e.id, e.occurred_at, e.subject_kind, e.subject_id, e.event_type, c.name AS concept
+      SELECT e.id, e.occurred_at, e.subject_kind, e.subject_id, e.event_type,
+             c.id AS concept_id, c.name AS concept
       FROM events e
       LEFT JOIN instances i
         ON e.subject_kind = 'instance' AND i.id = e.subject_id AND i.org_id = e.org_id
@@ -93,6 +95,7 @@ const replayEventsSince = (orgId: string, since: number) =>
         kind: r.subject_kind as SubjectKind,
         subjectId: r.subject_id,
         type: r.event_type,
+        conceptId: r.concept_id,
         concept: r.concept,
       }),
     )

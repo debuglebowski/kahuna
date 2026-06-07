@@ -16,6 +16,7 @@ import type {
 export interface ConceptRow {
   readonly id: string
   readonly org_id: string
+  readonly slug: string
   readonly name: string
   readonly description: string | null
   readonly created_at: Date
@@ -65,6 +66,7 @@ const toFieldConfig = (raw: unknown): FieldConfig =>
 export const toConcept = (r: ConceptRow): Concept => ({
   id: r.id,
   orgId: r.org_id,
+  slug: r.slug,
   name: r.name,
   description: r.description,
   createdAt: r.created_at,

@@ -175,7 +175,7 @@ export function FieldForm({
             <Select value={target} onChange={(e) => setTarget(e.target.value)}>
               <option value="">—</option>
               {concepts.map((c) => (
-                <option key={c.id} value={c.name}>
+                <option key={c.id} value={c.id}>
                   {c.name}
                 </option>
               ))}

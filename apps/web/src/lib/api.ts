@@ -50,8 +50,8 @@ type Fields = Record<string, unknown>
 export const api = {
   listConcepts: () => call((c) => c.listConcepts()),
   createConcept: (name: string) => call((c) => c.createConcept({ name })),
-  updateConcept: (id: string, description: string | null) =>
-    call((c) => c.updateConcept({ id, description })),
+  updateConcept: (id: string, patch: { name?: string; description: string | null }) =>
+    call((c) => c.updateConcept({ id, name: patch.name, description: patch.description })),
   deleteConcept: (id: string) => call((c) => c.deleteConcept({ id })),
   listFields: (conceptId: string) => call((c) => c.listFields({ conceptId })),
   addField: (input: {
@@ -64,12 +64,12 @@ export const api = {
   updateField: (input: { id: string; config?: FieldConfig; formula?: string | null }) =>
     call((c) => c.updateField(input)),
   deleteField: (id: string) => call((c) => c.deleteField({ id })),
-  listInstances: (conceptName: string) => call((c) => c.listInstances({ conceptName })),
+  listInstances: (conceptId: string) => call((c) => c.listInstances({ conceptId })),
   getOwed: () => call((c) => c.getOwed()),
   getChanged: () => call((c) => c.getChanged()),
   getDemand: () => call((c) => c.getDemand()),
-  createInstance: (conceptName: string, fields: Fields) =>
-    call((c) => c.createInstance({ conceptName, fields })),
+  createInstance: (conceptId: string, fields: Fields) =>
+    call((c) => c.createInstance({ conceptId, fields })),
   updateInstance: (id: string, expectedVersion: number, patch: Fields) =>
     call((c) => c.updateInstance({ id, expectedVersion, patch })),
   transitionInstance: (id: string, expectedVersion: number, field: string, to: string) =>

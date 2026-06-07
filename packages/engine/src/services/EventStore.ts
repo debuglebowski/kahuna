@@ -19,7 +19,9 @@ export interface EventEnvelope {
   readonly kind: SubjectKind
   readonly subjectId: Id
   readonly type: string
-  /** Concept name for instance events (lets the client route precisely); null otherwise. */
+  /** Concept id for instance events (routes to the id-keyed collection); null otherwise. */
+  readonly conceptId: string | null
+  /** Concept name for instance events (used by the by-name dashboard routing); null otherwise. */
   readonly concept: string | null
 }
 
@@ -28,6 +30,8 @@ export interface AppendInput {
   readonly subjectId: Id
   readonly eventType: string
   readonly payload: EventPayload
+  /** Concept id carried into the NOTIFY envelope for instance events. */
+  readonly conceptId?: string
   /** Concept name carried into the NOTIFY envelope for instance events. */
   readonly conceptName?: string
 }
@@ -63,6 +67,7 @@ export class EventStore extends Effect.Service<EventStore>()("engine/EventStore"
           kind: input.subjectKind,
           subjectId: input.subjectId,
           type: input.eventType,
+          conceptId: input.conceptId ?? null,
           concept: input.conceptName ?? null,
         }
         yield* sql`SELECT pg_notify(${EVENT_CHANNEL}, ${JSON.stringify(envelope)})`

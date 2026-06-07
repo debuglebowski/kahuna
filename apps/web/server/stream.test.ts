@@ -9,6 +9,7 @@ const env = (org: string, id: number): EventEnvelope => ({
   kind: "instance",
   subjectId: `s${id}`,
   type: "InstanceCreated",
+  conceptId: "deal-id",
   concept: "Deal",
 })
 

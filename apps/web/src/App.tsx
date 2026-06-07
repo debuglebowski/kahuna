@@ -33,7 +33,7 @@ export function App() {
           <Route path="members" element={<Members />} />
           <Route path="concepts" element={<Concepts />} />
         </Route>
-        <Route path="/concepts/:name" element={<ConceptView />} />
+        <Route path="/concepts/:id" element={<ConceptView />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Layout>

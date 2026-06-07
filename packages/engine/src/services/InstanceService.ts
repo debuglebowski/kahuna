@@ -1,6 +1,6 @@
 import { PgClient } from "@effect/sql-pg"
 import { Effect, Either } from "effect"
-import type { EngineEvent, Field, Instance, InstanceState } from "../domain/types"
+import type { ConceptRef, EngineEvent, Field, Instance, InstanceState } from "../domain/types"
 import {
   FieldValidationError,
   IllegalTransition,
@@ -117,14 +117,14 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
         return toInstance(row)
       })
 
-    const create = (input: {
-      readonly conceptName: string
-      readonly fields: Record<string, unknown>
-    }) =>
+    const create = (input: ConceptRef & { readonly fields: Record<string, unknown> }) =>
       sql.withTransaction(
         Effect.gen(function* () {
           const { orgId } = yield* OrgContext
-          const concept = yield* concepts.getByName(input.conceptName)
+          const concept =
+            "conceptId" in input
+              ? yield* concepts.getById(input.conceptId)
+              : yield* concepts.getByName(input.conceptName)
           const defs = yield* fields.listFields(concept.id)
           const validated = yield* validateFields(defs, input.fields)
           const inserted = yield* sql<InstanceRow>`
@@ -137,6 +137,7 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
             subjectId: created.id,
             eventType: "InstanceCreated",
             payload: { _tag: "InstanceCreated", conceptId: concept.id, fields: validated },
+            conceptId: concept.id,
             conceptName: concept.name,
           })
           const folded = applyEvent(null, event)
