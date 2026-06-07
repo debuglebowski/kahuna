@@ -1,18 +1,17 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useLiveQuery } from "@tanstack/react-db"
+import { useMutation } from "@tanstack/react-query"
 import { type FormEvent, useState } from "react"
 import { Link } from "react-router-dom"
 import { Badge, Button, Card, CardHeader, Field, Input, Select, Spinner } from "../components/ui"
 import { api } from "../lib/api"
+import { accountsCollection, KEY, useRegisterCollection } from "../lib/collections"
 import { showValue } from "../lib/utils"
 
 const PHASES = ["prospect", "deal", "live", "renewal"]
 
 export function Accounts() {
-  const qc = useQueryClient()
-  const accounts = useQuery({
-    queryKey: ["accounts"],
-    queryFn: () => api.listInstances("Account"),
-  })
+  useRegisterCollection(KEY.accounts, accountsCollection)
+  const accounts = useLiveQuery((q) => q.from({ a: accountsCollection }))
   const [name, setName] = useState("")
   const [phase, setPhase] = useState("prospect")
   const [value, setValue] = useState("")
@@ -27,7 +26,7 @@ export function Accounts() {
     onSuccess: () => {
       setName("")
       setValue("")
-      qc.invalidateQueries({ queryKey: ["accounts"] })
+      void accountsCollection.utils.refetch()
     },
   })
 

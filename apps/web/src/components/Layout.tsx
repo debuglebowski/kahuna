@@ -1,9 +1,13 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useLiveQuery } from "@tanstack/react-db"
+import { useMutation } from "@tanstack/react-query"
 import { LogOut } from "lucide-react"
 import { type ReactNode, useState } from "react"
 import { Link, useLocation, useNavigate } from "react-router-dom"
 import { api } from "../lib/api"
 import { signOut, useSession } from "../lib/auth-client"
+import { conceptsCollection, KEY, useRegisterCollection } from "../lib/collections"
+import { useLiveSync } from "../lib/useLiveSync"
+import { useSafetyRefetch } from "../lib/useSafetyRefetch"
 import { cn } from "../lib/utils"
 
 const GLOBAL: ReadonlyArray<readonly [string, string]> = [
@@ -58,19 +62,20 @@ export function Layout({ children }: { children: ReactNode }) {
   const { data } = useSession()
   const loc = useLocation()
   const navigate = useNavigate()
-  const qc = useQueryClient()
   const [creating, setCreating] = useState(false)
   const [name, setName] = useState("")
 
-  const concepts = useQuery({
-    queryKey: ["concepts"],
-    queryFn: () => api.listConcepts(),
-  })
+  // Mount the single live-sync connection + safety backstop here (Layout wraps
+  // every authed page). The concepts sidebar is a live query.
+  useLiveSync()
+  useSafetyRefetch()
+  useRegisterCollection(KEY.concepts, conceptsCollection)
+  const { data: concepts } = useLiveQuery((q) => q.from({ c: conceptsCollection }))
 
   const createConcept = useMutation({
     mutationFn: (n: string) => api.createConcept(n),
     onSuccess: (c) => {
-      qc.invalidateQueries({ queryKey: ["concepts"] })
+      void conceptsCollection.utils.refetch()
       setCreating(false)
       setName("")
       navigate(conceptHref(c.name))
@@ -122,10 +127,10 @@ export function Layout({ children }: { children: ReactNode }) {
             </div>
           )}
 
-          {concepts.data?.length === 0 && !creating && (
+          {concepts?.length === 0 && !creating && (
             <p className="px-3 py-1 text-xs text-gray-400">No concepts yet.</p>
           )}
-          {concepts.data?.map((c) => {
+          {concepts?.map((c) => {
             const href = conceptHref(c.name)
             return <NavItem key={c.id} to={href} label={c.name} active={loc.pathname === href} />
           })}

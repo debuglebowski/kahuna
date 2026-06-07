@@ -1,8 +1,8 @@
-import { useQuery } from "@tanstack/react-query"
+import { useLiveQuery } from "@tanstack/react-db"
 import { useMemo, useState } from "react"
 import { Navigate, useParams } from "react-router-dom"
 import { Card, CardHeader, Input, Spinner } from "../components/ui"
-import { api } from "../lib/api"
+import { instancesByConcept, KEY, useRegisterCollection } from "../lib/collections"
 import { showValue } from "../lib/utils"
 
 /** Generic instance browser for a single concept (filter + click-to-sort). */
@@ -12,11 +12,12 @@ export function ConceptView() {
   const [sortKey, setSortKey] = useState<string | null>(null)
   const [asc, setAsc] = useState(true)
 
-  const instances = useQuery({
-    queryKey: ["instances", name],
-    enabled: !!name && name !== "Account",
-    queryFn: () => api.listInstances(name),
-  })
+  const collection = instancesByConcept(name)
+  useRegisterCollection(KEY.instances(name), collection)
+  const instances = useLiveQuery(
+    (q) => (name && name !== "Account" ? q.from({ i: collection }) : undefined),
+    [name, collection],
+  )
 
   const columns = useMemo(() => {
     const keys = new Set<string>()

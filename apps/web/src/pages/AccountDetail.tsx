@@ -1,9 +1,11 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useLiveQuery } from "@tanstack/react-db"
+import { useMutation } from "@tanstack/react-query"
 import type { ReactNode } from "react"
 import { Link, useParams } from "react-router-dom"
 import { InlineForm } from "../components/InlineForm"
 import { Badge, Button, Card, CardHeader, decayTone, momentumTone, Spinner } from "../components/ui"
 import { api, type DecayValue, type Instance, type MomentumValue } from "../lib/api"
+import { accountHubCollection, KEY, useRegisterCollection } from "../lib/collections"
 import { showValue } from "../lib/utils"
 
 const STATUS_NEXT: Record<string, string[]> = {
@@ -24,54 +26,49 @@ const Section = ({ title, children }: { title: string; children: ReactNode }) =>
 
 export function AccountDetail() {
   const { id = "" } = useParams()
-  const qc = useQueryClient()
-  const hub = useQuery({
-    queryKey: ["account", id],
-    queryFn: () => api.getAccountHub(id),
-    enabled: !!id,
-  })
+  const hubCol = accountHubCollection(id)
+  useRegisterCollection(KEY.account(id), hubCol)
+  const hubQ = useLiveQuery((q) => (id ? q.from({ h: hubCol }) : undefined), [id, hubCol])
 
-  const invalidate = () => {
-    qc.invalidateQueries({ queryKey: ["account", id] })
-    for (const k of ["owed", "changed", "demand", "accounts"]) {
-      qc.invalidateQueries({ queryKey: [k] })
-    }
+  // The creator's own action also arrives via SSE; refetch immediately for snappiness.
+  const refresh = () => {
+    void hubCol.utils.refetch()
   }
 
   const addContact = useMutation({
     mutationFn: (fields: Record<string, unknown>) => api.createContact(id, fields),
-    onSuccess: invalidate,
+    onSuccess: refresh,
   })
   const logInteraction = useMutation({
     mutationFn: (fields: Record<string, unknown>) => api.logInteraction(id, fields),
-    onSuccess: invalidate,
+    onSuccess: refresh,
   })
   const raiseSignal = useMutation({
     mutationFn: (fields: Record<string, unknown>) => api.logSignal(id, fields),
-    onSuccess: invalidate,
+    onSuccess: refresh,
   })
   const addTask = useMutation({
     mutationFn: (fields: Record<string, unknown>) => api.createTask(id, fields),
-    onSuccess: invalidate,
+    onSuccess: refresh,
   })
   const addDeal = useMutation({
     mutationFn: (f: Record<string, string>) =>
       api.createDeal(id, { status: f.status, is_renewal: f.is_renewal === "yes" }),
-    onSuccess: invalidate,
+    onSuccess: refresh,
   })
   const advanceDeal = useMutation({
     mutationFn: (p: { dealId: string; version: number; to: string }) =>
       api.transitionInstance(p.dealId, p.version, "status", p.to),
-    onSuccess: invalidate,
+    onSuccess: refresh,
   })
   const completeTask = useMutation({
     mutationFn: (p: { taskId: string; version: number }) =>
       api.updateInstance(p.taskId, p.version, { done: true }),
-    onSuccess: invalidate,
+    onSuccess: refresh,
   })
   const addArtifact = useMutation({
     mutationFn: (fields: Record<string, unknown>) => api.createArtifact(id, fields),
-    onSuccess: invalidate,
+    onSuccess: refresh,
   })
   const uploadFile = useMutation({
     mutationFn: async (p: { artifactId: string; file: File }) => {
@@ -84,13 +81,13 @@ export function AccountDetail() {
       if (!res.ok) throw new Error("upload failed")
       return res.json()
     },
-    onSuccess: invalidate,
+    onSuccess: refresh,
   })
 
-  if (hub.isLoading) return <Spinner />
-  if (hub.isError || !hub.data)
-    return <div className="text-sm text-red-600">Account not found.</div>
-  const { account, contacts, interactions, signals, tasks, deals, artifacts } = hub.data
+  if (hubQ.isLoading) return <Spinner />
+  const hub = hubQ.data?.[0]
+  if (!hub) return <div className="text-sm text-red-600">Account not found.</div>
+  const { account, contacts, interactions, signals, tasks, deals, artifacts } = hub
   const s = account.state
 
   return (

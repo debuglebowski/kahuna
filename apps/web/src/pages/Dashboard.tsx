@@ -1,7 +1,14 @@
-import { useQuery } from "@tanstack/react-query"
+import { useLiveQuery } from "@tanstack/react-db"
 import type { ReactNode } from "react"
 import { Badge, Card, CardHeader, decayTone, Spinner } from "../components/ui"
-import { api, type DecayValue, type Instance } from "../lib/api"
+import type { DecayValue, Instance } from "../lib/api"
+import {
+  changedCollection,
+  demandCollection,
+  KEY,
+  owedCollection,
+  useRegisterCollection,
+} from "../lib/collections"
 import { showValue } from "../lib/utils"
 
 const decayOf = (d: Instance) => d.state.decay as DecayValue | undefined
@@ -18,9 +25,17 @@ const Row = ({ children }: { children: ReactNode }) => (
 const Empty = () => <div className="text-xs text-gray-400">Nothing here.</div>
 
 export function Dashboard() {
-  const owed = useQuery({ queryKey: ["owed"], queryFn: () => api.getOwed() })
-  const changed = useQuery({ queryKey: ["changed"], queryFn: () => api.getChanged() })
-  const demand = useQuery({ queryKey: ["demand"], queryFn: () => api.getDemand() })
+  useRegisterCollection(KEY.owed, owedCollection)
+  useRegisterCollection(KEY.changed, changedCollection)
+  useRegisterCollection(KEY.demand, demandCollection)
+  const owedQ = useLiveQuery((q) => q.from({ o: owedCollection }))
+  const changed = useLiveQuery((q) =>
+    q.from({ c: changedCollection }).orderBy(({ c }) => c.id, "desc"),
+  )
+  const demand = useLiveQuery((q) =>
+    q.from({ d: demandCollection }).orderBy(({ d }) => d.weight, "desc"),
+  )
+  const owed = { isLoading: owedQ.isLoading, data: owedQ.data?.[0] }
 
   return (
     <div className="grid gap-4 lg:grid-cols-3">
