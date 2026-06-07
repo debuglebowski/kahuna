@@ -1,26 +1,22 @@
 import { useQuery } from "@tanstack/react-query"
 import { useMemo, useState } from "react"
-import { Card, CardHeader, Input, Select, Spinner } from "../components/ui"
-import { apiGet, type Concept, type Instance } from "../lib/api"
+import { Navigate, useParams } from "react-router-dom"
+import { Card, CardHeader, Input, Spinner } from "../components/ui"
+import { apiGet, type Instance } from "../lib/api"
 import { showValue } from "../lib/utils"
 
-export function Browse() {
-  const concepts = useQuery({
-    queryKey: ["concepts"],
-    queryFn: () => apiGet<Concept[]>("/api/concepts"),
-  })
-  const [concept, setConcept] = useState("")
+/** Generic instance browser for a single concept (filter + click-to-sort). */
+export function ConceptView() {
+  const { name = "" } = useParams()
   const [filter, setFilter] = useState("")
   const [sortKey, setSortKey] = useState<string | null>(null)
   const [asc, setAsc] = useState(true)
 
-  const active = concept || concepts.data?.[0]?.name || ""
-  const decorate = active === "Deal" ? "&decorate=1" : ""
   const instances = useQuery({
-    queryKey: ["instances", active],
-    enabled: !!active,
+    queryKey: ["instances", name],
+    enabled: !!name && name !== "Account",
     queryFn: () =>
-      apiGet<Instance[]>(`/api/instances?concept=${encodeURIComponent(active)}${decorate}`),
+      apiGet<Instance[]>(`/api/instances?concept=${encodeURIComponent(name)}&decorate=1`),
   })
 
   const columns = useMemo(() => {
@@ -45,38 +41,26 @@ export function Browse() {
     return r
   }, [instances.data, filter, sortKey, asc])
 
+  // Account has a bespoke list + hub experience.
+  if (name === "Account") return <Navigate to="/accounts" replace />
+
   return (
     <Card>
       <CardHeader
-        title="Concept browser"
+        title={name}
         action={
-          <div className="flex gap-2">
-            <Select
-              value={active}
-              onChange={(e) => {
-                setConcept(e.target.value)
-                setSortKey(null)
-              }}
-            >
-              {(concepts.data ?? []).map((c) => (
-                <option key={c.id} value={c.name}>
-                  {c.name}
-                </option>
-              ))}
-            </Select>
-            <Input
-              placeholder="filter…"
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
-              className="w-48"
-            />
-          </div>
+          <Input
+            placeholder="filter…"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            className="w-48"
+          />
         }
       />
       {instances.isLoading ? (
         <Spinner />
       ) : rows.length === 0 ? (
-        <div className="p-4 text-sm text-gray-400">No instances.</div>
+        <div className="p-6 text-sm text-gray-400">No {name} instances yet.</div>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">

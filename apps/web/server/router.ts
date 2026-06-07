@@ -4,6 +4,7 @@ import { seedKingsmaker } from "./seed/seed"
 import { roleOf, runScoped } from "./session"
 import {
   createArtifact,
+  createConcept,
   createContact,
   createDeal,
   createInstance,
@@ -61,6 +62,10 @@ export const handleApi = async (req: Request): Promise<Response | null> => {
 
   if (p === "/api/bootstrap" && m === "POST") return json(await runScoped(req, seedKingsmaker))
   if (p === "/api/concepts" && m === "GET") return json(await runScoped(req, listConcepts))
+  if (p === "/api/concepts" && m === "POST") {
+    const b = await readBody(req)
+    return json(await runScoped(req, createConcept(b.name, b.description)))
+  }
   if (p === "/api/owed" && m === "GET") return json(await runScoped(req, getOwed))
   if (p === "/api/changed" && m === "GET") return json(await runScoped(req, getChanged))
   if (p === "/api/demand" && m === "GET") return json(await runScoped(req, getDemand))

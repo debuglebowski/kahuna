@@ -53,6 +53,9 @@ export const getInstance = (id: string, decorate = false): UC<Instance> =>
 
 export const listConcepts: UC<unknown> = Effect.flatMap(ConceptService, (c) => c.list())
 
+export const createConcept = (name: string, description?: string): UC<unknown> =>
+  Effect.flatMap(ConceptService, (c) => c.create({ name, description }))
+
 export const getAccountHub = (accountId: string): UC<unknown> =>
   Effect.gen(function* () {
     const instances = yield* InstanceService
