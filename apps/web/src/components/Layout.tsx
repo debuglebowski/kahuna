@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Plus } from "lucide-react"
+import { LogOut } from "lucide-react"
 import { type ReactNode, useState } from "react"
 import { Link, useLocation, useNavigate } from "react-router-dom"
 import { api } from "../lib/api"
@@ -29,6 +29,18 @@ function NavItem({ to, label, active }: { to: string; label: string; active: boo
       {label}
     </Link>
   )
+}
+
+/** Up to two initials from a name, falling back to the email's first letter. */
+function initialsOf(name: string | null | undefined, email: string) {
+  const source = name?.trim() || email
+  const letters = source
+    .split(/[\s@._-]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((w) => w[0])
+    .join("")
+  return (letters || email[0] || "?").toUpperCase()
 }
 
 function SectionLabel({ children, action }: { children: ReactNode; action?: ReactNode }) {
@@ -78,25 +90,11 @@ export function Layout({ children }: { children: ReactNode }) {
         <div className="px-4 py-4 text-lg font-semibold text-gray-900">Kingsmaker</div>
 
         <nav className="flex-1 overflow-y-auto px-2 pb-4">
-          <SectionLabel>Global</SectionLabel>
           {GLOBAL.map(([to, label]) => (
             <NavItem key={to} to={to} label={label} active={isActive(to)} />
           ))}
 
-          <SectionLabel
-            action={
-              <button
-                type="button"
-                onClick={() => setCreating((v) => !v)}
-                className="rounded p-0.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700"
-                title="New concept"
-              >
-                <Plus size={14} />
-              </button>
-            }
-          >
-            Concepts
-          </SectionLabel>
+          <SectionLabel>Concepts</SectionLabel>
 
           {creating && (
             <div className="px-1 pb-1">
@@ -133,15 +131,28 @@ export function Layout({ children }: { children: ReactNode }) {
           })}
         </nav>
 
-        <div className="border-t border-gray-100 px-3 py-3 text-xs text-gray-500">
-          <div className="truncate">{data?.user.email}</div>
-          <button
-            type="button"
-            onClick={() => signOut().then(() => location.reload())}
-            className="mt-1 text-gray-400 hover:text-gray-700 hover:underline"
-          >
-            Sign out
-          </button>
+        <div className="border-t border-gray-100 p-2">
+          <div className="flex items-center gap-2.5 rounded-lg px-2 py-2 transition-colors hover:bg-gray-50">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-gray-700 to-gray-900 text-xs font-semibold text-white">
+              {initialsOf(data?.user.name, data?.user.email ?? "")}
+            </div>
+            <div className="min-w-0 flex-1 leading-tight">
+              <div className="truncate text-sm font-medium text-gray-900">
+                {data?.user.name?.trim() || data?.user.email}
+              </div>
+              {data?.user.name?.trim() && (
+                <div className="truncate text-xs text-gray-500">{data?.user.email}</div>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => signOut().then(() => location.reload())}
+              title="Sign out"
+              className="shrink-0 rounded-md p-1.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700"
+            >
+              <LogOut size={15} />
+            </button>
+          </div>
         </div>
       </aside>
 
