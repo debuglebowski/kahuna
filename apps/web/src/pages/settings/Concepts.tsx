@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useEffect, useState } from "react"
-import { Badge, Button, Card, CardHeader, Spinner } from "../../components/ui"
+import { Badge, Button, Card, CardHeader, Input, Spinner } from "../../components/ui"
 import { api, type Field } from "../../lib/api"
 import { cn } from "../../lib/utils"
 import { FieldForm, type FieldFormValue } from "./FieldForm"
@@ -9,6 +9,8 @@ function msgOf(e: unknown): string {
   const err = e as { code?: string; message?: string }
   if (err?.code === "CONCEPT_IN_USE" || err?.message?.includes("ConceptInUse"))
     return "Can't delete: this concept still has instances."
+  if (err?.message?.includes("ConceptNameConflict"))
+    return "A concept with that name already exists."
   if (err?.code === "FORBIDDEN" || err?.message?.includes("Admin only")) return "Admins only."
   return err?.message ?? "Something went wrong."
 }
@@ -33,6 +35,8 @@ export function Concepts() {
   const [description, setDescription] = useState("")
   const [adding, setAdding] = useState(false)
   const [editingFieldId, setEditingFieldId] = useState<string | null>(null)
+  const [creatingConcept, setCreatingConcept] = useState(false)
+  const [newName, setNewName] = useState("")
 
   const selected = concepts.data?.find((c) => c.id === selectedId) ?? null
 
@@ -53,6 +57,20 @@ export function Concepts() {
   })
 
   const refetchFields = () => qc.invalidateQueries({ queryKey: ["fields", selectedId] })
+
+  const createConcept = useMutation({
+    mutationFn: (name: string) => api.createConcept(name),
+    onSuccess: (c) => {
+      setCreatingConcept(false)
+      setNewName("")
+      qc.invalidateQueries({ queryKey: ["concepts"] })
+      setSelectedId(c.id)
+    },
+  })
+  const submitNewConcept = () => {
+    const trimmed = newName.trim()
+    if (trimmed) createConcept.mutate(trimmed)
+  }
 
   const saveDesc = useMutation({
     mutationFn: () => api.updateConcept(selectedId!, description.trim() || null),
@@ -90,22 +108,72 @@ export function Concepts() {
 
   return (
     <div className="grid grid-cols-[200px_1fr] gap-5">
-      <nav className="space-y-1">
-        {concepts.data?.map((c) => (
+      <div className="space-y-2">
+        <nav className="space-y-1">
+          {concepts.data?.map((c) => (
+            <button
+              type="button"
+              key={c.id}
+              onClick={() => setSelectedId(c.id)}
+              className={cn(
+                "block w-full rounded-md px-3 py-1.5 text-left text-sm",
+                c.id === selectedId ? "bg-gray-900 text-white" : "text-gray-700 hover:bg-gray-100",
+              )}
+            >
+              {c.name}
+            </button>
+          ))}
+          {concepts.data?.length === 0 && !creatingConcept && (
+            <p className="px-3 text-xs text-gray-400">No concepts yet.</p>
+          )}
+        </nav>
+
+        {creatingConcept ? (
+          <div className="space-y-2">
+            <Input
+              autoFocus
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") submitNewConcept()
+                if (e.key === "Escape") {
+                  setCreatingConcept(false)
+                  setNewName("")
+                }
+              }}
+              placeholder="New concept name…"
+            />
+            <div className="flex gap-2">
+              <Button
+                onClick={submitNewConcept}
+                disabled={createConcept.isPending || !newName.trim()}
+              >
+                {createConcept.isPending ? "Creating…" : "Create"}
+              </Button>
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setCreatingConcept(false)
+                  setNewName("")
+                }}
+              >
+                Cancel
+              </Button>
+            </div>
+            {createConcept.error && (
+              <p className="text-xs text-red-600">{msgOf(createConcept.error)}</p>
+            )}
+          </div>
+        ) : (
           <button
             type="button"
-            key={c.id}
-            onClick={() => setSelectedId(c.id)}
-            className={cn(
-              "block w-full rounded-md px-3 py-1.5 text-left text-sm",
-              c.id === selectedId ? "bg-gray-900 text-white" : "text-gray-700 hover:bg-gray-100",
-            )}
+            onClick={() => setCreatingConcept(true)}
+            className="block w-full rounded-md px-3 py-1.5 text-left text-sm text-gray-400 hover:bg-gray-100 hover:text-gray-700"
           >
-            {c.name}
+            + New concept
           </button>
-        ))}
-        {concepts.data?.length === 0 && <p className="px-3 text-xs text-gray-400">No concepts.</p>}
-      </nav>
+        )}
+      </div>
 
       {selected && (
         <div className="space-y-5">
