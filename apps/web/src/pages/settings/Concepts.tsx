@@ -1,0 +1,214 @@
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useEffect, useState } from "react"
+import { Badge, Button, Card, CardHeader, Spinner } from "../../components/ui"
+import { api, type Field } from "../../lib/api"
+import { cn } from "../../lib/utils"
+import { FieldForm, type FieldFormValue } from "./FieldForm"
+
+function msgOf(e: unknown): string {
+  const err = e as { code?: string; message?: string }
+  if (err?.code === "CONCEPT_IN_USE" || err?.message?.includes("ConceptInUse"))
+    return "Can't delete: this concept still has instances."
+  if (err?.code === "FORBIDDEN" || err?.message?.includes("Admin only")) return "Admins only."
+  return err?.message ?? "Something went wrong."
+}
+
+function summarize(f: Field): string {
+  switch (f.kind) {
+    case "enum":
+      return (f.config.options ?? []).join(", ")
+    case "relation":
+      return `${f.config.relationType ?? "?"} → ${f.config.target ?? "?"} (${f.config.cardinality ?? "many"})`
+    case "computed":
+      return f.config.computedKind ?? ""
+    default:
+      return ""
+  }
+}
+
+export function Concepts() {
+  const qc = useQueryClient()
+  const concepts = useQuery({ queryKey: ["concepts"], queryFn: () => api.listConcepts() })
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [description, setDescription] = useState("")
+  const [adding, setAdding] = useState(false)
+  const [editingFieldId, setEditingFieldId] = useState<string | null>(null)
+
+  const selected = concepts.data?.find((c) => c.id === selectedId) ?? null
+
+  // Default-select the first concept; seed the description editor on selection.
+  useEffect(() => {
+    if (!selectedId && concepts.data?.length) setSelectedId(concepts.data[0]!.id)
+  }, [concepts.data, selectedId])
+  useEffect(() => {
+    setDescription(selected?.description ?? "")
+    setAdding(false)
+    setEditingFieldId(null)
+  }, [selected])
+
+  const fields = useQuery({
+    queryKey: ["fields", selectedId],
+    queryFn: () => api.listFields(selectedId!),
+    enabled: !!selectedId,
+  })
+
+  const refetchFields = () => qc.invalidateQueries({ queryKey: ["fields", selectedId] })
+
+  const saveDesc = useMutation({
+    mutationFn: () => api.updateConcept(selectedId!, description.trim() || null),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["concepts"] }),
+  })
+  const delConcept = useMutation({
+    mutationFn: () => api.deleteConcept(selectedId!),
+    onSuccess: () => {
+      setSelectedId(null)
+      qc.invalidateQueries({ queryKey: ["concepts"] })
+    },
+  })
+  const addField = useMutation({
+    mutationFn: (v: FieldFormValue) =>
+      api.addField({ conceptId: selectedId!, name: v.name, kind: v.kind, config: v.config }),
+    onSuccess: () => {
+      setAdding(false)
+      refetchFields()
+    },
+  })
+  const updateField = useMutation({
+    mutationFn: (vars: { id: string; config: FieldFormValue["config"] }) =>
+      api.updateField({ id: vars.id, config: vars.config }),
+    onSuccess: () => {
+      setEditingFieldId(null)
+      refetchFields()
+    },
+  })
+  const delField = useMutation({
+    mutationFn: (id: string) => api.deleteField(id),
+    onSuccess: refetchFields,
+  })
+
+  if (concepts.isPending) return <Spinner />
+
+  return (
+    <div className="grid grid-cols-[200px_1fr] gap-5">
+      <nav className="space-y-1">
+        {concepts.data?.map((c) => (
+          <button
+            type="button"
+            key={c.id}
+            onClick={() => setSelectedId(c.id)}
+            className={cn(
+              "block w-full rounded-md px-3 py-1.5 text-left text-sm",
+              c.id === selectedId ? "bg-gray-900 text-white" : "text-gray-700 hover:bg-gray-100",
+            )}
+          >
+            {c.name}
+          </button>
+        ))}
+        {concepts.data?.length === 0 && <p className="px-3 text-xs text-gray-400">No concepts.</p>}
+      </nav>
+
+      {selected && (
+        <div className="space-y-5">
+          <Card>
+            <CardHeader
+              title={selected.name}
+              action={
+                <div className="flex gap-2">
+                  <Button onClick={() => saveDesc.mutate()} disabled={saveDesc.isPending}>
+                    {saveDesc.isPending ? "Saving…" : "Save"}
+                  </Button>
+                  <Button
+                    variant="danger"
+                    disabled={delConcept.isPending}
+                    onClick={() => {
+                      if (confirm(`Delete concept "${selected.name}"? Its fields are removed too.`))
+                        delConcept.mutate()
+                    }}
+                  >
+                    Delete
+                  </Button>
+                </div>
+              }
+            />
+            <div className="space-y-2 p-4">
+              <span className="text-xs font-medium text-gray-500">Description</span>
+              <textarea
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                rows={2}
+                className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm outline-none focus:border-gray-500"
+              />
+              {delConcept.error && (
+                <p className="text-sm text-red-600">{msgOf(delConcept.error)}</p>
+              )}
+            </div>
+          </Card>
+
+          <Card>
+            <CardHeader
+              title="Fields"
+              action={
+                !adding && (
+                  <Button variant="ghost" onClick={() => setAdding(true)}>
+                    Add field
+                  </Button>
+                )
+              }
+            />
+            <div className="space-y-3 p-4">
+              {adding && (
+                <FieldForm
+                  concepts={concepts.data ?? []}
+                  onSubmit={(v) => addField.mutate(v)}
+                  onCancel={() => setAdding(false)}
+                  pending={addField.isPending}
+                />
+              )}
+              {addField.error && <p className="text-sm text-red-600">{msgOf(addField.error)}</p>}
+
+              {fields.isPending && <Spinner />}
+              <ul className="divide-y divide-gray-100">
+                {fields.data?.map((f) =>
+                  editingFieldId === f.id ? (
+                    <li key={f.id} className="py-3">
+                      <FieldForm
+                        concepts={concepts.data ?? []}
+                        initial={f}
+                        onSubmit={(v) => updateField.mutate({ id: f.id, config: v.config })}
+                        onCancel={() => setEditingFieldId(null)}
+                        pending={updateField.isPending}
+                      />
+                    </li>
+                  ) : (
+                    <li key={f.id} className="flex items-center gap-3 py-2.5">
+                      <span className="w-40 shrink-0 text-sm font-medium text-gray-900">
+                        {f.name}
+                      </span>
+                      <Badge>{f.kind}</Badge>
+                      <span className="flex-1 truncate text-xs text-gray-500">{summarize(f)}</span>
+                      <Button variant="ghost" onClick={() => setEditingFieldId(f.id)}>
+                        Edit
+                      </Button>
+                      <Button
+                        variant="danger"
+                        disabled={delField.isPending}
+                        onClick={() => {
+                          if (confirm(`Delete field "${f.name}"?`)) delField.mutate(f.id)
+                        }}
+                      >
+                        Delete
+                      </Button>
+                    </li>
+                  ),
+                )}
+              </ul>
+              {(updateField.error || delField.error) && (
+                <p className="text-sm text-red-600">{msgOf(updateField.error ?? delField.error)}</p>
+              )}
+            </div>
+          </Card>
+        </div>
+      )}
+    </div>
+  )
+}

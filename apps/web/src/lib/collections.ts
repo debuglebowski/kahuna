@@ -1,7 +1,7 @@
 import { createCollection } from "@tanstack/db"
 import { queryCollectionOptions } from "@tanstack/query-db-collection"
 import { useEffect } from "react"
-import type { AccountHub, Concept, DemandItem, FeedItem, Instance, Owed } from "../../rpc/contract"
+import type { Concept, DemandItem, FeedItem, Instance, Owed } from "../../rpc/contract"
 import { api } from "./api"
 import { queryClient } from "./queryClient"
 
@@ -54,15 +54,6 @@ export const conceptsCollection = createCollection(
   }),
 )
 
-export const accountsCollection = createCollection(
-  queryCollectionOptions({
-    queryKey: ["live", "accounts"],
-    queryFn: async (): Promise<Instance[]> => [...(await api.listInstances("Account"))],
-    queryClient,
-    getKey: (i: Instance) => i.id,
-  }),
-)
-
 export const changedCollection = createCollection(
   queryCollectionOptions({
     queryKey: ["live", "changed"],
@@ -94,28 +85,6 @@ export const owedCollection = createCollection(
 )
 
 // ── lazy, per-scope collections (memoised so the instance is stable) ───────────
-
-const hubCollections = new Map<string, ReturnType<typeof makeHub>>()
-const makeHub = (id: string) =>
-  createCollection(
-    queryCollectionOptions({
-      queryKey: ["live", "account", id],
-      queryFn: async (): Promise<Array<AccountHub & { id: string }>> => [
-        { id, ...(await api.getAccountHub(id)) },
-      ],
-      queryClient,
-      getKey: (h) => h.id,
-    }),
-  )
-
-export const accountHubCollection = (id: string) => {
-  let c = hubCollections.get(id)
-  if (!c) {
-    c = makeHub(id)
-    hubCollections.set(id, c)
-  }
-  return c
-}
 
 const conceptCollections = new Map<string, ReturnType<typeof makeConcept>>()
 const makeConcept = (name: string) =>

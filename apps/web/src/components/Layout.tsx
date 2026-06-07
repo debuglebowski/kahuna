@@ -17,9 +17,8 @@ const GLOBAL: ReadonlyArray<readonly [string, string]> = [
   ["/settings", "Settings"],
 ]
 
-/** A concept's nav target — Account keeps its bespoke hub experience. */
-const conceptHref = (name: string) =>
-  name === "Account" ? "/accounts" : `/concepts/${encodeURIComponent(name)}`
+/** A concept's nav target — every concept browses through the generic view. */
+const conceptHref = (name: string) => `/concepts/${encodeURIComponent(name)}`
 
 function NavItem({ to, label, active }: { to: string; label: string; active: boolean }) {
   return (

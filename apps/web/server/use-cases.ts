@@ -5,6 +5,9 @@ import {
   ConceptService,
   type EngineServices,
   EventStore,
+  type FieldConfig,
+  type FieldKind,
+  FieldService,
   type Instance,
   InstanceService,
   type OrgContext,
@@ -56,30 +59,31 @@ export const listConcepts: UC<unknown> = Effect.flatMap(ConceptService, (c) => c
 export const createConcept = (name: string, description?: string): UC<unknown> =>
   Effect.flatMap(ConceptService, (c) => c.create({ name, description }))
 
-export const getAccountHub = (accountId: string): UC<unknown> =>
-  Effect.gen(function* () {
-    const instances = yield* InstanceService
-    const query = yield* QueryService
-    const computed = yield* ComputedFields
-    const attachments = yield* AttachmentService
-    const account = yield* instances.get(accountId)
-    const related = (conceptName: string, relationType: string, orderBy?: ListOpts["orderBy"]) =>
-      query.findInstances({ conceptName, relatedToTo: { relationType, toId: accountId }, orderBy })
-    const dealsRaw = yield* related("Deal", "for")
-    const artifactsRaw = yield* related("Artifact", "belongs_to")
-    return {
-      account,
-      contacts: yield* related("Contact", "works_at"),
-      owners: yield* related("TeamMember", "owns"),
-      interactions: yield* related("Interaction", "on", { field: "occurred_on", dir: "desc" }),
-      signals: yield* related("Signal", "from"),
-      tasks: yield* related("Task", "on"),
-      deals: yield* Effect.forEach(dealsRaw, (d) => computed.decorate(d)),
-      artifacts: yield* Effect.forEach(artifactsRaw, (a) =>
-        attachments.list(a.id).pipe(Effect.map((atts) => ({ ...a, attachments: atts }))),
-      ),
-    }
-  })
+export const updateConcept = (id: string, description: string | null): UC<unknown> =>
+  Effect.flatMap(ConceptService, (c) => c.update({ id, description }))
+
+export const deleteConcept = (id: string): UC<unknown> =>
+  Effect.flatMap(ConceptService, (c) => c.remove(id))
+
+export const listFields = (conceptId: string): UC<unknown> =>
+  Effect.flatMap(FieldService, (f) => f.listFields(conceptId))
+
+export const addField = (input: {
+  readonly conceptId: string
+  readonly name: string
+  readonly kind: FieldKind
+  readonly config?: FieldConfig
+  readonly formula?: string
+}): UC<unknown> => Effect.flatMap(FieldService, (f) => f.addField(input))
+
+export const updateField = (input: {
+  readonly id: string
+  readonly config?: FieldConfig
+  readonly formula?: string | null
+}): UC<unknown> => Effect.flatMap(FieldService, (f) => f.update(input))
+
+export const deleteField = (id: string): UC<unknown> =>
+  Effect.flatMap(FieldService, (f) => f.remove(id))
 
 const decayBand = (d: Instance) => (d.state.decay as { band?: string } | undefined)?.band
 
@@ -181,36 +185,6 @@ export const linkRelation = (
 ): UC<unknown> =>
   Effect.flatMap(RelationService, (r) => r.create({ relationType, fromId, toId, properties }))
 
-/** Create an instance of `conceptName` and link it to an account via `relationType`. */
-const createLinked = (
-  conceptName: string,
-  relationType: string,
-  accountId: string,
-  fields: Record<string, unknown>,
-): UC<Instance> =>
-  Effect.gen(function* () {
-    const instances = yield* InstanceService
-    const relations = yield* RelationService
-    const inst = yield* instances.create({ conceptName, fields })
-    yield* relations.create({ relationType, fromId: inst.id, toId: accountId })
-    return inst
-  })
-
-export const createContact = (accountId: string, fields: Record<string, unknown>) =>
-  createLinked("Contact", "works_at", accountId, fields)
-
-export const createDeal = (accountId: string, fields: Record<string, unknown>) =>
-  createLinked("Deal", "for", accountId, fields)
-
-export const logSignal = (accountId: string, fields: Record<string, unknown>) =>
-  createLinked("Signal", "from", accountId, fields)
-
-export const createTask = (accountId: string, fields: Record<string, unknown>) =>
-  createLinked("Task", "on", accountId, { done: false, ...fields })
-
-export const createArtifact = (accountId: string, fields: Record<string, unknown>) =>
-  createLinked("Artifact", "belongs_to", accountId, fields)
-
 export const uploadAttachment = (
   instanceId: string,
   filename: string,
@@ -226,18 +200,3 @@ export const downloadAttachment = (
   attachmentId: string,
 ): UC<{ attachment: Attachment; data: Uint8Array }> =>
   Effect.flatMap(AttachmentService, (a) => a.download(attachmentId))
-
-export const logInteraction = (
-  accountId: string,
-  fields: Record<string, unknown>,
-  contactId?: string,
-): UC<Instance> =>
-  Effect.gen(function* () {
-    const instances = yield* InstanceService
-    const relations = yield* RelationService
-    const interaction = yield* instances.create({ conceptName: "Interaction", fields })
-    yield* relations.create({ relationType: "on", fromId: interaction.id, toId: accountId })
-    if (contactId)
-      yield* relations.create({ relationType: "with", fromId: interaction.id, toId: contactId })
-    return interaction
-  })

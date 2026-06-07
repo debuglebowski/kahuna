@@ -29,6 +29,42 @@ export const Concept = Schema.Struct({
 })
 export type Concept = typeof Concept.Type
 
+export const FieldKind = Schema.Literal(
+  "text",
+  "number",
+  "date",
+  "bool",
+  "enum",
+  "relation",
+  "file",
+  "computed",
+)
+export type FieldKind = typeof FieldKind.Type
+
+/** Mirrors the engine's `FieldConfig` (kept here so the contract stays engine-free). */
+export const FieldConfig = Schema.Struct({
+  options: Schema.optional(Schema.Array(Schema.String)),
+  transitions: Schema.optional(
+    Schema.Record({ key: Schema.String, value: Schema.Array(Schema.String) }),
+  ),
+  relationType: Schema.optional(Schema.String),
+  target: Schema.optional(Schema.String),
+  cardinality: Schema.optional(Schema.Literal("one", "many")),
+  computedKind: Schema.optional(Schema.Literal("decay", "momentum")),
+  params: Schema.optional(Schema.Record({ key: Schema.String, value: Schema.Unknown })),
+})
+export type FieldConfig = typeof FieldConfig.Type
+
+export const Field = Schema.Struct({
+  id: Schema.String,
+  conceptId: Schema.String,
+  name: Schema.String,
+  kind: FieldKind,
+  formula: Schema.NullOr(Schema.String),
+  config: FieldConfig,
+})
+export type Field = typeof Field.Type
+
 export const Attachment = Schema.Struct({
   id: Schema.String,
   instanceId: Schema.String,
@@ -38,23 +74,6 @@ export const Attachment = Schema.Struct({
   createdAt: Schema.Date,
 })
 export type Attachment = typeof Attachment.Type
-
-const ArtifactWithFiles = Schema.Struct({
-  ...InstanceFields,
-  attachments: Schema.Array(Attachment),
-})
-
-export const AccountHub = Schema.Struct({
-  account: Instance,
-  contacts: Schema.Array(Instance),
-  owners: Schema.Array(Instance),
-  interactions: Schema.Array(Instance),
-  signals: Schema.Array(Instance),
-  tasks: Schema.Array(Instance),
-  deals: Schema.Array(Instance),
-  artifacts: Schema.Array(ArtifactWithFiles),
-})
-export type AccountHub = typeof AccountHub.Type
 
 export const Owed = Schema.Struct({
   openTasks: Schema.Array(Instance),
@@ -99,14 +118,49 @@ export class KingsmakerRpcs extends RpcGroup.make(
     success: Concept,
     error: RpcError,
   }),
+  Rpc.make("updateConcept", {
+    payload: { id: Schema.String, description: Schema.NullOr(Schema.String) },
+    success: Concept,
+    error: RpcError,
+  }),
+  Rpc.make("deleteConcept", {
+    payload: { id: Schema.String },
+    success: Concept,
+    error: RpcError,
+  }),
+  Rpc.make("listFields", {
+    payload: { conceptId: Schema.String },
+    success: Schema.Array(Field),
+    error: RpcError,
+  }),
+  Rpc.make("addField", {
+    payload: {
+      conceptId: Schema.String,
+      name: Schema.String,
+      kind: FieldKind,
+      config: Schema.optional(FieldConfig),
+      formula: Schema.optional(Schema.String),
+    },
+    success: Field,
+    error: RpcError,
+  }),
+  Rpc.make("updateField", {
+    payload: {
+      id: Schema.String,
+      config: Schema.optional(FieldConfig),
+      formula: Schema.optional(Schema.NullOr(Schema.String)),
+    },
+    success: Field,
+    error: RpcError,
+  }),
+  Rpc.make("deleteField", {
+    payload: { id: Schema.String },
+    success: Field,
+    error: RpcError,
+  }),
   Rpc.make("listInstances", {
     payload: { conceptName: Schema.String },
     success: Schema.Array(Instance),
-    error: RpcError,
-  }),
-  Rpc.make("getAccountHub", {
-    payload: { accountId: Schema.String },
-    success: AccountHub,
     error: RpcError,
   }),
   Rpc.make("getOwed", { success: Owed, error: RpcError }),
@@ -129,40 +183,6 @@ export class KingsmakerRpcs extends RpcGroup.make(
       field: Schema.String,
       to: Schema.String,
     },
-    success: Instance,
-    error: RpcError,
-  }),
-  Rpc.make("createContact", {
-    payload: { accountId: Schema.String, fields: Fields },
-    success: Instance,
-    error: RpcError,
-  }),
-  Rpc.make("createDeal", {
-    payload: { accountId: Schema.String, fields: Fields },
-    success: Instance,
-    error: RpcError,
-  }),
-  Rpc.make("logSignal", {
-    payload: { accountId: Schema.String, fields: Fields },
-    success: Instance,
-    error: RpcError,
-  }),
-  Rpc.make("createTask", {
-    payload: { accountId: Schema.String, fields: Fields },
-    success: Instance,
-    error: RpcError,
-  }),
-  Rpc.make("logInteraction", {
-    payload: {
-      accountId: Schema.String,
-      fields: Fields,
-      contactId: Schema.optional(Schema.String),
-    },
-    success: Instance,
-    error: RpcError,
-  }),
-  Rpc.make("createArtifact", {
-    payload: { accountId: Schema.String, fields: Fields },
     success: Instance,
     error: RpcError,
   }),

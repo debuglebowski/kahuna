@@ -1,5 +1,10 @@
+import { ilike } from "drizzle-orm"
+import { auth } from "./auth"
+import { user } from "./auth-schema"
+import { db } from "./db"
+import { can } from "./policy"
 import type { UseCaseResult } from "./runtime"
-import { runScoped } from "./session"
+import { resolveOrg, roleOf, runScoped } from "./session"
 import { downloadAttachment, listAttachments, uploadAttachment } from "./use-cases"
 
 const json = (r: UseCaseResult<unknown>) =>
@@ -29,6 +34,42 @@ export const handleApi = async (req: Request): Promise<Response | null> => {
       return json(
         await runScoped(req, uploadAttachment(seg[2], file.name, file.type || undefined, data)),
       )
+    }
+  }
+
+  // Team management (admin-only): add an EXISTING user to the active org by email.
+  // No invitation/email flow — the user must already have an account.
+  if (seg[1] === "org" && seg[2] === "members" && !seg[3] && m === "POST") {
+    const org = await resolveOrg(req)
+    if (!org.ok) return Response.json({ error: org.code }, { status: org.status })
+    const role = await roleOf(org.actor, org.orgId)
+    if (!role || !can(role, "admin")) return Response.json({ error: "FORBIDDEN" }, { status: 403 })
+
+    const body = (await req.json().catch(() => null)) as {
+      email?: string
+      role?: string
+    } | null
+    const email = body?.email?.trim()
+    const memberRole = body?.role === "admin" ? "admin" : "member"
+    if (!email) return Response.json({ error: "EMAIL_REQUIRED" }, { status: 400 })
+
+    const [target] = await db
+      .select({ id: user.id })
+      .from(user)
+      .where(ilike(user.email, email)) // case-insensitive exact match (no wildcards in email)
+      .limit(1)
+    if (!target) return Response.json({ error: "NO_SUCH_USER" }, { status: 404 })
+    if (await roleOf(target.id, org.orgId))
+      return Response.json({ error: "ALREADY_MEMBER" }, { status: 409 })
+
+    try {
+      const member = await auth.api.addMember({
+        body: { userId: target.id, role: memberRole, organizationId: org.orgId },
+        headers: req.headers,
+      })
+      return Response.json(member, { status: 201 })
+    } catch (e) {
+      return Response.json({ error: "ADD_FAILED", detail: String(e) }, { status: 500 })
     }
   }
 

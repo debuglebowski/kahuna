@@ -1,7 +1,7 @@
 import { PgClient } from "@effect/sql-pg"
 import { Effect } from "effect"
 import type { Field, FieldConfig, FieldKind } from "../domain/types"
-import { FieldConfigInvalid, FieldNameConflict } from "../errors"
+import { FieldConfigInvalid, FieldNameConflict, FieldNotFound } from "../errors"
 import { EventStore } from "./EventStore"
 import { OrgContext } from "./OrgContext"
 import { type FieldRow, toField } from "./rows"
@@ -13,6 +13,26 @@ export interface AddFieldInput {
   readonly config?: FieldConfig
   readonly formula?: string
 }
+
+/** Validate a field's config shape against its kind (make invalid defs unrepresentable). */
+const validateConfig = (
+  ctx: { readonly conceptId: string; readonly name: string },
+  kind: FieldKind,
+  config: FieldConfig,
+) =>
+  Effect.gen(function* () {
+    const invalid = (reason: string) =>
+      Effect.fail(new FieldConfigInvalid({ conceptId: ctx.conceptId, name: ctx.name, reason }))
+    if (kind === "enum" && (!config.options || config.options.length === 0)) {
+      return yield* invalid("enum field requires non-empty config.options")
+    }
+    if (kind === "computed" && !config.computedKind) {
+      return yield* invalid("computed field requires config.computedKind")
+    }
+    if (kind === "relation" && (!config.relationType || !config.target)) {
+      return yield* invalid("relation field requires config.relationType and config.target")
+    }
+  })
 
 /** Manages field definitions on concepts (the schema-as-data). */
 export class FieldService extends Effect.Service<FieldService>()("engine/FieldService", {
@@ -30,26 +50,26 @@ export class FieldService extends Effect.Service<FieldService>()("engine/FieldSe
         return rows.map(toField)
       }).pipe(Effect.orDie)
 
+    const getById = (id: string) =>
+      Effect.gen(function* () {
+        const { orgId } = yield* OrgContext
+        const rows = yield* sql<FieldRow>`
+          SELECT * FROM fields WHERE org_id = ${orgId} AND id = ${id} LIMIT 1`
+        const row = rows[0]
+        if (!row) return yield* Effect.fail(new FieldNotFound({ fieldId: id }))
+        return toField(row)
+      })
+
     const addField = (input: AddFieldInput) =>
       sql.withTransaction(
         Effect.gen(function* () {
           const { orgId } = yield* OrgContext
           const config = input.config ?? {}
-
-          // Validate the config shape against the kind (make invalid defs unrepresentable).
-          const invalid = (reason: string) =>
-            Effect.fail(
-              new FieldConfigInvalid({ conceptId: input.conceptId, name: input.name, reason }),
-            )
-          if (input.kind === "enum" && (!config.options || config.options.length === 0)) {
-            return yield* invalid("enum field requires non-empty config.options")
-          }
-          if (input.kind === "computed" && !config.computedKind) {
-            return yield* invalid("computed field requires config.computedKind")
-          }
-          if (input.kind === "relation" && (!config.relationType || !config.target)) {
-            return yield* invalid("relation field requires config.relationType and config.target")
-          }
+          yield* validateConfig(
+            { conceptId: input.conceptId, name: input.name },
+            input.kind,
+            config,
+          )
 
           const existing = yield* sql<{ readonly id: string }>`
             SELECT id FROM fields WHERE concept_id = ${input.conceptId} AND name = ${input.name} LIMIT 1`
@@ -79,7 +99,68 @@ export class FieldService extends Effect.Service<FieldService>()("engine/FieldSe
         }),
       )
 
-    return { addField, listFields } as const
+    /**
+     * Edit a field's config and/or formula. Name and kind are immutable: stored
+     * instance state is keyed by field name, and changing kind would invalidate
+     * already-persisted values.
+     */
+    const update = (input: {
+      readonly id: string
+      readonly config?: FieldConfig
+      readonly formula?: string | null
+    }) =>
+      sql.withTransaction(
+        Effect.gen(function* () {
+          const { orgId } = yield* OrgContext
+          const current = yield* getById(input.id)
+          const config = input.config ?? current.config
+          yield* validateConfig(
+            { conceptId: current.conceptId, name: current.name },
+            current.kind,
+            config,
+          )
+          const formula = input.formula === undefined ? current.formula : input.formula
+          const rows = yield* sql<FieldRow>`
+            UPDATE fields SET config = ${sql.json(config)}, formula = ${formula}
+            WHERE org_id = ${orgId} AND id = ${input.id}
+            RETURNING *`
+          const field = toField(rows[0]!)
+          yield* events.append({
+            subjectKind: "field",
+            subjectId: field.id,
+            eventType: "FieldUpdated",
+            payload: {
+              _tag: "FieldUpdated",
+              conceptId: field.conceptId,
+              name: field.name,
+              kind: field.kind,
+            },
+          })
+          return field
+        }),
+      )
+
+    /**
+     * Delete a field def. Existing instance.state keeps any orphaned key
+     * harmlessly (field validation is write-time only).
+     */
+    const remove = (id: string) =>
+      sql.withTransaction(
+        Effect.gen(function* () {
+          const { orgId } = yield* OrgContext
+          const field = yield* getById(id)
+          yield* sql`DELETE FROM fields WHERE org_id = ${orgId} AND id = ${id}`
+          yield* events.append({
+            subjectKind: "field",
+            subjectId: id,
+            eventType: "FieldDeleted",
+            payload: { _tag: "FieldDeleted", conceptId: field.conceptId, name: field.name },
+          })
+          return field
+        }),
+      )
+
+    return { addField, listFields, getById, update, remove } as const
   }),
   dependencies: [EventStore.Default],
 }) {}

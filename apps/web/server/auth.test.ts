@@ -66,6 +66,22 @@ describe("tier 0 (BetterAuth) + scoping", () => {
     if (!res.ok) expect(res.status).toBe(404)
   })
 
+  it("deleting an org purges its engine data (beforeDeleteOrganization hook)", async () => {
+    const { headers, orgId } = await signUpAndOrg()
+    await runEngineOrThrow({ orgId, actor: "system" }, seedKingsmaker)
+    await runEngineOrThrow(
+      { orgId, actor: "system" },
+      Effect.flatMap(InstanceService, (i) => i.create({ conceptName: "Account", fields: {} })),
+    )
+    const before = await runEngineOrThrow({ orgId, actor: "system" }, listConcepts)
+    expect(before.length).toBe(8)
+
+    await auth.api.deleteOrganization({ body: { organizationId: orgId }, headers })
+
+    const after = await runEngineOrThrow({ orgId, actor: "system" }, listConcepts)
+    expect(after.length).toBe(0)
+  })
+
   it("an illegal Deal transition surfaces as 422 ILLEGAL_TRANSITION", async () => {
     const a = await signUpAndOrg()
     await runEngineOrThrow({ orgId: a.orgId, actor: "system" }, seedKingsmaker)

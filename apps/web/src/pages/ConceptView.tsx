@@ -1,6 +1,6 @@
 import { useLiveQuery } from "@tanstack/react-db"
 import { useMemo, useState } from "react"
-import { Navigate, useParams } from "react-router-dom"
+import { useParams } from "react-router-dom"
 import { Card, CardHeader, Input, Spinner } from "../components/ui"
 import { instancesByConcept, KEY, useRegisterCollection } from "../lib/collections"
 import { showValue } from "../lib/utils"
@@ -15,7 +15,7 @@ export function ConceptView() {
   const collection = instancesByConcept(name)
   useRegisterCollection(KEY.instances(name), collection)
   const instances = useLiveQuery(
-    (q) => (name && name !== "Account" ? q.from({ i: collection }) : undefined),
+    (q) => (name ? q.from({ i: collection }) : undefined),
     [name, collection],
   )
 
@@ -40,9 +40,6 @@ export function ConceptView() {
     }
     return r
   }, [instances.data, filter, sortKey, asc])
-
-  // Account has a bespoke list + hub experience.
-  if (name === "Account") return <Navigate to="/accounts" replace />
 
   return (
     <Card>

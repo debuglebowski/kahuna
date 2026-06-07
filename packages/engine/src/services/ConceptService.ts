@@ -1,6 +1,6 @@
 import { PgClient } from "@effect/sql-pg"
 import { Effect } from "effect"
-import { ConceptNameConflict, ConceptNotFound } from "../errors"
+import { ConceptInUse, ConceptNameConflict, ConceptNotFound } from "../errors"
 import { EventStore } from "./EventStore"
 import { OrgContext } from "./OrgContext"
 import { type ConceptRow, toConcept } from "./rows"
@@ -61,7 +61,54 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
         }),
       )
 
-    return { create, getByName, getById, list } as const
+    /** Edit a concept's description. Name is immutable (the app refs concepts by name). */
+    const update = (input: { readonly id: string; readonly description: string | null }) =>
+      sql.withTransaction(
+        Effect.gen(function* () {
+          const { orgId } = yield* OrgContext
+          const rows = yield* sql<ConceptRow>`
+            UPDATE concepts SET description = ${input.description}
+            WHERE org_id = ${orgId} AND id = ${input.id}
+            RETURNING *`
+          const row = rows[0]
+          if (!row) return yield* Effect.fail(new ConceptNotFound({ concept: input.id }))
+          const concept = toConcept(row)
+          yield* events.append({
+            subjectKind: "concept",
+            subjectId: concept.id,
+            eventType: "ConceptUpdated",
+            payload: { _tag: "ConceptUpdated", description: concept.description },
+          })
+          return concept
+        }),
+      )
+
+    /** Delete a concept (and its field defs). Refused while any live instance exists. */
+    const remove = (id: string) =>
+      sql.withTransaction(
+        Effect.gen(function* () {
+          const { orgId } = yield* OrgContext
+          const concept = yield* getById(id)
+          const counts = yield* sql<{ readonly count: number | string }>`
+            SELECT COUNT(*)::int AS count FROM instances
+            WHERE org_id = ${orgId} AND concept_id = ${id} AND deleted_at IS NULL`
+          const instanceCount = Number(counts[0]?.count ?? 0)
+          if (instanceCount > 0) {
+            return yield* Effect.fail(new ConceptInUse({ concept: concept.name, instanceCount }))
+          }
+          yield* sql`DELETE FROM fields WHERE org_id = ${orgId} AND concept_id = ${id}`
+          yield* sql`DELETE FROM concepts WHERE org_id = ${orgId} AND id = ${id}`
+          yield* events.append({
+            subjectKind: "concept",
+            subjectId: id,
+            eventType: "ConceptDeleted",
+            payload: { _tag: "ConceptDeleted" },
+          })
+          return concept
+        }),
+      )
+
+    return { create, getByName, getById, list, update, remove } as const
   }),
   dependencies: [EventStore.Default],
 }) {}

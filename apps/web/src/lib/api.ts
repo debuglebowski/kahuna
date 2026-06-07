@@ -1,14 +1,16 @@
 import { FetchHttpClient } from "@effect/platform"
 import { RpcClient, RpcSerialization } from "@effect/rpc"
 import { Context, Effect, Layer, ManagedRuntime } from "effect"
-import { KingsmakerRpcs } from "../../rpc/contract"
+import { type FieldConfig, type FieldKind, KingsmakerRpcs } from "../../rpc/contract"
 
 export type {
-  AccountHub,
   Attachment,
   Concept,
   DemandItem,
   FeedItem,
+  Field,
+  FieldConfig,
+  FieldKind,
   Instance,
   Owed,
 } from "../../rpc/contract"
@@ -48,8 +50,21 @@ type Fields = Record<string, unknown>
 export const api = {
   listConcepts: () => call((c) => c.listConcepts()),
   createConcept: (name: string) => call((c) => c.createConcept({ name })),
+  updateConcept: (id: string, description: string | null) =>
+    call((c) => c.updateConcept({ id, description })),
+  deleteConcept: (id: string) => call((c) => c.deleteConcept({ id })),
+  listFields: (conceptId: string) => call((c) => c.listFields({ conceptId })),
+  addField: (input: {
+    conceptId: string
+    name: string
+    kind: FieldKind
+    config?: FieldConfig
+    formula?: string
+  }) => call((c) => c.addField(input)),
+  updateField: (input: { id: string; config?: FieldConfig; formula?: string | null }) =>
+    call((c) => c.updateField(input)),
+  deleteField: (id: string) => call((c) => c.deleteField({ id })),
   listInstances: (conceptName: string) => call((c) => c.listInstances({ conceptName })),
-  getAccountHub: (accountId: string) => call((c) => c.getAccountHub({ accountId })),
   getOwed: () => call((c) => c.getOwed()),
   getChanged: () => call((c) => c.getChanged()),
   getDemand: () => call((c) => c.getDemand()),
@@ -59,15 +74,4 @@ export const api = {
     call((c) => c.updateInstance({ id, expectedVersion, patch })),
   transitionInstance: (id: string, expectedVersion: number, field: string, to: string) =>
     call((c) => c.transitionInstance({ id, expectedVersion, field, to })),
-  createContact: (accountId: string, fields: Fields) =>
-    call((c) => c.createContact({ accountId, fields })),
-  createDeal: (accountId: string, fields: Fields) =>
-    call((c) => c.createDeal({ accountId, fields })),
-  logSignal: (accountId: string, fields: Fields) => call((c) => c.logSignal({ accountId, fields })),
-  createTask: (accountId: string, fields: Fields) =>
-    call((c) => c.createTask({ accountId, fields })),
-  logInteraction: (accountId: string, fields: Fields, contactId?: string) =>
-    call((c) => c.logInteraction({ accountId, fields, contactId })),
-  createArtifact: (accountId: string, fields: Fields) =>
-    call((c) => c.createArtifact({ accountId, fields })),
 }

@@ -19,16 +19,11 @@ export interface LiveEnvelope {
 
 export const KEY = {
   concepts: "concepts",
-  accounts: "accounts",
   owed: "owed",
   changed: "changed",
   demand: "demand",
-  account: (id: string) => `account:${id}`,
   instances: (concept: string) => `instances:${concept}`,
 } as const
-
-const accountKeys = (mounted: ReadonlyArray<string>) =>
-  mounted.filter((k) => k.startsWith("account:"))
 
 /**
  * Returns the subset of collection keys to refetch for this envelope, filtered
@@ -40,28 +35,14 @@ export const routeEnvelope = (env: LiveEnvelope, mounted: ReadonlyArray<string>)
   if (env.kind === "concept" || env.kind === "field") {
     candidates.add(KEY.concepts)
   } else if (env.kind === "relation") {
-    // A relation binds a child to an account; the envelope lacks the account id,
-    // so refetch the open hub(s) + the org-wide aggregations.
+    // Relations feed the dashboard aggregates (e.g. Signal -from-> account → demand).
     candidates.add(KEY.owed)
     candidates.add(KEY.demand)
-    for (const k of accountKeys(mounted)) candidates.add(k)
   } else {
-    // instance
+    // instance — keep the dashboard's owed/demand aggregates live.
     const c = env.concept
-    if (c === "Account") {
-      candidates.add(KEY.accounts)
-      candidates.add(KEY.owed)
-      candidates.add(KEY.demand)
-      candidates.add(KEY.account(env.subjectId))
-    } else if (c === "Deal" || c === "Task") {
-      candidates.add(KEY.owed)
-      for (const k of accountKeys(mounted)) candidates.add(k)
-    } else if (c === "Signal") {
-      candidates.add(KEY.demand)
-      for (const k of accountKeys(mounted)) candidates.add(k)
-    } else if (c === "Interaction" || c === "Contact" || c === "TeamMember" || c === "Artifact") {
-      for (const k of accountKeys(mounted)) candidates.add(k)
-    }
+    if (c === "Deal" || c === "Task") candidates.add(KEY.owed)
+    else if (c === "Signal") candidates.add(KEY.demand)
     if (c) candidates.add(KEY.instances(c))
   }
 

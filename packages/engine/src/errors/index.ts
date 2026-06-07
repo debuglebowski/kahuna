@@ -38,10 +38,19 @@ export class FieldNameConflict extends Schema.TaggedError<FieldNameConflict>()(
   },
 ) {}
 
+export class FieldNotFound extends Schema.TaggedError<FieldNotFound>()("FieldNotFound", {
+  fieldId: Schema.String,
+}) {}
+
 export class FieldValidationError extends Schema.TaggedError<FieldValidationError>()(
   "FieldValidationError",
   { message: Schema.String, field: Schema.optional(Schema.String) },
 ) {}
+
+export class ConceptInUse extends Schema.TaggedError<ConceptInUse>()("ConceptInUse", {
+  concept: Schema.String,
+  instanceCount: Schema.Number,
+}) {}
 
 export class IllegalTransition extends Schema.TaggedError<IllegalTransition>()(
   "IllegalTransition",
@@ -85,8 +94,10 @@ export type EngineError =
   | InstanceNotFound
   | ConceptNotFound
   | ConceptNameConflict
+  | ConceptInUse
   | FieldConfigInvalid
   | FieldNameConflict
+  | FieldNotFound
   | FieldValidationError
   | IllegalTransition
   | RelationTargetMismatch

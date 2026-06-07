@@ -12,7 +12,7 @@ const env = (over: Partial<LiveEnvelope>): LiveEnvelope => ({
   ...over,
 })
 
-const GLOBALS = [KEY.concepts, KEY.accounts, KEY.owed, KEY.changed, KEY.demand]
+const GLOBALS = [KEY.concepts, KEY.owed, KEY.changed, KEY.demand]
 
 describe("routeEnvelope", () => {
   it("always nudges the changed feed (when mounted)", () => {
@@ -24,30 +24,19 @@ describe("routeEnvelope", () => {
     expect(routeEnvelope(env({ concept: "Deal" }), [])).toEqual([])
   })
 
-  it("Account change refetches accounts/owed/demand + the open hub", () => {
-    const mounted = [...GLOBALS, KEY.account("acc1")]
-    const keys = routeEnvelope(env({ concept: "Account", subjectId: "acc1" }), mounted)
-    expect(new Set(keys)).toEqual(
-      new Set([KEY.changed, KEY.accounts, KEY.owed, KEY.demand, KEY.account("acc1")]),
-    )
+  it("Deal change refetches owed (dashboard aggregate)", () => {
+    const keys = new Set(routeEnvelope(env({ concept: "Deal" }), GLOBALS))
+    expect(keys).toEqual(new Set([KEY.changed, KEY.owed]))
   })
 
-  it("Deal change refetches owed + the mounted hub, not accounts/demand", () => {
-    const mounted = [...GLOBALS, KEY.account("acc1")]
-    const keys = new Set(routeEnvelope(env({ concept: "Deal" }), mounted))
-    expect(keys).toEqual(new Set([KEY.changed, KEY.owed, KEY.account("acc1")]))
+  it("Signal change refetches demand (dashboard aggregate)", () => {
+    const keys = new Set(routeEnvelope(env({ concept: "Signal" }), GLOBALS))
+    expect(keys).toEqual(new Set([KEY.changed, KEY.demand]))
   })
 
-  it("Signal change refetches demand + the mounted hub", () => {
-    const mounted = [...GLOBALS, KEY.account("acc1")]
-    const keys = new Set(routeEnvelope(env({ concept: "Signal" }), mounted))
-    expect(keys).toEqual(new Set([KEY.changed, KEY.demand, KEY.account("acc1")]))
-  })
-
-  it("relation change refetches mounted hub + owed + demand", () => {
-    const mounted = [...GLOBALS, KEY.account("acc1")]
-    const keys = new Set(routeEnvelope(env({ kind: "relation", concept: null }), mounted))
-    expect(keys).toEqual(new Set([KEY.changed, KEY.owed, KEY.demand, KEY.account("acc1")]))
+  it("relation change refetches owed + demand", () => {
+    const keys = new Set(routeEnvelope(env({ kind: "relation", concept: null }), GLOBALS))
+    expect(keys).toEqual(new Set([KEY.changed, KEY.owed, KEY.demand]))
   })
 
   it("concept/field change refetches concepts", () => {
@@ -60,5 +49,11 @@ describe("routeEnvelope", () => {
     const mounted = [KEY.changed, KEY.instances("Widget")]
     const keys = new Set(routeEnvelope(env({ concept: "Widget" }), mounted))
     expect(keys).toEqual(new Set([KEY.changed, KEY.instances("Widget")]))
+  })
+
+  it("Account is now just a generic concept (no special aggregates)", () => {
+    const mounted = [...GLOBALS, KEY.instances("Account")]
+    const keys = new Set(routeEnvelope(env({ concept: "Account", subjectId: "acc1" }), mounted))
+    expect(keys).toEqual(new Set([KEY.changed, KEY.instances("Account")]))
   })
 })

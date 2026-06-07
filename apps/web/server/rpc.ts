@@ -3,14 +3,15 @@ import { RpcMiddleware, RpcSerialization, RpcServer } from "@effect/rpc"
 import { type EngineServices, OrgContext, type OrgScope } from "@kingsmaker/engine"
 import { Effect, Layer } from "effect"
 import {
-  type AccountHub,
   type Concept,
   type DemandItem,
+  type Field,
   KingsmakerRpcs,
   type Owed,
   RpcError,
 } from "../rpc/contract"
 import { auth } from "./auth"
+import { can } from "./policy"
 import { EngineBase, ERROR_MAP } from "./runtime"
 import { roleOf } from "./session"
 import * as uc from "./use-cases"
@@ -71,6 +72,28 @@ const toRpcError = (e: unknown): RpcError => {
 const mapErr = <A, E>(eff: Effect.Effect<A, E, OrgContext | EngineServices>) =>
   eff.pipe(Effect.catchAll((e) => Effect.fail(toRpcError(e))))
 
+/**
+ * Admin gate for schema-mutating RPCs (concept configuration). Reuses the
+ * OrgContext already provided by AuthMiddleware plus the BetterAuth member role
+ * — one indexed lookup, only on the handlers that need it.
+ */
+const requireAdmin: Effect.Effect<void, RpcError, OrgContext> = Effect.gen(function* () {
+  const { orgId, actor } = yield* OrgContext
+  const role = yield* Effect.tryPromise({
+    try: () => roleOf(actor, orgId),
+    catch: () => new RpcError({ code: "INTERNAL", message: "role lookup failed", status: 500 }),
+  })
+  if (!role || !can(role, "admin")) {
+    return yield* Effect.fail(
+      new RpcError({ code: "FORBIDDEN", message: "Admin only", status: 403 }),
+    )
+  }
+})
+
+/** Run an admin-only use-case behind the gate, mapping engine errors. */
+const admin = <A>(eff: Effect.Effect<unknown, unknown, OrgContext | EngineServices>) =>
+  requireAdmin.pipe(Effect.zipRight(as<A>(eff)))
+
 // Casting helper for the loosely-typed (UC<unknown>) use-cases — runtime values
 // already match the wire schema; this just informs the handler's return type.
 const as = <A>(eff: Effect.Effect<unknown, unknown, OrgContext | EngineServices>) =>
@@ -81,8 +104,14 @@ const ServerRpcs = KingsmakerRpcs.middleware(AuthMiddleware)
 const HandlersLive = ServerRpcs.toLayer({
   listConcepts: () => as<ReadonlyArray<Concept>>(uc.listConcepts),
   createConcept: ({ name }) => as<Concept>(uc.createConcept(name)),
+  updateConcept: ({ id, description }) => admin<Concept>(uc.updateConcept(id, description)),
+  deleteConcept: ({ id }) => admin<Concept>(uc.deleteConcept(id)),
+  listFields: ({ conceptId }) => as<ReadonlyArray<Field>>(uc.listFields(conceptId)),
+  addField: ({ conceptId, name, kind, config, formula }) =>
+    admin<Field>(uc.addField({ conceptId, name, kind, config, formula })),
+  updateField: ({ id, config, formula }) => admin<Field>(uc.updateField({ id, config, formula })),
+  deleteField: ({ id }) => admin<Field>(uc.deleteField(id)),
   listInstances: ({ conceptName }) => mapErr(uc.listInstances(conceptName, { decorate: true })),
-  getAccountHub: ({ accountId }) => as<AccountHub>(uc.getAccountHub(accountId)),
   getOwed: () => as<Owed>(uc.getOwed),
   getChanged: () => mapErr(uc.getChanged),
   getDemand: () => as<ReadonlyArray<DemandItem>>(uc.getDemand),
@@ -91,13 +120,6 @@ const HandlersLive = ServerRpcs.toLayer({
     mapErr(uc.updateInstance(id, expectedVersion, patch)),
   transitionInstance: ({ id, expectedVersion, field, to }) =>
     mapErr(uc.transitionInstance(id, expectedVersion, field, to)),
-  createContact: ({ accountId, fields }) => mapErr(uc.createContact(accountId, fields)),
-  createDeal: ({ accountId, fields }) => mapErr(uc.createDeal(accountId, fields)),
-  logSignal: ({ accountId, fields }) => mapErr(uc.logSignal(accountId, fields)),
-  createTask: ({ accountId, fields }) => mapErr(uc.createTask(accountId, fields)),
-  logInteraction: ({ accountId, fields, contactId }) =>
-    mapErr(uc.logInteraction(accountId, fields, contactId)),
-  createArtifact: ({ accountId, fields }) => mapErr(uc.createArtifact(accountId, fields)),
 }).pipe(Layer.provide(EngineBase))
 
 // HttpRouter.DefaultServices (HttpPlatform | Etag | FileSystem | Path) — pure
