@@ -135,6 +135,7 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
             subjectId: created.id,
             eventType: "InstanceCreated",
             payload: { _tag: "InstanceCreated", conceptId: concept.id, fields: validated },
+            conceptName: concept.name,
           })
           const folded = applyEvent(null, event)
           if (Either.isLeft(folded)) return yield* Effect.fail(folded.left)
@@ -171,6 +172,7 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
             )
           }
           const defs = yield* fields.listFields(current.conceptId)
+          const concept = yield* concepts.getById(current.conceptId)
           const validated = yield* validateFields(defs, input.patch)
           yield* checkTransitions(defs, current.state, validated)
           const event = yield* events.append({
@@ -178,6 +180,7 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
             subjectId: current.id,
             eventType: "InstanceUpdated",
             payload: { _tag: "InstanceUpdated", patch: validated },
+            conceptName: concept.name,
           })
           const folded = applyEvent(
             { state: current.state, version: current.version, deletedAt: null },
@@ -224,11 +227,13 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
               }),
             )
           }
+          const concept = yield* concepts.getById(current.conceptId)
           const event = yield* events.append({
             subjectKind: "instance",
             subjectId: current.id,
             eventType: "InstanceDeleted",
             payload: { _tag: "InstanceDeleted" },
+            conceptName: concept.name,
           })
           const folded = applyEvent(
             { state: current.state, version: current.version, deletedAt: null },
