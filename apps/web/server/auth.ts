@@ -3,6 +3,8 @@ import { drizzleAdapter } from "better-auth/adapters/drizzle"
 import { organization } from "better-auth/plugins"
 import * as schema from "./auth-schema"
 import { db } from "./db"
+import { runEngineOrThrow } from "./runtime"
+import { seedKingsmaker } from "./seed/seed"
 
 /**
  * BetterAuth owns Tier-0 identity: user / session / account / verification plus
@@ -30,7 +32,21 @@ export const auth = betterAuth({
   secret: process.env.BETTER_AUTH_SECRET ?? "dev-secret-change-me",
   baseURL: process.env.BETTER_AUTH_URL ?? "http://localhost:3000",
   trustedOrigins,
-  plugins: [organization()],
+  plugins: [
+    organization({
+      organizationHooks: {
+        // Seed the Kingsmaker concepts into every new org, server-side, so it
+        // can't be skipped by a failed/absent client call. Idempotent.
+        afterCreateOrganization: async ({ organization, user }) => {
+          try {
+            await runEngineOrThrow({ orgId: organization.id, actor: user.id }, seedKingsmaker)
+          } catch (error) {
+            console.error(`Failed to seed org ${organization.id}:`, error)
+          }
+        },
+      },
+    }),
+  ],
 })
 
 export type Auth = typeof auth

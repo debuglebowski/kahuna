@@ -1,6 +1,5 @@
 import { type FormEvent, useState } from "react"
 import { Button, Card, Field, Input } from "../components/ui"
-import { apiPost } from "../lib/api"
 import { authClient } from "../lib/auth-client"
 
 export function AuthPage() {
@@ -28,7 +27,7 @@ export function AuthPage() {
         if (created.error || !created.data)
           throw new Error(created.error?.message ?? "Org create failed")
         await authClient.organization.setActive({ organizationId: created.data.id })
-        await apiPost("/api/bootstrap", {})
+        // Concepts are seeded server-side by the org-creation hook (see auth.ts).
       }
       location.reload()
     } catch (err) {
