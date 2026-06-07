@@ -64,6 +64,16 @@ export const applyEvent = (
       // Attachments are recorded against the instance but do not change its
       // projected state or version.
       return Either.right(acc)
+    case "ComputedBandChanged": {
+      // Materialise a coarse band marker for change-detection / automations.
+      // Does NOT bump version (the display decay/momentum stay computed-on-read).
+      const bands = (acc.state.__bands as Record<string, string> | undefined) ?? {}
+      return Either.right({
+        state: { ...acc.state, __bands: { ...bands, [p.field]: p.to } },
+        version: acc.version,
+        deletedAt: acc.deletedAt,
+      })
+    }
     default:
       // Non-instance payloads should never appear in an instance stream.
       return Either.left(

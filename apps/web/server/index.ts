@@ -3,6 +3,7 @@ import path from "node:path"
 import { healthCheck, PgLive } from "@kingsmaker/engine"
 import { Effect } from "effect"
 import { auth } from "./auth"
+import { startDecayTick } from "./decay-tick"
 import { handleApi } from "./router"
 import { rpcHandler } from "./rpc"
 import { startHub, streamHandler } from "./stream"
@@ -10,8 +11,10 @@ import { startHub, streamHandler } from "./stream"
 const port = Number(process.env.PORT ?? 3000)
 const DIST = path.resolve(import.meta.dirname, "../dist")
 
-// Boot the single process-wide LISTEN that powers the live-sync SSE stream.
+// Boot the single process-wide LISTEN that powers the live-sync SSE stream,
+// and the periodic decay tick that turns time-based band crossings into events.
 startHub()
+startDecayTick()
 
 const server = Bun.serve({
   port,

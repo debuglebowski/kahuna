@@ -98,6 +98,29 @@ export type EventPayload =
       readonly name: string
       readonly kind: string
     }
+  // Emitted by the server decay tick when a time-derived computed band crosses a
+  // threshold (e.g. decay warm -> cooling). Folds into a `__bands` marker WITHOUT
+  // bumping version (like AttachmentAdded), so it never collides with a user's
+  // optimistic-concurrency check.
+  | {
+      readonly _tag: "ComputedBandChanged"
+      readonly field: string
+      readonly kind: "decay" | "momentum"
+      readonly from: string | null
+      readonly to: string
+    }
+  // Concept/field schema edits (settings → concept configuration). These are
+  // subjectKind "concept"/"field" events — they NEVER appear in an instance
+  // stream, so the instance reducer (projection/reducer.ts) ignores them.
+  | { readonly _tag: "ConceptUpdated"; readonly description: string | null }
+  | { readonly _tag: "ConceptDeleted" }
+  | {
+      readonly _tag: "FieldUpdated"
+      readonly conceptId: Id
+      readonly name: string
+      readonly kind: string
+    }
+  | { readonly _tag: "FieldDeleted"; readonly conceptId: Id; readonly name: string }
 
 export interface Attachment {
   readonly id: Id

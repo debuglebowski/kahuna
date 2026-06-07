@@ -1,6 +1,6 @@
 import { PgClient } from "@effect/sql-pg"
 import { Effect, Either } from "effect"
-import type { Field, Instance, InstanceState } from "../domain/types"
+import type { EngineEvent, Field, Instance, InstanceState } from "../domain/types"
 import {
   FieldValidationError,
   IllegalTransition,
@@ -9,6 +9,7 @@ import {
 } from "../errors"
 import { foldEvents } from "../projection/fold"
 import { applyEvent } from "../projection/reducer"
+import { ComputedFields } from "./ComputedFields"
 import { ConceptService } from "./ConceptService"
 import { EventStore } from "./EventStore"
 import { FieldService } from "./FieldService"
@@ -104,6 +105,7 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
     const events = yield* EventStore
     const concepts = yield* ConceptService
     const fields = yield* FieldService
+    const computed = yield* ComputedFields
 
     const loadAny = (instanceId: string) =>
       Effect.gen(function* () {
@@ -295,7 +297,77 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
         }),
       )
 
-    return { create, update, transition, softDelete, get, getAsOf, rebuild } as const
+    /**
+     * Server decay tick: if this instance's decay band has crossed since the
+     * last marker, append a `ComputedBandChanged` event (which fans out over
+     * SSE + is an automation hook). Read-then-conditionally-lock — the common
+     * no-op path takes no lock and no write. Idempotent. Returns emitted events.
+     */
+    const recomputeBands = (instanceId: string) =>
+      Effect.gen(function* () {
+        const { orgId } = yield* OrgContext
+        const inst = yield* get(instanceId)
+        const decorated = yield* computed.decorate(inst)
+        const band = (decorated.state.decay as { band?: string } | undefined)?.band
+        if (!band) return [] as EngineEvent[] // concept has no decay computed field
+        const stored = (inst.state.__bands as Record<string, string> | undefined)?.decay
+        if (band === stored) return [] as EngineEvent[] // no crossing → no lock, no write
+
+        return yield* sql.withTransaction(
+          Effect.gen(function* () {
+            const rows = yield* sql<InstanceRow>`
+              SELECT * FROM instances
+              WHERE id = ${instanceId} AND org_id = ${orgId} AND deleted_at IS NULL
+              FOR UPDATE`
+            const row = rows[0]
+            if (!row) return [] as EngineEvent[]
+            const current = toInstance(row)
+            const recheck = yield* computed.decorate(current)
+            const bandNow = (recheck.state.decay as { band?: string } | undefined)?.band
+            const storedNow = (current.state.__bands as Record<string, string> | undefined)?.decay
+            if (!bandNow || bandNow === storedNow) return [] as EngineEvent[]
+            const concept = yield* concepts.getById(current.conceptId)
+            const event = yield* events.append({
+              subjectKind: "instance",
+              subjectId: current.id,
+              eventType: "ComputedBandChanged",
+              payload: {
+                _tag: "ComputedBandChanged",
+                field: "decay",
+                kind: "decay",
+                from: storedNow ?? null,
+                to: bandNow,
+              },
+              conceptName: concept.name,
+            })
+            const folded = applyEvent(
+              { state: current.state, version: current.version, deletedAt: null },
+              event,
+            )
+            if (Either.isLeft(folded)) return yield* Effect.fail(folded.left)
+            yield* sql<InstanceRow>`
+              UPDATE instances SET state = ${sql.json(folded.right.state)}, version = ${folded.right.version}
+              WHERE id = ${current.id} AND org_id = ${orgId}`
+            return [event]
+          }),
+        )
+      })
+
+    return {
+      create,
+      update,
+      transition,
+      softDelete,
+      get,
+      getAsOf,
+      rebuild,
+      recomputeBands,
+    } as const
   }),
-  dependencies: [ConceptService.Default, FieldService.Default, EventStore.Default],
+  dependencies: [
+    ConceptService.Default,
+    FieldService.Default,
+    EventStore.Default,
+    ComputedFields.Default,
+  ],
 }) {}
