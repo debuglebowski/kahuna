@@ -1,11 +1,13 @@
-import { useLiveQuery } from "@tanstack/react-db"
+import { decay, momentum } from "@kingsmaker/engine/computed"
+import { createOptimisticAction, useLiveQuery } from "@tanstack/react-db"
 import { useMutation } from "@tanstack/react-query"
-import type { ReactNode } from "react"
+import { type ReactNode, useMemo, useState } from "react"
 import { Link, useParams } from "react-router-dom"
 import { InlineForm } from "../components/InlineForm"
 import { Badge, Button, Card, CardHeader, decayTone, momentumTone, Spinner } from "../components/ui"
-import { api, type DecayValue, type Instance, type MomentumValue } from "../lib/api"
+import { api, type Instance } from "../lib/api"
 import { accountHubCollection, KEY, useRegisterCollection } from "../lib/collections"
+import { useNow } from "../lib/useNow"
 import { showValue } from "../lib/utils"
 
 const STATUS_NEXT: Record<string, string[]> = {
@@ -35,6 +37,17 @@ export function AccountDetail() {
     void hubCol.utils.refetch()
   }
 
+  // Client-side decay/momentum drift: recompute from the account's interaction
+  // dates + a ticking `now`, so bands advance with time without a refetch.
+  const now = useNow()
+  const interactionDates = useMemo(
+    () =>
+      (hubQ.data?.[0]?.interactions ?? [])
+        .map((i) => new Date(String(i.state.occurred_on ?? "")))
+        .filter((d) => !Number.isNaN(d.getTime())),
+    [hubQ.data],
+  )
+
   const addContact = useMutation({
     mutationFn: (fields: Record<string, unknown>) => api.createContact(id, fields),
     onSuccess: refresh,
@@ -56,16 +69,52 @@ export function AccountDetail() {
       api.createDeal(id, { status: f.status, is_renewal: f.is_renewal === "yes" }),
     onSuccess: refresh,
   })
-  const advanceDeal = useMutation({
-    mutationFn: (p: { dealId: string; version: number; to: string }) =>
-      api.transitionInstance(p.dealId, p.version, "status", p.to),
-    onSuccess: refresh,
-  })
-  const completeTask = useMutation({
-    mutationFn: (p: { taskId: string; version: number }) =>
-      api.updateInstance(p.taskId, p.version, { done: true }),
-    onSuccess: refresh,
-  })
+  // Optimistic transition: apply the new status to the hub row immediately, then
+  // persist via RPC. On an IllegalTransition / VersionConflict the RPC throws and
+  // TanStack DB rolls the optimistic change back; surface the message.
+  const [dealError, setDealError] = useState<string | null>(null)
+  const advanceDealAction = useMemo(
+    () =>
+      createOptimisticAction<{ dealId: string; version: number; to: string }>({
+        onMutate: ({ dealId, to }) => {
+          hubCol.update(id, (draft) => {
+            const d = draft.deals.find((x) => x.id === dealId)
+            if (d) d.state.status = to
+          })
+        },
+        mutationFn: async ({ dealId, version, to }) => {
+          await api.transitionInstance(dealId, version, "status", to)
+          await hubCol.utils.refetch()
+        },
+      }),
+    [hubCol, id],
+  )
+  const advanceDeal = (dealId: string, version: number, to: string) => {
+    setDealError(null)
+    advanceDealAction({ dealId, version, to }).isPersisted.promise.catch((e: unknown) => {
+      setDealError(e instanceof Error ? e.message : "Failed to advance deal")
+    })
+  }
+
+  const completeTaskAction = useMemo(
+    () =>
+      createOptimisticAction<{ taskId: string; version: number }>({
+        onMutate: ({ taskId }) => {
+          hubCol.update(id, (draft) => {
+            const t = draft.tasks.find((x) => x.id === taskId)
+            if (t) t.state.done = true
+          })
+        },
+        mutationFn: async ({ taskId, version }) => {
+          await api.updateInstance(taskId, version, { done: true })
+          await hubCol.utils.refetch()
+        },
+      }),
+    [hubCol, id],
+  )
+  const completeTask = (taskId: string, version: number) => {
+    completeTaskAction({ taskId, version })
+  }
   const addArtifact = useMutation({
     mutationFn: (fields: Record<string, unknown>) => api.createArtifact(id, fields),
     onSuccess: refresh,
@@ -127,13 +176,13 @@ export function AccountDetail() {
               <DealRow
                 key={d.id}
                 deal={d}
-                onAdvance={(to) => advanceDeal.mutate({ dealId: d.id, version: d.version, to })}
+                interactionDates={interactionDates}
+                now={now}
+                onAdvance={(to) => advanceDeal(d.id, d.version, to)}
               />
             ))
           )}
-          {advanceDeal.isError ? (
-            <p className="text-sm text-red-600">{(advanceDeal.error as Error).message}</p>
-          ) : null}
+          {dealError ? <p className="text-sm text-red-600">{dealError}</p> : null}
           <div className="border-t border-gray-100 pt-3">
             <InlineForm
               fields={[
@@ -255,10 +304,7 @@ export function AccountDetail() {
                     <Badge>{showValue(t.state.due_date).slice(0, 10)}</Badge>
                   ) : null}
                   {!t.state.done ? (
-                    <Button
-                      variant="ghost"
-                      onClick={() => completeTask.mutate({ taskId: t.id, version: t.version })}
-                    >
+                    <Button variant="ghost" onClick={() => completeTask(t.id, t.version)}>
                       Done
                     </Button>
                   ) : null}
@@ -347,25 +393,33 @@ const Row = ({ children }: { children: ReactNode }) => (
 )
 const Empty = () => <div className="text-xs text-gray-400">Nothing here yet.</div>
 
-function DealRow({ deal, onAdvance }: { deal: Instance; onAdvance: (to: string) => void }) {
+function DealRow({
+  deal,
+  interactionDates,
+  now,
+  onAdvance,
+}: {
+  deal: Instance
+  interactionDates: Date[]
+  now: number
+  onAdvance: (to: string) => void
+}) {
   const status = String(deal.state.status ?? "")
-  const decay = deal.state.decay as DecayValue | undefined
-  const momentum = deal.state.momentum as MomentumValue | undefined
+  // decay falls back to the deal's createdAt when the account has no interactions
+  // (same rule as the server's ComputedFields.decorate).
+  const d = decay(interactionDates, new Date(now), {}, deal.createdAt)
+  const m = momentum(interactionDates, new Date(now))
   const next = STATUS_NEXT[status] ?? []
   return (
     <div className="rounded border border-gray-100 p-3">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Badge>{status}</Badge>
-          {decay ? (
-            <Badge tone={decayTone(decay.band)}>
-              decay {decay.band}
-              {decay.days != null ? ` · ${decay.days}d` : ""}
-            </Badge>
-          ) : null}
-          {momentum ? (
-            <Badge tone={momentumTone(momentum.label)}>momentum {momentum.label}</Badge>
-          ) : null}
+          <Badge tone={decayTone(d.band)}>
+            decay {d.band}
+            {d.days != null ? ` · ${d.days}d` : ""}
+          </Badge>
+          <Badge tone={momentumTone(m.label)}>momentum {m.label}</Badge>
           {deal.state.is_renewal ? <Badge tone="amber">renewal</Badge> : null}
         </div>
         {next.length > 0 ? (
