@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query"
 import { useMemo, useState } from "react"
 import { Navigate, useParams } from "react-router-dom"
 import { Card, CardHeader, Input, Spinner } from "../components/ui"
-import { apiGet, type Instance } from "../lib/api"
+import { api } from "../lib/api"
 import { showValue } from "../lib/utils"
 
 /** Generic instance browser for a single concept (filter + click-to-sort). */
@@ -15,8 +15,7 @@ export function ConceptView() {
   const instances = useQuery({
     queryKey: ["instances", name],
     enabled: !!name && name !== "Account",
-    queryFn: () =>
-      apiGet<Instance[]>(`/api/instances?concept=${encodeURIComponent(name)}&decorate=1`),
+    queryFn: () => api.listInstances(name),
   })
 
   const columns = useMemo(() => {

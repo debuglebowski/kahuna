@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Plus } from "lucide-react"
 import { type ReactNode, useState } from "react"
 import { Link, useLocation, useNavigate } from "react-router-dom"
-import { apiGet, apiPost, type Concept } from "../lib/api"
+import { api } from "../lib/api"
 import { signOut, useSession } from "../lib/auth-client"
 import { cn } from "../lib/utils"
 
@@ -52,11 +52,11 @@ export function Layout({ children }: { children: ReactNode }) {
 
   const concepts = useQuery({
     queryKey: ["concepts"],
-    queryFn: () => apiGet<Concept[]>("/api/concepts"),
+    queryFn: () => api.listConcepts(),
   })
 
   const createConcept = useMutation({
-    mutationFn: (n: string) => apiPost<Concept>("/api/concepts", { name: n }),
+    mutationFn: (n: string) => api.createConcept(n),
     onSuccess: (c) => {
       qc.invalidateQueries({ queryKey: ["concepts"] })
       setCreating(false)

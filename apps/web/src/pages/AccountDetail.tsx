@@ -3,14 +3,7 @@ import type { ReactNode } from "react"
 import { Link, useParams } from "react-router-dom"
 import { InlineForm } from "../components/InlineForm"
 import { Badge, Button, Card, CardHeader, decayTone, momentumTone, Spinner } from "../components/ui"
-import {
-  type AccountHub,
-  apiGet,
-  apiPost,
-  type DecayValue,
-  type Instance,
-  type MomentumValue,
-} from "../lib/api"
+import { api, type DecayValue, type Instance, type MomentumValue } from "../lib/api"
 import { showValue } from "../lib/utils"
 
 const STATUS_NEXT: Record<string, string[]> = {
@@ -34,7 +27,7 @@ export function AccountDetail() {
   const qc = useQueryClient()
   const hub = useQuery({
     queryKey: ["account", id],
-    queryFn: () => apiGet<AccountHub>(`/api/accounts/${id}`),
+    queryFn: () => api.getAccountHub(id),
     enabled: !!id,
   })
 
@@ -45,37 +38,39 @@ export function AccountDetail() {
     }
   }
 
-  const capture = (sub: string) => (fields: Record<string, unknown>) =>
-    apiPost(`/api/accounts/${id}/${sub}`, { fields })
-
-  const addContact = useMutation({ mutationFn: capture("contacts"), onSuccess: invalidate })
-  const logInteraction = useMutation({ mutationFn: capture("interactions"), onSuccess: invalidate })
-  const raiseSignal = useMutation({ mutationFn: capture("signals"), onSuccess: invalidate })
-  const addTask = useMutation({ mutationFn: capture("tasks"), onSuccess: invalidate })
+  const addContact = useMutation({
+    mutationFn: (fields: Record<string, unknown>) => api.createContact(id, fields),
+    onSuccess: invalidate,
+  })
+  const logInteraction = useMutation({
+    mutationFn: (fields: Record<string, unknown>) => api.logInteraction(id, fields),
+    onSuccess: invalidate,
+  })
+  const raiseSignal = useMutation({
+    mutationFn: (fields: Record<string, unknown>) => api.logSignal(id, fields),
+    onSuccess: invalidate,
+  })
+  const addTask = useMutation({
+    mutationFn: (fields: Record<string, unknown>) => api.createTask(id, fields),
+    onSuccess: invalidate,
+  })
   const addDeal = useMutation({
     mutationFn: (f: Record<string, string>) =>
-      apiPost(`/api/accounts/${id}/deals`, {
-        fields: { status: f.status, is_renewal: f.is_renewal === "yes" },
-      }),
+      api.createDeal(id, { status: f.status, is_renewal: f.is_renewal === "yes" }),
     onSuccess: invalidate,
   })
   const advanceDeal = useMutation({
     mutationFn: (p: { dealId: string; version: number; to: string }) =>
-      apiPost(`/api/instances/${p.dealId}/transition`, {
-        expectedVersion: p.version,
-        field: "status",
-        to: p.to,
-      }),
+      api.transitionInstance(p.dealId, p.version, "status", p.to),
     onSuccess: invalidate,
   })
   const completeTask = useMutation({
     mutationFn: (p: { taskId: string; version: number }) =>
-      apiPost(`/api/instances/${p.taskId}`, { expectedVersion: p.version, patch: { done: true } }),
+      api.updateInstance(p.taskId, p.version, { done: true }),
     onSuccess: invalidate,
   })
   const addArtifact = useMutation({
-    mutationFn: (fields: Record<string, unknown>) =>
-      apiPost(`/api/accounts/${id}/artifacts`, { fields }),
+    mutationFn: (fields: Record<string, unknown>) => api.createArtifact(id, fields),
     onSuccess: invalidate,
   })
   const uploadFile = useMutation({

@@ -1,14 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
 import type { ReactNode } from "react"
 import { Badge, Card, CardHeader, decayTone, Spinner } from "../components/ui"
-import {
-  apiGet,
-  type DecayValue,
-  type DemandItem,
-  type FeedItem,
-  type Instance,
-  type Owed,
-} from "../lib/api"
+import { api, type DecayValue, type Instance } from "../lib/api"
 import { showValue } from "../lib/utils"
 
 const decayOf = (d: Instance) => d.state.decay as DecayValue | undefined
@@ -25,15 +18,9 @@ const Row = ({ children }: { children: ReactNode }) => (
 const Empty = () => <div className="text-xs text-gray-400">Nothing here.</div>
 
 export function Dashboard() {
-  const owed = useQuery({ queryKey: ["owed"], queryFn: () => apiGet<Owed>("/api/owed") })
-  const changed = useQuery({
-    queryKey: ["changed"],
-    queryFn: () => apiGet<FeedItem[]>("/api/changed"),
-  })
-  const demand = useQuery({
-    queryKey: ["demand"],
-    queryFn: () => apiGet<DemandItem[]>("/api/demand"),
-  })
+  const owed = useQuery({ queryKey: ["owed"], queryFn: () => api.getOwed() })
+  const changed = useQuery({ queryKey: ["changed"], queryFn: () => api.getChanged() })
+  const demand = useQuery({ queryKey: ["demand"], queryFn: () => api.getDemand() })
 
   return (
     <div className="grid gap-4 lg:grid-cols-3">

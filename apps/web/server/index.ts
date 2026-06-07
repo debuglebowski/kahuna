@@ -3,6 +3,7 @@ import { healthCheck, PgLive } from "@kingsmaker/engine"
 import { Effect } from "effect"
 import { auth } from "./auth"
 import { handleApi } from "./router"
+import { rpcHandler } from "./rpc"
 
 const port = Number(process.env.PORT ?? 3000)
 const DIST = path.resolve(import.meta.dirname, "../dist")
@@ -14,6 +15,9 @@ const server = Bun.serve({
 
     // BetterAuth's own endpoints.
     if (url.pathname.startsWith("/api/auth")) return auth.handler(req)
+
+    // Typed RPC endpoint (the application API).
+    if (url.pathname === "/api/rpc") return rpcHandler(req)
 
     if (url.pathname === "/api/health") {
       const ok = await Effect.runPromise(healthCheck.pipe(Effect.provide(PgLive))).catch(

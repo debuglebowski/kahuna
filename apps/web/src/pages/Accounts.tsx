@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { type FormEvent, useState } from "react"
 import { Link } from "react-router-dom"
 import { Badge, Button, Card, CardHeader, Field, Input, Select, Spinner } from "../components/ui"
-import { apiGet, apiPost, type Instance } from "../lib/api"
+import { api } from "../lib/api"
 import { showValue } from "../lib/utils"
 
 const PHASES = ["prospect", "deal", "live", "renewal"]
@@ -11,7 +11,7 @@ export function Accounts() {
   const qc = useQueryClient()
   const accounts = useQuery({
     queryKey: ["accounts"],
-    queryFn: () => apiGet<Instance[]>("/api/accounts"),
+    queryFn: () => api.listInstances("Account"),
   })
   const [name, setName] = useState("")
   const [phase, setPhase] = useState("prospect")
@@ -19,12 +19,10 @@ export function Accounts() {
 
   const create = useMutation({
     mutationFn: () =>
-      apiPost("/api/accounts", {
-        fields: {
-          name,
-          lifecycle_phase: phase,
-          ...(value ? { contract_value: Number(value) } : {}),
-        },
+      api.createInstance("Account", {
+        name,
+        lifecycle_phase: phase,
+        ...(value ? { contract_value: Number(value) } : {}),
       }),
     onSuccess: () => {
       setName("")

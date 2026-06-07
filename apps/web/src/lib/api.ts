@@ -1,21 +1,19 @@
-/** A field-value bag for an instance's projected state. */
-export type State = Record<string, unknown>
+import { FetchHttpClient } from "@effect/platform"
+import { RpcClient, RpcSerialization } from "@effect/rpc"
+import { Context, Effect, Layer, ManagedRuntime } from "effect"
+import { KingsmakerRpcs } from "../../rpc/contract"
 
-export interface Instance {
-  readonly id: string
-  readonly conceptId: string
-  readonly state: State
-  readonly version: number
-  readonly createdAt: string
-  readonly deletedAt: string | null
-}
+export type {
+  AccountHub,
+  Attachment,
+  Concept,
+  DemandItem,
+  FeedItem,
+  Instance,
+  Owed,
+} from "../../rpc/contract"
 
-export interface Concept {
-  readonly id: string
-  readonly name: string
-  readonly description: string | null
-}
-
+/** Computed-field shapes (carried inside an instance's `state`). */
 export interface DecayValue {
   readonly days: number | null
   readonly band: "fresh" | "warm" | "cooling" | "cold"
@@ -26,70 +24,50 @@ export interface MomentumValue {
   readonly prior: number
 }
 
-export interface Attachment {
-  readonly id: string
-  readonly instanceId: string
-  readonly filename: string
-  readonly mimeType: string | null
-  readonly sizeBytes: number | null
-  readonly createdAt: string
+// Build the RPC client once: fetch transport + ndjson, pointed at /api/rpc.
+const ProtocolLive = RpcClient.layerProtocolHttp({ url: "/api/rpc" }).pipe(
+  Layer.provide(FetchHttpClient.layer),
+  Layer.provide(RpcSerialization.layerNdjson),
+)
+
+const makeClient = RpcClient.make(KingsmakerRpcs)
+type Client = Effect.Effect.Success<typeof makeClient>
+
+class ApiClient extends Context.Tag("kingsmaker/ApiClient")<ApiClient, Client>() {}
+
+const runtime = ManagedRuntime.make(
+  Layer.scoped(ApiClient, makeClient).pipe(Layer.provide(ProtocolLive)),
+)
+
+const call = <A, E>(f: (client: Client) => Effect.Effect<A, E>): Promise<A> =>
+  runtime.runPromise(Effect.flatMap(ApiClient, f))
+
+type Fields = Record<string, unknown>
+
+/** Typed, end-to-end client — replaces the old hand-written fetch wrappers. */
+export const api = {
+  listConcepts: () => call((c) => c.listConcepts()),
+  createConcept: (name: string) => call((c) => c.createConcept({ name })),
+  listInstances: (conceptName: string) => call((c) => c.listInstances({ conceptName })),
+  getAccountHub: (accountId: string) => call((c) => c.getAccountHub({ accountId })),
+  getOwed: () => call((c) => c.getOwed()),
+  getChanged: () => call((c) => c.getChanged()),
+  getDemand: () => call((c) => c.getDemand()),
+  createInstance: (conceptName: string, fields: Fields) =>
+    call((c) => c.createInstance({ conceptName, fields })),
+  updateInstance: (id: string, expectedVersion: number, patch: Fields) =>
+    call((c) => c.updateInstance({ id, expectedVersion, patch })),
+  transitionInstance: (id: string, expectedVersion: number, field: string, to: string) =>
+    call((c) => c.transitionInstance({ id, expectedVersion, field, to })),
+  createContact: (accountId: string, fields: Fields) =>
+    call((c) => c.createContact({ accountId, fields })),
+  createDeal: (accountId: string, fields: Fields) =>
+    call((c) => c.createDeal({ accountId, fields })),
+  logSignal: (accountId: string, fields: Fields) => call((c) => c.logSignal({ accountId, fields })),
+  createTask: (accountId: string, fields: Fields) =>
+    call((c) => c.createTask({ accountId, fields })),
+  logInteraction: (accountId: string, fields: Fields, contactId?: string) =>
+    call((c) => c.logInteraction({ accountId, fields, contactId })),
+  createArtifact: (accountId: string, fields: Fields) =>
+    call((c) => c.createArtifact({ accountId, fields })),
 }
-
-export type ArtifactWithFiles = Instance & { readonly attachments: Attachment[] }
-
-export interface AccountHub {
-  readonly account: Instance
-  readonly contacts: Instance[]
-  readonly owners: Instance[]
-  readonly interactions: Instance[]
-  readonly signals: Instance[]
-  readonly artifacts: ArtifactWithFiles[]
-  readonly tasks: Instance[]
-  readonly deals: Instance[]
-}
-
-export interface Owed {
-  readonly openTasks: Instance[]
-  readonly decayingDeals: Instance[]
-  readonly dueRenewals: Instance[]
-}
-
-export interface FeedItem {
-  readonly id: number
-  readonly occurredAt: string
-  readonly actor: string | null
-  readonly eventType: string
-  readonly subjectKind: string
-  readonly subjectId: string
-}
-
-export interface DemandItem {
-  readonly signal: Instance
-  readonly accountId: string | null
-  readonly accountName: string | null
-  readonly weight: number
-}
-
-export interface Me {
-  readonly userId: string
-  readonly email: string
-  readonly name: string
-  readonly orgId: string | null
-  readonly role: string | null
-}
-
-const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
-  const res = await fetch(path, {
-    headers: { "content-type": "application/json", ...init?.headers },
-    ...init,
-  })
-  if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as { error?: string }
-    throw new Error(body.error ?? `${res.status} ${res.statusText}`)
-  }
-  return res.json() as Promise<T>
-}
-
-export const apiGet = <T>(path: string) => request<T>(path)
-export const apiPost = <T>(path: string, body: unknown) =>
-  request<T>(path, { method: "POST", body: JSON.stringify(body) })

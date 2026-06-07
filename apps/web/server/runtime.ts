@@ -20,13 +20,14 @@ const BlobLive =
       })
     : LocalFsBlobStore(process.env.BLOB_LOCAL_DIR ?? "./.blobstore")
 
+/** Engine services + Postgres pool + BlobStore, built once (no OrgContext). */
+export const EngineBase = Layer.provide(EngineLive, Layer.merge(PgLive, BlobLive))
+
 /**
- * The base runtime: PgClient pool + BlobStore + all engine services, built ONCE
- * for the process. Per-request OrgContext is provided at call time (cheap).
+ * The base runtime, built ONCE for the process. Per-request OrgContext is
+ * provided at call time (cheap).
  */
-export const AppRuntime = ManagedRuntime.make(
-  Layer.provide(EngineLive, Layer.merge(PgLive, BlobLive)),
-)
+export const AppRuntime = ManagedRuntime.make(EngineBase)
 
 export type UseCaseResult<A> =
   | { readonly ok: true; readonly status: number; readonly data: A }
@@ -37,7 +38,7 @@ export type UseCaseResult<A> =
       readonly detail?: unknown
     }
 
-const ERROR_MAP: Record<string, { status: number; code: string }> = {
+export const ERROR_MAP: Record<string, { status: number; code: string }> = {
   FieldValidationError: { status: 422, code: "VALIDATION" },
   IllegalTransition: { status: 422, code: "ILLEGAL_TRANSITION" },
   RelationTargetMismatch: { status: 422, code: "RELATION_TARGET_MISMATCH" },
