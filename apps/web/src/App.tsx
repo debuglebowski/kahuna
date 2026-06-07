@@ -11,7 +11,7 @@ import { Organization } from "./pages/settings/Organization"
 import { Profile } from "./pages/settings/Profile"
 import { Security } from "./pages/settings/Security"
 import { SettingsLayout } from "./pages/settings/SettingsLayout"
-import { Team } from "./pages/settings/Team"
+import { Members } from "./pages/settings/Members"
 
 export function App() {
   const { data: session, isPending } = useSession()
@@ -30,7 +30,7 @@ export function App() {
           <Route path="profile" element={<Profile />} />
           <Route path="security" element={<Security />} />
           <Route path="organization" element={<Organization />} />
-          <Route path="team" element={<Team />} />
+          <Route path="members" element={<Members />} />
           <Route path="concepts" element={<Concepts />} />
         </Route>
         <Route path="/concepts/:name" element={<ConceptView />} />

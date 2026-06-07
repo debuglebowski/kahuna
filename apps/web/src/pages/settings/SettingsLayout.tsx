@@ -14,11 +14,11 @@ const TABS: ReadonlyArray<Tab> = [
   { to: "profile", label: "Profile", admin: false },
   { to: "security", label: "Security", admin: false },
   { to: "organization", label: "Organization", admin: true },
-  { to: "team", label: "Team", admin: true },
+  { to: "members", label: "Members", admin: true },
   { to: "concepts", label: "Concepts", admin: true },
 ]
 
-/** Active org + my membership — drives both the role gate and the Org/Team pages. */
+/** Active org + my membership — drives both the role gate and the Org/Members pages. */
 export function useFullOrg() {
   return useQuery({
     queryKey: ["fullOrg"],

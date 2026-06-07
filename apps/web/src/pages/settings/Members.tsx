@@ -27,7 +27,7 @@ async function addMemberByEmail(email: string, role: string) {
 
 const roleTone = (role: string) => (role === "owner" ? "blue" : role === "admin" ? "amber" : "gray")
 
-export function Team() {
+export function Members() {
   const org = useFullOrg()
   const qc = useQueryClient()
   const { data: session } = useSession()
