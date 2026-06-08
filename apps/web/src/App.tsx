@@ -9,7 +9,6 @@ import { Placeholder } from "./pages/Placeholder"
 import { Concepts } from "./pages/settings/Concepts"
 import { Organization } from "./pages/settings/Organization"
 import { Profile } from "./pages/settings/Profile"
-import { Security } from "./pages/settings/Security"
 import { SettingsLayout } from "./pages/settings/SettingsLayout"
 import { Members } from "./pages/settings/Members"
 
@@ -28,7 +27,7 @@ export function App() {
         <Route path="/settings" element={<SettingsLayout />}>
           <Route index element={<Navigate to="profile" replace />} />
           <Route path="profile" element={<Profile />} />
-          <Route path="security" element={<Security />} />
+          <Route path="security" element={<Navigate to="/settings/profile" replace />} />
           <Route path="organization" element={<Organization />} />
           <Route path="members" element={<Members />} />
           <Route path="concepts" element={<Concepts />} />
