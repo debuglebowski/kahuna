@@ -13,7 +13,7 @@ const env = (over: Partial<LiveEnvelope>): LiveEnvelope => ({
   ...over,
 })
 
-const GLOBALS = [KEY.concepts, KEY.owed, KEY.changed, KEY.demand]
+const GLOBALS = [KEY.concepts, KEY.changed]
 
 describe("routeEnvelope", () => {
   it("always nudges the changed feed (when mounted)", () => {
@@ -21,26 +21,18 @@ describe("routeEnvelope", () => {
   })
 
   it("filters out keys that aren't mounted", () => {
-    // Owed not mounted → a Deal change refetches nothing but the (unmounted) changed feed.
+    // Nothing mounted → a Deal change refetches nothing.
     expect(routeEnvelope(env({ concept: "Deal" }), [])).toEqual([])
   })
 
-  it("any instance change nudges owed + demand generically (when mounted)", () => {
-    // No concept-name special-casing: every instance event can affect the
-    // dashboard aggregates, so both are candidates (filtered to what's mounted).
+  it("an instance change only nudges the changed feed when no list/detail is mounted", () => {
     const keys = new Set(routeEnvelope(env({ concept: "Deal", conceptId: "deal-id" }), GLOBALS))
-    expect(keys).toEqual(new Set([KEY.changed, KEY.owed, KEY.demand]))
+    expect(keys).toEqual(new Set([KEY.changed]))
   })
 
-  it("instance change does not nudge owed/demand when they aren't mounted", () => {
-    expect(routeEnvelope(env({ concept: "Signal", conceptId: "sig-id" }), [KEY.changed])).toEqual([
-      KEY.changed,
-    ])
-  })
-
-  it("relation change refetches owed + demand", () => {
+  it("relation change with nothing relevant mounted only nudges the changed feed", () => {
     const keys = new Set(routeEnvelope(env({ kind: "relation", concept: null }), GLOBALS))
-    expect(keys).toEqual(new Set([KEY.changed, KEY.owed, KEY.demand]))
+    expect(keys).toEqual(new Set([KEY.changed]))
   })
 
   it("concept/field change refetches concepts", () => {
@@ -51,13 +43,11 @@ describe("routeEnvelope", () => {
 
   it("generic concept routes to its mounted ConceptView (by concept id)", () => {
     const mounted = [KEY.changed, KEY.instances("widget-id")]
-    const keys = new Set(
-      routeEnvelope(env({ concept: "Widget", conceptId: "widget-id" }), mounted),
-    )
+    const keys = new Set(routeEnvelope(env({ concept: "Widget", conceptId: "widget-id" }), mounted))
     expect(keys).toEqual(new Set([KEY.changed, KEY.instances("widget-id")]))
   })
 
-  it("instance change with the dashboard mounted refetches its collection + aggregates", () => {
+  it("instance change with its ConceptView mounted refetches that collection", () => {
     const mounted = [...GLOBALS, KEY.instances("account-id")]
     const keys = new Set(
       routeEnvelope(
@@ -65,9 +55,7 @@ describe("routeEnvelope", () => {
         mounted,
       ),
     )
-    expect(keys).toEqual(
-      new Set([KEY.changed, KEY.owed, KEY.demand, KEY.instances("account-id")]),
-    )
+    expect(keys).toEqual(new Set([KEY.changed, KEY.instances("account-id")]))
   })
 
   it("instance change nudges mounted detail pages (viewed or connected)", () => {

@@ -116,10 +116,10 @@ const validateValue = (
 
 const validateFields = (defs: ReadonlyArray<Field>, input: Record<string, unknown>) =>
   Effect.gen(function* () {
-    const byName = new Map(defs.map((d) => [d.name, d]))
+    const byId = new Map(defs.map((d) => [d.id, d]))
     const out: InstanceState = {}
     for (const [key, value] of Object.entries(input)) {
-      const def = byName.get(key)
+      const def = byId.get(key)
       if (!def)
         return yield* Effect.fail(
           new FieldValidationError({ message: `unknown field "${key}"`, field: key }),
@@ -137,9 +137,9 @@ const checkTransitions = (
   Effect.gen(function* () {
     for (const def of defs) {
       if (def.kind !== "enum" || !def.config.transitions) continue
-      if (!(def.name in patch)) continue
-      const to = patch[def.name]
-      const from = current[def.name]
+      if (!(def.id in patch)) continue
+      const to = patch[def.id]
+      const from = current[def.id]
       if (from === undefined || from === to) continue
       const allowed = def.config.transitions[String(from)] ?? []
       if (!allowed.includes(String(to))) {
@@ -369,10 +369,16 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
       Effect.gen(function* () {
         const { orgId } = yield* OrgContext
         const inst = yield* get(instanceId)
+        const defs = yield* fields.listFields(inst.conceptId)
+        const decayField = defs.find(
+          (d) => d.kind === "computed" && d.config.computedKind === "decay",
+        )
+        if (!decayField) return [] as EngineEvent[] // concept has no decay computed field
+        const bandKey = decayField.id
         const decorated = yield* computed.decorate(inst)
-        const band = (decorated.state.decay as { band?: string } | undefined)?.band
-        if (!band) return [] as EngineEvent[] // concept has no decay computed field
-        const stored = (inst.state.__bands as Record<string, string> | undefined)?.decay
+        const band = (decorated.state[bandKey] as { band?: string } | undefined)?.band
+        if (!band) return [] as EngineEvent[]
+        const stored = (inst.state.__bands as Record<string, string> | undefined)?.[bandKey]
         if (band === stored) return [] as EngineEvent[] // no crossing → no lock, no write
 
         return yield* sql.withTransaction(
@@ -385,8 +391,10 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
             if (!row) return [] as EngineEvent[]
             const current = toInstance(row)
             const recheck = yield* computed.decorate(current)
-            const bandNow = (recheck.state.decay as { band?: string } | undefined)?.band
-            const storedNow = (current.state.__bands as Record<string, string> | undefined)?.decay
+            const bandNow = (recheck.state[bandKey] as { band?: string } | undefined)?.band
+            const storedNow = (current.state.__bands as Record<string, string> | undefined)?.[
+              bandKey
+            ]
             if (!bandNow || bandNow === storedNow) return [] as EngineEvent[]
             const concept = yield* concepts.getById(current.conceptId)
             const event = yield* events.append({
@@ -395,7 +403,7 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
               eventType: "ComputedBandChanged",
               payload: {
                 _tag: "ComputedBandChanged",
-                field: "decay",
+                field: bandKey,
                 kind: "decay",
                 from: storedNow ?? null,
                 to: bandNow,

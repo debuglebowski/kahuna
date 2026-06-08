@@ -1,13 +1,21 @@
 import { PgClient } from "@effect/sql-pg"
 import { Effect } from "effect"
 import type { Id } from "../domain/types"
-import { InstanceNotFound, RelationNotFound, RelationTargetMismatch } from "../errors"
+import {
+  FieldNotFound,
+  FieldValidationError,
+  InstanceNotFound,
+  RelationNotFound,
+  RelationTargetMismatch,
+} from "../errors"
 import { EventStore } from "./EventStore"
+import { FieldService } from "./FieldService"
 import { OrgContext } from "./OrgContext"
 import { type RelationRow, toRelation } from "./rows"
 
 export interface CreateRelationInput {
-  readonly relationType: string
+  /** The relation field def (kind=relation) this edge realises. */
+  readonly fieldId: Id
   readonly fromId: Id
   readonly toId: Id
   readonly properties?: Record<string, unknown>
@@ -18,6 +26,7 @@ export class RelationService extends Effect.Service<RelationService>()("engine/R
   effect: Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
     const events = yield* EventStore
+    const fieldsSvc = yield* FieldService
 
     const conceptIdOf = (orgId: string, instanceId: string) =>
       Effect.gen(function* () {
@@ -39,26 +48,44 @@ export class RelationService extends Effect.Service<RelationService>()("engine/R
       sql.withTransaction(
         Effect.gen(function* () {
           const { orgId } = yield* OrgContext
-          yield* conceptIdOf(orgId, input.fromId)
+          const field = yield* fieldsSvc.getById(input.fieldId)
+          if (field.deletedAt !== null)
+            return yield* Effect.fail(new FieldNotFound({ fieldId: input.fieldId }))
+          if (field.kind !== "relation")
+            return yield* Effect.fail(
+              new FieldValidationError({
+                message: `field "${field.name}" is not a relation`,
+                field: field.name,
+              }),
+            )
+
+          const fromConceptId = yield* conceptIdOf(orgId, input.fromId)
           const toConceptId = yield* conceptIdOf(orgId, input.toId)
 
-          // If this relation type is declared (a kind=relation field with a target
-          // concept id), enforce that the target's concept matches.
-          const decl = yield* sql<{ readonly target: string | null }>`
-            SELECT (config->>'target') AS target FROM fields
-            WHERE org_id = ${orgId} AND kind = 'relation'
-              AND (config->>'relationType') = ${input.relationType}
-              AND (config->>'target') IS NOT NULL
-            LIMIT 1`
-          const expected = decl[0]?.target
-          if (expected && expected !== toConceptId) {
+          // `from` must be an instance of the concept that declares this field.
+          if (fromConceptId !== field.conceptId) {
             const [expectedName, actualName] = yield* Effect.all([
-              nameOfConcept(orgId, expected),
+              nameOfConcept(orgId, field.conceptId),
+              nameOfConcept(orgId, fromConceptId),
+            ])
+            return yield* Effect.fail(
+              new RelationTargetMismatch({
+                relationType: field.name,
+                expected: expectedName,
+                actual: actualName,
+              }),
+            )
+          }
+          // `to` must match the field's declared target concept (if any).
+          const target = field.config.target
+          if (target && target !== toConceptId) {
+            const [expectedName, actualName] = yield* Effect.all([
+              nameOfConcept(orgId, target),
               nameOfConcept(orgId, toConceptId),
             ])
             return yield* Effect.fail(
               new RelationTargetMismatch({
-                relationType: input.relationType,
+                relationType: field.name,
                 expected: expectedName,
                 actual: actualName,
               }),
@@ -66,8 +93,8 @@ export class RelationService extends Effect.Service<RelationService>()("engine/R
           }
 
           const rows = yield* sql<RelationRow>`
-            INSERT INTO relations (org_id, relation_type, from_id, to_id, properties)
-            VALUES (${orgId}, ${input.relationType}, ${input.fromId}, ${input.toId}, ${sql.json(input.properties ?? {})})
+            INSERT INTO relations (org_id, field_id, from_id, to_id, properties)
+            VALUES (${orgId}, ${input.fieldId}, ${input.fromId}, ${input.toId}, ${sql.json(input.properties ?? {})})
             RETURNING *`
           const relation = toRelation(rows[0]!)
           yield* events.append({
@@ -76,7 +103,7 @@ export class RelationService extends Effect.Service<RelationService>()("engine/R
             eventType: "RelationCreated",
             payload: {
               _tag: "RelationCreated",
-              relationType: relation.relationType,
+              fieldId: relation.fieldId,
               fromId: relation.fromId,
               toId: relation.toId,
               properties: relation.properties,
@@ -108,13 +135,13 @@ export class RelationService extends Effect.Service<RelationService>()("engine/R
         }),
       )
 
-    const listFrom = (fromId: Id, relationType?: string) =>
+    const listFrom = (fromId: Id, fieldId?: string) =>
       Effect.gen(function* () {
         const { orgId } = yield* OrgContext
-        const rows = relationType
+        const rows = fieldId
           ? yield* sql<RelationRow>`
               SELECT * FROM relations
-              WHERE org_id = ${orgId} AND from_id = ${fromId} AND relation_type = ${relationType} AND deleted_at IS NULL
+              WHERE org_id = ${orgId} AND from_id = ${fromId} AND field_id = ${fieldId} AND deleted_at IS NULL
               ORDER BY created_at ASC`
           : yield* sql<RelationRow>`
               SELECT * FROM relations
@@ -122,13 +149,13 @@ export class RelationService extends Effect.Service<RelationService>()("engine/R
         return rows.map(toRelation)
       })
 
-    const listTo = (toId: Id, relationType?: string) =>
+    const listTo = (toId: Id, fieldId?: string) =>
       Effect.gen(function* () {
         const { orgId } = yield* OrgContext
-        const rows = relationType
+        const rows = fieldId
           ? yield* sql<RelationRow>`
               SELECT * FROM relations
-              WHERE org_id = ${orgId} AND to_id = ${toId} AND relation_type = ${relationType} AND deleted_at IS NULL
+              WHERE org_id = ${orgId} AND to_id = ${toId} AND field_id = ${fieldId} AND deleted_at IS NULL
               ORDER BY created_at ASC`
           : yield* sql<RelationRow>`
               SELECT * FROM relations
@@ -138,5 +165,5 @@ export class RelationService extends Effect.Service<RelationService>()("engine/R
 
     return { create, remove, listFrom, listTo } as const
   }),
-  dependencies: [EventStore.Default],
+  dependencies: [EventStore.Default, FieldService.Default],
 }) {}

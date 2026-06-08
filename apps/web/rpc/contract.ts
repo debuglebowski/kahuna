@@ -51,8 +51,7 @@ export const FieldConfig = Schema.Struct({
   transitions: Schema.optional(
     Schema.Record({ key: Schema.String, value: Schema.Array(Schema.String) }),
   ),
-  relationType: Schema.optional(Schema.String),
-  /** relation: the target concept's id. */
+  /** relation: the target concept's id (the relation's identity is the field id). */
   target: Schema.optional(Schema.String),
   cardinality: Schema.optional(Schema.Literal("one", "many")),
   computedKind: Schema.optional(Schema.Literal("decay", "momentum")),
@@ -84,13 +83,6 @@ export const Attachment = Schema.Struct({
 })
 export type Attachment = typeof Attachment.Type
 
-export const Owed = Schema.Struct({
-  openTasks: Schema.Array(Instance),
-  decayingDeals: Schema.Array(Instance),
-  dueRenewals: Schema.Array(Instance),
-})
-export type Owed = typeof Owed.Type
-
 export const FeedItem = Schema.Struct({
   id: Schema.Number,
   occurredAt: Schema.Date,
@@ -101,18 +93,15 @@ export const FeedItem = Schema.Struct({
 })
 export type FeedItem = typeof FeedItem.Type
 
-export const DemandItem = Schema.Struct({
-  signal: Instance,
-  accountId: Schema.NullOr(Schema.String),
-  accountName: Schema.NullOr(Schema.String),
-  weight: Schema.Number,
-})
-export type DemandItem = typeof DemandItem.Type
-
 /** One instance connected to another via a relation, with its concept resolved. */
 export const RelatedInstance = Schema.Struct({
   relationId: Schema.String,
-  relationType: Schema.String,
+  /** The relation field def this edge realises (identity); name is decorative. */
+  fieldId: Schema.String,
+  relationName: Schema.String,
+  /** Server-resolved display label of the connected instance (its state is keyed
+   *  by field id, which the client can't resolve without that concept's fields). */
+  label: Schema.String,
   /** `out` = this instance is the relation's `from`; `in` = it is the `to`. */
   direction: Schema.Literal("out", "in"),
   conceptId: Schema.String,
@@ -208,6 +197,7 @@ export class KingsmakerRpcs extends RpcGroup.make(
   Rpc.make("updateField", {
     payload: {
       id: Schema.String,
+      name: Schema.optional(Schema.String),
       config: Schema.optional(FieldConfig),
       formula: Schema.optional(Schema.NullOr(Schema.String)),
     },
@@ -229,9 +219,7 @@ export class KingsmakerRpcs extends RpcGroup.make(
     success: InstanceDetail,
     error: RpcError,
   }),
-  Rpc.make("getOwed", { success: Owed, error: RpcError }),
   Rpc.make("getChanged", { success: Schema.Array(FeedItem), error: RpcError }),
-  Rpc.make("getDemand", { success: Schema.Array(DemandItem), error: RpcError }),
   Rpc.make("createInstance", {
     payload: { conceptId: Schema.String, fields: Fields },
     success: Instance,

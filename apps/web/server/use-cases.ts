@@ -24,7 +24,7 @@ type UC<A, E = unknown> = Effect.Effect<A, E, OrgContext | EngineServices>
 export interface ListOpts {
   readonly where?: Record<string, unknown>
   readonly orderBy?: { readonly field: string; readonly dir?: "asc" | "desc" }
-  readonly relatedToTo?: { readonly relationType: string; readonly toId: string }
+  readonly relatedToTo?: { readonly fieldId: string; readonly toId: string }
   readonly limit?: number
   readonly decorate?: boolean
 }
@@ -79,25 +79,32 @@ export const getInstanceDetail = (id: string): UC<unknown> =>
     const nameById = new Map(allConcepts.map((c) => [c.id, c.name] as const))
 
     const resolve = (
-      rel: { id: string; relationType: string },
+      rel: { id: string; fieldId: string },
       direction: "out" | "in",
       otherId: string,
     ) =>
-      instances.get(otherId).pipe(
-        Effect.flatMap((other) =>
-          computed.decorate(other).pipe(
-            Effect.map((d) => ({
-              relationId: rel.id,
-              relationType: rel.relationType,
-              direction,
-              conceptId: other.conceptId,
-              conceptName: nameById.get(other.conceptId) ?? other.conceptId,
-              instance: d,
-            })),
-          ),
-        ),
-        Effect.catchAll(() => Effect.succeed(null)),
-      )
+      Effect.gen(function* () {
+        const other = yield* instances.get(otherId)
+        const [field, otherFields, d] = yield* Effect.all([
+          fieldsSvc.getById(rel.fieldId),
+          fieldsSvc.listFields(other.conceptId),
+          computed.decorate(other),
+        ])
+        // Resolve a display label from the connected concept's first text field
+        // (its state is keyed by field id; the client lacks these defs).
+        const textField = otherFields.find((f) => f.kind === "text" && d.state[f.id])
+        return {
+          relationId: rel.id,
+          fieldId: rel.fieldId,
+          // Decorative label, resolved from the field def (renameable).
+          relationName: field.name,
+          label: textField ? String(d.state[textField.id]) : "(untitled)",
+          direction,
+          conceptId: other.conceptId,
+          conceptName: nameById.get(other.conceptId) ?? other.conceptId,
+          instance: d,
+        }
+      }).pipe(Effect.catchAll(() => Effect.succeed(null)))
 
     const related = yield* Effect.all([
       Effect.forEach(outRels, (r) => resolve(r, "out", r.toId)),
@@ -145,7 +152,8 @@ export const getConceptGraph: UC<unknown> = Effect.gen(function* () {
         id: f.id,
         from: f.conceptId,
         to: f.config.target as string,
-        relationType: f.config.relationType ?? f.name,
+        // Identity is the field id (`id`); these are decorative labels.
+        relationType: f.name,
         cardinality: f.config.cardinality ?? ("many" as const),
         fieldName: f.name,
       })),
@@ -162,47 +170,13 @@ export const addField = (input: {
 
 export const updateField = (input: {
   readonly id: string
+  readonly name?: string
   readonly config?: FieldConfig
   readonly formula?: string | null
 }): UC<unknown> => Effect.flatMap(FieldService, (f) => f.update(input))
 
 export const deleteField = (id: string): UC<unknown> =>
   Effect.flatMap(FieldService, (f) => f.remove(id))
-
-const decayBand = (d: Instance) => (d.state.decay as { band?: string } | undefined)?.band
-
-/**
- * List instances for the concept pinned by `slug` — the dashboard's stable handle
- * (decoupled from the renameable display name). An org missing that concept (e.g.
- * never seeded) yields an empty list rather than failing.
- */
-const instancesBySlug = (slug: string, opts: { readonly limit?: number } = {}) =>
-  Effect.gen(function* () {
-    const concepts = yield* ConceptService
-    const query = yield* QueryService
-    const concept = yield* concepts.getBySlug(slug)
-    return yield* query.findInstances({ conceptId: concept.id, limit: opts.limit })
-  }).pipe(Effect.catchTag("ConceptNotFound", () => Effect.succeed([] as ReadonlyArray<Instance>)))
-
-export const getOwed: UC<unknown> = Effect.gen(function* () {
-  const computed = yield* ComputedFields
-  const tasks = yield* instancesBySlug("task", { limit: 200 })
-  const openTasks = tasks.filter((t) => t.state.done !== true)
-  const dealsRaw = yield* instancesBySlug("deal", { limit: 200 })
-  const deals = yield* Effect.forEach(dealsRaw, (d) => computed.decorate(d))
-  const open = deals.filter((d) => d.state.status !== "won" && d.state.status !== "lost")
-  return {
-    openTasks,
-    decayingDeals: open
-      .filter((d) => decayBand(d) === "cooling" || decayBand(d) === "cold")
-      .sort(
-        (a, b) =>
-          ((b.state.decay as { days?: number }).days ?? 0) -
-          ((a.state.decay as { days?: number }).days ?? 0),
-      ),
-    dueRenewals: open.filter((d) => d.state.is_renewal === true),
-  }
-})
 
 export interface FeedItem {
   readonly id: number
@@ -228,26 +202,6 @@ export const getChanged: UC<ReadonlyArray<FeedItem>> = Effect.flatMap(EventStore
   ),
 )
 
-export const getDemand: UC<unknown> = Effect.gen(function* () {
-  const relations = yield* RelationService
-  const instances = yield* InstanceService
-  const signals = yield* instancesBySlug("signal", { limit: 200 })
-  const open = signals.filter((s) => s.state.status !== "shipped")
-  const items = yield* Effect.forEach(open, (signal) =>
-    Effect.gen(function* () {
-      const rels = yield* relations.listFrom(signal.id, "from")
-      const accountId = rels[0]?.toId
-      if (!accountId) return { signal, accountId: null, accountName: null, weight: 0 }
-      const account = yield* instances
-        .get(accountId)
-        .pipe(Effect.catchAll(() => Effect.succeed(null)))
-      const weight = Number(account?.state.contract_value ?? account?.state.prospecting_value ?? 0)
-      return { signal, accountId, accountName: (account?.state.name as string) ?? null, weight }
-    }),
-  )
-  return [...items].sort((a, b) => b.weight - a.weight)
-})
-
 // ── commands ──────────────────────────────────────────────────────────────────
 
 export const createInstance = (conceptId: string, fields: Record<string, unknown>): UC<Instance> =>
@@ -271,12 +225,12 @@ export const transitionInstance = (
   )
 
 export const linkRelation = (
-  relationType: string,
+  fieldId: string,
   fromId: string,
   toId: string,
   properties?: Record<string, unknown>,
 ): UC<unknown> =>
-  Effect.flatMap(RelationService, (r) => r.create({ relationType, fromId, toId, properties }))
+  Effect.flatMap(RelationService, (r) => r.create({ fieldId, fromId, toId, properties }))
 
 export const uploadAttachment = (
   instanceId: string,

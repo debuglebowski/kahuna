@@ -33,12 +33,12 @@ export function ConceptView() {
     [id, collection],
   )
 
-  // Field defs drive the create form; loaded lazily when the user opens it.
+  // Field defs drive both the table columns (id→name) and the create form.
   const [adding, setAdding] = useState(false)
   const fields = useQuery({
     queryKey: ["fields", id],
     queryFn: () => api.listFields(id),
-    enabled: !!id && adding,
+    enabled: !!id,
   })
   const create = useMutation({
     mutationFn: (values: Record<string, unknown>) => api.createInstance(id, values),
@@ -52,11 +52,16 @@ export function ConceptView() {
     create.reset()
   }
 
-  const columns = useMemo(() => {
-    const keys = new Set<string>()
-    for (const i of instances.data ?? []) for (const k of Object.keys(i.state)) keys.add(k)
-    return [...keys]
-  }, [instances.data])
+  // Columns come from the concept's field defs (state is keyed by field id):
+  // header = the renameable name, cell/sort key = the stable id. Relation/file
+  // values don't live in state, so they're not columns.
+  const columns = useMemo(
+    () =>
+      (fields.data ?? [])
+        .filter((f) => f.kind !== "relation" && f.kind !== "file")
+        .map((f) => ({ id: f.id, name: f.name })),
+    [fields.data],
+  )
 
   const rows = useMemo(() => {
     let r = [...(instances.data ?? [])]
@@ -101,18 +106,18 @@ export function ConceptView() {
                   <tr className="border-b border-gray-100 text-xs uppercase text-gray-400">
                     {columns.map((c) => (
                       <th
-                        key={c}
+                        key={c.id}
                         className="cursor-pointer px-4 py-2"
                         onClick={() => {
-                          if (sortKey === c) setAsc(!asc)
+                          if (sortKey === c.id) setAsc(!asc)
                           else {
-                            setSortKey(c)
+                            setSortKey(c.id)
                             setAsc(true)
                           }
                         }}
                       >
-                        {c}
-                        {sortKey === c ? (asc ? " ▲" : " ▼") : ""}
+                        {c.name}
+                        {sortKey === c.id ? (asc ? " ▲" : " ▼") : ""}
                       </th>
                     ))}
                   </tr>
@@ -125,8 +130,8 @@ export function ConceptView() {
                       onClick={() => navigate(`/instances/${r.id}`)}
                     >
                       {columns.map((c) => (
-                        <td key={c} className="px-4 py-2 text-gray-700">
-                          {showValue(r.state[c])}
+                        <td key={c.id} className="px-4 py-2 text-gray-700">
+                          {showValue(r.state[c.id])}
                         </td>
                       ))}
                     </tr>

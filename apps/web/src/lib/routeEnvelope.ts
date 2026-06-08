@@ -22,9 +22,7 @@ export interface LiveEnvelope {
 
 export const KEY = {
   concepts: "concepts",
-  owed: "owed",
   changed: "changed",
-  demand: "demand",
   instances: (concept: string) => `instances:${concept}`,
   /** A single instance's detail view (its own data + connected instances). */
   detail: (id: string) => `detail:${id}`,
@@ -45,16 +43,10 @@ export const routeEnvelope = (env: LiveEnvelope, mounted: ReadonlyArray<string>)
   if (env.kind === "concept" || env.kind === "field") {
     candidates.add(KEY.concepts)
   } else if (env.kind === "relation") {
-    // Relations feed the dashboard aggregates (e.g. Signal -from-> account → demand).
-    candidates.add(KEY.owed)
-    candidates.add(KEY.demand)
+    // A relation change can affect any open detail page (connected instances).
     for (const k of details) candidates.add(k)
   } else {
-    // instance — the dashboard aggregates (owed/demand) are global, so any instance
-    // change can affect them; nudge both (the `mounted` filter below means they only
-    // actually refetch when the dashboard is open). No concept-name special-casing.
-    candidates.add(KEY.owed)
-    candidates.add(KEY.demand)
+    // instance — nudge its concept's list and any open detail pages.
     if (env.conceptId) candidates.add(KEY.instances(env.conceptId))
     for (const k of details) candidates.add(k)
   }

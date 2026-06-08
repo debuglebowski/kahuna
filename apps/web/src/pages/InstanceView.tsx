@@ -5,10 +5,11 @@ import type { DecayValue, Field, MomentumValue, RelatedInstance } from "../lib/a
 import { instanceDetail, KEY, useRegisterCollection } from "../lib/collections"
 import { showValue } from "../lib/utils"
 
-/** A human label for an instance — first text field, else a common name key, else its id. */
-const labelOf = (state: Record<string, unknown>, fields?: ReadonlyArray<Field>): string => {
-  const textField = fields?.find((f) => f.kind === "text" && state[f.name])
-  const v = textField ? state[textField.name] : (state.title ?? state.name)
+/** A human label for an instance — its first non-empty text field, else untitled.
+ *  State is keyed by field id, so the concept's field defs are required. */
+const labelOf = (state: Record<string, unknown>, fields: ReadonlyArray<Field>): string => {
+  const textField = fields.find((f) => f.kind === "text" && state[f.id])
+  const v = textField ? state[textField.id] : undefined
   return v ? String(v) : "(untitled)"
 }
 
@@ -35,7 +36,8 @@ function FieldValue({ field, value }: { field: Field; value: unknown }) {
 function Connections({ related }: { related: ReadonlyArray<RelatedInstance> }) {
   const groups = new Map<string, RelatedInstance[]>()
   for (const r of related) {
-    const key = `${r.direction}:${r.relationType}`
+    // Group by direction + relation field id (stable); label from relationName.
+    const key = `${r.direction}:${r.fieldId}`
     const list = groups.get(key) ?? []
     list.push(r)
     groups.set(key, list)
@@ -47,12 +49,12 @@ function Connections({ related }: { related: ReadonlyArray<RelatedInstance> }) {
   return (
     <div className="divide-y divide-gray-100">
       {[...groups.entries()].map(([key, items]) => {
-        const [direction, relationType] = key.split(":")
-        const arrow = direction === "out" ? "→" : "←"
+        const first = items[0]!
+        const arrow = first.direction === "out" ? "→" : "←"
         return (
           <div key={key} className="px-4 py-3">
             <div className="mb-2 text-xs font-medium uppercase tracking-wide text-gray-400">
-              {arrow} {relationType}
+              {arrow} {first.relationName}
             </div>
             <div className="space-y-1">
               {items.map((r) => (
@@ -61,7 +63,7 @@ function Connections({ related }: { related: ReadonlyArray<RelatedInstance> }) {
                   to={`/instances/${r.instance.id}`}
                   className="flex items-center justify-between rounded px-2 py-1 hover:bg-gray-50"
                 >
-                  <span className="text-sm text-gray-700">{labelOf(r.instance.state)}</span>
+                  <span className="text-sm text-gray-700">{r.label}</span>
                   <Badge tone="blue">{r.conceptName}</Badge>
                 </Link>
               ))}
@@ -88,9 +90,9 @@ export function InstanceView() {
   if (detailQ.isLoading || !detail) return <Spinner />
 
   const { instance, concept, fields, related } = detail
-  // Show declared fields in their defined order, plus any extra state keys
-  // (skip engine-internal book-keeping like `__bands`).
-  const declared = new Set(fields.map((f) => f.name))
+  // Show declared fields in their defined order, plus any orphaned state keys —
+  // field ids whose def was deleted (skip engine-internal markers like `__bands`).
+  const declared = new Set(fields.map((f) => f.id))
   const extras = Object.keys(instance.state).filter((k) => !declared.has(k) && !k.startsWith("__"))
 
   return (
@@ -110,7 +112,7 @@ export function InstanceView() {
               <div key={f.id} className="flex items-center justify-between px-4 py-2">
                 <dt className="text-gray-400">{f.name}</dt>
                 <dd className="text-right">
-                  <FieldValue field={f} value={instance.state[f.name]} />
+                  <FieldValue field={f} value={instance.state[f.id]} />
                 </dd>
               </div>
             ))}

@@ -7,12 +7,13 @@ import { type InstanceRow, toInstance } from "./rows"
 
 /** Identify the concept by id or name (exactly one), plus the query options. */
 export type FindInstancesInput = ConceptRef & {
-  /** JSONB containment filter: `state @> where`. */
+  /** JSONB containment filter: `state @> where` (keys are field ids). */
   readonly where?: Record<string, unknown>
-  /** Restrict to instances that are the `from` of a relation pointing at `toId`. */
-  readonly relatedToTo?: { readonly relationType: string; readonly toId: string }
-  /** Restrict to instances that are the `to` of a relation coming from `fromId`. */
-  readonly relatedToFrom?: { readonly relationType: string; readonly fromId: string }
+  /** Restrict to instances that are the `from` of a `fieldId` relation pointing at `toId`. */
+  readonly relatedToTo?: { readonly fieldId: string; readonly toId: string }
+  /** Restrict to instances that are the `to` of a `fieldId` relation coming from `fromId`. */
+  readonly relatedToFrom?: { readonly fieldId: string; readonly fromId: string }
+  /** `field` is a field id (or `"created_at"`). */
   readonly orderBy?: { readonly field: string; readonly dir?: "asc" | "desc" }
   readonly limit?: number
 }
@@ -34,9 +35,9 @@ export class QueryService extends Effect.Service<QueryService>()("engine/QuerySe
 
         const whereExtra = input.where ? sql` AND state @> ${sql.json(input.where)}` : sql``
         const relExtra = input.relatedToTo
-          ? sql` AND id IN (SELECT from_id FROM relations WHERE org_id = ${orgId} AND relation_type = ${input.relatedToTo.relationType} AND to_id = ${input.relatedToTo.toId} AND deleted_at IS NULL)`
+          ? sql` AND id IN (SELECT from_id FROM relations WHERE org_id = ${orgId} AND field_id = ${input.relatedToTo.fieldId} AND to_id = ${input.relatedToTo.toId} AND deleted_at IS NULL)`
           : input.relatedToFrom
-            ? sql` AND id IN (SELECT to_id FROM relations WHERE org_id = ${orgId} AND relation_type = ${input.relatedToFrom.relationType} AND from_id = ${input.relatedToFrom.fromId} AND deleted_at IS NULL)`
+            ? sql` AND id IN (SELECT to_id FROM relations WHERE org_id = ${orgId} AND field_id = ${input.relatedToFrom.fieldId} AND from_id = ${input.relatedToFrom.fromId} AND deleted_at IS NULL)`
             : sql``
         const orderCol =
           !input.orderBy || input.orderBy.field === "created_at"

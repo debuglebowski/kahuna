@@ -47,12 +47,22 @@ export const fields = pgTable(
     conceptId: uuid("concept_id")
       .notNull()
       .references(() => concepts.id),
+    // `id` is the authoritative key for instance.state / events / relation edges;
+    // `name` is a purely decorative, freely-renameable label.
     name: text("name").notNull(),
     kind: text("kind").notNull(),
     formula: text("formula"),
     config: jsonb("config").notNull().default(sql`'{}'::jsonb`),
+    // Soft delete: a field is never hard-deleted, so any id it ever owned stays
+    // resolvable to a name for orphaned `state` keys / historical events.
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
   },
-  (t) => [uniqueIndex("fields_concept_name_uq").on(t.conceptId, t.name)],
+  // Partial unique so a name can be reused after its field is soft-deleted.
+  (t) => [
+    uniqueIndex("fields_concept_name_uq")
+      .on(t.conceptId, t.name)
+      .where(sql`${t.deletedAt} IS NULL`),
+  ],
 )
 
 export const instances = pgTable(
@@ -68,7 +78,11 @@ export const instances = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
   },
-  (t) => [index("instances_org_concept_idx").on(t.orgId, t.conceptId)],
+  (t) => [
+    index("instances_org_concept_idx").on(t.orgId, t.conceptId),
+    // Supports `state @> {...}` containment filters (QueryService.where).
+    index("instances_state_gin").using("gin", sql`${t.state} jsonb_path_ops`),
+  ],
 )
 
 export const relations = pgTable(
@@ -76,7 +90,11 @@ export const relations = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     orgId: text("org_id").notNull(),
-    relationType: text("relation_type").notNull(),
+    // The relation field def this edge realises (kind=relation). Identity by id,
+    // not a type string — so the relation's label is freely renameable.
+    fieldId: uuid("field_id")
+      .notNull()
+      .references(() => fields.id),
     fromId: uuid("from_id")
       .notNull()
       .references(() => instances.id),
@@ -88,8 +106,8 @@ export const relations = pgTable(
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
   },
   (t) => [
-    index("relations_from_idx").on(t.orgId, t.fromId, t.relationType),
-    index("relations_to_idx").on(t.orgId, t.toId, t.relationType),
+    index("relations_from_idx").on(t.orgId, t.fromId, t.fieldId),
+    index("relations_to_idx").on(t.orgId, t.toId, t.fieldId),
   ],
 )
 

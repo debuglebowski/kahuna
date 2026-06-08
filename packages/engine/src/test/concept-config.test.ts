@@ -92,24 +92,24 @@ describe("concept configuration (settings)", () => {
 
       const account = yield* concepts.create({ name: "Account" })
       const deal = yield* concepts.create({ name: "Deal" })
-      // Declare a relation type "for" on Deal that must target Account (by id).
-      yield* fields.addField({
+      // Declare a relation field on Deal that must target Account (by id).
+      const accountField = yield* fields.addField({
         conceptId: deal.id,
         name: "account",
         kind: "relation",
-        config: { relationType: "for", target: account.id, cardinality: "one" },
+        config: { target: account.id, cardinality: "one" },
       })
 
       const acc = yield* instances.create({ conceptId: account.id, fields: {} })
       const d = yield* instances.create({ conceptId: deal.id, fields: {} })
 
       // Linking to an Account instance satisfies the declared target id.
-      yield* relations.create({ relationType: "for", fromId: d.id, toId: acc.id })
+      yield* relations.create({ fieldId: accountField.id, fromId: d.id, toId: acc.id })
 
       // Linking to a non-Account target (another Deal) is rejected.
       const d2 = yield* instances.create({ conceptId: deal.id, fields: {} })
       const err = yield* relations
-        .create({ relationType: "for", fromId: d.id, toId: d2.id })
+        .create({ fieldId: accountField.id, fromId: d.id, toId: d2.id })
         .pipe(Effect.flip)
       expect(err._tag).toBe("RelationTargetMismatch")
     }).pipe(Effect.provide(testLayer(newOrgId()))),

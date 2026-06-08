@@ -16,7 +16,11 @@ export class ComputedFields extends Effect.Service<ComputedFields>()("engine/Com
     const sql = yield* PgClient.PgClient
     const fields = yield* FieldService
 
-    /** Deal --forRel--> Account; Interactions --onRel--> Account; collect their dateField. */
+    /**
+     * Deal --forRel--> Account; Interactions --onRel--> Account; collect their
+     * dateField. `forRel`/`onRel` are relation **field ids**; `dateField` is the
+     * **field id** of the date field on the related concept.
+     */
     const gatherDates = (instanceId: string, forRel: string, onRel: string, dateField: string) =>
       Effect.gen(function* () {
         const { orgId } = yield* OrgContext
@@ -25,11 +29,11 @@ export class ComputedFields extends Effect.Service<ComputedFields>()("engine/Com
           FROM relations r_for
           JOIN relations r_on
             ON r_on.to_id = r_for.to_id AND r_on.org_id = r_for.org_id
-            AND r_on.relation_type = ${onRel} AND r_on.deleted_at IS NULL
+            AND r_on.field_id = ${onRel} AND r_on.deleted_at IS NULL
           JOIN instances i
             ON i.id = r_on.from_id AND i.org_id = r_for.org_id AND i.deleted_at IS NULL
           WHERE r_for.org_id = ${orgId} AND r_for.from_id = ${instanceId}
-            AND r_for.relation_type = ${forRel} AND r_for.deleted_at IS NULL
+            AND r_for.field_id = ${forRel} AND r_for.deleted_at IS NULL
             AND (i.state->>${dateField}) IS NOT NULL`
         return rows
           .map((r) => r.occurred_on)
@@ -47,14 +51,18 @@ export class ComputedFields extends Effect.Service<ComputedFields>()("engine/Com
         const state = { ...instance.state }
         for (const def of computed) {
           const params = def.config.params ?? {}
-          const forRel = (params.forRelation as string | undefined) ?? "for"
-          const onRel = (params.onRelation as string | undefined) ?? "on"
-          const dateField = (params.dateField as string | undefined) ?? "occurred_on"
-          const dates = yield* gatherDates(instance.id, forRel, onRel, dateField)
+          // Relation/date refs are field ids, resolved at field-creation time.
+          const forRel = params.forRelation as string | undefined
+          const onRel = params.onRelation as string | undefined
+          const dateField = params.dateField as string | undefined
+          const dates =
+            forRel && onRel && dateField
+              ? yield* gatherDates(instance.id, forRel, onRel, dateField)
+              : []
           if (def.config.computedKind === "decay") {
-            state[def.name] = decay(dates, now, params as DecayParams, instance.createdAt)
+            state[def.id] = decay(dates, now, params as DecayParams, instance.createdAt)
           } else if (def.config.computedKind === "momentum") {
-            state[def.name] = momentum(dates, now, params as MomentumParams)
+            state[def.id] = momentum(dates, now, params as MomentumParams)
           }
         }
         return { ...instance, state } satisfies Instance

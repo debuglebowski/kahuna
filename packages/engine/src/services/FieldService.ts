@@ -33,8 +33,8 @@ const validateConfig = (
     if (kind === "computed" && !config.computedKind) {
       return yield* invalid("computed field requires config.computedKind")
     }
-    if (kind === "relation" && (!config.relationType || !config.target)) {
-      return yield* invalid("relation field requires config.relationType and config.target")
+    if (kind === "relation" && !config.target) {
+      return yield* invalid("relation field requires config.target")
     }
     if (config.format) {
       if (kind === "text" && !TEXT_FORMATS.has(config.format)) {
@@ -64,7 +64,9 @@ export class FieldService extends Effect.Service<FieldService>()("engine/FieldSe
       Effect.gen(function* () {
         const { orgId } = yield* OrgContext
         const rows = yield* sql<FieldRow>`
-          SELECT * FROM fields WHERE org_id = ${orgId} AND concept_id = ${conceptId} ORDER BY name ASC`
+          SELECT * FROM fields
+          WHERE org_id = ${orgId} AND concept_id = ${conceptId} AND deleted_at IS NULL
+          ORDER BY name ASC`
         return rows.map(toField)
       }).pipe(Effect.orDie)
 
@@ -90,7 +92,9 @@ export class FieldService extends Effect.Service<FieldService>()("engine/FieldSe
           )
 
           const existing = yield* sql<{ readonly id: string }>`
-            SELECT id FROM fields WHERE concept_id = ${input.conceptId} AND name = ${input.name} LIMIT 1`
+            SELECT id FROM fields
+            WHERE concept_id = ${input.conceptId} AND name = ${input.name} AND deleted_at IS NULL
+            LIMIT 1`
           if (existing[0]) {
             return yield* Effect.fail(
               new FieldNameConflict({ conceptId: input.conceptId, name: input.name }),
@@ -118,12 +122,14 @@ export class FieldService extends Effect.Service<FieldService>()("engine/FieldSe
       )
 
     /**
-     * Edit a field's config and/or formula. Name and kind are immutable: stored
-     * instance state is keyed by field name, and changing kind would invalidate
-     * already-persisted values.
+     * Edit a field's name (the decorative label), config and/or formula. Only
+     * `kind` is immutable — changing it would invalidate already-persisted
+     * values. The name is free to change because instance state is keyed by
+     * `id`, not by name.
      */
     const update = (input: {
       readonly id: string
+      readonly name?: string
       readonly config?: FieldConfig
       readonly formula?: string | null
     }) =>
@@ -131,15 +137,24 @@ export class FieldService extends Effect.Service<FieldService>()("engine/FieldSe
         Effect.gen(function* () {
           const { orgId } = yield* OrgContext
           const current = yield* getById(input.id)
+          const name = input.name ?? current.name
           const config = input.config ?? current.config
-          yield* validateConfig(
-            { conceptId: current.conceptId, name: current.name },
-            current.kind,
-            config,
-          )
+          yield* validateConfig({ conceptId: current.conceptId, name }, current.kind, config)
+          if (name !== current.name) {
+            const clash = yield* sql<{ readonly id: string }>`
+              SELECT id FROM fields
+              WHERE concept_id = ${current.conceptId} AND name = ${name}
+                AND deleted_at IS NULL AND id <> ${input.id}
+              LIMIT 1`
+            if (clash[0]) {
+              return yield* Effect.fail(
+                new FieldNameConflict({ conceptId: current.conceptId, name }),
+              )
+            }
+          }
           const formula = input.formula === undefined ? current.formula : input.formula
           const rows = yield* sql<FieldRow>`
-            UPDATE fields SET config = ${sql.json(config)}, formula = ${formula}
+            UPDATE fields SET name = ${name}, config = ${sql.json(config)}, formula = ${formula}
             WHERE org_id = ${orgId} AND id = ${input.id}
             RETURNING *`
           const field = toField(rows[0]!)
@@ -159,15 +174,17 @@ export class FieldService extends Effect.Service<FieldService>()("engine/FieldSe
       )
 
     /**
-     * Delete a field def. Existing instance.state keeps any orphaned key
-     * harmlessly (field validation is write-time only).
+     * Soft-delete a field def. The row is retained (deleted_at set) so its id
+     * stays resolvable to a name for any orphaned `state` keys / historical
+     * events / relation edges that still reference it. Existing instance.state
+     * keeps the orphaned key harmlessly (field validation is write-time only).
      */
     const remove = (id: string) =>
       sql.withTransaction(
         Effect.gen(function* () {
           const { orgId } = yield* OrgContext
           const field = yield* getById(id)
-          yield* sql`DELETE FROM fields WHERE org_id = ${orgId} AND id = ${id}`
+          yield* sql`UPDATE fields SET deleted_at = now() WHERE org_id = ${orgId} AND id = ${id}`
           yield* events.append({
             subjectKind: "field",
             subjectId: id,

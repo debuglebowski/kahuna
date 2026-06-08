@@ -34,8 +34,7 @@ export interface FieldConfig {
   readonly options?: ReadonlyArray<string>
   /** enum: legal state-machine transitions `from -> [to, ...]` */
   readonly transitions?: Record<string, ReadonlyArray<string>>
-  /** relation: the relation type + target concept name */
-  readonly relationType?: string
+  /** relation: the target concept's id (the relation's identity is its field id). */
   readonly target?: string
   readonly cardinality?: "one" | "many"
   /** computed: which built-in + its params */
@@ -47,6 +46,8 @@ export interface FieldConfig {
   readonly format?: string
 }
 
+/** Instance field values, keyed by field **id** (`fields.id`). Synthetic keys
+ *  prefixed with `__` (e.g. `__bands`) are engine markers, not fields. */
 export type InstanceState = Record<string, unknown>
 
 export interface Concept {
@@ -68,10 +69,14 @@ export interface Field {
   readonly id: Id
   readonly orgId: OrgId
   readonly conceptId: Id
+  /** Decorative, freely-renameable label. The stable key is `id`. */
   readonly name: string
   readonly kind: FieldKind
   readonly formula: string | null
   readonly config: FieldConfig
+  /** Soft-delete marker; non-null fields are hidden from `listFields` but stay
+   *  resolvable by `id` (so orphaned state keys / historical edges resolve). */
+  readonly deletedAt: Date | null
 }
 
 export interface Instance {
@@ -87,7 +92,8 @@ export interface Instance {
 export interface Relation {
   readonly id: Id
   readonly orgId: OrgId
-  readonly relationType: string
+  /** The relation field def (kind=relation) this edge realises. */
+  readonly fieldId: Id
   readonly fromId: Id
   readonly toId: Id
   readonly properties: Record<string, unknown>
@@ -101,7 +107,7 @@ export type EventPayload =
   | { readonly _tag: "InstanceDeleted" }
   | {
       readonly _tag: "RelationCreated"
-      readonly relationType: string
+      readonly fieldId: Id
       readonly fromId: Id
       readonly toId: Id
       readonly properties: Record<string, unknown>

@@ -21,7 +21,7 @@ function summarize(f: Field, nameOf: (id: string) => string): string {
     case "enum":
       return (f.config.options ?? []).join(", ")
     case "relation":
-      return `${f.config.relationType ?? "?"} → ${f.config.target ? nameOf(f.config.target) : "?"} (${f.config.cardinality ?? "many"})`
+      return `→ ${f.config.target ? nameOf(f.config.target) : "?"} (${f.config.cardinality ?? "many"})`
     case "computed":
       return f.config.computedKind ?? ""
     case "user":
@@ -113,8 +113,8 @@ export function Concepts() {
     },
   })
   const updateField = useMutation({
-    mutationFn: (vars: { id: string; config: FieldFormValue["config"] }) =>
-      api.updateField({ id: vars.id, config: vars.config }),
+    mutationFn: (vars: { id: string; name: string; config: FieldFormValue["config"] }) =>
+      api.updateField({ id: vars.id, name: vars.name, config: vars.config }),
     onSuccess: () => {
       setEditingFieldId(null)
       refetchFields()
@@ -270,7 +270,9 @@ export function Concepts() {
                       <FieldForm
                         concepts={concepts.data ?? []}
                         initial={f}
-                        onSubmit={(v) => updateField.mutate({ id: f.id, config: v.config })}
+                        onSubmit={(v) =>
+                          updateField.mutate({ id: f.id, name: v.name, config: v.config })
+                        }
                         onCancel={() => setEditingFieldId(null)}
                         pending={updateField.isPending}
                       />

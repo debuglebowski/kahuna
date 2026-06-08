@@ -1,14 +1,7 @@
 import { createCollection } from "@tanstack/db"
 import { queryCollectionOptions } from "@tanstack/query-db-collection"
 import { useEffect } from "react"
-import type {
-  Concept,
-  DemandItem,
-  FeedItem,
-  Instance,
-  InstanceDetail,
-  Owed,
-} from "../../rpc/contract"
+import type { Concept, FeedItem, Instance, InstanceDetail } from "../../rpc/contract"
 import { api } from "./api"
 import { queryClient } from "./queryClient"
 
@@ -67,27 +60,6 @@ export const changedCollection = createCollection(
     queryFn: async (): Promise<FeedItem[]> => [...(await api.getChanged())],
     queryClient,
     getKey: (f: FeedItem) => f.id,
-  }),
-)
-
-export const demandCollection = createCollection(
-  queryCollectionOptions({
-    queryKey: ["live", "demand"],
-    queryFn: async (): Promise<DemandItem[]> => [...(await api.getDemand())],
-    queryClient,
-    getKey: (d: DemandItem) => d.signal.id,
-  }),
-)
-
-// `Owed` is one composite object — model it as a single-row collection.
-export const owedCollection = createCollection(
-  queryCollectionOptions({
-    queryKey: ["live", "owed"],
-    queryFn: async (): Promise<Array<Owed & { id: string }>> => [
-      { id: "owed", ...(await api.getOwed()) },
-    ],
-    queryClient,
-    getKey: (o) => o.id,
   }),
 )
 

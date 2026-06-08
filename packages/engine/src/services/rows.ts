@@ -29,6 +29,7 @@ export interface FieldRow {
   readonly kind: string
   readonly formula: string | null
   readonly config: unknown
+  readonly deleted_at: Date | null
 }
 export interface InstanceRow {
   readonly id: string
@@ -42,7 +43,7 @@ export interface InstanceRow {
 export interface RelationRow {
   readonly id: string
   readonly org_id: string
-  readonly relation_type: string
+  readonly field_id: string
   readonly from_id: string
   readonly to_id: string
   readonly properties: Record<string, unknown>
@@ -80,6 +81,7 @@ export const toField = (r: FieldRow): Field => ({
   kind: r.kind as FieldKind,
   formula: r.formula,
   config: toFieldConfig(r.config),
+  deletedAt: r.deleted_at,
 })
 
 export const toInstance = (r: InstanceRow): Instance => ({
@@ -95,7 +97,7 @@ export const toInstance = (r: InstanceRow): Instance => ({
 export const toRelation = (r: RelationRow): Relation => ({
   id: r.id,
   orgId: r.org_id,
-  relationType: r.relation_type,
+  fieldId: r.field_id,
   fromId: r.from_id,
   toId: r.to_id,
   properties: r.properties ?? {},

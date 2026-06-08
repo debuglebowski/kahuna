@@ -12,15 +12,30 @@ import { newOrgId, testLayer } from "./harness"
 type DecayValue = { readonly band: string; readonly days: number | null }
 type MomentumValue = { readonly label: string; readonly recent: number; readonly prior: number }
 
-/** Define a minimal Account / Interaction / Deal model (+ relations) in the current org. */
+/**
+ * Define a minimal Account / Interaction / Deal model (+ relations) in the
+ * current org. Returns the concepts and a map of field **ids** — instance state,
+ * transitions, relations and computed params are all keyed by id, not name.
+ */
 const setupDealModel = Effect.gen(function* () {
   const concepts = yield* ConceptService
   const fields = yield* FieldService
-  yield* concepts.create({ name: "Account" })
+  const account = yield* concepts.create({ name: "Account" })
   const interaction = yield* concepts.create({ name: "Interaction" })
   const deal = yield* concepts.create({ name: "Deal" })
-  yield* fields.addField({ conceptId: interaction.id, name: "occurred_on", kind: "date" })
-  yield* fields.addField({
+
+  const occurredOn = yield* fields.addField({
+    conceptId: interaction.id,
+    name: "occurred_on",
+    kind: "date",
+  })
+  const onField = yield* fields.addField({
+    conceptId: interaction.id,
+    name: "on",
+    kind: "relation",
+    config: { target: account.id, cardinality: "many" },
+  })
+  const status = yield* fields.addField({
     conceptId: deal.id,
     name: "status",
     kind: "enum",
@@ -29,43 +44,63 @@ const setupDealModel = Effect.gen(function* () {
       transitions: { lead: ["qualified", "lost"], qualified: ["won", "lost"], won: [], lost: [] },
     },
   })
-  yield* fields.addField({
+  const forField = yield* fields.addField({
+    conceptId: deal.id,
+    name: "for",
+    kind: "relation",
+    config: { target: account.id, cardinality: "one" },
+  })
+  const decay = yield* fields.addField({
     conceptId: deal.id,
     name: "decay",
     kind: "computed",
     config: {
       computedKind: "decay",
-      params: { forRelation: "for", onRelation: "on", dateField: "occurred_on" },
+      params: { forRelation: forField.id, onRelation: onField.id, dateField: occurredOn.id },
     },
   })
-  yield* fields.addField({
+  const momentum = yield* fields.addField({
     conceptId: deal.id,
     name: "momentum",
     kind: "computed",
     config: {
       computedKind: "momentum",
-      params: { forRelation: "for", onRelation: "on", dateField: "occurred_on" },
+      params: { forRelation: forField.id, onRelation: onField.id, dateField: occurredOn.id },
     },
   })
+
+  return {
+    account,
+    interaction,
+    deal,
+    f: {
+      status: status.id,
+      decay: decay.id,
+      momentum: momentum.id,
+      occurredOn: occurredOn.id,
+      for: forField.id,
+      on: onField.id,
+    },
+  }
 })
 
 describe("engine (integration)", () => {
   it.effect("replay == incremental projection", () =>
     Effect.gen(function* () {
-      yield* setupDealModel
+      const m = yield* setupDealModel
       const instances = yield* InstanceService
       const events = yield* EventStore
 
-      const d0 = yield* instances.create({ conceptName: "Deal", fields: { status: "lead" } })
+      const d0 = yield* instances.create({ conceptName: "Deal", fields: { [m.f.status]: "lead" } })
       const d1 = yield* instances.update({
         instanceId: d0.id,
         expectedVersion: 0,
-        patch: { status: "qualified" },
+        patch: { [m.f.status]: "qualified" },
       })
       const d2 = yield* instances.transition({
         instanceId: d0.id,
         expectedVersion: d1.version,
-        field: "status",
+        field: m.f.status,
         to: "won",
       })
 
@@ -77,23 +112,23 @@ describe("engine (integration)", () => {
         expect(folded.right.version).toBe(d2.version)
       }
       const fresh = yield* instances.get(d0.id)
-      expect(fresh.state).toEqual({ status: "won" })
+      expect(fresh.state).toEqual({ [m.f.status]: "won" })
       expect(fresh.version).toBe(2)
     }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
 
   it.effect("stale-version write is rejected", () =>
     Effect.gen(function* () {
-      yield* setupDealModel
+      const m = yield* setupDealModel
       const instances = yield* InstanceService
-      const d = yield* instances.create({ conceptName: "Deal", fields: { status: "lead" } })
+      const d = yield* instances.create({ conceptName: "Deal", fields: { [m.f.status]: "lead" } })
       yield* instances.update({
         instanceId: d.id,
         expectedVersion: 0,
-        patch: { status: "qualified" },
+        patch: { [m.f.status]: "qualified" },
       })
       const err = yield* instances
-        .update({ instanceId: d.id, expectedVersion: 0, patch: { status: "lost" } })
+        .update({ instanceId: d.id, expectedVersion: 0, patch: { [m.f.status]: "lost" } })
         .pipe(Effect.flip)
       expect(err._tag).toBe("VersionConflict")
     }).pipe(Effect.provide(testLayer(newOrgId()))),
@@ -101,14 +136,14 @@ describe("engine (integration)", () => {
 
   it.effect("concurrent writers: exactly one wins (FOR UPDATE)", () =>
     Effect.gen(function* () {
-      yield* setupDealModel
+      const m = yield* setupDealModel
       const instances = yield* InstanceService
-      const d = yield* instances.create({ conceptName: "Deal", fields: { status: "lead" } })
+      const d = yield* instances.create({ conceptName: "Deal", fields: { [m.f.status]: "lead" } })
       const a = instances
-        .update({ instanceId: d.id, expectedVersion: 0, patch: { status: "qualified" } })
+        .update({ instanceId: d.id, expectedVersion: 0, patch: { [m.f.status]: "qualified" } })
         .pipe(Effect.either)
       const b = instances
-        .update({ instanceId: d.id, expectedVersion: 0, patch: { status: "lost" } })
+        .update({ instanceId: d.id, expectedVersion: 0, patch: { [m.f.status]: "lost" } })
         .pipe(Effect.either)
       const results = yield* Effect.all([a, b], { concurrency: 2 })
       expect(results.filter(Either.isRight).length).toBe(1)
@@ -118,28 +153,28 @@ describe("engine (integration)", () => {
 
   it.effect("time-travel reconstructs past state", () =>
     Effect.gen(function* () {
-      yield* setupDealModel
+      const m = yield* setupDealModel
       const instances = yield* InstanceService
       const events = yield* EventStore
-      const d = yield* instances.create({ conceptName: "Deal", fields: { status: "lead" } })
+      const d = yield* instances.create({ conceptName: "Deal", fields: { [m.f.status]: "lead" } })
       const v1 = yield* instances.update({
         instanceId: d.id,
         expectedVersion: 0,
-        patch: { status: "qualified" },
+        patch: { [m.f.status]: "qualified" },
       })
       yield* instances.transition({
         instanceId: d.id,
         expectedVersion: v1.version,
-        field: "status",
+        field: m.f.status,
         to: "won",
       })
 
       const stream = yield* events.readStream(d.id)
       const asCreate = yield* instances.getAsOf(d.id, stream[0]!.id)
-      expect(asCreate.state).toEqual({ status: "lead" })
+      expect(asCreate.state).toEqual({ [m.f.status]: "lead" })
       expect(asCreate.version).toBe(0)
       const asUpdate = yield* instances.getAsOf(d.id, stream[1]!.id)
-      expect(asUpdate.state).toEqual({ status: "qualified" })
+      expect(asUpdate.state).toEqual({ [m.f.status]: "qualified" })
       expect(asUpdate.version).toBe(1)
 
       const head = yield* instances.getAsOf(d.id, stream[2]!.id)
@@ -151,33 +186,33 @@ describe("engine (integration)", () => {
 
   it.effect("illegal Deal transition rejected; legal one allowed", () =>
     Effect.gen(function* () {
-      yield* setupDealModel
+      const m = yield* setupDealModel
       const instances = yield* InstanceService
-      const d = yield* instances.create({ conceptName: "Deal", fields: { status: "lead" } })
+      const d = yield* instances.create({ conceptName: "Deal", fields: { [m.f.status]: "lead" } })
       const err = yield* instances
-        .transition({ instanceId: d.id, expectedVersion: 0, field: "status", to: "won" })
+        .transition({ instanceId: d.id, expectedVersion: 0, field: m.f.status, to: "won" })
         .pipe(Effect.flip)
       expect(err._tag).toBe("IllegalTransition")
       const ok = yield* instances.transition({
         instanceId: d.id,
         expectedVersion: 0,
-        field: "status",
+        field: m.f.status,
         to: "qualified",
       })
-      expect(ok.state.status).toBe("qualified")
+      expect(ok.state[m.f.status]).toBe("qualified")
     }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
 
   it.effect("rejects unknown and wrong-type fields", () =>
     Effect.gen(function* () {
-      yield* setupDealModel
+      const m = yield* setupDealModel
       const instances = yield* InstanceService
       const e1 = yield* instances
         .create({ conceptName: "Deal", fields: { nope: 1 } })
         .pipe(Effect.flip)
       expect(e1._tag).toBe("FieldValidationError")
       const e2 = yield* instances
-        .create({ conceptName: "Deal", fields: { status: "bogus" } })
+        .create({ conceptName: "Deal", fields: { [m.f.status]: "bogus" } })
         .pipe(Effect.flip)
       expect(e2._tag).toBe("FieldValidationError")
     }).pipe(Effect.provide(testLayer(newOrgId()))),
@@ -185,18 +220,18 @@ describe("engine (integration)", () => {
 
   it.effect("rebuild reproduces the incremental projection", () =>
     Effect.gen(function* () {
-      yield* setupDealModel
+      const m = yield* setupDealModel
       const instances = yield* InstanceService
-      const d = yield* instances.create({ conceptName: "Deal", fields: { status: "lead" } })
+      const d = yield* instances.create({ conceptName: "Deal", fields: { [m.f.status]: "lead" } })
       const v1 = yield* instances.update({
         instanceId: d.id,
         expectedVersion: 0,
-        patch: { status: "qualified" },
+        patch: { [m.f.status]: "qualified" },
       })
       const live = yield* instances.transition({
         instanceId: d.id,
         expectedVersion: v1.version,
-        field: "status",
+        field: m.f.status,
         to: "won",
       })
       const rebuilt = yield* instances.rebuild(d.id)
@@ -207,7 +242,7 @@ describe("engine (integration)", () => {
 
   it.effect("decay and momentum reflect the current time (TestClock)", () =>
     Effect.gen(function* () {
-      yield* setupDealModel
+      const m = yield* setupDealModel
       const instances = yield* InstanceService
       const relations = yield* RelationService
       const computed = yield* ComputedFields
@@ -216,31 +251,34 @@ describe("engine (integration)", () => {
       yield* TestClock.setTime(base)
 
       const account = yield* instances.create({ conceptName: "Account", fields: {} })
-      const deal = yield* instances.create({ conceptName: "Deal", fields: { status: "lead" } })
-      yield* relations.create({ relationType: "for", fromId: deal.id, toId: account.id })
+      const deal = yield* instances.create({
+        conceptName: "Deal",
+        fields: { [m.f.status]: "lead" },
+      })
+      yield* relations.create({ fieldId: m.f.for, fromId: deal.id, toId: account.id })
       const interaction = yield* instances.create({
         conceptName: "Interaction",
-        fields: { occurred_on: new Date(base - 2 * 86_400_000).toISOString() },
+        fields: { [m.f.occurredOn]: new Date(base - 2 * 86_400_000).toISOString() },
       })
-      yield* relations.create({ relationType: "on", fromId: interaction.id, toId: account.id })
+      yield* relations.create({ fieldId: m.f.on, fromId: interaction.id, toId: account.id })
 
       const atBase = yield* computed.decorate(deal)
-      expect((atBase.state.decay as DecayValue).band).toBe("fresh")
-      expect((atBase.state.decay as DecayValue).days).toBe(2)
-      expect((atBase.state.momentum as MomentumValue).label).toBe("heating")
+      expect((atBase.state[m.f.decay] as DecayValue).band).toBe("fresh")
+      expect((atBase.state[m.f.decay] as DecayValue).days).toBe(2)
+      expect((atBase.state[m.f.momentum] as MomentumValue).label).toBe("heating")
 
       // Move 20 days forward: interaction is now 22 days old -> cooling, and falls into the prior window -> cooling momentum.
       yield* TestClock.setTime(base + 20 * 86_400_000)
       const later = yield* computed.decorate(deal)
-      expect((later.state.decay as DecayValue).band).toBe("cooling")
-      expect((later.state.decay as DecayValue).days).toBe(22)
-      expect((later.state.momentum as MomentumValue).label).toBe("cooling")
+      expect((later.state[m.f.decay] as DecayValue).band).toBe("cooling")
+      expect((later.state[m.f.decay] as DecayValue).days).toBe(22)
+      expect((later.state[m.f.momentum] as MomentumValue).label).toBe("cooling")
     }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
 
   it.effect("back-dated interaction changes decay", () =>
     Effect.gen(function* () {
-      yield* setupDealModel
+      const m = yield* setupDealModel
       const instances = yield* InstanceService
       const relations = yield* RelationService
       const computed = yield* ComputedFields
@@ -248,21 +286,24 @@ describe("engine (integration)", () => {
       yield* TestClock.setTime(base)
 
       const account = yield* instances.create({ conceptName: "Account", fields: {} })
-      const deal = yield* instances.create({ conceptName: "Deal", fields: { status: "lead" } })
-      yield* relations.create({ relationType: "for", fromId: deal.id, toId: account.id })
+      const deal = yield* instances.create({
+        conceptName: "Deal",
+        fields: { [m.f.status]: "lead" },
+      })
+      yield* relations.create({ fieldId: m.f.for, fromId: deal.id, toId: account.id })
 
       // No interactions yet -> falls back to deal age (just created -> fresh).
       const before = yield* computed.decorate(deal)
-      expect((before.state.decay as DecayValue).band).toBe("fresh")
+      expect((before.state[m.f.decay] as DecayValue).band).toBe("fresh")
 
       // Add an interaction 40 days ago -> decay jumps to cold.
       const old = yield* instances.create({
         conceptName: "Interaction",
-        fields: { occurred_on: new Date(base - 40 * 86_400_000).toISOString() },
+        fields: { [m.f.occurredOn]: new Date(base - 40 * 86_400_000).toISOString() },
       })
-      yield* relations.create({ relationType: "on", fromId: old.id, toId: account.id })
+      yield* relations.create({ fieldId: m.f.on, fromId: old.id, toId: account.id })
       const after = yield* computed.decorate(deal)
-      expect((after.state.decay as DecayValue).band).toBe("cold")
+      expect((after.state[m.f.decay] as DecayValue).band).toBe("cold")
     }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
 
@@ -297,8 +338,8 @@ describe("field primitives (user / json / money / multiple / format)", () => {
       const fields = yield* FieldService
       const instances = yield* InstanceService
       const team = yield* concepts.create({ name: "Team" })
-      yield* fields.addField({ conceptId: team.id, name: "owner", kind: "user" })
-      yield* fields.addField({
+      const owner = yield* fields.addField({ conceptId: team.id, name: "owner", kind: "user" })
+      const reviewers = yield* fields.addField({
         conceptId: team.id,
         name: "reviewers",
         kind: "user",
@@ -307,14 +348,14 @@ describe("field primitives (user / json / money / multiple / format)", () => {
 
       const t = yield* instances.create({
         conceptId: team.id,
-        fields: { owner: "user-1", reviewers: ["user-2", "user-3"] },
+        fields: { [owner.id]: "user-1", [reviewers.id]: ["user-2", "user-3"] },
       })
-      expect(t.state.owner).toBe("user-1")
-      expect(t.state.reviewers).toEqual(["user-2", "user-3"])
+      expect(t.state[owner.id]).toBe("user-1")
+      expect(t.state[reviewers.id]).toEqual(["user-2", "user-3"])
 
       // a `multiple` field rejects a non-array value
       const err = yield* instances
-        .create({ conceptId: team.id, fields: { reviewers: "user-2" } })
+        .create({ conceptId: team.id, fields: { [reviewers.id]: "user-2" } })
         .pipe(Effect.flip)
       expect(err._tag).toBe("FieldValidationError")
     }).pipe(Effect.provide(testLayer(newOrgId()))),
@@ -326,18 +367,21 @@ describe("field primitives (user / json / money / multiple / format)", () => {
       const fields = yield* FieldService
       const instances = yield* InstanceService
       const c = yield* concepts.create({ name: "Doc" })
-      yield* fields.addField({ conceptId: c.id, name: "meta", kind: "json" })
-      yield* fields.addField({ conceptId: c.id, name: "price", kind: "money" })
+      const meta = yield* fields.addField({ conceptId: c.id, name: "meta", kind: "json" })
+      const price = yield* fields.addField({ conceptId: c.id, name: "price", kind: "money" })
 
       const ok = yield* instances.create({
         conceptId: c.id,
-        fields: { meta: { a: 1, tags: ["x"] }, price: { amount: 99.5, currency: "USD" } },
+        fields: {
+          [meta.id]: { a: 1, tags: ["x"] },
+          [price.id]: { amount: 99.5, currency: "USD" },
+        },
       })
-      expect(ok.state.meta).toEqual({ a: 1, tags: ["x"] })
-      expect(ok.state.price).toEqual({ amount: 99.5, currency: "USD" })
+      expect(ok.state[meta.id]).toEqual({ a: 1, tags: ["x"] })
+      expect(ok.state[price.id]).toEqual({ amount: 99.5, currency: "USD" })
 
       const err = yield* instances
-        .create({ conceptId: c.id, fields: { price: { amount: 10 } } })
+        .create({ conceptId: c.id, fields: { [price.id]: { amount: 10 } } })
         .pipe(Effect.flip)
       expect(err._tag).toBe("FieldValidationError")
     }).pipe(Effect.provide(testLayer(newOrgId()))),
@@ -349,17 +393,17 @@ describe("field primitives (user / json / money / multiple / format)", () => {
       const fields = yield* FieldService
       const instances = yield* InstanceService
       const c = yield* concepts.create({ name: "Person" })
-      yield* fields.addField({
+      const email = yield* fields.addField({
         conceptId: c.id,
         name: "email",
         kind: "text",
         config: { format: "email" },
       })
 
-      const ok = yield* instances.create({ conceptId: c.id, fields: { email: "a@b.com" } })
-      expect(ok.state.email).toBe("a@b.com")
+      const ok = yield* instances.create({ conceptId: c.id, fields: { [email.id]: "a@b.com" } })
+      expect(ok.state[email.id]).toBe("a@b.com")
       const badValue = yield* instances
-        .create({ conceptId: c.id, fields: { email: "nope" } })
+        .create({ conceptId: c.id, fields: { [email.id]: "nope" } })
         .pipe(Effect.flip)
       expect(badValue._tag).toBe("FieldValidationError")
 

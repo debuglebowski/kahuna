@@ -1,5 +1,5 @@
 {
-  "id": "f8382fc3-ad7a-4f19-972c-1a48b6331856",
+  "id": "32f08a71-c74c-4adb-88f3-158f73e80772",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -98,6 +98,12 @@
           "primaryKey": false,
           "notNull": true
         },
+        "slug": {
+          "name": "slug",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
         "name": {
           "name": "name",
           "type": "text",
@@ -130,6 +136,27 @@
             },
             {
               "expression": "name",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "concepts_org_slug_uq": {
+          "name": "concepts_org_slug_uq",
+          "columns": [
+            {
+              "expression": "org_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "slug",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -301,6 +328,12 @@
           "primaryKey": false,
           "notNull": true,
           "default": "'{}'::jsonb"
+        },
+        "deleted_at": {
+          "name": "deleted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
         }
       },
       "indexes": {
@@ -321,6 +354,7 @@
             }
           ],
           "isUnique": true,
+          "where": "\"fields\".\"deleted_at\" IS NULL",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -419,6 +453,21 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "instances_state_gin": {
+          "name": "instances_state_gin",
+          "columns": [
+            {
+              "expression": "\"state\" jsonb_path_ops",
+              "asc": true,
+              "isExpression": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "gin",
+          "with": {}
         }
       },
       "foreignKeys": {
@@ -459,9 +508,9 @@
           "primaryKey": false,
           "notNull": true
         },
-        "relation_type": {
-          "name": "relation_type",
-          "type": "text",
+        "field_id": {
+          "name": "field_id",
+          "type": "uuid",
           "primaryKey": false,
           "notNull": true
         },
@@ -515,7 +564,7 @@
               "nulls": "last"
             },
             {
-              "expression": "relation_type",
+              "expression": "field_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -542,7 +591,7 @@
               "nulls": "last"
             },
             {
-              "expression": "relation_type",
+              "expression": "field_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -555,6 +604,19 @@
         }
       },
       "foreignKeys": {
+        "relations_field_id_fields_id_fk": {
+          "name": "relations_field_id_fields_id_fk",
+          "tableFrom": "relations",
+          "tableTo": "fields",
+          "columnsFrom": [
+            "field_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
         "relations_from_id_instances_id_fk": {
           "name": "relations_from_id_instances_id_fk",
           "tableFrom": "relations",

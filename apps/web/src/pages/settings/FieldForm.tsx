@@ -29,7 +29,7 @@ export interface FieldFormValue {
   readonly config: FieldConfig
 }
 
-/** Add or edit a field def. In edit mode name + kind are locked (immutable). */
+/** Add or edit a field def. Name is a freely-editable label; only kind is locked. */
 export function FieldForm({
   concepts,
   initial,
@@ -51,7 +51,6 @@ export function FieldForm({
     const t = initial?.config.transitions ?? {}
     return Object.fromEntries(Object.entries(t).map(([k, v]) => [k, [...v]]))
   })
-  const [relationType, setRelationType] = useState(initial?.config.relationType ?? "")
   const [target, setTarget] = useState(initial?.config.target ?? "")
   const [cardinality, setCardinality] = useState<"one" | "many">(
     initial?.config.cardinality ?? "many",
@@ -90,7 +89,7 @@ export function FieldForm({
         return { options, ...(Object.keys(t).length ? { transitions: t } : {}) }
       }
       case "relation":
-        return { relationType: relationType.trim(), target, cardinality }
+        return { target, cardinality }
       case "computed":
         return {
           computedKind,
@@ -111,7 +110,7 @@ export function FieldForm({
   const valid =
     (editing || name.trim().length > 0) &&
     (kind !== "enum" || options.length > 0) &&
-    (kind !== "relation" || (relationType.trim() && target)) &&
+    (kind !== "relation" || !!target) &&
     (kind !== "computed" || !!computedKind)
 
   const toggleTransition = (from: string, to: string) =>
@@ -126,7 +125,7 @@ export function FieldForm({
     <div className="space-y-4 rounded-md border border-gray-200 bg-gray-50 p-4">
       <div className="grid grid-cols-2 gap-3">
         <Field label="Name">
-          <Input value={name} onChange={(e) => setName(e.target.value)} disabled={editing} />
+          <Input value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
         <Field label="Kind">
           <Select
@@ -182,14 +181,7 @@ export function FieldForm({
       )}
 
       {kind === "relation" && (
-        <div className="grid grid-cols-3 gap-3">
-          <Field label="Relation type">
-            <Input
-              value={relationType}
-              onChange={(e) => setRelationType(e.target.value)}
-              placeholder="works_at"
-            />
-          </Field>
+        <div className="grid grid-cols-2 gap-3">
           <Field label="Target concept">
             <Select value={target} onChange={(e) => setTarget(e.target.value)}>
               <option value="">—</option>

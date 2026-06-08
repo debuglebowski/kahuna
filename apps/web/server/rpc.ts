@@ -5,11 +5,9 @@ import { Effect, Layer } from "effect"
 import {
   type Concept,
   type ConceptGraph,
-  type DemandItem,
   type Field,
   type InstanceDetail,
   KingsmakerRpcs,
-  type Owed,
   RpcError,
 } from "../rpc/contract"
 import { auth } from "./auth"
@@ -114,14 +112,14 @@ async function assertMembers(
   conceptId: string,
   values: Record<string, unknown>,
 ): Promise<void> {
-  const defs = await pool.query<{ name: string }>(
-    "SELECT name FROM fields WHERE org_id = $1 AND concept_id = $2 AND kind = 'user'",
+  const defs = await pool.query<{ id: string }>(
+    "SELECT id FROM fields WHERE org_id = $1 AND concept_id = $2 AND kind = 'user' AND deleted_at IS NULL",
     [orgId, conceptId],
   )
   if (defs.rows.length === 0) return
   const ids = new Set<string>()
-  for (const { name } of defs.rows) {
-    const v = values[name]
+  for (const { id } of defs.rows) {
+    const v = values[id]
     if (Array.isArray(v)) {
       for (const x of v) if (typeof x === "string") ids.add(x)
     } else if (typeof v === "string") {
@@ -187,13 +185,12 @@ const HandlersLive = ServerRpcs.toLayer({
   getConceptGraph: () => as<ConceptGraph>(uc.getConceptGraph),
   addField: ({ conceptId, name, kind, config, formula }) =>
     admin<Field>(uc.addField({ conceptId, name, kind, config, formula })),
-  updateField: ({ id, config, formula }) => admin<Field>(uc.updateField({ id, config, formula })),
+  updateField: ({ id, name, config, formula }) =>
+    admin<Field>(uc.updateField({ id, name, config, formula })),
   deleteField: ({ id }) => admin<Field>(uc.deleteField(id)),
   listInstances: ({ conceptId }) => mapErr(uc.listInstances(conceptId, { decorate: true })),
   getInstance: ({ id }) => as<InstanceDetail>(uc.getInstanceDetail(id)),
-  getOwed: () => as<Owed>(uc.getOwed),
   getChanged: () => mapErr(uc.getChanged),
-  getDemand: () => as<ReadonlyArray<DemandItem>>(uc.getDemand),
   createInstance: ({ conceptId, fields }) =>
     checkThen(
       (orgId) => assertMembers(orgId, conceptId, fields),

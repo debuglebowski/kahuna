@@ -83,14 +83,16 @@ export function InstanceForm({
   const set = (name: string, v: unknown) => setValues((prev) => ({ ...prev, [name]: v }))
 
   // Coerce raw inputs into the wire shape, omitting blanks (the engine rejects
-  // wrong types, so we only send fields the user actually filled).
+  // wrong types, so we only send fields the user actually filled). Form-local
+  // state is keyed by field name (unique within a concept); the wire payload is
+  // keyed by field id.
   const build = (): Record<string, unknown> => {
     const out: Record<string, unknown> = {}
     for (const f of editable) {
       const raw = values[f.name]
       const multiple = !!f.config.multiple
       if (f.kind === "bool") {
-        out[f.name] = raw === true
+        out[f.id] = raw === true
         continue
       }
       if (f.kind === "user") {
@@ -98,7 +100,7 @@ export function InstanceForm({
           const arr = (Array.isArray(raw) ? raw : []).filter((x): x is string => !!x)
           if (arr.length) out[f.name] = arr
         } else if (typeof raw === "string" && raw) {
-          out[f.name] = raw
+          out[f.id] = raw
         }
         continue
       }
@@ -106,7 +108,7 @@ export function InstanceForm({
         const m = (raw ?? {}) as { amount?: string; currency?: string }
         const amount = Number(m.amount)
         if (m.amount !== undefined && m.amount !== "" && Number.isFinite(amount)) {
-          out[f.name] = { amount, currency: (m.currency || "USD").toUpperCase() }
+          out[f.id] = { amount, currency: (m.currency || "USD").toUpperCase() }
         }
         continue
       }
@@ -114,9 +116,9 @@ export function InstanceForm({
         const s = typeof raw === "string" ? raw.trim() : ""
         if (!s) continue
         try {
-          out[f.name] = JSON.parse(s)
+          out[f.id] = JSON.parse(s)
         } catch {
-          out[f.name] = s
+          out[f.id] = s
         }
         continue
       }
@@ -135,7 +137,7 @@ export function InstanceForm({
         const n = Number(s)
         if (Number.isFinite(n)) out[f.name] = n
       } else {
-        out[f.name] = s
+        out[f.id] = s
       }
     }
     return out

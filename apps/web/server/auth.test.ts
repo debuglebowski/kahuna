@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto"
-import { ConceptService, InstanceService } from "@kingsmaker/engine"
+import { ConceptService, FieldService, InstanceService } from "@kingsmaker/engine"
 import { Effect } from "effect"
 import { describe, expect, it } from "vitest"
 import { auth } from "./auth"
@@ -46,7 +46,7 @@ describe("tier 0 (BetterAuth) + scoping", () => {
     const req = new Request("http://localhost/api/concepts", { headers })
     const result = await runScoped(req, listConcepts)
     expect(result.ok).toBe(true)
-    if (result.ok) expect(result.data.length).toBe(8)
+    if (result.ok) expect(result.data.length).toBe(7)
   })
 
   it("org A cannot see org B's instances (404 via session scope)", async () => {
@@ -74,7 +74,7 @@ describe("tier 0 (BetterAuth) + scoping", () => {
       Effect.flatMap(InstanceService, (i) => i.create({ conceptName: "Account", fields: {} })),
     )
     const before = await runEngineOrThrow({ orgId, actor: "system" }, listConcepts)
-    expect(before.length).toBe(8)
+    expect(before.length).toBe(7)
 
     await auth.api.deleteOrganization({ body: { organizationId: orgId }, headers })
 
@@ -82,20 +82,32 @@ describe("tier 0 (BetterAuth) + scoping", () => {
     expect(after.length).toBe(0)
   })
 
-  it("an illegal Deal transition surfaces as 422 ILLEGAL_TRANSITION", async () => {
+  it("an illegal Agreement status transition surfaces as 422 ILLEGAL_TRANSITION", async () => {
     const a = await signUpAndOrg()
     await runEngineOrThrow({ orgId: a.orgId, actor: "system" }, seedKingsmaker)
-    const deal = await runEngineOrThrow(
+    // Resolve the seeded Agreement.status field id, then create a draft agreement.
+    const { instanceId, statusId } = await runEngineOrThrow(
       { orgId: a.orgId, actor: "system" },
-      Effect.flatMap(InstanceService, (i) =>
-        i.create({ conceptName: "Deal", fields: { status: "lead" } }),
-      ),
+      Effect.gen(function* () {
+        const concepts = yield* ConceptService
+        const fieldSvc = yield* FieldService
+        const instances = yield* InstanceService
+        const agreement = yield* concepts.getByName("Agreement")
+        const fs = yield* fieldSvc.listFields(agreement.id)
+        const statusId = fs.find((f) => f.name === "status")!.id
+        const inst = yield* instances.create({
+          conceptId: agreement.id,
+          fields: { [statusId]: "draft" },
+        })
+        return { instanceId: inst.id, statusId }
+      }),
     )
     const req = new Request("http://localhost/x", { headers: a.headers })
+    // draft only allows -> active; jumping to "expired" is illegal.
     const res = await runScoped(
       req,
       Effect.flatMap(InstanceService, (i) =>
-        i.transition({ instanceId: deal.id, expectedVersion: 0, field: "status", to: "won" }),
+        i.transition({ instanceId, expectedVersion: 0, field: statusId, to: "expired" }),
       ),
     )
     expect(res.ok).toBe(false)

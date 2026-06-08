@@ -9,14 +9,12 @@ export type {
   ConceptGraph,
   ConceptGraphEdge,
   ConceptGraphNode,
-  DemandItem,
   FeedItem,
   Field,
   FieldConfig,
   FieldKind,
   Instance,
   InstanceDetail,
-  Owed,
   RelatedInstance,
 } from "../../rpc/contract"
 
@@ -67,14 +65,16 @@ export const api = {
     config?: FieldConfig
     formula?: string
   }) => call((c) => c.addField(input)),
-  updateField: (input: { id: string; config?: FieldConfig; formula?: string | null }) =>
-    call((c) => c.updateField(input)),
+  updateField: (input: {
+    id: string
+    name?: string
+    config?: FieldConfig
+    formula?: string | null
+  }) => call((c) => c.updateField(input)),
   deleteField: (id: string) => call((c) => c.deleteField({ id })),
   listInstances: (conceptId: string) => call((c) => c.listInstances({ conceptId })),
   getInstance: (id: string) => call((c) => c.getInstance({ id })),
-  getOwed: () => call((c) => c.getOwed()),
   getChanged: () => call((c) => c.getChanged()),
-  getDemand: () => call((c) => c.getDemand()),
   createInstance: (conceptId: string, fields: Fields) =>
     call((c) => c.createInstance({ conceptId, fields })),
   updateInstance: (id: string, expectedVersion: number, patch: Fields) =>
