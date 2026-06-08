@@ -25,7 +25,8 @@ export function ConceptView() {
   // Resolve the display name from the (live) concepts collection so a rename
   // reflects immediately while the id-based route stays stable.
   const { data: concepts } = useLiveQuery((q) => q.from({ c: conceptsCollection }))
-  const name = concepts?.find((c) => c.id === id)?.name ?? ""
+  const concept = concepts?.find((c) => c.id === id)
+  const name = concept?.name ?? ""
 
   const collection = instancesByConcept(id)
   useRegisterCollection(KEY.instances(id), collection)
@@ -154,6 +155,7 @@ export function ConceptView() {
           ) : (
             <InstanceForm
               fields={fields.data ?? []}
+              defaultLabelIds={concept?.defaultLabelIds ?? []}
               onSubmit={(v) => create.mutate(v)}
               onCancel={closeModal}
               pending={create.isPending}

@@ -15,6 +15,7 @@ const TABS: ReadonlyArray<Tab> = [
   { to: "organization", label: "Organization", admin: true },
   { to: "members", label: "Members", admin: true },
   { to: "concepts", label: "Concepts", admin: false },
+  { to: "labels", label: "Labels", admin: false },
 ]
 
 /** Active org + my membership — drives both the role gate and the Org/Members pages. */

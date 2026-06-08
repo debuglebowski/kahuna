@@ -1,7 +1,10 @@
+import { useQuery } from "@tanstack/react-query"
 import { Plus, X } from "lucide-react"
 import { useMemo, useState } from "react"
+import { LABELS_KEY } from "../../rpc/contract"
+import { LabelMultiSelect } from "../components/LabelMultiSelect"
 import { Button, Field, Input, Select } from "../components/ui"
-import type { Field as FieldDef } from "../lib/api"
+import { api, type Field as FieldDef } from "../lib/api"
 import { useFullOrg } from "./settings/SettingsLayout"
 
 /**
@@ -68,11 +71,14 @@ function MemberPicker({
 /** A dynamic create form driven by a concept's field defs. */
 export function InstanceForm({
   fields,
+  defaultLabelIds = [],
   onSubmit,
   onCancel,
   pending,
 }: {
   fields: ReadonlyArray<FieldDef>
+  /** The concept's default label ids — pre-selected for the new item. */
+  defaultLabelIds?: ReadonlyArray<string>
   onSubmit: (values: Record<string, unknown>) => void
   onCancel: () => void
   pending?: boolean
@@ -80,6 +86,8 @@ export function InstanceForm({
   const editable = useMemo(() => fields.filter((f) => EDITABLE.has(f.kind)), [fields])
   const omitted = fields.length - editable.length
   const [values, setValues] = useState<Record<string, unknown>>({})
+  const labelVocab = useQuery({ queryKey: ["labels"], queryFn: () => api.listLabels() })
+  const [labelIds, setLabelIds] = useState<string[]>(() => [...defaultLabelIds])
 
   const set = (name: string, v: unknown) => setValues((prev) => ({ ...prev, [name]: v }))
 
@@ -140,6 +148,13 @@ export function InstanceForm({
       } else {
         out[f.id] = s
       }
+    }
+    // Per-item labels: send the (live-filtered) selection so a since-deleted
+    // default id never reaches the server. While the vocab is still loading we
+    // omit __labels, letting the server snapshot the concept's defaults.
+    if (labelVocab.data) {
+      const live = new Set(labelVocab.data.map((l) => l.id))
+      out[LABELS_KEY] = labelIds.filter((id) => live.has(id))
     }
     return out
   }
@@ -292,6 +307,16 @@ export function InstanceForm({
         <p className="text-xs text-gray-400">
           {omitted} relation/file/computed field{omitted > 1 ? "s" : ""} are set after creating.
         </p>
+      )}
+
+      {(labelVocab.data?.length ?? 0) > 0 && (
+        <Field label="Labels">
+          <LabelMultiSelect
+            all={labelVocab.data ?? []}
+            selectedIds={labelIds}
+            onChange={setLabelIds}
+          />
+        </Field>
       )}
 
       <div className="flex gap-2">

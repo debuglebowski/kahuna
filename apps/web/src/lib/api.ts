@@ -15,6 +15,7 @@ export type {
   FieldKind,
   Instance,
   InstanceDetail,
+  Label,
   RelatedInstance,
 } from "../../rpc/contract"
 
@@ -53,9 +54,35 @@ type Fields = Record<string, unknown>
 export const api = {
   listConcepts: () => call((c) => c.listConcepts()),
   createConcept: (name: string) => call((c) => c.createConcept({ name })),
-  updateConcept: (id: string, patch: { name?: string; description: string | null }) =>
-    call((c) => c.updateConcept({ id, name: patch.name, description: patch.description })),
+  updateConcept: (
+    id: string,
+    patch: {
+      name?: string
+      description: string | null
+      icon?: string | null
+      staticLabelIds?: ReadonlyArray<string>
+      defaultLabelIds?: ReadonlyArray<string>
+    },
+  ) =>
+    call((c) =>
+      c.updateConcept({
+        id,
+        name: patch.name,
+        description: patch.description,
+        icon: patch.icon,
+        staticLabelIds: patch.staticLabelIds,
+        defaultLabelIds: patch.defaultLabelIds,
+      }),
+    ),
   deleteConcept: (id: string) => call((c) => c.deleteConcept({ id })),
+  listLabels: () => call((c) => c.listLabels()),
+  createLabel: (name: string, color?: string | null, primary?: boolean) =>
+    call((c) => c.createLabel({ name, color, primary })),
+  renameLabel: (id: string, patch: { name?: string; color?: string | null; primary?: boolean }) =>
+    call((c) =>
+      c.renameLabel({ id, name: patch.name, color: patch.color, primary: patch.primary }),
+    ),
+  deleteLabel: (id: string) => call((c) => c.deleteLabel({ id })),
   listFields: (conceptId: string) => call((c) => c.listFields({ conceptId })),
   getConceptGraph: () => call((c) => c.getConceptGraph()),
   addField: (input: {
@@ -64,12 +91,14 @@ export const api = {
     kind: FieldKind
     config?: FieldConfig
     formula?: string
+    icon?: string | null
   }) => call((c) => c.addField(input)),
   updateField: (input: {
     id: string
     name?: string
     config?: FieldConfig
     formula?: string | null
+    icon?: string | null
   }) => call((c) => c.updateField(input)),
   deleteField: (id: string) => call((c) => c.deleteField({ id })),
   listInstances: (conceptId: string) => call((c) => c.listInstances({ conceptId })),

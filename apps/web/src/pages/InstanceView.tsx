@@ -1,7 +1,28 @@
 import { useLiveQuery } from "@tanstack/react-db"
+import { useMutation, useQuery } from "@tanstack/react-query"
+import { Check } from "lucide-react"
+import { useEffect, useState } from "react"
 import { Link, useParams } from "react-router-dom"
-import { Badge, Card, CardHeader, decayTone, momentumTone, Spinner } from "../components/ui"
-import type { DecayValue, Field, MomentumValue, RelatedInstance } from "../lib/api"
+import { LABELS_KEY } from "../../rpc/contract"
+import { LabelMultiSelect } from "../components/LabelMultiSelect"
+import {
+  Badge,
+  Button,
+  Card,
+  CardHeader,
+  decayTone,
+  LabelChip,
+  momentumTone,
+  Spinner,
+} from "../components/ui"
+import {
+  api,
+  type DecayValue,
+  type Field,
+  type Label,
+  type MomentumValue,
+  type RelatedInstance,
+} from "../lib/api"
 import { instanceDetail, KEY, useRegisterCollection } from "../lib/collections"
 import { showValue } from "../lib/utils"
 
@@ -75,6 +96,102 @@ function Connections({ related }: { related: ReadonlyArray<RelatedInstance> }) {
   )
 }
 
+/**
+ * Per-item label editor. Inherited (static) labels render as locked chips; the
+ * item's own labels are a draft multi-select saved via `updateInstance` (the
+ * first caller of that endpoint). The draft reseeds whenever the server's label
+ * set changes (after our save, or an external edit) — keyed by the id set.
+ */
+function LabelsCard({
+  instance,
+  staticLabels,
+  ownLabels,
+  onSaved,
+}: {
+  instance: { id: string; version: number }
+  staticLabels: ReadonlyArray<Label>
+  ownLabels: ReadonlyArray<Label>
+  onSaved: () => void
+}) {
+  const vocab = useQuery({ queryKey: ["labels"], queryFn: () => api.listLabels() })
+  const serverKey = ownLabels.map((l) => l.id).join(",")
+  const serverIds = serverKey ? serverKey.split(",") : []
+  const [draft, setDraft] = useState<string[]>(serverIds)
+  // Reseed to the server truth whenever it changes (not while editing a draft).
+  useEffect(() => {
+    setDraft(serverKey ? serverKey.split(",") : [])
+  }, [serverKey])
+
+  const save = useMutation({
+    mutationFn: () => api.updateInstance(instance.id, instance.version, { [LABELS_KEY]: draft }),
+    onSuccess: onSaved,
+  })
+
+  const hasVocab = (vocab.data?.length ?? 0) > 0
+  if (!hasVocab && staticLabels.length === 0 && ownLabels.length === 0) return null
+
+  const dirty = draft.length !== serverIds.length || draft.some((id) => !serverIds.includes(id))
+  const staticIds = staticLabels.map((l) => l.id)
+
+  return (
+    <Card>
+      <CardHeader
+        title="Labels"
+        action={
+          dirty && (
+            <Button onClick={() => save.mutate()} disabled={save.isPending}>
+              <Check size={15} />
+              {save.isPending ? "Saving…" : "Save"}
+            </Button>
+          )
+        }
+      />
+      <div className="space-y-3 p-4">
+        {staticLabels.length > 0 && (
+          <div className="space-y-1.5">
+            <span className="text-xs font-medium text-gray-500">Inherited</span>
+            <div className="flex flex-wrap gap-1.5">
+              {staticLabels.map((l) => (
+                <LabelChip
+                  key={l.id}
+                  color={l.color}
+                  primary={l.primary}
+                  title="Inherited from the concept"
+                >
+                  {l.name}
+                </LabelChip>
+              ))}
+            </div>
+          </div>
+        )}
+        <div className="space-y-1.5">
+          <span className="text-xs font-medium text-gray-500">This item</span>
+          {hasVocab ? (
+            <LabelMultiSelect
+              all={vocab.data ?? []}
+              selectedIds={draft}
+              onChange={setDraft}
+              excludeIds={staticIds}
+              emptyHint="No labels available."
+            />
+          ) : ownLabels.length > 0 ? (
+            <div className="flex flex-wrap gap-1.5">
+              {ownLabels.map((l) => (
+                <LabelChip key={l.id} color={l.color} primary={l.primary}>
+                  {l.name}
+                </LabelChip>
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs text-gray-400">None.</p>
+          )}
+        </div>
+        {save.error && <p className="text-sm text-red-600">{(save.error as Error).message}</p>}
+      </div>
+    </Card>
+  )
+}
+
 /** Single-instance detail: all of its own data plus everything connected to it. */
 export function InstanceView() {
   const { id = "" } = useParams()
@@ -89,7 +206,7 @@ export function InstanceView() {
 
   if (detailQ.isLoading || !detail) return <Spinner />
 
-  const { instance, concept, fields, related } = detail
+  const { instance, concept, fields, related, staticLabels, labels } = detail
   // Show declared fields in their defined order, plus any orphaned state keys —
   // field ids whose def was deleted (skip engine-internal markers like `__bands`).
   const declared = new Set(fields.map((f) => f.id))
@@ -129,6 +246,13 @@ export function InstanceView() {
           <CardHeader title="Connected" />
           <Connections related={related} />
         </Card>
+
+        <LabelsCard
+          instance={instance}
+          staticLabels={staticLabels}
+          ownLabels={labels}
+          onSaved={() => collection.utils.refetch()}
+        />
       </div>
     </div>
   )

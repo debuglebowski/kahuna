@@ -2,6 +2,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Check, Pencil, Plus, Trash2, X } from "lucide-react"
 import { useEffect, useState } from "react"
 import { Link, useOutletContext } from "react-router-dom"
+import { IconPicker } from "../../components/IconPicker"
+import { LabelMultiSelect } from "../../components/LabelMultiSelect"
 import {
   Badge,
   Button,
@@ -10,12 +12,41 @@ import {
   Drawer,
   IconButton,
   Input,
+  LabelChip,
   Modal,
   Spinner,
 } from "../../components/ui"
-import { api, type Field } from "../../lib/api"
+import { api, type Field, type Label } from "../../lib/api"
+import { ConceptIcon } from "../../lib/icons"
 import { ConceptGraphCanvas } from "./ConceptGraphCanvas"
 import { FieldForm, type FieldFormValue } from "./FieldForm"
+
+/** Resolve label ids → chips for the non-admin (read-only) concept view. */
+function ReadOnlyLabels({
+  ids,
+  vocab,
+}: {
+  ids: ReadonlyArray<string>
+  vocab: ReadonlyArray<Label>
+}) {
+  const byId = new Map(vocab.map((l) => [l.id, l]))
+  const resolved = ids
+    .flatMap((id) => {
+      const l = byId.get(id)
+      return l ? [l] : []
+    })
+    .sort((a, b) => a.name.localeCompare(b.name))
+  if (resolved.length === 0) return <p className="text-xs text-gray-400">None.</p>
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {resolved.map((l) => (
+        <LabelChip key={l.id} color={l.color} primary={l.primary}>
+          {l.name}
+        </LabelChip>
+      ))}
+    </div>
+  )
+}
 
 function msgOf(e: unknown): string {
   const err = e as { code?: string; message?: string }
@@ -58,18 +89,25 @@ export function Concepts() {
   const concepts = useQuery({ queryKey: ["concepts"], queryFn: () => api.listConcepts() })
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [name, setName] = useState("")
+  const [icon, setIcon] = useState<string | null>(null)
   const [description, setDescription] = useState("")
   const [adding, setAdding] = useState(false)
   const [editingFieldId, setEditingFieldId] = useState<string | null>(null)
   const [creatingConcept, setCreatingConcept] = useState(false)
   const [newName, setNewName] = useState("")
+  const [staticLabelIds, setStaticLabelIds] = useState<string[]>([])
+  const [defaultLabelIds, setDefaultLabelIds] = useState<string[]>([])
 
   const selected = concepts.data?.find((c) => c.id === selectedId) ?? null
+  const labelVocab = useQuery({ queryKey: ["labels"], queryFn: () => api.listLabels() })
 
   // Seed the editor whenever the selected concept changes.
   useEffect(() => {
     setName(selected?.name ?? "")
+    setIcon(selected?.icon ?? null)
     setDescription(selected?.description ?? "")
+    setStaticLabelIds([...(selected?.staticLabelIds ?? [])])
+    setDefaultLabelIds([...(selected?.defaultLabelIds ?? [])])
     setAdding(false)
     setEditingFieldId(null)
   }, [selected])
@@ -107,6 +145,7 @@ export function Concepts() {
       api.updateConcept(selectedId!, {
         name: name.trim(),
         description: description.trim() || null,
+        icon,
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["concepts"] })
@@ -121,9 +160,25 @@ export function Concepts() {
       refetchGraph()
     },
   })
+  const saveLabels = useMutation({
+    // A static label is always applied, so it's never also a default.
+    mutationFn: () =>
+      api.updateConcept(selectedId!, {
+        description: selected?.description ?? null,
+        staticLabelIds,
+        defaultLabelIds: defaultLabelIds.filter((id) => !staticLabelIds.includes(id)),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["concepts"] }),
+  })
   const addField = useMutation({
     mutationFn: (v: FieldFormValue) =>
-      api.addField({ conceptId: selectedId!, name: v.name, kind: v.kind, config: v.config }),
+      api.addField({
+        conceptId: selectedId!,
+        name: v.name,
+        kind: v.kind,
+        config: v.config,
+        icon: v.icon,
+      }),
     onSuccess: () => {
       setAdding(false)
       refetchFields()
@@ -131,8 +186,12 @@ export function Concepts() {
     },
   })
   const updateField = useMutation({
-    mutationFn: (vars: { id: string; name: string; config: FieldFormValue["config"] }) =>
-      api.updateField({ id: vars.id, name: vars.name, config: vars.config }),
+    mutationFn: (vars: {
+      id: string
+      name: string
+      config: FieldFormValue["config"]
+      icon: string | null
+    }) => api.updateField({ id: vars.id, name: vars.name, config: vars.config, icon: vars.icon }),
     onSuccess: () => {
       setEditingFieldId(null)
       refetchFields()
@@ -199,7 +258,12 @@ export function Concepts() {
 
       {selected && (
         <Drawer
-          title={selected.name}
+          title={
+            <span className="flex items-center gap-2">
+              <ConceptIcon value={selected.icon} size={16} />
+              {selected.name}
+            </span>
+          }
           onClose={() => setSelectedId(null)}
           headerAction={
             <Link
@@ -228,7 +292,15 @@ export function Concepts() {
               />
               <div className="space-y-2 p-4">
                 <span className="text-xs font-medium text-gray-500">Name</span>
-                <Input value={name} onChange={(e) => setName(e.target.value)} disabled={!admin} />
+                <div className="flex items-center gap-2">
+                  <IconPicker value={icon} onChange={setIcon} disabled={!admin} />
+                  <Input
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    disabled={!admin}
+                    className="flex-1"
+                  />
+                </div>
                 <span className="text-xs font-medium text-gray-500">Description</span>
                 <textarea
                   value={description}
@@ -239,6 +311,65 @@ export function Concepts() {
                 />
                 {saveConcept.error && (
                   <p className="text-sm text-red-600">{msgOf(saveConcept.error)}</p>
+                )}
+              </div>
+            </Card>
+
+            <Card>
+              <CardHeader
+                title="Labels"
+                action={
+                  admin && (
+                    <Button onClick={() => saveLabels.mutate()} disabled={saveLabels.isPending}>
+                      <Check size={15} />
+                      {saveLabels.isPending ? "Saving…" : "Save"}
+                    </Button>
+                  )
+                }
+              />
+              <div className="space-y-4 p-4">
+                <div className="space-y-1.5">
+                  <span className="text-xs font-medium text-gray-500">Always applied (static)</span>
+                  <p className="text-xs text-gray-400">
+                    Inherited by every item of this concept; can't be removed per item.
+                  </p>
+                  {admin ? (
+                    <LabelMultiSelect
+                      all={labelVocab.data ?? []}
+                      selectedIds={staticLabelIds}
+                      onChange={setStaticLabelIds}
+                    />
+                  ) : (
+                    <ReadOnlyLabels ids={selected.staticLabelIds} vocab={labelVocab.data ?? []} />
+                  )}
+                </div>
+                <div className="space-y-1.5">
+                  <span className="text-xs font-medium text-gray-500">Default on new items</span>
+                  <p className="text-xs text-gray-400">
+                    Pre-applied when an item is created; editable per item afterward.
+                  </p>
+                  {admin ? (
+                    <LabelMultiSelect
+                      all={labelVocab.data ?? []}
+                      selectedIds={defaultLabelIds}
+                      onChange={setDefaultLabelIds}
+                      excludeIds={staticLabelIds}
+                    />
+                  ) : (
+                    <ReadOnlyLabels ids={selected.defaultLabelIds} vocab={labelVocab.data ?? []} />
+                  )}
+                </div>
+                {admin && (labelVocab.data?.length ?? 0) === 0 && (
+                  <p className="text-xs text-gray-400">
+                    No labels yet — create some in{" "}
+                    <Link to="/settings/labels" className="underline">
+                      Labels
+                    </Link>
+                    .
+                  </p>
+                )}
+                {saveLabels.error && (
+                  <p className="text-sm text-red-600">{msgOf(saveLabels.error)}</p>
                 )}
               </div>
             </Card>
@@ -276,15 +407,23 @@ export function Concepts() {
                           concepts={concepts.data ?? []}
                           initial={f}
                           onSubmit={(v) =>
-                            updateField.mutate({ id: f.id, name: v.name, config: v.config })
+                            updateField.mutate({
+                              id: f.id,
+                              name: v.name,
+                              config: v.config,
+                              icon: v.icon,
+                            })
                           }
                           onCancel={() => setEditingFieldId(null)}
                           pending={updateField.isPending}
                         />
                       </li>
                     ) : (
-                      <li key={f.id} className="flex items-center gap-3 py-2.5">
-                        <span className="w-40 shrink-0 truncate text-sm font-medium text-gray-900">
+                      <li key={f.id} className="flex items-center gap-2 py-2.5">
+                        <span className="flex w-5 shrink-0 justify-center text-gray-500">
+                          <ConceptIcon value={f.icon} size={16} />
+                        </span>
+                        <span className="w-36 shrink-0 truncate text-sm font-medium text-gray-900">
                           {f.name}
                         </span>
                         <Badge>{f.kind}</Badge>

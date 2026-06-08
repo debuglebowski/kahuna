@@ -1,5 +1,6 @@
 import { Check, Plus, X } from "lucide-react"
 import { useMemo, useState } from "react"
+import { IconPicker } from "../../components/IconPicker"
 import { Button, Field, Input, Select } from "../../components/ui"
 import type { Concept, FieldConfig, Field as FieldDef, FieldKind } from "../../lib/api"
 
@@ -28,6 +29,8 @@ export interface FieldFormValue {
   readonly name: string
   readonly kind: FieldKind
   readonly config: FieldConfig
+  /** Display glyph: literal emoji or `lucide:Name`; null = none. */
+  readonly icon: string | null
 }
 
 /** Add or edit a field def. Name is a freely-editable label; only kind is locked. */
@@ -46,6 +49,7 @@ export function FieldForm({
 }) {
   const editing = !!initial
   const [name, setName] = useState(initial?.name ?? "")
+  const [icon, setIcon] = useState<string | null>(initial?.icon ?? null)
   const [kind, setKind] = useState<FieldKind>(initial?.kind ?? "text")
   const [optionsText, setOptionsText] = useState((initial?.config.options ?? []).join(", "))
   const [transitions, setTransitions] = useState<Record<string, string[]>>(() => {
@@ -124,10 +128,14 @@ export function FieldForm({
 
   return (
     <div className="space-y-4 rounded-md border border-gray-200 bg-gray-50 p-4">
+      <Field label="Name">
+        <div className="flex items-center gap-2">
+          <IconPicker value={icon} onChange={setIcon} />
+          <Input value={name} onChange={(e) => setName(e.target.value)} className="flex-1" />
+        </div>
+      </Field>
+
       <div className="grid grid-cols-2 gap-3">
-        <Field label="Name">
-          <Input value={name} onChange={(e) => setName(e.target.value)} />
-        </Field>
         <Field label="Kind">
           <Select
             value={kind}
@@ -141,7 +149,30 @@ export function FieldForm({
             ))}
           </Select>
         </Field>
+        {FORMATS[kind] && (
+          <Field label="Format (optional)">
+            <Select value={format} onChange={(e) => setFormat(e.target.value)}>
+              <option value="">none</option>
+              {FORMATS[kind]?.map((fmt) => (
+                <option key={fmt} value={fmt}>
+                  {fmt}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        )}
       </div>
+
+      {MULTIPLE_KINDS.has(kind) && (
+        <label className="flex items-center gap-2 text-sm text-gray-700">
+          <input
+            type="checkbox"
+            checked={multiple}
+            onChange={(e) => setMultiple(e.target.checked)}
+          />
+          Allow multiple values
+        </label>
+      )}
 
       {kind === "enum" && (
         <div className="space-y-3">
@@ -227,34 +258,10 @@ export function FieldForm({
         </div>
       )}
 
-      {MULTIPLE_KINDS.has(kind) && (
-        <label className="flex items-center gap-2 text-sm text-gray-700">
-          <input
-            type="checkbox"
-            checked={multiple}
-            onChange={(e) => setMultiple(e.target.checked)}
-          />
-          Allow multiple values
-        </label>
-      )}
-
-      {FORMATS[kind] && (
-        <Field label="Format (optional)">
-          <Select value={format} onChange={(e) => setFormat(e.target.value)}>
-            <option value="">none</option>
-            {FORMATS[kind]?.map((fmt) => (
-              <option key={fmt} value={fmt}>
-                {fmt}
-              </option>
-            ))}
-          </Select>
-        </Field>
-      )}
-
       <div className="flex gap-2">
         <Button
           disabled={!valid || pending}
-          onClick={() => onSubmit({ name: name.trim(), kind, config: buildConfig() })}
+          onClick={() => onSubmit({ name: name.trim(), kind, config: buildConfig(), icon })}
         >
           {editing ? <Check size={15} /> : <Plus size={15} />}
           {pending ? "Saving…" : editing ? "Save field" : "Add field"}

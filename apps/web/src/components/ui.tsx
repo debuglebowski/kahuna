@@ -1,4 +1,4 @@
-import { ServerCrash, X } from "lucide-react"
+import { Crown, ServerCrash, X } from "lucide-react"
 import {
   type ButtonHTMLAttributes,
   type InputHTMLAttributes,
@@ -143,6 +143,72 @@ export const decayTone = (band?: string): Tone =>
 
 export const momentumTone = (label?: string): Tone =>
   label === "heating" ? "green" : label === "cooling" ? "red" : "gray"
+
+/** Parse a #rgb / #rrggbb hex into [r,g,b] (0-255), or null if unparseable. */
+function parseHex(hex: string): [number, number, number] | null {
+  const m = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(hex.trim())
+  const raw = m?.[1]
+  if (!raw) return null
+  // Expand shorthand "abc" → "aabbcc" without per-char indexing.
+  const full = raw.length === 3 ? raw.replace(/./g, (c) => c + c) : raw
+  const n = Number.parseInt(full, 16)
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255]
+}
+
+/** Pick black or white text for legibility on a solid hex background. */
+export function readableOn(hex: string): string {
+  const rgb = parseHex(hex)
+  if (!rgb) return "#111827"
+  const [r, g, b] = rgb
+  const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+  return lum > 0.6 ? "#111827" : "#ffffff"
+}
+
+/**
+ * A colored label pill drawn from the org label vocabulary. `color` is a free
+ * hex (null → neutral gray). Pass `onRemove` to render a × affordance (editable
+ * chips); omit it for read-only / locked (inherited) labels.
+ */
+export function LabelChip({
+  color,
+  children,
+  onRemove,
+  title,
+  primary,
+}: {
+  color: string | null
+  children: ReactNode
+  onRemove?: () => void
+  title?: string
+  /** Primary labels render a leading crown (see `Label.primary`). */
+  primary?: boolean
+}) {
+  const style =
+    color && parseHex(color) ? { backgroundColor: color, color: readableOn(color) } : undefined
+  return (
+    <span
+      title={title}
+      style={style}
+      className={cn(
+        "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium",
+        style ? "" : "bg-gray-100 text-gray-700",
+      )}
+    >
+      {primary && <Crown className="h-3 w-3 shrink-0" aria-label="Primary" />}
+      {children}
+      {onRemove && (
+        <button
+          type="button"
+          onClick={onRemove}
+          aria-label="Remove label"
+          className="-mr-0.5 ml-0.5 inline-flex rounded-full opacity-70 hover:opacity-100"
+        >
+          <X className="h-3 w-3" />
+        </button>
+      )}
+    </span>
+  )
+}
 
 export function Spinner() {
   return <div className="p-8 text-sm text-gray-400">Loading…</div>

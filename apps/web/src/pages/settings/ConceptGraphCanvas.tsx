@@ -24,6 +24,7 @@ import { AlignHorizontalDistributeCenter, AlignVerticalDistributeCenter } from "
 import { useCallback, useEffect, useMemo } from "react"
 import { Card, Spinner } from "../../components/ui"
 import { api, type ConceptGraph } from "../../lib/api"
+import { ConceptIcon } from "../../lib/icons"
 
 const NODE_W = 168
 const NODE_H = 44
@@ -32,10 +33,11 @@ type Dir = "LR" | "TB"
 
 /** Concept box. Click selects it for editing; the active concept is highlighted. */
 function ConceptNode({ data }: NodeProps) {
-  const { label, selected, direction } = data as {
+  const { label, selected, direction, icon } = data as {
     label: string
     selected?: boolean
     direction?: Dir
+    icon?: string | null
   }
   const targetPos = direction === "TB" ? Position.Top : Position.Left
   const sourcePos = direction === "TB" ? Position.Bottom : Position.Right
@@ -48,7 +50,10 @@ function ConceptNode({ data }: NodeProps) {
       }
     >
       <Handle type="target" position={targetPos} className="!h-2 !w-2 !border-0 !bg-gray-300" />
-      {label}
+      <span className="inline-flex items-center justify-center gap-1.5">
+        <ConceptIcon value={icon} size={15} />
+        {label}
+      </span>
       <Handle type="source" position={sourcePos} className="!h-2 !w-2 !border-0 !bg-gray-300" />
     </div>
   )
@@ -125,7 +130,7 @@ function buildFlow(graph: ConceptGraph, direction: Dir): { nodes: Node[]; edges:
       id: n.id,
       type: "concept",
       position: { x: p.x - NODE_W / 2, y: p.y - NODE_H / 2 },
-      data: { label: n.name, selected: false, direction },
+      data: { label: n.name, selected: false, direction, icon: n.icon },
     }
   })
 
