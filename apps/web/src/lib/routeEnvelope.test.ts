@@ -69,4 +69,26 @@ describe("routeEnvelope", () => {
       new Set([KEY.changed, KEY.owed, KEY.demand, KEY.instances("account-id")]),
     )
   })
+
+  it("instance change nudges mounted detail pages (viewed or connected)", () => {
+    // A detail page may render the changed instance directly or as a connected
+    // one — either way it refetches. Unmounted detail pages stay untouched.
+    const mounted = [KEY.changed, KEY.detail("acc1"), KEY.detail("other")]
+    const keys = new Set(
+      routeEnvelope(env({ conceptId: "account-id", subjectId: "acc1" }), mounted),
+    )
+    expect(keys).toEqual(new Set([KEY.changed, KEY.detail("acc1"), KEY.detail("other")]))
+  })
+
+  it("relation change nudges mounted detail pages (a link was added/removed)", () => {
+    const mounted = [KEY.changed, KEY.detail("acc1")]
+    const keys = new Set(routeEnvelope(env({ kind: "relation", concept: null }), mounted))
+    expect(keys).toEqual(new Set([KEY.changed, KEY.detail("acc1")]))
+  })
+
+  it("does not nudge a detail key that isn't mounted", () => {
+    expect(routeEnvelope(env({ conceptId: "c", subjectId: "x" }), [KEY.changed])).toEqual([
+      KEY.changed,
+    ])
+  })
 })

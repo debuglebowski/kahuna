@@ -5,13 +5,14 @@ import { useSession } from "./lib/auth-client"
 import { AuthPage } from "./pages/AuthPage"
 import { ConceptView } from "./pages/ConceptView"
 import { Dashboard } from "./pages/Dashboard"
+import { InstanceView } from "./pages/InstanceView"
 import { Placeholder } from "./pages/Placeholder"
 import { Concepts } from "./pages/settings/Concepts"
 import { ConceptsGraph } from "./pages/settings/ConceptsGraph"
+import { Members } from "./pages/settings/Members"
 import { Organization } from "./pages/settings/Organization"
 import { Profile } from "./pages/settings/Profile"
 import { SettingsLayout } from "./pages/settings/SettingsLayout"
-import { Members } from "./pages/settings/Members"
 
 export function App() {
   const { data: session, isPending, error, isRefetching, refetch } = useSession()
@@ -38,6 +39,7 @@ export function App() {
           <Route path="concepts-graph" element={<ConceptsGraph />} />
         </Route>
         <Route path="/concepts/:id" element={<ConceptView />} />
+        <Route path="/instances/:id" element={<InstanceView />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Layout>

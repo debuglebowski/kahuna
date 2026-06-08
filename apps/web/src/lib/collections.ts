@@ -1,7 +1,14 @@
 import { createCollection } from "@tanstack/db"
 import { queryCollectionOptions } from "@tanstack/query-db-collection"
 import { useEffect } from "react"
-import type { Concept, DemandItem, FeedItem, Instance, Owed } from "../../rpc/contract"
+import type {
+  Concept,
+  DemandItem,
+  FeedItem,
+  Instance,
+  InstanceDetail,
+  Owed,
+} from "../../rpc/contract"
 import { api } from "./api"
 import { queryClient } from "./queryClient"
 
@@ -102,6 +109,30 @@ export const instancesByConcept = (conceptId: string) => {
   if (!c) {
     c = makeConcept(conceptId)
     conceptCollections.set(conceptId, c)
+  }
+  return c
+}
+
+// One instance's full detail (own data + connected instances) — a single-row
+// collection per instance id, so the detail page reacts via the same registry.
+const detailCollections = new Map<string, ReturnType<typeof makeDetail>>()
+const makeDetail = (id: string) =>
+  createCollection(
+    queryCollectionOptions({
+      queryKey: ["live", "detail", id],
+      queryFn: async (): Promise<Array<InstanceDetail & { id: string }>> => [
+        { id, ...(await api.getInstance(id)) },
+      ],
+      queryClient,
+      getKey: (d) => d.id,
+    }),
+  )
+
+export const instanceDetail = (id: string) => {
+  let c = detailCollections.get(id)
+  if (!c) {
+    c = makeDetail(id)
+    detailCollections.set(id, c)
   }
   return c
 }

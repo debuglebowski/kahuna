@@ -15,7 +15,9 @@ export type {
   FieldConfig,
   FieldKind,
   Instance,
+  InstanceDetail,
   Owed,
+  RelatedInstance,
 } from "../../rpc/contract"
 
 /** Computed-field shapes (carried inside an instance's `state`). */
@@ -69,6 +71,7 @@ export const api = {
     call((c) => c.updateField(input)),
   deleteField: (id: string) => call((c) => c.deleteField({ id })),
   listInstances: (conceptId: string) => call((c) => c.listInstances({ conceptId })),
+  getInstance: (id: string) => call((c) => c.getInstance({ id })),
   getOwed: () => call((c) => c.getOwed()),
   getChanged: () => call((c) => c.getChanged()),
   getDemand: () => call((c) => c.getDemand()),

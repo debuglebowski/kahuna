@@ -102,6 +102,27 @@ export const DemandItem = Schema.Struct({
 })
 export type DemandItem = typeof DemandItem.Type
 
+/** One instance connected to another via a relation, with its concept resolved. */
+export const RelatedInstance = Schema.Struct({
+  relationId: Schema.String,
+  relationType: Schema.String,
+  /** `out` = this instance is the relation's `from`; `in` = it is the `to`. */
+  direction: Schema.Literal("out", "in"),
+  conceptId: Schema.String,
+  conceptName: Schema.String,
+  instance: Instance,
+})
+export type RelatedInstance = typeof RelatedInstance.Type
+
+/** A single instance plus everything needed to render its detail view. */
+export const InstanceDetail = Schema.Struct({
+  instance: Instance,
+  concept: Concept,
+  fields: Schema.Array(Field),
+  related: Schema.Array(RelatedInstance),
+})
+export type InstanceDetail = typeof InstanceDetail.Type
+
 /** A node in the concept graph — one concept. */
 export const ConceptGraphNode = Schema.Struct({
   id: Schema.String,
@@ -194,6 +215,11 @@ export class KingsmakerRpcs extends RpcGroup.make(
   Rpc.make("listInstances", {
     payload: { conceptId: Schema.String },
     success: Schema.Array(Instance),
+    error: RpcError,
+  }),
+  Rpc.make("getInstance", {
+    payload: { id: Schema.String },
+    success: InstanceDetail,
     error: RpcError,
   }),
   Rpc.make("getOwed", { success: Owed, error: RpcError }),

@@ -54,6 +54,59 @@ export const getInstance = (id: string, decorate = false): UC<Instance> =>
     return decorate ? yield* computed.decorate(inst) : inst
   })
 
+/**
+ * One instance plus its detail context: concept, field defs, and every related
+ * instance (both directions) with its concept name resolved — for the detail
+ * view's "connected things". Dangling relations (target deleted) are skipped.
+ */
+export const getInstanceDetail = (id: string): UC<unknown> =>
+  Effect.gen(function* () {
+    const instances = yield* InstanceService
+    const relations = yield* RelationService
+    const conceptsSvc = yield* ConceptService
+    const fieldsSvc = yield* FieldService
+    const computed = yield* ComputedFields
+
+    const inst = yield* instances.get(id)
+    const [decorated, concept, fieldDefs, outRels, inRels, allConcepts] = yield* Effect.all([
+      computed.decorate(inst),
+      conceptsSvc.getById(inst.conceptId),
+      fieldsSvc.listFields(inst.conceptId),
+      relations.listFrom(id),
+      relations.listTo(id),
+      conceptsSvc.list(),
+    ])
+    const nameById = new Map(allConcepts.map((c) => [c.id, c.name] as const))
+
+    const resolve = (
+      rel: { id: string; relationType: string },
+      direction: "out" | "in",
+      otherId: string,
+    ) =>
+      instances.get(otherId).pipe(
+        Effect.flatMap((other) =>
+          computed.decorate(other).pipe(
+            Effect.map((d) => ({
+              relationId: rel.id,
+              relationType: rel.relationType,
+              direction,
+              conceptId: other.conceptId,
+              conceptName: nameById.get(other.conceptId) ?? other.conceptId,
+              instance: d,
+            })),
+          ),
+        ),
+        Effect.catchAll(() => Effect.succeed(null)),
+      )
+
+    const related = yield* Effect.all([
+      Effect.forEach(outRels, (r) => resolve(r, "out", r.toId)),
+      Effect.forEach(inRels, (r) => resolve(r, "in", r.fromId)),
+    ]).pipe(Effect.map(([a, b]) => [...a, ...b].filter((x) => x !== null)))
+
+    return { instance: decorated, concept, fields: fieldDefs, related }
+  })
+
 export const listConcepts: UC<unknown> = Effect.flatMap(ConceptService, (c) => c.list())
 
 export const createConcept = (name: string, description?: string): UC<unknown> =>
@@ -63,7 +116,9 @@ export const updateConcept = (
   id: string,
   patch: { readonly name?: string; readonly description: string | null },
 ): UC<unknown> =>
-  Effect.flatMap(ConceptService, (c) => c.update({ id, name: patch.name, description: patch.description }))
+  Effect.flatMap(ConceptService, (c) =>
+    c.update({ id, name: patch.name, description: patch.description }),
+  )
 
 export const deleteConcept = (id: string): UC<unknown> =>
   Effect.flatMap(ConceptService, (c) => c.remove(id))
@@ -195,10 +250,8 @@ export const getDemand: UC<unknown> = Effect.gen(function* () {
 
 // ── commands ──────────────────────────────────────────────────────────────────
 
-export const createInstance = (
-  conceptId: string,
-  fields: Record<string, unknown>,
-): UC<Instance> => Effect.flatMap(InstanceService, (i) => i.create({ conceptId, fields }))
+export const createInstance = (conceptId: string, fields: Record<string, unknown>): UC<Instance> =>
+  Effect.flatMap(InstanceService, (i) => i.create({ conceptId, fields }))
 
 export const updateInstance = (
   id: string,
