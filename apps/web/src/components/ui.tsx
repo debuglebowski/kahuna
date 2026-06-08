@@ -226,10 +226,12 @@ export function Modal({
 export function Drawer({
   title,
   onClose,
+  headerAction,
   children,
 }: {
   title: ReactNode
   onClose: () => void
+  headerAction?: ReactNode
   children: ReactNode
 }) {
   useEffect(() => {
@@ -254,11 +256,14 @@ export function Drawer({
         aria-modal="true"
         className="absolute inset-y-0 right-0 flex w-[640px] max-w-[95vw] flex-col border-l border-gray-200 bg-white shadow-xl"
       >
-        <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3">
-          <h3 className="truncate text-sm font-semibold text-gray-700">{title}</h3>
-          <IconButton onClick={onClose} aria-label="Close">
-            <X size={16} />
-          </IconButton>
+        <div className="flex items-center justify-between gap-2 border-b border-gray-100 px-4 py-3">
+          <h3 className="min-w-0 truncate text-sm font-semibold text-gray-700">{title}</h3>
+          <div className="flex shrink-0 items-center gap-2">
+            {headerAction}
+            <IconButton onClick={onClose} aria-label="Close">
+              <X size={16} />
+            </IconButton>
+          </div>
         </div>
         <div className="flex-1 overflow-y-auto p-4">{children}</div>
       </div>

@@ -198,45 +198,32 @@ export function Concepts() {
       )}
 
       {selected && (
-        <Drawer title={selected.name} onClose={() => setSelectedId(null)}>
+        <Drawer
+          title={selected.name}
+          onClose={() => setSelectedId(null)}
+          headerAction={
+            <Link
+              to={`/concepts/${selected.id}`}
+              className="text-xs text-gray-500 hover:text-gray-800"
+            >
+              View instances
+            </Link>
+          }
+        >
           <div className="space-y-5">
             <Card>
               <CardHeader
                 title="Concept"
                 action={
-                  <div className="flex items-center gap-3">
-                    <Link
-                      to={`/concepts/${selected.id}`}
-                      className="text-xs text-gray-500 hover:text-gray-800"
+                  admin && (
+                    <Button
+                      onClick={() => saveConcept.mutate()}
+                      disabled={saveConcept.isPending || !name.trim()}
                     >
-                      View instances
-                    </Link>
-                    {admin && (
-                      <>
-                        <Button
-                          onClick={() => saveConcept.mutate()}
-                          disabled={saveConcept.isPending || !name.trim()}
-                        >
-                          <Check size={15} />
-                          {saveConcept.isPending ? "Saving…" : "Save"}
-                        </Button>
-                        <Button
-                          variant="danger"
-                          disabled={delConcept.isPending}
-                          onClick={() => {
-                            if (
-                              confirm(
-                                `Delete concept "${selected.name}"? Its fields are removed too.`,
-                              )
-                            )
-                              delConcept.mutate()
-                          }}
-                        >
-                          Delete
-                        </Button>
-                      </>
-                    )}
-                  </div>
+                      <Check size={15} />
+                      {saveConcept.isPending ? "Saving…" : "Save"}
+                    </Button>
+                  )
                 }
               />
               <div className="space-y-2 p-4">
@@ -250,10 +237,8 @@ export function Concepts() {
                   disabled={!admin}
                   className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm outline-none focus:border-gray-500 disabled:bg-gray-50 disabled:text-gray-500"
                 />
-                {(saveConcept.error || delConcept.error) && (
-                  <p className="text-sm text-red-600">
-                    {msgOf(saveConcept.error ?? delConcept.error)}
-                  </p>
+                {saveConcept.error && (
+                  <p className="text-sm text-red-600">{msgOf(saveConcept.error)}</p>
                 )}
               </div>
             </Card>
@@ -337,6 +322,26 @@ export function Concepts() {
                 )}
               </div>
             </Card>
+
+            {admin && (
+              <div className="border-t border-gray-100 pt-4">
+                <button
+                  type="button"
+                  disabled={delConcept.isPending}
+                  onClick={() => {
+                    if (confirm(`Delete concept "${selected.name}"? Its fields are removed too.`))
+                      delConcept.mutate()
+                  }}
+                  className="inline-flex items-center gap-1.5 text-xs text-gray-400 transition hover:text-red-600 disabled:opacity-50"
+                >
+                  <Trash2 size={14} />
+                  {delConcept.isPending ? "Deleting…" : "Delete concept"}
+                </button>
+                {delConcept.error && (
+                  <p className="mt-2 text-sm text-red-600">{msgOf(delConcept.error)}</p>
+                )}
+              </div>
+            )}
           </div>
         </Drawer>
       )}
