@@ -1,6 +1,7 @@
 import { type FormEvent, useState } from "react"
 import { Button, Card, Field, Input } from "../components/ui"
 import { authClient } from "../lib/auth-client"
+import { makeOrgSlug } from "../lib/org"
 
 export function AuthPage() {
   const [mode, setMode] = useState<"in" | "up">("in")
@@ -22,8 +23,10 @@ export function AuthPage() {
       } else {
         const r = await authClient.signUp.email({ email, password, name })
         if (r.error) throw new Error(r.error.message ?? "Sign-up failed")
-        const slug = `${org.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${Math.random().toString(36).slice(2, 7)}`
-        const created = await authClient.organization.create({ name: org || "My Org", slug })
+        const created = await authClient.organization.create({
+          name: org || "My Org",
+          slug: makeOrgSlug(org || "My Org"),
+        })
         if (created.error || !created.data)
           throw new Error(created.error?.message ?? "Org create failed")
         await authClient.organization.setActive({ organizationId: created.data.id })
