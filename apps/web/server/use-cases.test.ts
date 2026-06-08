@@ -33,27 +33,27 @@ describe("use-cases (UI backbone)", () => {
     const fieldId = (fields: ReadonlyArray<FieldRow>, name: string) =>
       fields.find((f) => f.name === name)!.id
 
-    const accountFields = await fieldsOf(idOf("Account"))
-    const contactFields = await fieldsOf(idOf("AccountContact"))
+    const companyFields = await fieldsOf(idOf("Company"))
+    const contactFields = await fieldsOf(idOf("CompanyContact"))
     const worksAt = fieldId(contactFields, "works_at")
 
     // Create instances with field-id-keyed state (names are just labels now).
-    const account = await run(
+    const company = await run(
       org,
-      createInstance(idOf("Account"), { [fieldId(accountFields, "name")]: "Acme" }),
+      createInstance(idOf("Company"), { [fieldId(companyFields, "name")]: "Acme" }),
     )
     const contact = await run(
       org,
-      createInstance(idOf("AccountContact"), {
+      createInstance(idOf("CompanyContact"), {
         [fieldId(contactFields, "name")]: "Jane",
         [fieldId(contactFields, "email")]: "jane@acme.com",
       }),
     )
 
     // Link via the relation field's id (not a type string).
-    await run(org, linkRelation(worksAt, contact.id, account.id))
+    await run(org, linkRelation(worksAt, contact.id, company.id))
 
-    // The contact's detail view resolves the connected Account, labelled by the
+    // The contact's detail view resolves the connected Company, labelled by the
     // relation field's (renameable) name and the target's display label.
     const detail = (await run(org, getInstanceDetail(contact.id))) as {
       related: ReadonlyArray<{
@@ -69,7 +69,7 @@ describe("use-cases (UI backbone)", () => {
     expect(edge.fieldId).toBe(worksAt)
     expect(edge.relationName).toBe("works_at")
     expect(edge.label).toBe("Acme")
-    expect(edge.conceptName).toBe("Account")
+    expect(edge.conceptName).toBe("Company")
     expect(edge.direction).toBe("out")
 
     // The concept graph exposes the same relation as a typed edge (by field id).
@@ -78,7 +78,7 @@ describe("use-cases (UI backbone)", () => {
     }
     expect(
       graph.edges.some(
-        (e) => e.id === worksAt && e.from === idOf("AccountContact") && e.to === idOf("Account"),
+        (e) => e.id === worksAt && e.from === idOf("CompanyContact") && e.to === idOf("Company"),
       ),
     ).toBe(true)
 

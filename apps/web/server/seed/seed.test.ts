@@ -25,11 +25,11 @@ describe("kingsmaker seed", () => {
       ),
     )
     expect(names).toEqual([
-      "Account",
-      "AccountContact",
-      "AccountNote",
       "Agreement",
       "AgreementTemplate",
+      "Company",
+      "CompanyContact",
+      "CompanyNote",
       "Policy",
       "Runbook",
     ])
@@ -38,30 +38,30 @@ describe("kingsmaker seed", () => {
   it("Agreement's relation fields resolve to concept ids + a status state machine", async () => {
     const org = randomUUID()
     await run(org, seedKingsmaker)
-    const { fields, accountId, templateId } = await run(
+    const { fields, companyId, templateId } = await run(
       org,
       Effect.gen(function* () {
         const concepts = yield* ConceptService
         const fieldSvc = yield* FieldService
-        const account = yield* concepts.getByName("Account")
+        const company = yield* concepts.getByName("Company")
         const template = yield* concepts.getByName("AgreementTemplate")
         const agreement = yield* concepts.getByName("Agreement")
         return {
           fields: yield* fieldSvc.listFields(agreement.id),
-          accountId: account.id,
+          companyId: company.id,
           templateId: template.id,
         }
       }),
     )
     const byName = new Map(fields.map((f) => [f.name, f]))
     expect(byName.get("for")?.kind).toBe("relation")
-    expect(byName.get("for")?.config.target).toBe(accountId)
+    expect(byName.get("for")?.config.target).toBe(companyId)
     expect(byName.get("based_on")?.config.target).toBe(templateId)
     expect(byName.get("status")?.config.transitions?.draft).toContain("active")
     expect(byName.get("owner")?.kind).toBe("user")
   })
 
-  it("AccountNote carries a user (author) field", async () => {
+  it("CompanyNote carries a user (author) field", async () => {
     const org = randomUUID()
     await run(org, seedKingsmaker)
     const author = await run(
@@ -69,7 +69,7 @@ describe("kingsmaker seed", () => {
       Effect.gen(function* () {
         const concepts = yield* ConceptService
         const fieldSvc = yield* FieldService
-        const note = yield* concepts.getByName("AccountNote")
+        const note = yield* concepts.getByName("CompanyNote")
         const fs = yield* fieldSvc.listFields(note.id)
         return fs.find((f) => f.name === "author")
       }),

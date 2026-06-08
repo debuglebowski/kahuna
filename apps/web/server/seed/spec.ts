@@ -23,35 +23,35 @@ export interface ConceptSpec {
  * validated against bauth_member at the app boundary). Inter-concept links are
  * `relation` fields whose `targetName` is resolved to a concept id at seed time:
  *
- *   AccountContact -works_at->  Account
- *   AccountNote    -about->     Account
+ *   CompanyContact -works_at->  Company
+ *   CompanyNote    -about->     Company
  *   Agreement      -based_on->  AgreementTemplate
- *   Agreement      -for->       Account
- *   Agreement      -signed_by-> AccountContact
+ *   Agreement      -for->       Company
+ *   Agreement      -signed_by-> CompanyContact
  */
 export const kingsmakerSpec: ReadonlyArray<ConceptSpec> = [
   {
-    name: "Account",
+    name: "Company",
     description: "A customer or counterparty — the hub of the graph.",
     fields: [{ name: "name", kind: "text" }],
   },
   {
-    name: "AccountContact",
-    description: "A person at an account.",
+    name: "CompanyContact",
+    description: "A person at a company.",
     fields: [
       { name: "name", kind: "text" },
       { name: "email", kind: "text", config: { format: "email" } },
       {
         name: "works_at",
         kind: "relation",
-        targetName: "Account",
+        targetName: "Company",
         config: { cardinality: "one" },
       },
     ],
   },
   {
-    name: "AccountNote",
-    description: "A freeform note about an account.",
+    name: "CompanyNote",
+    description: "A freeform note about a company.",
     fields: [
       { name: "body", kind: "text" },
       { name: "noted_on", kind: "date" },
@@ -59,7 +59,7 @@ export const kingsmakerSpec: ReadonlyArray<ConceptSpec> = [
       {
         name: "about",
         kind: "relation",
-        targetName: "Account",
+        targetName: "Company",
         config: { cardinality: "one" },
       },
     ],
@@ -85,7 +85,7 @@ export const kingsmakerSpec: ReadonlyArray<ConceptSpec> = [
   },
   {
     name: "Agreement",
-    description: "An executed agreement — based on a template, for an account.",
+    description: "An executed agreement — based on a template, for a company.",
     fields: [
       { name: "title", kind: "text" },
       {
@@ -115,13 +115,13 @@ export const kingsmakerSpec: ReadonlyArray<ConceptSpec> = [
       {
         name: "for",
         kind: "relation",
-        targetName: "Account",
+        targetName: "Company",
         config: { cardinality: "one" },
       },
       {
         name: "signed_by",
         kind: "relation",
-        targetName: "AccountContact",
+        targetName: "CompanyContact",
         config: { cardinality: "one" },
       },
     ],
