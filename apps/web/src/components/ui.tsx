@@ -1,9 +1,10 @@
 import { ServerCrash } from "lucide-react"
-import type {
-  ButtonHTMLAttributes,
-  InputHTMLAttributes,
-  ReactNode,
-  SelectHTMLAttributes,
+import {
+  type ButtonHTMLAttributes,
+  type InputHTMLAttributes,
+  type ReactNode,
+  type SelectHTMLAttributes,
+  useEffect,
 } from "react"
 import { cn } from "../lib/utils"
 
@@ -139,6 +140,55 @@ export function ErrorScreen({
           </Button>
         )}
       </Card>
+    </div>
+  )
+}
+
+/** A centered modal over a dimmed backdrop. Closes on Escape or backdrop click. */
+export function Modal({
+  title,
+  onClose,
+  children,
+}: {
+  title: ReactNode
+  onClose: () => void
+  children: ReactNode
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose()
+    }
+    document.addEventListener("keydown", onKey)
+    return () => document.removeEventListener("keydown", onKey)
+  }, [onClose])
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 pt-20">
+      {/* Backdrop as a real button → click-to-close stays keyboard-accessible. */}
+      <button
+        type="button"
+        aria-label="Close"
+        onClick={onClose}
+        className="absolute inset-0 cursor-default bg-black/30"
+      />
+      <div
+        role="dialog"
+        aria-modal="true"
+        className="relative w-full max-w-lg rounded-lg border border-gray-200 bg-white shadow-xl"
+      >
+        <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3">
+          <h3 className="text-sm font-semibold text-gray-700">{title}</h3>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="text-gray-400 transition hover:text-gray-600"
+          >
+            ✕
+          </button>
+        </div>
+        <div className="p-4">{children}</div>
+      </div>
     </div>
   )
 }
