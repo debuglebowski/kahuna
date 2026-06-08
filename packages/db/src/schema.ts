@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm"
 import {
   bigint,
   bigserial,
+  boolean,
   index,
   jsonb,
   pgTable,
@@ -31,12 +32,44 @@ export const concepts = pgTable(
     slug: text("slug").notNull(),
     name: text("name").notNull(),
     description: text("description"),
+    // Optional display glyph: a literal emoji (e.g. "🏢") or a curated lucide
+    // icon name prefixed "lucide:" (e.g. "lucide:Building2"); null renders none.
+    icon: text("icon"),
+    // Label-id arrays drawn from the org-wide `labels` vocabulary. `static` =
+    // inherited by every instance (read-time, never written per item); `default`
+    // = snapshotted onto each new instance's `state.__labels` at creation time.
+    // Stored as ids (not names) so a label rename needs no backfill.
+    staticLabelIds: jsonb("static_label_ids").notNull().default(sql`'[]'::jsonb`),
+    defaultLabelIds: jsonb("default_label_ids").notNull().default(sql`'[]'::jsonb`),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     uniqueIndex("concepts_org_name_uq").on(t.orgId, t.name),
     uniqueIndex("concepts_org_slug_uq").on(t.orgId, t.slug),
   ],
+)
+
+/**
+ * The org-wide, flat label vocabulary. A single label can be applied in three
+ * scopes — concept-static, concept-default (see `concepts`), and per-item
+ * (`instances.state.__labels`) — all drawing from this one list. Keyed by `id`
+ * (renameable `name`), soft-deleted so any id it ever owned stays resolvable.
+ */
+export const labels = pgTable(
+  "labels",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: text("org_id").notNull(),
+    name: text("name").notNull(),
+    // Optional free hex color (e.g. "#e11d48"); null renders as a neutral chip.
+    color: text("color"),
+    // A plain flag for now (rendered with a crown); future features key off it.
+    isPrimary: boolean("is_primary").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  },
+  // Partial unique so a name can be reused after its label is soft-deleted.
+  (t) => [uniqueIndex("labels_org_name_uq").on(t.orgId, t.name).where(sql`${t.deletedAt} IS NULL`)],
 )
 
 export const fields = pgTable(
@@ -53,6 +86,8 @@ export const fields = pgTable(
     kind: text("kind").notNull(),
     formula: text("formula"),
     config: jsonb("config").notNull().default(sql`'{}'::jsonb`),
+    // Optional display glyph (see `concepts.icon`): literal emoji or "lucide:Name".
+    icon: text("icon"),
     // Soft delete: a field is never hard-deleted, so any id it ever owned stays
     // resolvable to a name for orphaned `state` keys / historical events.
     deletedAt: timestamp("deleted_at", { withTimezone: true }),

@@ -8,6 +8,27 @@
       "when": 1780932700876,
       "tag": "0000_smart_magdalene",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1780948897399,
+      "tag": "0001_chilly_dormammu",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1780950650312,
+      "tag": "0002_famous_the_enforcers",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1780951134823,
+      "tag": "0003_reflective_whirlwind",
+      "breakpoints": true
     }
   ]
 }

@@ -5,6 +5,7 @@ import { ConceptService } from "./services/ConceptService"
 import { EventStore } from "./services/EventStore"
 import { FieldService } from "./services/FieldService"
 import { InstanceService } from "./services/InstanceService"
+import { LabelService } from "./services/LabelService"
 import { QueryService } from "./services/QueryService"
 import { RelationService } from "./services/RelationService"
 
@@ -21,6 +22,7 @@ export const EngineLive = Layer.mergeAll(
   QueryService.Default,
   ComputedFields.Default,
   AttachmentService.Default,
+  LabelService.Default,
 )
 
 /** Union of all engine service tags — the requirements an engine effect may carry. */
@@ -33,3 +35,4 @@ export type EngineServices =
   | QueryService
   | ComputedFields
   | AttachmentService
+  | LabelService

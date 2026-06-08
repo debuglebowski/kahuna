@@ -1,7 +1,8 @@
 import { PgClient } from "@effect/sql-pg"
 import { Effect } from "effect"
-import { ConceptInUse, ConceptNameConflict, ConceptNotFound } from "../errors"
+import { ConceptInUse, ConceptNameConflict, ConceptNotFound, LabelNotFound } from "../errors"
 import { EventStore } from "./EventStore"
+import { LabelService } from "./LabelService"
 import { OrgContext } from "./OrgContext"
 import { type ConceptRow, toConcept } from "./rows"
 
@@ -18,6 +19,7 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
   effect: Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
     const events = yield* EventStore
+    const labels = yield* LabelService
 
     const getByName = (name: string) =>
       Effect.gen(function* () {
@@ -58,7 +60,11 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
         return rows.map(toConcept)
       })
 
-    const create = (input: { readonly name: string; readonly description?: string }) =>
+    const create = (input: {
+      readonly name: string
+      readonly description?: string
+      readonly icon?: string | null
+    }) =>
       sql.withTransaction(
         Effect.gen(function* () {
           const { orgId } = yield* OrgContext
@@ -73,8 +79,8 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
           let slug = base
           for (let n = 2; used.has(slug); n++) slug = `${base}_${n}`
           const rows = yield* sql<ConceptRow>`
-            INSERT INTO concepts (org_id, slug, name, description)
-            VALUES (${orgId}, ${slug}, ${input.name}, ${input.description ?? null})
+            INSERT INTO concepts (org_id, slug, name, description, icon)
+            VALUES (${orgId}, ${slug}, ${input.name}, ${input.description ?? null}, ${input.icon ?? null})
             RETURNING *`
           const concept = toConcept(rows[0]!)
           yield* events.append({
@@ -88,34 +94,52 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
       )
 
     /**
-     * Edit a concept's description and/or rename it. The app refers to concepts
-     * by id, so renaming is safe; the (org, name) uniqueness constraint still
-     * holds, so a clashing new name fails with ConceptNameConflict.
+     * Edit a concept's description, rename it, and/or set its static/default
+     * label-id sets. The app refers to concepts by id, so renaming is safe; the
+     * (org, name) uniqueness constraint still holds, so a clashing new name
+     * fails with ConceptNameConflict. Omitted label arrays are left unchanged
+     * (so the name/description "Save" path never wipes the label sets).
      */
     const update = (input: {
       readonly id: string
       readonly description: string | null
       readonly name?: string
+      // Omitted → left unchanged; explicit null → cleared.
+      readonly icon?: string | null
+      readonly staticLabelIds?: ReadonlyArray<string>
+      readonly defaultLabelIds?: ReadonlyArray<string>
     }) =>
       sql.withTransaction(
         Effect.gen(function* () {
           const { orgId } = yield* OrgContext
+          const current = yield* getById(input.id)
           const name = input.name?.trim()
-          if (name) {
+          if (name && name !== current.name) {
             const clash = yield* sql<{ readonly id: string }>`
               SELECT id FROM concepts
               WHERE org_id = ${orgId} AND name = ${name} AND id <> ${input.id} LIMIT 1`
             if (clash[0]) return yield* Effect.fail(new ConceptNameConflict({ name }))
           }
-          const rows = name
-            ? yield* sql<ConceptRow>`
-                UPDATE concepts SET description = ${input.description}, name = ${name}
-                WHERE org_id = ${orgId} AND id = ${input.id}
-                RETURNING *`
-            : yield* sql<ConceptRow>`
-                UPDATE concepts SET description = ${input.description}
-                WHERE org_id = ${orgId} AND id = ${input.id}
-                RETURNING *`
+          // Reject any provided label id that isn't a live vocabulary entry.
+          const provided = [...(input.staticLabelIds ?? []), ...(input.defaultLabelIds ?? [])]
+          if (provided.length > 0) {
+            const live = yield* labels.existingIds(provided)
+            const missing = provided.find((id) => !live.has(id))
+            if (missing) return yield* Effect.fail(new LabelNotFound({ labelId: missing }))
+          }
+          const finalName = name || current.name
+          const icon = input.icon === undefined ? current.icon : input.icon
+          const staticIds = [...new Set(input.staticLabelIds ?? current.staticLabelIds)]
+          const defaultIds = [...new Set(input.defaultLabelIds ?? current.defaultLabelIds)]
+          // Bind the id arrays as JSON text + cast: `sql.json` serialises a
+          // top-level array as a Postgres array literal (`{…}`), not jsonb.
+          const rows = yield* sql<ConceptRow>`
+            UPDATE concepts
+            SET description = ${input.description}, name = ${finalName}, icon = ${icon},
+                static_label_ids = ${JSON.stringify(staticIds)}::jsonb,
+                default_label_ids = ${JSON.stringify(defaultIds)}::jsonb
+            WHERE org_id = ${orgId} AND id = ${input.id}
+            RETURNING *`
           const row = rows[0]
           if (!row) return yield* Effect.fail(new ConceptNotFound({ concept: input.id }))
           const concept = toConcept(row)
@@ -127,6 +151,9 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
               _tag: "ConceptUpdated",
               description: concept.description,
               ...(name ? { name: concept.name } : {}),
+              ...(input.icon !== undefined ? { icon: concept.icon } : {}),
+              ...(input.staticLabelIds ? { staticLabelIds: concept.staticLabelIds } : {}),
+              ...(input.defaultLabelIds ? { defaultLabelIds: concept.defaultLabelIds } : {}),
             },
           })
           return concept
@@ -160,5 +187,5 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
 
     return { create, getByName, getById, getBySlug, list, update, remove } as const
   }),
-  dependencies: [EventStore.Default],
+  dependencies: [EventStore.Default, LabelService.Default],
 }) {}

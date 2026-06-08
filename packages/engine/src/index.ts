@@ -32,6 +32,7 @@ export {
 } from "./services/EventStore"
 export { type AddFieldInput, FieldService } from "./services/FieldService"
 export { InstanceService } from "./services/InstanceService"
+export { LabelService } from "./services/LabelService"
 // Services
 export { OrgContext, type OrgScope } from "./services/OrgContext"
 export { type FindInstancesInput, QueryService } from "./services/QueryService"

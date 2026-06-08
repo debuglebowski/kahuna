@@ -12,6 +12,8 @@ export interface AddFieldInput {
   readonly kind: FieldKind
   readonly config?: FieldConfig
   readonly formula?: string
+  /** Optional display glyph: literal emoji or `lucide:Name` (see `Field.icon`). */
+  readonly icon?: string | null
 }
 
 /** Recognised `config.format` names per kind (value validators live in InstanceService). */
@@ -102,8 +104,8 @@ export class FieldService extends Effect.Service<FieldService>()("engine/FieldSe
           }
 
           const rows = yield* sql<FieldRow>`
-            INSERT INTO fields (org_id, concept_id, name, kind, formula, config)
-            VALUES (${orgId}, ${input.conceptId}, ${input.name}, ${input.kind}, ${input.formula ?? null}, ${sql.json(config)})
+            INSERT INTO fields (org_id, concept_id, name, kind, formula, config, icon)
+            VALUES (${orgId}, ${input.conceptId}, ${input.name}, ${input.kind}, ${input.formula ?? null}, ${sql.json(config)}, ${input.icon ?? null})
             RETURNING *`
           const field = toField(rows[0]!)
           yield* events.append({
@@ -132,6 +134,8 @@ export class FieldService extends Effect.Service<FieldService>()("engine/FieldSe
       readonly name?: string
       readonly config?: FieldConfig
       readonly formula?: string | null
+      // Omitted → left unchanged; explicit null → cleared.
+      readonly icon?: string | null
     }) =>
       sql.withTransaction(
         Effect.gen(function* () {
@@ -153,8 +157,9 @@ export class FieldService extends Effect.Service<FieldService>()("engine/FieldSe
             }
           }
           const formula = input.formula === undefined ? current.formula : input.formula
+          const icon = input.icon === undefined ? current.icon : input.icon
           const rows = yield* sql<FieldRow>`
-            UPDATE fields SET name = ${name}, config = ${sql.json(config)}, formula = ${formula}
+            UPDATE fields SET name = ${name}, config = ${sql.json(config)}, formula = ${formula}, icon = ${icon}
             WHERE org_id = ${orgId} AND id = ${input.id}
             RETURNING *`
           const field = toField(rows[0]!)

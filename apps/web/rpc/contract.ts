@@ -9,6 +9,10 @@ import { Schema } from "effect"
 
 // ── wire schemas ──────────────────────────────────────────────────────────────
 
+/** Synthetic instance-state key carrying an item's own label ids (mirrors the
+ *  engine's `LABELS_KEY`). Sent inside `createInstance.fields` / `updateInstance.patch`. */
+export const LABELS_KEY = "__labels"
+
 const State = Schema.Record({ key: Schema.String, value: Schema.Unknown })
 
 const InstanceFields = {
@@ -27,8 +31,26 @@ export const Concept = Schema.Struct({
   slug: Schema.String,
   name: Schema.String,
   description: Schema.NullOr(Schema.String),
+  /** Display glyph: a literal emoji or a curated lucide icon name prefixed
+   *  `lucide:` (e.g. `lucide:Building2`); null renders none. */
+  icon: Schema.NullOr(Schema.String),
+  /** Label ids inherited by every instance (static); and snapshotted onto new
+   *  instances (default). Both drawn from the org-wide label vocabulary. */
+  staticLabelIds: Schema.Array(Schema.String),
+  defaultLabelIds: Schema.Array(Schema.String),
 })
 export type Concept = typeof Concept.Type
+
+/** A label in the org-wide, flat vocabulary. */
+export const Label = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+  color: Schema.NullOr(Schema.String),
+  /** A plain flag for now (rendered with a crown); future features key off it. */
+  primary: Schema.Boolean,
+  deletedAt: Schema.NullOr(Schema.Date),
+})
+export type Label = typeof Label.Type
 
 export const FieldKind = Schema.Literal(
   "text",
@@ -70,6 +92,8 @@ export const Field = Schema.Struct({
   kind: FieldKind,
   formula: Schema.NullOr(Schema.String),
   config: FieldConfig,
+  /** Display glyph: literal emoji or `lucide:Name` (see `Concept.icon`). */
+  icon: Schema.NullOr(Schema.String),
 })
 export type Field = typeof Field.Type
 
@@ -116,6 +140,10 @@ export const InstanceDetail = Schema.Struct({
   concept: Concept,
   fields: Schema.Array(Field),
   related: Schema.Array(RelatedInstance),
+  /** Inherited from the concept (static) — shown as locked chips. */
+  staticLabels: Schema.Array(Label),
+  /** This instance's own labels (from `state.__labels`), resolved and editable. */
+  labels: Schema.Array(Label),
 })
 export type InstanceDetail = typeof InstanceDetail.Type
 
@@ -124,6 +152,8 @@ export const ConceptGraphNode = Schema.Struct({
   id: Schema.String,
   name: Schema.String,
   slug: Schema.String,
+  /** Display glyph: literal emoji or `lucide:Name` (see `Concept.icon`). */
+  icon: Schema.NullOr(Schema.String),
 })
 export type ConceptGraphNode = typeof ConceptGraphNode.Type
 
@@ -168,6 +198,10 @@ export class KingsmakerRpcs extends RpcGroup.make(
       id: Schema.String,
       description: Schema.NullOr(Schema.String),
       name: Schema.optional(Schema.String),
+      // Omitted → left unchanged (so the name/description save never wipes them).
+      icon: Schema.optional(Schema.NullOr(Schema.String)),
+      staticLabelIds: Schema.optional(Schema.Array(Schema.String)),
+      defaultLabelIds: Schema.optional(Schema.Array(Schema.String)),
     },
     success: Concept,
     error: RpcError,
@@ -175,6 +209,31 @@ export class KingsmakerRpcs extends RpcGroup.make(
   Rpc.make("deleteConcept", {
     payload: { id: Schema.String },
     success: Concept,
+    error: RpcError,
+  }),
+  Rpc.make("listLabels", { success: Schema.Array(Label), error: RpcError }),
+  Rpc.make("createLabel", {
+    payload: {
+      name: Schema.String,
+      color: Schema.optional(Schema.NullOr(Schema.String)),
+      primary: Schema.optional(Schema.Boolean),
+    },
+    success: Label,
+    error: RpcError,
+  }),
+  Rpc.make("renameLabel", {
+    payload: {
+      id: Schema.String,
+      name: Schema.optional(Schema.String),
+      color: Schema.optional(Schema.NullOr(Schema.String)),
+      primary: Schema.optional(Schema.Boolean),
+    },
+    success: Label,
+    error: RpcError,
+  }),
+  Rpc.make("deleteLabel", {
+    payload: { id: Schema.String },
+    success: Label,
     error: RpcError,
   }),
   Rpc.make("listFields", {
@@ -190,6 +249,7 @@ export class KingsmakerRpcs extends RpcGroup.make(
       kind: FieldKind,
       config: Schema.optional(FieldConfig),
       formula: Schema.optional(Schema.String),
+      icon: Schema.optional(Schema.NullOr(Schema.String)),
     },
     success: Field,
     error: RpcError,
@@ -200,6 +260,7 @@ export class KingsmakerRpcs extends RpcGroup.make(
       name: Schema.optional(Schema.String),
       config: Schema.optional(FieldConfig),
       formula: Schema.optional(Schema.NullOr(Schema.String)),
+      icon: Schema.optional(Schema.NullOr(Schema.String)),
     },
     success: Field,
     error: RpcError,

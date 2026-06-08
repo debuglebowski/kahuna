@@ -1,6 +1,13 @@
 import { PgClient } from "@effect/sql-pg"
 import { Effect, Either } from "effect"
-import type { ConceptRef, EngineEvent, Field, Instance, InstanceState } from "../domain/types"
+import {
+  type ConceptRef,
+  type EngineEvent,
+  type Field,
+  type Instance,
+  type InstanceState,
+  LABELS_KEY,
+} from "../domain/types"
 import {
   FieldValidationError,
   IllegalTransition,
@@ -13,6 +20,7 @@ import { ComputedFields } from "./ComputedFields"
 import { ConceptService } from "./ConceptService"
 import { EventStore } from "./EventStore"
 import { FieldService } from "./FieldService"
+import { LabelService } from "./LabelService"
 import { OrgContext } from "./OrgContext"
 import { type InstanceRow, toInstance } from "./rows"
 
@@ -129,6 +137,28 @@ const validateFields = (defs: ReadonlyArray<Field>, input: Record<string, unknow
     return out
   })
 
+/** Split the synthetic `__labels` key out of a write payload (it isn't a field,
+ *  so it must bypass `validateFields`; it re-enters the event payload after). */
+const splitLabels = (input: Record<string, unknown>) => {
+  const { [LABELS_KEY]: rawLabels, ...rest } = input
+  return { rest, rawLabels }
+}
+
+/** Coerce/validate a `__labels` value into a deduped label-id array. */
+const coerceLabelIds = (
+  raw: unknown,
+): Effect.Effect<ReadonlyArray<string>, FieldValidationError> => {
+  if (!Array.isArray(raw) || raw.some((x) => typeof x !== "string")) {
+    return Effect.fail(
+      new FieldValidationError({
+        message: "__labels must be an array of label ids",
+        field: LABELS_KEY,
+      }),
+    )
+  }
+  return Effect.succeed([...new Set(raw as string[])])
+}
+
 const checkTransitions = (
   defs: ReadonlyArray<Field>,
   current: InstanceState,
@@ -167,6 +197,22 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
     const concepts = yield* ConceptService
     const fields = yield* FieldService
     const computed = yield* ComputedFields
+    const labels = yield* LabelService
+
+    /** Reject any label id that isn't a live vocabulary entry. */
+    const assertLabelsExist = (ids: ReadonlyArray<string>) =>
+      Effect.gen(function* () {
+        if (ids.length === 0) return
+        const live = yield* labels.existingIds(ids)
+        const missing = ids.find((id) => !live.has(id))
+        if (missing)
+          return yield* Effect.fail(
+            new FieldValidationError({
+              message: `unknown label id "${missing}"`,
+              field: LABELS_KEY,
+            }),
+          )
+      })
 
     const loadAny = (instanceId: string) =>
       Effect.gen(function* () {
@@ -187,7 +233,21 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
               ? yield* concepts.getById(input.conceptId)
               : yield* concepts.getByName(input.conceptName)
           const defs = yield* fields.listFields(concept.id)
-          const validated = yield* validateFields(defs, input.fields)
+          const { rest, rawLabels } = splitLabels(input.fields)
+          const validated = yield* validateFields(defs, rest)
+          // Per-item labels: use the caller's set if given, else snapshot the
+          // concept's defaults (dropping any since soft-deleted). Static labels
+          // are NOT written here — they're inherited at read time.
+          let labelIds: ReadonlyArray<string>
+          if (rawLabels === undefined) {
+            const live = yield* labels.existingIds(concept.defaultLabelIds)
+            labelIds = concept.defaultLabelIds.filter((id) => live.has(id))
+          } else {
+            labelIds = yield* coerceLabelIds(rawLabels)
+            yield* assertLabelsExist(labelIds)
+          }
+          const fieldsWithLabels: InstanceState =
+            labelIds.length > 0 ? { ...validated, [LABELS_KEY]: [...labelIds] } : validated
           const inserted = yield* sql<InstanceRow>`
             INSERT INTO instances (org_id, concept_id, state, version)
             VALUES (${orgId}, ${concept.id}, ${sql.json({})}, 0)
@@ -197,7 +257,7 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
             subjectKind: "instance",
             subjectId: created.id,
             eventType: "InstanceCreated",
-            payload: { _tag: "InstanceCreated", conceptId: concept.id, fields: validated },
+            payload: { _tag: "InstanceCreated", conceptId: concept.id, fields: fieldsWithLabels },
             conceptId: concept.id,
             conceptName: concept.name,
           })
@@ -237,13 +297,20 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
           }
           const defs = yield* fields.listFields(current.conceptId)
           const concept = yield* concepts.getById(current.conceptId)
-          const validated = yield* validateFields(defs, input.patch)
+          const { rest, rawLabels } = splitLabels(input.patch)
+          const validated = yield* validateFields(defs, rest)
           yield* checkTransitions(defs, current.state, validated)
+          let patch: InstanceState = validated
+          if (rawLabels !== undefined) {
+            const labelIds = yield* coerceLabelIds(rawLabels)
+            yield* assertLabelsExist(labelIds)
+            patch = { ...validated, [LABELS_KEY]: [...labelIds] }
+          }
           const event = yield* events.append({
             subjectKind: "instance",
             subjectId: current.id,
             eventType: "InstanceUpdated",
-            payload: { _tag: "InstanceUpdated", patch: validated },
+            payload: { _tag: "InstanceUpdated", patch },
             conceptName: concept.name,
           })
           const folded = applyEvent(
@@ -439,5 +506,6 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
     FieldService.Default,
     EventStore.Default,
     ComputedFields.Default,
+    LabelService.Default,
   ],
 }) {}

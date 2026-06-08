@@ -42,6 +42,15 @@ export class FieldNotFound extends Schema.TaggedError<FieldNotFound>()("FieldNot
   fieldId: Schema.String,
 }) {}
 
+export class LabelNotFound extends Schema.TaggedError<LabelNotFound>()("LabelNotFound", {
+  labelId: Schema.String,
+}) {}
+
+export class LabelNameConflict extends Schema.TaggedError<LabelNameConflict>()(
+  "LabelNameConflict",
+  { name: Schema.String },
+) {}
+
 export class FieldValidationError extends Schema.TaggedError<FieldValidationError>()(
   "FieldValidationError",
   { message: Schema.String, field: Schema.optional(Schema.String) },
@@ -99,6 +108,8 @@ export type EngineError =
   | FieldNameConflict
   | FieldNotFound
   | FieldValidationError
+  | LabelNotFound
+  | LabelNameConflict
   | IllegalTransition
   | RelationTargetMismatch
   | RelationNotFound

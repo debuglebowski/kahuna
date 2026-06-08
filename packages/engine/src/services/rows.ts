@@ -8,6 +8,7 @@ import type {
   FieldKind,
   Instance,
   InstanceState,
+  Label,
   Relation,
   SubjectKind,
 } from "../domain/types"
@@ -19,7 +20,19 @@ export interface ConceptRow {
   readonly slug: string
   readonly name: string
   readonly description: string | null
+  readonly icon: string | null
+  readonly static_label_ids: unknown
+  readonly default_label_ids: unknown
   readonly created_at: Date
+}
+export interface LabelRow {
+  readonly id: string
+  readonly org_id: string
+  readonly name: string
+  readonly color: string | null
+  readonly is_primary: boolean
+  readonly created_at: Date
+  readonly deleted_at: Date | null
 }
 export interface FieldRow {
   readonly id: string
@@ -29,6 +42,7 @@ export interface FieldRow {
   readonly kind: string
   readonly formula: string | null
   readonly config: unknown
+  readonly icon: string | null
   readonly deleted_at: Date | null
 }
 export interface InstanceRow {
@@ -64,13 +78,30 @@ export interface EventRow {
 const toFieldConfig = (raw: unknown): FieldConfig =>
   raw && typeof raw === "object" ? (raw as FieldConfig) : {}
 
+/** Coerce a jsonb column into a string-id array (defensive against null/garbage). */
+const toIdArray = (raw: unknown): ReadonlyArray<string> =>
+  Array.isArray(raw) ? raw.filter((x): x is string => typeof x === "string") : []
+
 export const toConcept = (r: ConceptRow): Concept => ({
   id: r.id,
   orgId: r.org_id,
   slug: r.slug,
   name: r.name,
   description: r.description,
+  icon: r.icon,
+  staticLabelIds: toIdArray(r.static_label_ids),
+  defaultLabelIds: toIdArray(r.default_label_ids),
   createdAt: r.created_at,
+})
+
+export const toLabel = (r: LabelRow): Label => ({
+  id: r.id,
+  orgId: r.org_id,
+  name: r.name,
+  color: r.color,
+  primary: r.is_primary,
+  createdAt: r.created_at,
+  deletedAt: r.deleted_at,
 })
 
 export const toField = (r: FieldRow): Field => ({
@@ -81,6 +112,7 @@ export const toField = (r: FieldRow): Field => ({
   kind: r.kind as FieldKind,
   formula: r.formula,
   config: toFieldConfig(r.config),
+  icon: r.icon,
   deletedAt: r.deleted_at,
 })
 

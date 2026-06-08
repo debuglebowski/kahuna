@@ -8,7 +8,7 @@ const ensureConcept = (concepts: ConceptService, spec: ConceptSpec) =>
     .getByName(spec.name)
     .pipe(
       Effect.catchTag("ConceptNotFound", () =>
-        concepts.create({ name: spec.name, description: spec.description }),
+        concepts.create({ name: spec.name, description: spec.description, icon: spec.icon }),
       ),
     )
 
@@ -39,7 +39,13 @@ export const seedKingsmaker = Effect.gen(function* () {
         field.kind === "relation" && field.targetName
           ? { ...(field.config ?? {}), target: idByName.get(field.targetName) }
           : field.config
-      yield* fields.addField({ conceptId, name: field.name, kind: field.kind, config })
+      yield* fields.addField({
+        conceptId,
+        name: field.name,
+        kind: field.kind,
+        config,
+        icon: field.icon,
+      })
     }
   }
 

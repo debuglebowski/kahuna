@@ -61,4 +61,16 @@ describe("reducer / fold", () => {
     const result = foldEvents([])
     expect(Either.isRight(result) && result.right === null).toBe(true)
   })
+
+  it("folds the synthetic __labels key through create + patch (per-item labels)", () => {
+    const result = foldEvents([
+      ev(1, { _tag: "InstanceCreated", conceptId: "c", fields: { __labels: ["a"] } }),
+      ev(2, { _tag: "InstanceUpdated", patch: { __labels: ["a", "b"] } }),
+    ])
+    expect(Either.isRight(result)).toBe(true)
+    if (Either.isRight(result) && result.right) {
+      expect(result.right.state.__labels).toEqual(["a", "b"])
+      expect(result.right.version).toBe(1)
+    }
+  })
 })

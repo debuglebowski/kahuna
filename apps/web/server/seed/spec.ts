@@ -6,11 +6,15 @@ export interface FieldSpec {
   readonly config?: FieldConfig
   /** relation fields: the target concept's name, resolved to an id by the runner. */
   readonly targetName?: string
+  /** Display glyph: a literal emoji or `lucide:Name` (see engine `Field.icon`). */
+  readonly icon?: string
 }
 
 export interface ConceptSpec {
   readonly name: string
   readonly description?: string
+  /** Display glyph: a literal emoji or `lucide:Name` (see engine `Concept.icon`). */
+  readonly icon?: string
   readonly fields: ReadonlyArray<FieldSpec>
 }
 
@@ -33,29 +37,33 @@ export const kingsmakerSpec: ReadonlyArray<ConceptSpec> = [
   {
     name: "Company",
     description: "A customer or counterparty — the hub of the graph.",
+    icon: "🏢",
     fields: [{ name: "name", kind: "text" }],
   },
   {
     name: "CompanyContact",
     description: "A person at a company.",
+    icon: "lucide:Contact",
     fields: [
       { name: "name", kind: "text" },
-      { name: "email", kind: "text", config: { format: "email" } },
+      { name: "email", kind: "text", config: { format: "email" }, icon: "✉️" },
       {
         name: "works_at",
         kind: "relation",
         targetName: "Company",
         config: { cardinality: "one" },
+        icon: "🏢",
       },
     ],
   },
   {
     name: "CompanyNote",
     description: "A freeform note about a company.",
+    icon: "📝",
     fields: [
       { name: "body", kind: "text" },
-      { name: "noted_on", kind: "date" },
-      { name: "author", kind: "user" },
+      { name: "noted_on", kind: "date", icon: "📅" },
+      { name: "author", kind: "user", icon: "👤" },
       {
         name: "about",
         kind: "relation",
@@ -67,6 +75,7 @@ export const kingsmakerSpec: ReadonlyArray<ConceptSpec> = [
   {
     name: "AgreementTemplate",
     description: "A master template that agreements are executed from.",
+    icon: "📋",
     fields: [
       { name: "name", kind: "text" },
       { name: "doc_type", kind: "enum", config: { options: ["msa", "dpa", "nda", "sow"] } },
@@ -79,13 +88,14 @@ export const kingsmakerSpec: ReadonlyArray<ConceptSpec> = [
         },
       },
       { name: "version", kind: "number" },
-      { name: "owner", kind: "user" },
-      { name: "body", kind: "file" },
+      { name: "owner", kind: "user", icon: "👤" },
+      { name: "body", kind: "file", icon: "📎" },
     ],
   },
   {
     name: "Agreement",
     description: "An executed agreement — based on a template, for a company.",
+    icon: "lucide:FileText",
     fields: [
       { name: "title", kind: "text" },
       {
@@ -101,11 +111,11 @@ export const kingsmakerSpec: ReadonlyArray<ConceptSpec> = [
           },
         },
       },
-      { name: "effective_date", kind: "date" },
-      { name: "expiry_date", kind: "date" },
+      { name: "effective_date", kind: "date", icon: "📅" },
+      { name: "expiry_date", kind: "date", icon: "📅" },
       { name: "version", kind: "number" },
-      { name: "owner", kind: "user" },
-      { name: "file", kind: "file" },
+      { name: "owner", kind: "user", icon: "👤" },
+      { name: "file", kind: "file", icon: "📎" },
       {
         name: "based_on",
         kind: "relation",
@@ -129,6 +139,7 @@ export const kingsmakerSpec: ReadonlyArray<ConceptSpec> = [
   {
     name: "Policy",
     description: "An internal governance policy with a review cadence.",
+    icon: "🛡️",
     fields: [
       { name: "title", kind: "text" },
       {
@@ -161,6 +172,7 @@ export const kingsmakerSpec: ReadonlyArray<ConceptSpec> = [
   {
     name: "Runbook",
     description: "An internal operational runbook with a review cadence.",
+    icon: "lucide:BookOpen",
     fields: [
       { name: "title", kind: "text" },
       {

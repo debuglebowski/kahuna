@@ -47,8 +47,13 @@ export interface FieldConfig {
 }
 
 /** Instance field values, keyed by field **id** (`fields.id`). Synthetic keys
- *  prefixed with `__` (e.g. `__bands`) are engine markers, not fields. */
+ *  prefixed with `__` (e.g. `__bands`, `__labels`) are engine markers, not fields.
+ *  `__labels` holds this item's own label ids (an array of `labels.id`); it rides
+ *  the normal InstanceCreated/InstanceUpdated payloads and folds like any state key. */
 export type InstanceState = Record<string, unknown>
+
+/** Synthetic `InstanceState` key holding an instance's own label ids. */
+export const LABELS_KEY = "__labels"
 
 export interface Concept {
   readonly id: Id
@@ -59,7 +64,30 @@ export interface Concept {
   readonly slug: string
   readonly name: string
   readonly description: string | null
+  /** Optional display glyph: a literal emoji or a curated lucide icon name
+   *  prefixed `lucide:` (e.g. `lucide:Building2`); null renders none. */
+  readonly icon: string | null
+  /** Label ids inherited by every instance of this concept (read-time, never
+   *  written per item — so they can't be removed on an individual item). */
+  readonly staticLabelIds: ReadonlyArray<Id>
+  /** Label ids snapshotted onto each new instance's `__labels` at creation time;
+   *  editable per item afterward. */
+  readonly defaultLabelIds: ReadonlyArray<Id>
   readonly createdAt: Date
+}
+
+/** A label in the org-wide, flat vocabulary. Keyed by `id`; `name`/`color` are
+ *  freely editable; soft-deleted so any id it ever owned stays resolvable. */
+export interface Label {
+  readonly id: Id
+  readonly orgId: OrgId
+  readonly name: string
+  /** Optional free hex color (e.g. "#e11d48"); null renders neutral. */
+  readonly color: string | null
+  /** A plain flag for now (rendered with a crown); future features key off it. */
+  readonly primary: boolean
+  readonly createdAt: Date
+  readonly deletedAt: Date | null
 }
 
 /** Identify a concept by exactly one handle (compile-time exclusive). */
@@ -74,6 +102,8 @@ export interface Field {
   readonly kind: FieldKind
   readonly formula: string | null
   readonly config: FieldConfig
+  /** Optional display glyph (see `Concept.icon`): literal emoji or `lucide:Name`. */
+  readonly icon: string | null
   /** Soft-delete marker; non-null fields are hidden from `listFields` but stay
    *  resolvable by `id` (so orphaned state keys / historical edges resolve). */
   readonly deletedAt: Date | null
@@ -139,8 +169,26 @@ export type EventPayload =
       readonly _tag: "ConceptUpdated"
       readonly description: string | null
       readonly name?: string
+      readonly icon?: string | null
+      readonly staticLabelIds?: ReadonlyArray<Id>
+      readonly defaultLabelIds?: ReadonlyArray<Id>
     }
   | { readonly _tag: "ConceptDeleted" }
+  // Label vocabulary edits (settings → Labels). subjectKind "label"; like
+  // concept/field schema events these never appear in an instance stream.
+  | {
+      readonly _tag: "LabelCreated"
+      readonly name: string
+      readonly color: string | null
+      readonly primary: boolean
+    }
+  | {
+      readonly _tag: "LabelRenamed"
+      readonly name: string
+      readonly color: string | null
+      readonly primary: boolean
+    }
+  | { readonly _tag: "LabelDeleted" }
   | {
       readonly _tag: "FieldUpdated"
       readonly conceptId: Id
@@ -160,7 +208,7 @@ export interface Attachment {
   readonly createdAt: Date
 }
 
-export type SubjectKind = "instance" | "relation" | "concept" | "field"
+export type SubjectKind = "instance" | "relation" | "concept" | "field" | "label"
 
 export interface EngineEvent {
   readonly id: number

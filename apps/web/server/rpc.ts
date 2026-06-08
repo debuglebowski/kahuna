@@ -8,6 +8,7 @@ import {
   type Field,
   type InstanceDetail,
   KingsmakerRpcs,
+  type Label,
   RpcError,
 } from "../rpc/contract"
 import { auth } from "./auth"
@@ -178,15 +179,22 @@ const ServerRpcs = KingsmakerRpcs.middleware(AuthMiddleware)
 const HandlersLive = ServerRpcs.toLayer({
   listConcepts: () => as<ReadonlyArray<Concept>>(uc.listConcepts),
   createConcept: ({ name }) => as<Concept>(uc.createConcept(name)),
-  updateConcept: ({ id, name, description }) =>
-    admin<Concept>(uc.updateConcept(id, { name, description })),
+  updateConcept: ({ id, name, description, icon, staticLabelIds, defaultLabelIds }) =>
+    admin<Concept>(
+      uc.updateConcept(id, { name, description, icon, staticLabelIds, defaultLabelIds }),
+    ),
   deleteConcept: ({ id }) => admin<Concept>(uc.deleteConcept(id)),
+  listLabels: () => as<ReadonlyArray<Label>>(uc.listLabels),
+  createLabel: ({ name, color, primary }) => admin<Label>(uc.createLabel(name, color, primary)),
+  renameLabel: ({ id, name, color, primary }) =>
+    admin<Label>(uc.renameLabel(id, { name, color, primary })),
+  deleteLabel: ({ id }) => admin<Label>(uc.deleteLabel(id)),
   listFields: ({ conceptId }) => as<ReadonlyArray<Field>>(uc.listFields(conceptId)),
   getConceptGraph: () => as<ConceptGraph>(uc.getConceptGraph),
-  addField: ({ conceptId, name, kind, config, formula }) =>
-    admin<Field>(uc.addField({ conceptId, name, kind, config, formula })),
-  updateField: ({ id, name, config, formula }) =>
-    admin<Field>(uc.updateField({ id, name, config, formula })),
+  addField: ({ conceptId, name, kind, config, formula, icon }) =>
+    admin<Field>(uc.addField({ conceptId, name, kind, config, formula, icon })),
+  updateField: ({ id, name, config, formula, icon }) =>
+    admin<Field>(uc.updateField({ id, name, config, formula, icon })),
   deleteField: ({ id }) => admin<Field>(uc.deleteField(id)),
   listInstances: ({ conceptId }) => mapErr(uc.listInstances(conceptId, { decorate: true })),
   getInstance: ({ id }) => as<InstanceDetail>(uc.getInstanceDetail(id)),
