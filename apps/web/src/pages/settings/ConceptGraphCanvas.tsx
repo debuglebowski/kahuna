@@ -4,30 +4,41 @@ import { useQuery } from "@tanstack/react-query"
 import {
   Background,
   BaseEdge,
+  ControlButton,
   Controls,
   type Edge,
   EdgeLabelRenderer,
   type EdgeProps,
   Handle,
   MarkerType,
-  MiniMap,
   type Node,
   type NodeProps,
   Position,
   ReactFlow,
+  ReactFlowProvider,
   useEdgesState,
   useNodesState,
+  useReactFlow,
 } from "@xyflow/react"
-import { useEffect, useMemo } from "react"
+import { AlignHorizontalDistributeCenter, AlignVerticalDistributeCenter } from "lucide-react"
+import { useCallback, useEffect, useMemo } from "react"
 import { Card, Spinner } from "../../components/ui"
 import { api, type ConceptGraph } from "../../lib/api"
 
 const NODE_W = 168
 const NODE_H = 44
 
+type Dir = "LR" | "TB"
+
 /** Concept box. Click selects it for editing; the active concept is highlighted. */
 function ConceptNode({ data }: NodeProps) {
-  const { label, selected } = data as { label: string; selected?: boolean }
+  const { label, selected, direction } = data as {
+    label: string
+    selected?: boolean
+    direction?: Dir
+  }
+  const targetPos = direction === "TB" ? Position.Top : Position.Left
+  const sourcePos = direction === "TB" ? Position.Bottom : Position.Right
   return (
     <div
       className={
@@ -36,13 +47,9 @@ function ConceptNode({ data }: NodeProps) {
           : "cursor-pointer rounded-lg border border-gray-300 bg-white px-4 py-2 text-center text-sm font-medium text-gray-800 shadow-sm hover:border-gray-500"
       }
     >
-      <Handle type="target" position={Position.Left} className="!h-2 !w-2 !border-0 !bg-gray-300" />
+      <Handle type="target" position={targetPos} className="!h-2 !w-2 !border-0 !bg-gray-300" />
       {label}
-      <Handle
-        type="source"
-        position={Position.Right}
-        className="!h-2 !w-2 !border-0 !bg-gray-300"
-      />
+      <Handle type="source" position={sourcePos} className="!h-2 !w-2 !border-0 !bg-gray-300" />
     </div>
   )
 }
@@ -81,8 +88,8 @@ function SelfLoopEdge({
 const nodeTypes = { concept: ConceptNode }
 const edgeTypes = { selfloop: SelfLoopEdge }
 
-/** Project the concept graph into laid-out React Flow nodes + edges (dagre LR). */
-function buildFlow(graph: ConceptGraph): { nodes: Node[]; edges: Edge[] } {
+/** Project the concept graph into laid-out React Flow nodes + edges (dagre). */
+function buildFlow(graph: ConceptGraph, direction: Dir): { nodes: Node[]; edges: Edge[] } {
   // Collapse multiple relation fields with the same direction into one labelled edge.
   const merged = new Map<string, { from: string; to: string; labels: Set<string> }>()
   for (const e of graph.edges) {
@@ -107,7 +114,7 @@ function buildFlow(graph: ConceptGraph): { nodes: Node[]; edges: Edge[] } {
   }))
 
   const g = new Dagre.graphlib.Graph().setDefaultEdgeLabel(() => ({}))
-  g.setGraph({ rankdir: "LR", nodesep: 40, ranksep: 90 })
+  g.setGraph({ rankdir: direction, nodesep: 40, ranksep: 90 })
   for (const n of graph.nodes) g.setNode(n.id, { width: NODE_W, height: NODE_H })
   for (const e of edges) if (e.source !== e.target) g.setEdge(e.source, e.target)
   Dagre.layout(g)
@@ -118,7 +125,7 @@ function buildFlow(graph: ConceptGraph): { nodes: Node[]; edges: Edge[] } {
       id: n.id,
       type: "concept",
       position: { x: p.x - NODE_W / 2, y: p.y - NODE_H / 2 },
-      data: { label: n.name, selected: false },
+      data: { label: n.name, selected: false, direction },
     }
   })
 
@@ -135,7 +142,8 @@ function Flow({
   selectedId: string | null
   onSelect: (conceptId: string) => void
 }) {
-  const initial = useMemo(() => buildFlow(graph), [graph])
+  const { fitView } = useReactFlow()
+  const initial = useMemo(() => buildFlow(graph, "LR"), [graph])
   const [nodes, setNodes, onNodesChange] = useNodesState(initial.nodes)
   const [edges, , onEdgesChange] = useEdgesState(initial.edges)
 
@@ -143,6 +151,18 @@ function Flow({
   useEffect(() => {
     setNodes((ns) => ns.map((n) => ({ ...n, data: { ...n.data, selected: n.id === selectedId } })))
   }, [selectedId, setNodes])
+
+  // Re-run the dagre layout in the chosen direction, then refit the viewport.
+  const align = useCallback(
+    (direction: Dir) => {
+      const next = buildFlow(graph, direction)
+      setNodes(
+        next.nodes.map((n) => ({ ...n, data: { ...n.data, selected: n.id === selectedId } })),
+      )
+      requestAnimationFrame(() => fitView({ padding: 0.2 }))
+    },
+    [graph, selectedId, setNodes, fitView],
+  )
 
   return (
     <ReactFlow
@@ -160,8 +180,14 @@ function Flow({
       style={{ width: "100%", height: "100%" }}
     >
       <Background color="#e5e7eb" gap={20} />
-      <Controls showInteractive={false} />
-      <MiniMap pannable zoomable />
+      <Controls showInteractive={false}>
+        <ControlButton onClick={() => align("LR")} title="Arrange horizontally">
+          <AlignHorizontalDistributeCenter size={16} />
+        </ControlButton>
+        <ControlButton onClick={() => align("TB")} title="Arrange vertically">
+          <AlignVerticalDistributeCenter size={16} />
+        </ControlButton>
+      </Controls>
     </ReactFlow>
   )
 }
@@ -203,7 +229,9 @@ export function ConceptGraphCanvas({
         </p>
       )}
       <Card className="h-[70vh] w-full overflow-hidden">
-        <Flow key={sig} graph={graph.data} selectedId={selectedId} onSelect={onSelect} />
+        <ReactFlowProvider>
+          <Flow key={sig} graph={graph.data} selectedId={selectedId} onSelect={onSelect} />
+        </ReactFlowProvider>
       </Card>
     </div>
   )
