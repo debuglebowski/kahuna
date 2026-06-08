@@ -24,7 +24,7 @@ import { AlignHorizontalDistributeCenter, AlignVerticalDistributeCenter } from "
 import { useCallback, useEffect, useMemo } from "react"
 import { Card, Spinner } from "../../components/ui"
 import { api, type ConceptGraph } from "../../lib/api"
-import { ConceptIcon } from "../../lib/icons"
+import { ConceptIcon, DEFAULT_CONCEPT_ICON } from "../../lib/icons"
 
 const NODE_W = 168
 const NODE_H = 44
@@ -51,7 +51,7 @@ function ConceptNode({ data }: NodeProps) {
     >
       <Handle type="target" position={targetPos} className="!h-2 !w-2 !border-0 !bg-gray-300" />
       <span className="inline-flex items-center justify-center gap-1.5">
-        <ConceptIcon value={icon} size={15} />
+        <ConceptIcon value={icon || DEFAULT_CONCEPT_ICON} size={15} />
         {label}
       </span>
       <Handle type="source" position={sourcePos} className="!h-2 !w-2 !border-0 !bg-gray-300" />

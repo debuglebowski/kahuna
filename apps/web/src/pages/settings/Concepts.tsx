@@ -17,7 +17,7 @@ import {
   Spinner,
 } from "../../components/ui"
 import { api, type Field, type Label } from "../../lib/api"
-import { ConceptIcon } from "../../lib/icons"
+import { ConceptIcon, DEFAULT_CONCEPT_ICON } from "../../lib/icons"
 import { ConceptGraphCanvas } from "./ConceptGraphCanvas"
 import { FieldForm, type FieldFormValue } from "./FieldForm"
 
@@ -260,7 +260,7 @@ export function Concepts() {
         <Drawer
           title={
             <span className="flex items-center gap-2">
-              <ConceptIcon value={selected.icon} size={16} />
+              <ConceptIcon value={selected.icon || DEFAULT_CONCEPT_ICON} size={16} />
               {selected.name}
             </span>
           }

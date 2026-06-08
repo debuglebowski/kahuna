@@ -93,6 +93,7 @@ import {
   Send,
   Server,
   Settings,
+  Shapes,
   Shield,
   ShieldCheck,
   ShoppingBag,
@@ -219,6 +220,7 @@ export const ICONS: Record<string, LucideIcon> = {
   Store,
   Factory,
   Tractor,
+  Shapes,
   Box,
   Boxes,
   Layers,
@@ -268,6 +270,9 @@ export const ICONS: Record<string, LucideIcon> = {
 
 /** Ordered icon names for the picker grid (registry insertion order). */
 export const ICON_NAMES: ReadonlyArray<string> = Object.keys(ICONS)
+
+/** Fallback glyph shown for a concept that hasn't chosen an icon of its own. */
+export const DEFAULT_CONCEPT_ICON = `${ICON_PREFIX}Shapes`
 
 /**
  * Curated emoji set with search keywords (CRM/business-leaning, grouped by

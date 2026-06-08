@@ -15,6 +15,7 @@ import { Link, useLocation, useNavigate } from "react-router-dom"
 import { api } from "../lib/api"
 import { signOut, useSession } from "../lib/auth-client"
 import { conceptsCollection, KEY, useRegisterCollection } from "../lib/collections"
+import { ConceptIcon, DEFAULT_CONCEPT_ICON } from "../lib/icons"
 import { useLiveSync } from "../lib/useLiveSync"
 import { useSafetyRefetch } from "../lib/useSafetyRefetch"
 import { cn } from "../lib/utils"
@@ -71,9 +72,9 @@ function NavItem({
   )
 }
 
-/** A concept carries no icon of its own — show its first initial in the nav. */
-function conceptInitial(name: string): ReactNode {
-  return <span className="text-[11px] font-semibold">{(name.trim()[0] ?? "?").toUpperCase()}</span>
+/** A concept's nav glyph — its chosen icon, or the shared default when unset. */
+function conceptGlyph(icon: string | null): ReactNode {
+  return <ConceptIcon value={icon || DEFAULT_CONCEPT_ICON} size={16} />
 }
 
 /** Up to two initials from a name, falling back to the email's first letter. */
@@ -170,7 +171,7 @@ export function Layout({ children }: { children: ReactNode }) {
                   key={c.id}
                   to={href}
                   label={c.name}
-                  icon={conceptInitial(c.name)}
+                  icon={conceptGlyph(c.icon)}
                   active={loc.pathname === href}
                   collapsed
                 />
@@ -245,7 +246,7 @@ export function Layout({ children }: { children: ReactNode }) {
                 key={c.id}
                 to={href}
                 label={c.name}
-                icon={conceptInitial(c.name)}
+                icon={conceptGlyph(c.icon)}
                 active={loc.pathname === href}
                 collapsed={false}
               />
