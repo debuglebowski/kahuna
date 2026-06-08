@@ -18,20 +18,26 @@ import {
   useEdgesState,
   useNodesState,
 } from "@xyflow/react"
-import { useMemo } from "react"
-import { useNavigate } from "react-router-dom"
+import { useEffect, useMemo } from "react"
 import { Card, Spinner } from "../../components/ui"
 import { api, type ConceptGraph } from "../../lib/api"
 
 const NODE_W = 168
 const NODE_H = 44
 
-/** Concept box. Click navigates to that concept's instance browser. */
+/** Concept box. Click selects it for editing; the active concept is highlighted. */
 function ConceptNode({ data }: NodeProps) {
+  const { label, selected } = data as { label: string; selected?: boolean }
   return (
-    <div className="cursor-pointer rounded-lg border border-gray-300 bg-white px-4 py-2 text-center text-sm font-medium text-gray-800 shadow-sm hover:border-gray-500">
+    <div
+      className={
+        selected
+          ? "cursor-pointer rounded-lg border-2 border-gray-900 bg-white px-4 py-2 text-center text-sm font-medium text-gray-900 shadow"
+          : "cursor-pointer rounded-lg border border-gray-300 bg-white px-4 py-2 text-center text-sm font-medium text-gray-800 shadow-sm hover:border-gray-500"
+      }
+    >
       <Handle type="target" position={Position.Left} className="!h-2 !w-2 !border-0 !bg-gray-300" />
-      {(data as { label: string }).label}
+      {label}
       <Handle
         type="source"
         position={Position.Right}
@@ -112,7 +118,7 @@ function buildFlow(graph: ConceptGraph): { nodes: Node[]; edges: Edge[] } {
       id: n.id,
       type: "concept",
       position: { x: p.x - NODE_W / 2, y: p.y - NODE_H / 2 },
-      data: { label: n.name },
+      data: { label: n.name, selected: false },
     }
   })
 
@@ -120,11 +126,23 @@ function buildFlow(graph: ConceptGraph): { nodes: Node[]; edges: Edge[] } {
 }
 
 /** Interactive canvas — separated so its layout is computed once per data load. */
-function Flow({ graph }: { graph: ConceptGraph }) {
-  const navigate = useNavigate()
+function Flow({
+  graph,
+  selectedId,
+  onSelect,
+}: {
+  graph: ConceptGraph
+  selectedId: string | null
+  onSelect: (conceptId: string) => void
+}) {
   const initial = useMemo(() => buildFlow(graph), [graph])
-  const [nodes, , onNodesChange] = useNodesState(initial.nodes)
+  const [nodes, setNodes, onNodesChange] = useNodesState(initial.nodes)
   const [edges, , onEdgesChange] = useEdgesState(initial.edges)
+
+  // Reflect the active selection without re-running layout (preserves pan/zoom).
+  useEffect(() => {
+    setNodes((ns) => ns.map((n) => ({ ...n, data: { ...n.data, selected: n.id === selectedId } })))
+  }, [selectedId, setNodes])
 
   return (
     <ReactFlow
@@ -134,7 +152,7 @@ function Flow({ graph }: { graph: ConceptGraph }) {
       onEdgesChange={onEdgesChange}
       nodeTypes={nodeTypes}
       edgeTypes={edgeTypes}
-      onNodeClick={(_, node) => navigate(`/concepts/${node.id}`)}
+      onNodeClick={(_, node) => onSelect(node.id)}
       nodesConnectable={false}
       minZoom={0.2}
       fitView
@@ -148,8 +166,14 @@ function Flow({ graph }: { graph: ConceptGraph }) {
   )
 }
 
-/** Settings → Concepts graph: concepts as nodes, relation fields as edges. */
-export function ConceptsGraph() {
+/** Concept graph as a selector: concepts are nodes, relation fields are edges. */
+export function ConceptGraphCanvas({
+  selectedId,
+  onSelect,
+}: {
+  selectedId: string | null
+  onSelect: (conceptId: string) => void
+}) {
   const graph = useQuery({ queryKey: ["conceptGraph"], queryFn: () => api.getConceptGraph() })
 
   if (graph.isPending) return <Spinner />
@@ -163,7 +187,7 @@ export function ConceptsGraph() {
     return (
       <Card>
         <div className="p-6 text-sm text-gray-400">
-          No concepts yet. Create concepts and add relation fields to see the graph.
+          No concepts yet. Create a concept to get started.
         </div>
       </Card>
     )
@@ -175,12 +199,11 @@ export function ConceptsGraph() {
     <div className="space-y-3">
       {graph.data.edges.length === 0 && (
         <p className="text-sm text-gray-400">
-          No relationships yet — add relation fields to your concepts (Settings → Concepts) to
-          connect them.
+          No relationships yet — add relation fields to your concepts to connect them.
         </p>
       )}
       <Card className="h-[70vh] w-full overflow-hidden">
-        <Flow key={sig} graph={graph.data} />
+        <Flow key={sig} graph={graph.data} selectedId={selectedId} onSelect={onSelect} />
       </Card>
     </div>
   )

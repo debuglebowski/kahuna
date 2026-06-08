@@ -192,3 +192,52 @@ export function Modal({
     </div>
   )
 }
+
+/** Right-anchored slide-over panel. Floats over the page; Esc or backdrop closes it. */
+export function Drawer({
+  title,
+  onClose,
+  children,
+}: {
+  title: ReactNode
+  onClose: () => void
+  children: ReactNode
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose()
+    }
+    document.addEventListener("keydown", onKey)
+    return () => document.removeEventListener("keydown", onKey)
+  }, [onClose])
+
+  return (
+    <div className="fixed inset-0 z-50">
+      {/* Backdrop as a real button → click-to-close stays keyboard-accessible. */}
+      <button
+        type="button"
+        aria-label="Close"
+        onClick={onClose}
+        className="absolute inset-0 cursor-default bg-black/30"
+      />
+      <div
+        role="dialog"
+        aria-modal="true"
+        className="absolute inset-y-0 right-0 flex w-[640px] max-w-[95vw] flex-col border-l border-gray-200 bg-white shadow-xl"
+      >
+        <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3">
+          <h3 className="truncate text-sm font-semibold text-gray-700">{title}</h3>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="text-gray-400 transition hover:text-gray-600"
+          >
+            ✕
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-4">{children}</div>
+      </div>
+    </div>
+  )
+}

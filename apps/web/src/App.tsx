@@ -8,7 +8,6 @@ import { Dashboard } from "./pages/Dashboard"
 import { InstanceView } from "./pages/InstanceView"
 import { Placeholder } from "./pages/Placeholder"
 import { Concepts } from "./pages/settings/Concepts"
-import { ConceptsGraph } from "./pages/settings/ConceptsGraph"
 import { Members } from "./pages/settings/Members"
 import { Organization } from "./pages/settings/Organization"
 import { Profile } from "./pages/settings/Profile"
@@ -36,7 +35,7 @@ export function App() {
           <Route path="organization" element={<Organization />} />
           <Route path="members" element={<Members />} />
           <Route path="concepts" element={<Concepts />} />
-          <Route path="concepts-graph" element={<ConceptsGraph />} />
+          <Route path="concepts-graph" element={<Navigate to="/settings/concepts" replace />} />
         </Route>
         <Route path="/concepts/:id" element={<ConceptView />} />
         <Route path="/instances/:id" element={<InstanceView />} />
