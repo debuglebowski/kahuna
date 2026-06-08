@@ -1,3 +1,4 @@
+import { ServerCrash } from "lucide-react"
 import type {
   ButtonHTMLAttributes,
   InputHTMLAttributes,
@@ -110,4 +111,34 @@ export const momentumTone = (label?: string): Tone =>
 
 export function Spinner() {
   return <div className="p-8 text-sm text-gray-400">Loading…</div>
+}
+
+/** Full-screen "can't reach the server" state with an optional retry. */
+export function ErrorScreen({
+  title = "Can't reach the server",
+  message = "We couldn't connect to the server. Check your connection and try again.",
+  onRetry,
+  retrying = false,
+}: {
+  title?: string
+  message?: string
+  onRetry?: () => void
+  retrying?: boolean
+}) {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-gray-50 p-4">
+      <Card className="w-full max-w-sm p-6 text-center">
+        <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-red-50 text-red-600">
+          <ServerCrash size={22} />
+        </div>
+        <h1 className="mb-1 text-lg font-semibold text-gray-900">{title}</h1>
+        <p className="mb-5 text-sm text-gray-500">{message}</p>
+        {onRetry && (
+          <Button onClick={onRetry} disabled={retrying} className="w-full">
+            {retrying ? "Retrying…" : "Try again"}
+          </Button>
+        )}
+      </Card>
+    </div>
+  )
 }

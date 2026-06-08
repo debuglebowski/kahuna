@@ -1,6 +1,6 @@
 import { Navigate, Route, Routes } from "react-router-dom"
 import { Layout } from "./components/Layout"
-import { Spinner } from "./components/ui"
+import { ErrorScreen, Spinner } from "./components/ui"
 import { useSession } from "./lib/auth-client"
 import { AuthPage } from "./pages/AuthPage"
 import { ConceptView } from "./pages/ConceptView"
@@ -13,9 +13,12 @@ import { SettingsLayout } from "./pages/settings/SettingsLayout"
 import { Members } from "./pages/settings/Members"
 
 export function App() {
-  const { data: session, isPending } = useSession()
+  const { data: session, isPending, error, isRefetching, refetch } = useSession()
 
   if (isPending) return <Spinner />
+  // A populated `error` means the session request failed (server unreachable) —
+  // distinct from an unauthenticated 200 (no error, no data → AuthPage).
+  if (error) return <ErrorScreen onRetry={() => void refetch()} retrying={isRefetching} />
   if (!session) return <AuthPage />
 
   return (
