@@ -1,6 +1,16 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query"
+import { Plus, Trash2 } from "lucide-react"
 import { useState } from "react"
-import { Badge, Button, Card, CardHeader, Input, Select, Spinner } from "../../components/ui"
+import {
+  Badge,
+  Button,
+  Card,
+  CardHeader,
+  IconButton,
+  Input,
+  Select,
+  Spinner,
+} from "../../components/ui"
 import { authClient, useSession } from "../../lib/auth-client"
 import { Feedback } from "./parts"
 import { useFullOrg } from "./SettingsLayout"
@@ -92,6 +102,7 @@ export function Members() {
               </Select>
             </div>
             <Button onClick={() => add.mutate()} disabled={add.isPending || !email.includes("@")}>
+              <Plus size={15} />
               {add.isPending ? "Adding…" : "Add"}
             </Button>
           </div>
@@ -126,16 +137,17 @@ export function Members() {
                     <option value="owner">owner</option>
                   </Select>
                 </div>
-                <Button
+                <IconButton
                   variant="danger"
+                  aria-label={`Remove ${m.user?.email ?? "member"}`}
                   disabled={lockOwner || remove.isPending}
                   onClick={() => {
                     if (confirm(`Remove ${m.user?.email ?? "this member"} from the org?`))
                       remove.mutate(m.id)
                   }}
                 >
-                  Remove
-                </Button>
+                  <Trash2 size={15} />
+                </IconButton>
               </li>
             )
           })}

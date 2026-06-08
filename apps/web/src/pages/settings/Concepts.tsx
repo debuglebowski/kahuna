@@ -1,7 +1,18 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { Check, Pencil, Plus, Trash2, X } from "lucide-react"
 import { useEffect, useState } from "react"
 import { Link, useOutletContext } from "react-router-dom"
-import { Badge, Button, Card, CardHeader, Drawer, Input, Modal, Spinner } from "../../components/ui"
+import {
+  Badge,
+  Button,
+  Card,
+  CardHeader,
+  Drawer,
+  IconButton,
+  Input,
+  Modal,
+  Spinner,
+} from "../../components/ui"
 import { api, type Field } from "../../lib/api"
 import { ConceptGraphCanvas } from "./ConceptGraphCanvas"
 import { FieldForm, type FieldFormValue } from "./FieldForm"
@@ -144,7 +155,12 @@ export function Concepts() {
         <p className="text-sm text-gray-500">
           Click a concept to view{admin ? " or edit" : ""} its settings.
         </p>
-        {admin && <Button onClick={() => setCreatingConcept(true)}>+ New concept</Button>}
+        {admin && (
+          <Button onClick={() => setCreatingConcept(true)}>
+            <Plus size={15} />
+            New concept
+          </Button>
+        )}
       </div>
 
       <ConceptGraphCanvas selectedId={selectedId} onSelect={setSelectedId} />
@@ -166,9 +182,11 @@ export function Concepts() {
                 onClick={submitNewConcept}
                 disabled={createConcept.isPending || !newName.trim()}
               >
+                <Plus size={15} />
                 {createConcept.isPending ? "Creating…" : "Create"}
               </Button>
               <Button variant="ghost" onClick={() => setCreatingConcept(false)}>
+                <X size={15} />
                 Cancel
               </Button>
             </div>
@@ -199,6 +217,7 @@ export function Concepts() {
                           onClick={() => saveConcept.mutate()}
                           disabled={saveConcept.isPending || !name.trim()}
                         >
+                          <Check size={15} />
                           {saveConcept.isPending ? "Saving…" : "Save"}
                         </Button>
                         <Button
@@ -246,6 +265,7 @@ export function Concepts() {
                   admin &&
                   !adding && (
                     <Button variant="ghost" onClick={() => setAdding(true)}>
+                      <Plus size={15} />
                       Add field
                     </Button>
                   )
@@ -288,18 +308,22 @@ export function Concepts() {
                         </span>
                         {admin && (
                           <>
-                            <Button variant="ghost" onClick={() => setEditingFieldId(f.id)}>
-                              Edit
-                            </Button>
-                            <Button
+                            <IconButton
+                              aria-label={`Edit ${f.name}`}
+                              onClick={() => setEditingFieldId(f.id)}
+                            >
+                              <Pencil size={15} />
+                            </IconButton>
+                            <IconButton
                               variant="danger"
+                              aria-label={`Delete ${f.name}`}
                               disabled={delField.isPending}
                               onClick={() => {
                                 if (confirm(`Delete field "${f.name}"?`)) delField.mutate(f.id)
                               }}
                             >
-                              Delete
-                            </Button>
+                              <Trash2 size={15} />
+                            </IconButton>
                           </>
                         )}
                       </li>

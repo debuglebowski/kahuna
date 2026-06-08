@@ -1,4 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query"
+import { Check } from "lucide-react"
 import { useEffect, useState } from "react"
 import { Button, Card, CardHeader, Field, Input, Spinner } from "../../components/ui"
 import { authClient, signOut, useSession } from "../../lib/auth-client"
@@ -10,7 +11,6 @@ export function Organization() {
   const qc = useQueryClient()
   const { data: session } = useSession()
   const [name, setName] = useState("")
-  const [slug, setSlug] = useState("")
   const [logo, setLogo] = useState("")
   const [confirm, setConfirm] = useState("")
 
@@ -18,7 +18,6 @@ export function Organization() {
   useEffect(() => {
     if (org.data) {
       setName(org.data.name ?? "")
-      setSlug(org.data.slug ?? "")
       setLogo(org.data.logo ?? "")
     }
   }, [org.data])
@@ -28,7 +27,7 @@ export function Organization() {
       if (!org.data) return
       const { error } = await authClient.organization.update({
         organizationId: org.data.id,
-        data: { name: name.trim(), slug: slug.trim(), logo: logo.trim() || undefined },
+        data: { name: name.trim(), logo: logo.trim() || undefined },
       })
       if (error) throw new Error(error.message ?? "Failed to update organization")
     },
@@ -65,10 +64,8 @@ export function Organization() {
         <CardHeader
           title="Organization"
           action={
-            <Button
-              onClick={() => save.mutate()}
-              disabled={save.isPending || !name.trim() || !slug.trim()}
-            >
+            <Button onClick={() => save.mutate()} disabled={save.isPending || !name.trim()}>
+              <Check size={15} />
               {save.isPending ? "Saving…" : "Save"}
             </Button>
           }
@@ -76,9 +73,6 @@ export function Organization() {
         <div className="max-w-md space-y-4 p-4">
           <Field label="Name">
             <Input value={name} onChange={(e) => setName(e.target.value)} />
-          </Field>
-          <Field label="Slug">
-            <Input value={slug} onChange={(e) => setSlug(e.target.value)} />
           </Field>
           <Field label="Logo URL">
             <Input value={logo} onChange={(e) => setLogo(e.target.value)} placeholder="https://…" />
@@ -95,12 +89,12 @@ export function Organization() {
               Permanently delete <strong>{org.data?.name}</strong> and all of its data — concepts,
               records, history, and members. This cannot be undone.
             </p>
-            <Field label={`Type the slug "${org.data?.slug}" to confirm`}>
+            <Field label={`Type the name "${org.data?.name}" to confirm`}>
               <Input value={confirm} onChange={(e) => setConfirm(e.target.value)} />
             </Field>
             <Button
               variant="danger"
-              disabled={del.isPending || confirm !== org.data?.slug}
+              disabled={del.isPending || confirm !== org.data?.name}
               onClick={() => del.mutate()}
             >
               {del.isPending ? "Deleting…" : "Delete organization"}

@@ -1,4 +1,5 @@
 import { useMutation } from "@tanstack/react-query"
+import { Check } from "lucide-react"
 import { useState } from "react"
 import { Button, Card, CardHeader, Field, Input } from "../../components/ui"
 import { authClient, useSession } from "../../lib/auth-client"
@@ -25,6 +26,7 @@ function ProfileInfo() {
         title="Profile"
         action={
           <Button onClick={() => save.mutate()} disabled={save.isPending || !name.trim()}>
+            <Check size={15} />
             {save.isPending ? "Saving…" : "Save"}
           </Button>
         }
@@ -74,6 +76,7 @@ function ChangePassword() {
             onClick={() => save.mutate()}
             disabled={save.isPending || !current || next.length < 8}
           >
+            <Check size={15} />
             {save.isPending ? "Saving…" : "Change password"}
           </Button>
         }
@@ -117,6 +120,7 @@ function ChangeEmail() {
         title="Email"
         action={
           <Button onClick={() => save.mutate()} disabled={save.isPending || !email.includes("@")}>
+            <Check size={15} />
             {save.isPending ? "Saving…" : "Change email"}
           </Button>
         }

@@ -1,3 +1,4 @@
+import { Plus, X } from "lucide-react"
 import { useMemo, useState } from "react"
 import { Button, Field, Input, Select } from "../components/ui"
 import type { Field as FieldDef } from "../lib/api"
@@ -295,9 +296,11 @@ export function InstanceForm({
 
       <div className="flex gap-2">
         <Button disabled={pending} onClick={() => onSubmit(build())}>
+          <Plus size={15} />
           {pending ? "Creating…" : "Create"}
         </Button>
         <Button variant="ghost" onClick={onCancel}>
+          <X size={15} />
           Cancel
         </Button>
       </div>

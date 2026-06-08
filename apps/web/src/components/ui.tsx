@@ -1,4 +1,4 @@
-import { ServerCrash } from "lucide-react"
+import { ServerCrash, X } from "lucide-react"
 import {
   type ButtonHTMLAttributes,
   type InputHTMLAttributes,
@@ -22,6 +22,40 @@ export function Button({
     <button
       className={cn(
         "inline-flex items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition disabled:opacity-50",
+        styles,
+        className,
+      )}
+      {...props}
+    />
+  )
+}
+
+/**
+ * Square, icon-only button. Requires an `aria-label` (also used as the hover
+ * tooltip) so the icon stays accessible. Use for repeated row actions where a
+ * full text Button would crowd the layout.
+ */
+export function IconButton({
+  className,
+  variant = "default",
+  title,
+  "aria-label": ariaLabel,
+  ...props
+}: ButtonHTMLAttributes<HTMLButtonElement> & {
+  variant?: "default" | "danger"
+  "aria-label": string
+}) {
+  const styles = {
+    default: "text-gray-400 hover:bg-gray-100 hover:text-gray-700",
+    danger: "text-gray-400 hover:bg-red-50 hover:text-red-600",
+  }[variant]
+  return (
+    <button
+      type="button"
+      aria-label={ariaLabel}
+      title={title ?? ariaLabel}
+      className={cn(
+        "inline-flex items-center justify-center rounded-md p-1.5 transition disabled:opacity-50",
         styles,
         className,
       )}
@@ -178,14 +212,9 @@ export function Modal({
       >
         <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3">
           <h3 className="text-sm font-semibold text-gray-700">{title}</h3>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="text-gray-400 transition hover:text-gray-600"
-          >
-            ✕
-          </button>
+          <IconButton onClick={onClose} aria-label="Close">
+            <X size={16} />
+          </IconButton>
         </div>
         <div className="p-4">{children}</div>
       </div>
@@ -227,14 +256,9 @@ export function Drawer({
       >
         <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3">
           <h3 className="truncate text-sm font-semibold text-gray-700">{title}</h3>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="text-gray-400 transition hover:text-gray-600"
-          >
-            ✕
-          </button>
+          <IconButton onClick={onClose} aria-label="Close">
+            <X size={16} />
+          </IconButton>
         </div>
         <div className="flex-1 overflow-y-auto p-4">{children}</div>
       </div>

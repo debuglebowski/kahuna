@@ -1,3 +1,4 @@
+import { Check, Plus, X } from "lucide-react"
 import { useMemo, useState } from "react"
 import { Button, Field, Input, Select } from "../../components/ui"
 import type { Concept, FieldConfig, Field as FieldDef, FieldKind } from "../../lib/api"
@@ -255,9 +256,11 @@ export function FieldForm({
           disabled={!valid || pending}
           onClick={() => onSubmit({ name: name.trim(), kind, config: buildConfig() })}
         >
+          {editing ? <Check size={15} /> : <Plus size={15} />}
           {pending ? "Saving…" : editing ? "Save field" : "Add field"}
         </Button>
         <Button variant="ghost" onClick={onCancel}>
+          <X size={15} />
           Cancel
         </Button>
       </div>

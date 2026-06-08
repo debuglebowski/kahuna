@@ -1,5 +1,6 @@
 import { useLiveQuery } from "@tanstack/react-db"
 import { useMutation, useQuery } from "@tanstack/react-query"
+import { Plus } from "lucide-react"
 import { useMemo, useState } from "react"
 import { useNavigate, useParams } from "react-router-dom"
 import { Button, Card, Input, Modal, Spinner } from "../components/ui"
@@ -91,7 +92,10 @@ export function ConceptView() {
               onChange={(e) => setFilter(e.target.value)}
               className="w-48"
             />
-            <Button onClick={() => setAdding(true)}>+ Add {name}</Button>
+            <Button onClick={() => setAdding(true)}>
+              <Plus size={15} />
+              Add {name}
+            </Button>
           </div>
         </div>
         <Card>
