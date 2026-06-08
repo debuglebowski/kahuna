@@ -170,7 +170,7 @@ export function Layout({ children }: { children: ReactNode }) {
                 <NavItem
                   key={c.id}
                   to={href}
-                  label={c.name}
+                  label={c.pluralName || c.name}
                   icon={conceptGlyph(c.icon)}
                   active={loc.pathname === href}
                   collapsed
@@ -245,7 +245,7 @@ export function Layout({ children }: { children: ReactNode }) {
               <NavItem
                 key={c.id}
                 to={href}
-                label={c.name}
+                label={c.pluralName || c.name}
                 icon={conceptGlyph(c.icon)}
                 active={loc.pathname === href}
                 collapsed={false}

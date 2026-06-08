@@ -4,13 +4,16 @@ import { type ConceptSpec, kingsmakerSpec } from "./spec"
 
 /** Get a concept by name, creating it if absent (idempotent). */
 const ensureConcept = (concepts: ConceptService, spec: ConceptSpec) =>
-  concepts
-    .getByName(spec.name)
-    .pipe(
-      Effect.catchTag("ConceptNotFound", () =>
-        concepts.create({ name: spec.name, description: spec.description, icon: spec.icon }),
-      ),
-    )
+  concepts.getByName(spec.name).pipe(
+    Effect.catchTag("ConceptNotFound", () =>
+      concepts.create({
+        name: spec.name,
+        pluralName: spec.pluralName,
+        description: spec.description,
+        icon: spec.icon,
+      }),
+    ),
+  )
 
 /**
  * Seed the Kingsmaker concepts + fields for the current org (OrgContext).

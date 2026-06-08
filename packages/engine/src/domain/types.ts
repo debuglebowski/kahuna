@@ -63,6 +63,10 @@ export interface Concept {
    *  display name — so the name is free to be renamed. */
   readonly slug: string
   readonly name: string
+  /** Optional plural display label (e.g. `name` "Company" → "Companies"). The
+   *  sidebar prefers it and falls back to `name`; null until set (creation only
+   *  asks for the singular). */
+  readonly pluralName: string | null
   readonly description: string | null
   /** Optional display glyph: a literal emoji or a curated lucide icon name
    *  prefixed `lucide:` (e.g. `lucide:Building2`); null renders none. */
@@ -169,6 +173,7 @@ export type EventPayload =
       readonly _tag: "ConceptUpdated"
       readonly description: string | null
       readonly name?: string
+      readonly pluralName?: string | null
       readonly icon?: string | null
       readonly staticLabelIds?: ReadonlyArray<Id>
       readonly defaultLabelIds?: ReadonlyArray<Id>

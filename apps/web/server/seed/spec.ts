@@ -12,6 +12,8 @@ export interface FieldSpec {
 
 export interface ConceptSpec {
   readonly name: string
+  /** Optional plural display label; the sidebar prefers it over `name`. */
+  readonly pluralName?: string
   readonly description?: string
   /** Display glyph: a literal emoji or `lucide:Name` (see engine `Concept.icon`). */
   readonly icon?: string
@@ -36,12 +38,14 @@ export interface ConceptSpec {
 export const kingsmakerSpec: ReadonlyArray<ConceptSpec> = [
   {
     name: "Company",
+    pluralName: "Companies",
     description: "A customer or counterparty — the hub of the graph.",
     icon: "🏢",
     fields: [{ name: "name", kind: "text" }],
   },
   {
     name: "CompanyContact",
+    pluralName: "Contacts",
     description: "A person at a company.",
     icon: "lucide:Contact",
     fields: [
@@ -58,6 +62,7 @@ export const kingsmakerSpec: ReadonlyArray<ConceptSpec> = [
   },
   {
     name: "CompanyNote",
+    pluralName: "Notes",
     description: "A freeform note about a company.",
     icon: "📝",
     fields: [
@@ -74,6 +79,7 @@ export const kingsmakerSpec: ReadonlyArray<ConceptSpec> = [
   },
   {
     name: "AgreementTemplate",
+    pluralName: "Agreement Templates",
     description: "A master template that agreements are executed from.",
     icon: "📋",
     fields: [
@@ -94,6 +100,7 @@ export const kingsmakerSpec: ReadonlyArray<ConceptSpec> = [
   },
   {
     name: "Agreement",
+    pluralName: "Agreements",
     description: "An executed agreement — based on a template, for a company.",
     icon: "lucide:FileText",
     fields: [
@@ -138,6 +145,7 @@ export const kingsmakerSpec: ReadonlyArray<ConceptSpec> = [
   },
   {
     name: "Policy",
+    pluralName: "Policies",
     description: "An internal governance policy with a review cadence.",
     icon: "🛡️",
     fields: [
@@ -171,6 +179,7 @@ export const kingsmakerSpec: ReadonlyArray<ConceptSpec> = [
   },
   {
     name: "Runbook",
+    pluralName: "Runbooks",
     description: "An internal operational runbook with a review cadence.",
     icon: "lucide:BookOpen",
     fields: [

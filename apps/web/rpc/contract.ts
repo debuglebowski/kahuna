@@ -30,6 +30,8 @@ export const Concept = Schema.Struct({
   id: Schema.String,
   slug: Schema.String,
   name: Schema.String,
+  /** Optional plural display label; sidebar prefers it, falling back to `name`. */
+  pluralName: Schema.NullOr(Schema.String),
   description: Schema.NullOr(Schema.String),
   /** Display glyph: a literal emoji or a curated lucide icon name prefixed
    *  `lucide:` (e.g. `lucide:Building2`); null renders none. */
@@ -198,6 +200,8 @@ export class KingsmakerRpcs extends RpcGroup.make(
       id: Schema.String,
       description: Schema.NullOr(Schema.String),
       name: Schema.optional(Schema.String),
+      // Omitted → unchanged; null / blank → cleared back to the singular fallback.
+      pluralName: Schema.optional(Schema.NullOr(Schema.String)),
       // Omitted → left unchanged (so the name/description save never wipes them).
       icon: Schema.optional(Schema.NullOr(Schema.String)),
       staticLabelIds: Schema.optional(Schema.Array(Schema.String)),

@@ -19,6 +19,7 @@ export interface ConceptRow {
   readonly org_id: string
   readonly slug: string
   readonly name: string
+  readonly plural_name: string | null
   readonly description: string | null
   readonly icon: string | null
   readonly static_label_ids: unknown
@@ -87,6 +88,7 @@ export const toConcept = (r: ConceptRow): Concept => ({
   orgId: r.org_id,
   slug: r.slug,
   name: r.name,
+  pluralName: r.plural_name,
   description: r.description,
   icon: r.icon,
   staticLabelIds: toIdArray(r.static_label_ids),

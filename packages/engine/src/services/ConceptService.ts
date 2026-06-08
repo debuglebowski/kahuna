@@ -62,6 +62,9 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
 
     const create = (input: {
       readonly name: string
+      // Optional plural display label; the UI create flow omits it (singular
+      // only), but the seed supplies sensible plurals for the built-in concepts.
+      readonly pluralName?: string | null
       readonly description?: string
       readonly icon?: string | null
     }) =>
@@ -79,8 +82,8 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
           let slug = base
           for (let n = 2; used.has(slug); n++) slug = `${base}_${n}`
           const rows = yield* sql<ConceptRow>`
-            INSERT INTO concepts (org_id, slug, name, description, icon)
-            VALUES (${orgId}, ${slug}, ${input.name}, ${input.description ?? null}, ${input.icon ?? null})
+            INSERT INTO concepts (org_id, slug, name, plural_name, description, icon)
+            VALUES (${orgId}, ${slug}, ${input.name}, ${input.pluralName?.trim() || null}, ${input.description ?? null}, ${input.icon ?? null})
             RETURNING *`
           const concept = toConcept(rows[0]!)
           yield* events.append({
@@ -104,6 +107,8 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
       readonly id: string
       readonly description: string | null
       readonly name?: string
+      // Omitted → left unchanged; explicit null / blank → cleared.
+      readonly pluralName?: string | null
       // Omitted → left unchanged; explicit null → cleared.
       readonly icon?: string | null
       readonly staticLabelIds?: ReadonlyArray<string>
@@ -128,6 +133,9 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
             if (missing) return yield* Effect.fail(new LabelNotFound({ labelId: missing }))
           }
           const finalName = name || current.name
+          // Omitted → keep; provided → trim, treating blank as "cleared" (null).
+          const pluralName =
+            input.pluralName === undefined ? current.pluralName : input.pluralName?.trim() || null
           const icon = input.icon === undefined ? current.icon : input.icon
           const staticIds = [...new Set(input.staticLabelIds ?? current.staticLabelIds)]
           const defaultIds = [...new Set(input.defaultLabelIds ?? current.defaultLabelIds)]
@@ -135,7 +143,8 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
           // top-level array as a Postgres array literal (`{…}`), not jsonb.
           const rows = yield* sql<ConceptRow>`
             UPDATE concepts
-            SET description = ${input.description}, name = ${finalName}, icon = ${icon},
+            SET description = ${input.description}, name = ${finalName},
+                plural_name = ${pluralName}, icon = ${icon},
                 static_label_ids = ${JSON.stringify(staticIds)}::jsonb,
                 default_label_ids = ${JSON.stringify(defaultIds)}::jsonb
             WHERE org_id = ${orgId} AND id = ${input.id}
@@ -151,6 +160,7 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
               _tag: "ConceptUpdated",
               description: concept.description,
               ...(name ? { name: concept.name } : {}),
+              ...(input.pluralName !== undefined ? { pluralName: concept.pluralName } : {}),
               ...(input.icon !== undefined ? { icon: concept.icon } : {}),
               ...(input.staticLabelIds ? { staticLabelIds: concept.staticLabelIds } : {}),
               ...(input.defaultLabelIds ? { defaultLabelIds: concept.defaultLabelIds } : {}),

@@ -179,9 +179,16 @@ const ServerRpcs = KingsmakerRpcs.middleware(AuthMiddleware)
 const HandlersLive = ServerRpcs.toLayer({
   listConcepts: () => as<ReadonlyArray<Concept>>(uc.listConcepts),
   createConcept: ({ name }) => as<Concept>(uc.createConcept(name)),
-  updateConcept: ({ id, name, description, icon, staticLabelIds, defaultLabelIds }) =>
+  updateConcept: ({ id, name, pluralName, description, icon, staticLabelIds, defaultLabelIds }) =>
     admin<Concept>(
-      uc.updateConcept(id, { name, description, icon, staticLabelIds, defaultLabelIds }),
+      uc.updateConcept(id, {
+        name,
+        pluralName,
+        description,
+        icon,
+        staticLabelIds,
+        defaultLabelIds,
+      }),
     ),
   deleteConcept: ({ id }) => admin<Concept>(uc.deleteConcept(id)),
   listLabels: () => as<ReadonlyArray<Label>>(uc.listLabels),

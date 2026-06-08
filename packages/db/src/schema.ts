@@ -31,6 +31,10 @@ export const concepts = pgTable(
     // specific concepts by slug, so `name` is freely renameable.
     slug: text("slug").notNull(),
     name: text("name").notNull(),
+    // Optional plural display label (e.g. name "Company" → "Companies"). The
+    // sidebar prefers it, falling back to `name`; only the singular is asked for
+    // at creation, so this stays null until set in the concept settings drawer.
+    pluralName: text("plural_name"),
     description: text("description"),
     // Optional display glyph: a literal emoji (e.g. "🏢") or a curated lucide
     // icon name prefixed "lucide:" (e.g. "lucide:Building2"); null renders none.

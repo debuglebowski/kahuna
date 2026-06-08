@@ -89,6 +89,7 @@ export function Concepts() {
   const concepts = useQuery({ queryKey: ["concepts"], queryFn: () => api.listConcepts() })
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [name, setName] = useState("")
+  const [pluralName, setPluralName] = useState("")
   const [icon, setIcon] = useState<string | null>(null)
   const [description, setDescription] = useState("")
   const [adding, setAdding] = useState(false)
@@ -104,6 +105,7 @@ export function Concepts() {
   // Seed the editor whenever the selected concept changes.
   useEffect(() => {
     setName(selected?.name ?? "")
+    setPluralName(selected?.pluralName ?? "")
     setIcon(selected?.icon ?? null)
     setDescription(selected?.description ?? "")
     setStaticLabelIds([...(selected?.staticLabelIds ?? [])])
@@ -144,6 +146,7 @@ export function Concepts() {
     mutationFn: () =>
       api.updateConcept(selectedId!, {
         name: name.trim(),
+        pluralName: pluralName.trim() || null,
         description: description.trim() || null,
         icon,
       }),
@@ -301,6 +304,16 @@ export function Concepts() {
                     className="flex-1"
                   />
                 </div>
+                <span className="text-xs font-medium text-gray-500">Plural name</span>
+                <Input
+                  value={pluralName}
+                  onChange={(e) => setPluralName(e.target.value)}
+                  disabled={!admin}
+                  placeholder={name ? `${name}s` : "Plural name…"}
+                />
+                <p className="text-xs text-gray-400">
+                  Shown in the sidebar; falls back to the singular name when blank.
+                </p>
                 <span className="text-xs font-medium text-gray-500">Description</span>
                 <textarea
                   value={description}

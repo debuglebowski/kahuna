@@ -58,6 +58,7 @@ export const api = {
     id: string,
     patch: {
       name?: string
+      pluralName?: string | null
       description: string | null
       icon?: string | null
       staticLabelIds?: ReadonlyArray<string>
@@ -68,6 +69,7 @@ export const api = {
       c.updateConcept({
         id,
         name: patch.name,
+        pluralName: patch.pluralName,
         description: patch.description,
         icon: patch.icon,
         staticLabelIds: patch.staticLabelIds,

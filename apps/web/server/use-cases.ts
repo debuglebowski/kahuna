@@ -146,6 +146,7 @@ export const updateConcept = (
   id: string,
   patch: {
     readonly name?: string
+    readonly pluralName?: string | null
     readonly description: string | null
     readonly icon?: string | null
     readonly staticLabelIds?: ReadonlyArray<string>
@@ -156,6 +157,7 @@ export const updateConcept = (
     c.update({
       id,
       name: patch.name,
+      pluralName: patch.pluralName,
       description: patch.description,
       icon: patch.icon,
       staticLabelIds: patch.staticLabelIds,
