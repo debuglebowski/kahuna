@@ -19,6 +19,12 @@ export const FieldKind = Schema.Literal(
   "relation",
   "file",
   "computed",
+  // refs a real org member (bauth_user.id); stored in state like a scalar.
+  "user",
+  // arbitrary JSON-serializable blob (escape hatch for unmodeled data).
+  "json",
+  // an { amount, currency } pair.
+  "money",
 )
 export type FieldKind = typeof FieldKind.Type
 
@@ -35,6 +41,10 @@ export interface FieldConfig {
   /** computed: which built-in + its params */
   readonly computedKind?: "decay" | "momentum"
   readonly params?: Record<string, unknown>
+  /** any scalar kind: store/validate an array of values instead of a single one. */
+  readonly multiple?: boolean
+  /** text/number: an extra format constraint (email/url/phone/slug/color | percent). */
+  readonly format?: string
 }
 
 export type InstanceState = Record<string, unknown>

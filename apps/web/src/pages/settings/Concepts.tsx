@@ -24,8 +24,19 @@ function summarize(f: Field, nameOf: (id: string) => string): string {
       return `${f.config.relationType ?? "?"} → ${f.config.target ? nameOf(f.config.target) : "?"} (${f.config.cardinality ?? "many"})`
     case "computed":
       return f.config.computedKind ?? ""
+    case "user":
+      return f.config.multiple ? "members (multiple)" : "member"
+    case "money":
+      return "amount + currency"
+    case "json":
+      return "json"
+    case "text":
+    case "number":
+      return [f.config.format && `format: ${f.config.format}`, f.config.multiple && "multiple"]
+        .filter(Boolean)
+        .join(" · ")
     default:
-      return ""
+      return f.config.multiple ? "multiple" : ""
   }
 }
 
@@ -222,7 +233,9 @@ export function Concepts() {
                 className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm outline-none focus:border-gray-500"
               />
               {(saveConcept.error || delConcept.error) && (
-                <p className="text-sm text-red-600">{msgOf(saveConcept.error ?? delConcept.error)}</p>
+                <p className="text-sm text-red-600">
+                  {msgOf(saveConcept.error ?? delConcept.error)}
+                </p>
               )}
             </div>
           </Card>

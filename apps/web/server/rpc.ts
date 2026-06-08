@@ -13,6 +13,7 @@ import {
   RpcError,
 } from "../rpc/contract"
 import { auth } from "./auth"
+import { pool } from "./db"
 import { can } from "./policy"
 import { EngineBase, ERROR_MAP } from "./runtime"
 import { roleOf } from "./session"
@@ -101,6 +102,79 @@ const admin = <A>(eff: Effect.Effect<unknown, unknown, OrgContext | EngineServic
 const as = <A>(eff: Effect.Effect<unknown, unknown, OrgContext | EngineServices>) =>
   mapErr(eff) as Effect.Effect<A, RpcError, OrgContext | EngineServices>
 
+/**
+ * Enforce that every `user`-kind field value is a real member of the org. The
+ * engine treats a user id as an opaque logical FK (like org_id / actor) and never
+ * touches the auth tables, so membership — an auth-tier concern — is validated
+ * here against `bauth_member` via the shared pool (the same way auth.ts reaches
+ * engine tables). Throws RpcError(422) listing any non-members.
+ */
+async function assertMembers(
+  orgId: string,
+  conceptId: string,
+  values: Record<string, unknown>,
+): Promise<void> {
+  const defs = await pool.query<{ name: string }>(
+    "SELECT name FROM fields WHERE org_id = $1 AND concept_id = $2 AND kind = 'user'",
+    [orgId, conceptId],
+  )
+  if (defs.rows.length === 0) return
+  const ids = new Set<string>()
+  for (const { name } of defs.rows) {
+    const v = values[name]
+    if (Array.isArray(v)) {
+      for (const x of v) if (typeof x === "string") ids.add(x)
+    } else if (typeof v === "string") {
+      ids.add(v)
+    }
+  }
+  if (ids.size === 0) return
+  const members = await pool.query<{ user_id: string }>(
+    "SELECT user_id FROM bauth_member WHERE organization_id = $1",
+    [orgId],
+  )
+  const present = new Set(members.rows.map((r) => r.user_id))
+  const missing = [...ids].filter((id) => !present.has(id))
+  if (missing.length > 0) {
+    throw new RpcError({
+      code: "VALIDATION",
+      message: `not org members: ${missing.join(", ")}`,
+      status: 422,
+    })
+  }
+}
+
+/** Resolve an instance's concept, then run the member check against the patch. */
+async function assertMembersForInstance(
+  orgId: string,
+  instanceId: string,
+  patch: Record<string, unknown>,
+): Promise<void> {
+  const r = await pool.query<{ concept_id: string }>(
+    "SELECT concept_id FROM instances WHERE id = $1 AND org_id = $2 LIMIT 1",
+    [instanceId, orgId],
+  )
+  const conceptId = r.rows[0]?.concept_id
+  if (conceptId) await assertMembers(orgId, conceptId, patch)
+}
+
+/** Run a member pre-check (resolved against the request's org), then the use-case. */
+const checkThen = <A>(
+  precheck: (orgId: string) => Promise<void>,
+  run: Effect.Effect<A, unknown, OrgContext | EngineServices>,
+): Effect.Effect<A, RpcError, OrgContext | EngineServices> =>
+  Effect.gen(function* () {
+    const { orgId } = yield* OrgContext
+    yield* Effect.tryPromise({
+      try: () => precheck(orgId),
+      catch: (e) =>
+        e instanceof RpcError
+          ? e
+          : new RpcError({ code: "INTERNAL", message: "membership check failed", status: 500 }),
+    })
+    return yield* mapErr(run)
+  })
+
 const ServerRpcs = KingsmakerRpcs.middleware(AuthMiddleware)
 
 const HandlersLive = ServerRpcs.toLayer({
@@ -120,9 +194,16 @@ const HandlersLive = ServerRpcs.toLayer({
   getOwed: () => as<Owed>(uc.getOwed),
   getChanged: () => mapErr(uc.getChanged),
   getDemand: () => as<ReadonlyArray<DemandItem>>(uc.getDemand),
-  createInstance: ({ conceptId, fields }) => mapErr(uc.createInstance(conceptId, fields)),
+  createInstance: ({ conceptId, fields }) =>
+    checkThen(
+      (orgId) => assertMembers(orgId, conceptId, fields),
+      uc.createInstance(conceptId, fields),
+    ),
   updateInstance: ({ id, expectedVersion, patch }) =>
-    mapErr(uc.updateInstance(id, expectedVersion, patch)),
+    checkThen(
+      (orgId) => assertMembersForInstance(orgId, id, patch),
+      uc.updateInstance(id, expectedVersion, patch),
+    ),
   transitionInstance: ({ id, expectedVersion, field, to }) =>
     mapErr(uc.transitionInstance(id, expectedVersion, field, to)),
 }).pipe(Layer.provide(EngineBase))

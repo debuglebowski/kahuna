@@ -4,6 +4,8 @@ export interface FieldSpec {
   readonly name: string
   readonly kind: FieldKind
   readonly config?: FieldConfig
+  /** relation fields: the target concept's name, resolved to an id by the runner. */
+  readonly targetName?: string
 }
 
 export interface ConceptSpec {
@@ -12,153 +14,176 @@ export interface ConceptSpec {
   readonly fields: ReadonlyArray<FieldSpec>
 }
 
-const computedParams: FieldConfig["params"] = {
-  forRelation: "for",
-  onRelation: "on",
-  dateField: "occurred_on",
-}
-
 /**
- * The Kingsmaker application — defined entirely as data over the general engine.
- * The runner folds this into create-concept / add-field calls (event-sourced).
+ * The Kingsmaker application model — a documentation-centric CRM + compliance
+ * setup, defined entirely as data over the general engine. The runner folds it
+ * into create-concept / add-field calls (event-sourced).
  *
- * Relation types used by the app (created via RelationService at runtime, not
- * declared as fields so a type can target multiple concepts):
- *   Contact -works_at-> Account, Contact -reports_to-> Contact,
- *   TeamMember -owns-> Account|Task, Interaction -on-> Account,
- *   Interaction -with-> Contact, Signal -from-> Account,
- *   Artifact -belongs_to-> Account, Deal -for-> Account, Task -on-> Account|Deal.
+ * Ownership/authorship uses the built-in `user` field kind (a real bauth_user,
+ * validated against bauth_member at the app boundary). Inter-concept links are
+ * `relation` fields whose `targetName` is resolved to a concept id at seed time:
+ *
+ *   AccountContact -works_at->  Account
+ *   AccountNote    -about->     Account
+ *   Agreement      -based_on->  AgreementTemplate
+ *   Agreement      -for->       Account
+ *   Agreement      -signed_by-> AccountContact
  */
 export const kingsmakerSpec: ReadonlyArray<ConceptSpec> = [
   {
     name: "Account",
-    description: "A customer or prospect — the hub of the graph.",
-    fields: [
-      { name: "name", kind: "text" },
-      {
-        name: "lifecycle_phase",
-        kind: "enum",
-        config: { options: ["prospect", "deal", "live", "renewal"] },
-      },
-      { name: "prospecting_value", kind: "number" },
-      { name: "contract_value", kind: "number" },
-      { name: "intel", kind: "text" },
-    ],
+    description: "A customer or counterparty — the hub of the graph.",
+    fields: [{ name: "name", kind: "text" }],
   },
   {
-    name: "Contact",
+    name: "AccountContact",
     description: "A person at an account.",
     fields: [
       { name: "name", kind: "text" },
-      { name: "email", kind: "text" },
+      { name: "email", kind: "text", config: { format: "email" } },
       {
-        name: "role",
-        kind: "enum",
-        config: { options: ["champion", "economic_buyer", "blocker", "user"] },
+        name: "works_at",
+        kind: "relation",
+        targetName: "Account",
+        config: { relationType: "works_at", cardinality: "one" },
       },
     ],
   },
   {
-    name: "TeamMember",
-    description: "An internal owner (links to a Tier-0 user).",
+    name: "AccountNote",
+    description: "A freeform note about an account.",
     fields: [
-      { name: "name", kind: "text" },
-      { name: "user_ref", kind: "text" },
+      { name: "body", kind: "text" },
+      { name: "noted_on", kind: "date" },
+      { name: "author", kind: "user" },
+      {
+        name: "about",
+        kind: "relation",
+        targetName: "Account",
+        config: { relationType: "about", cardinality: "one" },
+      },
     ],
   },
   {
-    name: "Deal",
-    description: "An opportunity moving through an enforced lifecycle.",
+    name: "AgreementTemplate",
+    description: "A master template that agreements are executed from.",
     fields: [
+      { name: "name", kind: "text" },
+      { name: "doc_type", kind: "enum", config: { options: ["msa", "dpa", "nda", "sow"] } },
       {
         name: "status",
         kind: "enum",
         config: {
-          options: ["lead", "qualified", "proposal", "negotiation", "won", "lost"],
+          options: ["draft", "active", "deprecated"],
+          transitions: { draft: ["active"], active: ["deprecated"], deprecated: [] },
+        },
+      },
+      { name: "version", kind: "number" },
+      { name: "owner", kind: "user" },
+      { name: "body", kind: "file" },
+    ],
+  },
+  {
+    name: "Agreement",
+    description: "An executed agreement — based on a template, for an account.",
+    fields: [
+      { name: "title", kind: "text" },
+      {
+        name: "status",
+        kind: "enum",
+        config: {
+          options: ["draft", "active", "expired", "terminated"],
           transitions: {
-            lead: ["qualified", "lost"],
-            qualified: ["proposal", "lost"],
-            proposal: ["negotiation", "lost"],
-            negotiation: ["won", "lost"],
-            won: [],
-            lost: [],
+            draft: ["active"],
+            active: ["expired", "terminated"],
+            expired: [],
+            terminated: [],
           },
         },
       },
-      { name: "blocker", kind: "text" },
-      { name: "next_touchpoint", kind: "date" },
-      { name: "is_renewal", kind: "bool" },
+      { name: "effective_date", kind: "date" },
+      { name: "expiry_date", kind: "date" },
+      { name: "version", kind: "number" },
+      { name: "owner", kind: "user" },
+      { name: "file", kind: "file" },
       {
-        name: "momentum",
-        kind: "computed",
-        config: { computedKind: "momentum", params: computedParams },
+        name: "based_on",
+        kind: "relation",
+        targetName: "AgreementTemplate",
+        config: { relationType: "based_on", cardinality: "one" },
       },
       {
-        name: "decay",
-        kind: "computed",
-        config: { computedKind: "decay", params: computedParams },
+        name: "for",
+        kind: "relation",
+        targetName: "Account",
+        config: { relationType: "for", cardinality: "one" },
+      },
+      {
+        name: "signed_by",
+        kind: "relation",
+        targetName: "AccountContact",
+        config: { relationType: "signed_by", cardinality: "one" },
       },
     ],
   },
   {
-    name: "Interaction",
-    description: "A logged touchpoint.",
+    name: "Policy",
+    description: "An internal governance policy with a review cadence.",
     fields: [
-      { name: "occurred_on", kind: "date" },
-      { name: "kind", kind: "enum", config: { options: ["call", "email", "meeting", "note"] } },
-      { name: "note", kind: "text" },
-    ],
-  },
-  {
-    name: "Signal",
-    description: "A typed demand/risk signal raised from an account.",
-    fields: [
-      { name: "kind", kind: "enum", config: { options: ["request", "risk", "renewal"] } },
-      { name: "description", kind: "text" },
+      { name: "title", kind: "text" },
+      {
+        name: "category",
+        kind: "enum",
+        config: { options: ["security", "privacy", "hr", "finance"] },
+      },
       {
         name: "status",
         kind: "enum",
         config: {
-          options: ["captured", "promoted", "shipped"],
-          transitions: { captured: ["promoted"], promoted: ["shipped"], shipped: [] },
+          options: ["draft", "review", "approved", "published", "archived"],
+          transitions: {
+            draft: ["review"],
+            review: ["approved", "draft"],
+            approved: ["published"],
+            published: ["archived"],
+            archived: [],
+          },
         },
       },
-      { name: "linear_issue", kind: "text" },
-    ],
-  },
-  {
-    name: "Artifact",
-    description: "A typed document with a file attachment.",
-    fields: [
-      {
-        name: "doc_type",
-        kind: "enum",
-        config: { options: ["contract", "dpa", "sow", "questionnaire"] },
-      },
+      { name: "version", kind: "number" },
       { name: "effective_date", kind: "date" },
-      { name: "expiry_date", kind: "date" },
-      { name: "version", kind: "text" },
-      { name: "status", kind: "enum", config: { options: ["draft", "active", "expired"] } },
+      { name: "review_due", kind: "date" },
+      { name: "owner", kind: "user" },
+      { name: "approved_by", kind: "user" },
+      { name: "file", kind: "file" },
     ],
   },
   {
-    name: "Task",
-    description: "A unit of follow-up work.",
+    name: "Runbook",
+    description: "An internal operational runbook with a review cadence.",
     fields: [
       { name: "title", kind: "text" },
-      { name: "due_date", kind: "date" },
-      { name: "done", kind: "bool" },
+      {
+        name: "category",
+        kind: "enum",
+        config: { options: ["incident", "onboarding", "deploy", "support"] },
+      },
+      {
+        name: "status",
+        kind: "enum",
+        config: {
+          options: ["draft", "review", "published", "archived"],
+          transitions: {
+            draft: ["review"],
+            review: ["published", "draft"],
+            published: ["archived"],
+            archived: [],
+          },
+        },
+      },
+      { name: "review_due", kind: "date" },
+      { name: "owner", kind: "user" },
+      { name: "file", kind: "file" },
     ],
   },
 ]
-
-export const relationTypes = [
-  "works_at",
-  "reports_to",
-  "owns",
-  "on",
-  "with",
-  "from",
-  "belongs_to",
-  "for",
-] as const

@@ -6,6 +6,7 @@ build/
 *.local
 *.log
 .blobstore/
+snapshots/
 .DS_Store
 coverage/
 .vite/

@@ -39,6 +39,9 @@ export const FieldKind = Schema.Literal(
   "relation",
   "file",
   "computed",
+  "user",
+  "json",
+  "money",
 )
 export type FieldKind = typeof FieldKind.Type
 
@@ -54,6 +57,10 @@ export const FieldConfig = Schema.Struct({
   cardinality: Schema.optional(Schema.Literal("one", "many")),
   computedKind: Schema.optional(Schema.Literal("decay", "momentum")),
   params: Schema.optional(Schema.Record({ key: Schema.String, value: Schema.Unknown })),
+  /** any scalar kind: store/validate a list of values. */
+  multiple: Schema.optional(Schema.Boolean),
+  /** text/number: an extra format constraint. */
+  format: Schema.optional(Schema.String),
 })
 export type FieldConfig = typeof FieldConfig.Type
 

@@ -14,6 +14,10 @@ export interface AddFieldInput {
   readonly formula?: string
 }
 
+/** Recognised `config.format` names per kind (value validators live in InstanceService). */
+const TEXT_FORMATS = new Set(["email", "url", "phone", "slug", "color"])
+const NUMBER_FORMATS = new Set(["percent"])
+
 /** Validate a field's config shape against its kind (make invalid defs unrepresentable). */
 const validateConfig = (
   ctx: { readonly conceptId: string; readonly name: string },
@@ -31,6 +35,20 @@ const validateConfig = (
     }
     if (kind === "relation" && (!config.relationType || !config.target)) {
       return yield* invalid("relation field requires config.relationType and config.target")
+    }
+    if (config.format) {
+      if (kind === "text" && !TEXT_FORMATS.has(config.format)) {
+        return yield* invalid(`unknown text format "${config.format}"`)
+      }
+      if (kind === "number" && !NUMBER_FORMATS.has(config.format)) {
+        return yield* invalid(`unknown number format "${config.format}"`)
+      }
+      if (kind !== "text" && kind !== "number") {
+        return yield* invalid("config.format is only valid on text/number fields")
+      }
+    }
+    if (config.multiple && (kind === "relation" || kind === "file" || kind === "computed")) {
+      return yield* invalid("config.multiple is not valid on relation/file/computed fields")
     }
   })
 

@@ -14,25 +14,32 @@ const ensureConcept = (concepts: ConceptService, spec: ConceptSpec) =>
 
 /**
  * Seed the Kingsmaker concepts + fields for the current org (OrgContext).
- * Idempotent: re-running skips concepts/fields that already exist, and every
- * create flows through the engine's event-sourced append path.
+ * Two passes: create every concept first, then add fields — so `relation`
+ * fields can resolve their `targetName` to a concept id. Idempotent: re-running
+ * skips concepts/fields that already exist, and every create flows through the
+ * engine's event-sourced append path.
  */
 export const seedKingsmaker = Effect.gen(function* () {
   const concepts = yield* ConceptService
   const fields = yield* FieldService
 
+  const idByName = new Map<string, string>()
   for (const spec of kingsmakerSpec) {
     const concept = yield* ensureConcept(concepts, spec)
-    const existing = yield* fields.listFields(concept.id)
+    idByName.set(spec.name, concept.id)
+  }
+
+  for (const spec of kingsmakerSpec) {
+    const conceptId = idByName.get(spec.name)!
+    const existing = yield* fields.listFields(conceptId)
     const have = new Set(existing.map((f) => f.name))
     for (const field of spec.fields) {
       if (have.has(field.name)) continue
-      yield* fields.addField({
-        conceptId: concept.id,
-        name: field.name,
-        kind: field.kind,
-        config: field.config,
-      })
+      const config =
+        field.kind === "relation" && field.targetName
+          ? { ...(field.config ?? {}), target: idByName.get(field.targetName) }
+          : field.config
+      yield* fields.addField({ conceptId, name: field.name, kind: field.kind, config })
     }
   }
 

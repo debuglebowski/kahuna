@@ -11,7 +11,17 @@ const KINDS: ReadonlyArray<FieldKind> = [
   "relation",
   "file",
   "computed",
+  "user",
+  "json",
+  "money",
 ]
+
+/** Scalar kinds that can carry `config.multiple`, and the formats per kind. */
+const MULTIPLE_KINDS = new Set<FieldKind>(["text", "number", "date", "enum", "user"])
+const FORMATS: Partial<Record<FieldKind, ReadonlyArray<string>>> = {
+  text: ["email", "url", "phone", "slug", "color"],
+  number: ["percent"],
+}
 
 export interface FieldFormValue {
   readonly name: string
@@ -57,6 +67,8 @@ export function FieldForm({
       dateField: String(p.dateField ?? ""),
     }
   })
+  const [multiple, setMultiple] = useState(initial?.config.multiple ?? false)
+  const [format, setFormat] = useState(initial?.config.format ?? "")
 
   const options = useMemo(
     () =>
@@ -67,7 +79,7 @@ export function FieldForm({
     [optionsText],
   )
 
-  const buildConfig = (): FieldConfig => {
+  const baseConfig = (): FieldConfig => {
     switch (kind) {
       case "enum": {
         const t: Record<string, string[]> = {}
@@ -88,6 +100,13 @@ export function FieldForm({
         return {}
     }
   }
+
+  // Merge the orthogonal modifiers (multiple/format) onto the per-kind base.
+  const buildConfig = (): FieldConfig => ({
+    ...baseConfig(),
+    ...(MULTIPLE_KINDS.has(kind) && multiple ? { multiple: true } : {}),
+    ...((kind === "text" || kind === "number") && format ? { format } : {}),
+  })
 
   const valid =
     (editing || name.trim().length > 0) &&
@@ -213,6 +232,30 @@ export function FieldForm({
             </Field>
           ))}
         </div>
+      )}
+
+      {MULTIPLE_KINDS.has(kind) && (
+        <label className="flex items-center gap-2 text-sm text-gray-700">
+          <input
+            type="checkbox"
+            checked={multiple}
+            onChange={(e) => setMultiple(e.target.checked)}
+          />
+          Allow multiple values
+        </label>
+      )}
+
+      {FORMATS[kind] && (
+        <Field label="Format (optional)">
+          <Select value={format} onChange={(e) => setFormat(e.target.value)}>
+            <option value="">none</option>
+            {FORMATS[kind]?.map((fmt) => (
+              <option key={fmt} value={fmt}>
+                {fmt}
+              </option>
+            ))}
+          </Select>
+        </Field>
       )}
 
       <div className="flex gap-2">

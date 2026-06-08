@@ -1,12 +1,9 @@
 import { randomUUID } from "node:crypto"
 import {
-  ComputedFields,
   ConceptService,
   type EngineServices,
   FieldService,
-  InstanceService,
   type OrgContext,
-  RelationService,
 } from "@kingsmaker/engine"
 import { Effect } from "effect"
 import { describe, expect, it } from "vitest"
@@ -17,7 +14,7 @@ const run = <A, E>(orgId: string, eff: Effect.Effect<A, E, OrgContext | EngineSe
   runEngineOrThrow({ orgId, actor: "system" }, eff)
 
 describe("kingsmaker seed", () => {
-  it("creates 8 concepts and is idempotent", async () => {
+  it("creates the 7 model concepts and is idempotent", async () => {
     const org = randomUUID()
     await run(org, seedKingsmaker)
     await run(org, seedKingsmaker) // re-run must not error or duplicate
@@ -29,74 +26,54 @@ describe("kingsmaker seed", () => {
     )
     expect(names).toEqual([
       "Account",
-      "Artifact",
-      "Contact",
-      "Deal",
-      "Interaction",
-      "Signal",
-      "Task",
-      "TeamMember",
+      "AccountContact",
+      "AccountNote",
+      "Agreement",
+      "AgreementTemplate",
+      "Policy",
+      "Runbook",
     ])
   })
 
-  it("Deal has a status state machine plus computed decay/momentum", async () => {
+  it("Agreement's relation fields resolve to concept ids + a status state machine", async () => {
     const org = randomUUID()
     await run(org, seedKingsmaker)
-    const fields = await run(
+    const { fields, accountId, templateId } = await run(
       org,
       Effect.gen(function* () {
         const concepts = yield* ConceptService
         const fieldSvc = yield* FieldService
-        const deal = yield* concepts.getByName("Deal")
-        return yield* fieldSvc.listFields(deal.id)
-      }),
-    )
-    const byName = new Map(fields.map((f) => [f.name, f]))
-    expect(byName.get("status")?.kind).toBe("enum")
-    expect(byName.get("status")?.config.transitions?.lead).toContain("qualified")
-    expect(byName.get("decay")?.kind).toBe("computed")
-    expect(byName.get("momentum")?.kind).toBe("computed")
-  })
-
-  it("full workflow: account + deal + enforced transition + decay", async () => {
-    const org = randomUUID()
-    await run(org, seedKingsmaker)
-    const result = await run(
-      org,
-      Effect.gen(function* () {
-        const instances = yield* InstanceService
-        const relations = yield* RelationService
-        const computed = yield* ComputedFields
-        const account = yield* instances.create({
-          conceptName: "Account",
-          fields: { lifecycle_phase: "deal", contract_value: 50000, intel: "warm intro" },
-        })
-        const deal = yield* instances.create({
-          conceptName: "Deal",
-          fields: { status: "lead", is_renewal: false },
-        })
-        yield* relations.create({ relationType: "for", fromId: deal.id, toId: account.id })
-        const illegal = yield* instances
-          .transition({ instanceId: deal.id, expectedVersion: 0, field: "status", to: "won" })
-          .pipe(Effect.flip)
-        const advanced = yield* instances.transition({
-          instanceId: deal.id,
-          expectedVersion: 0,
-          field: "status",
-          to: "qualified",
-        })
-        const decorated = yield* computed.decorate(advanced)
+        const account = yield* concepts.getByName("Account")
+        const template = yield* concepts.getByName("AgreementTemplate")
+        const agreement = yield* concepts.getByName("Agreement")
         return {
-          illegalTag: illegal._tag,
-          status: advanced.state.status,
-          decay: decorated.state.decay,
-          momentum: decorated.state.momentum,
+          fields: yield* fieldSvc.listFields(agreement.id),
+          accountId: account.id,
+          templateId: template.id,
         }
       }),
     )
-    expect(result.illegalTag).toBe("IllegalTransition")
-    expect(result.status).toBe("qualified")
-    expect(result.decay).toBeDefined()
-    expect(result.momentum).toBeDefined()
+    const byName = new Map(fields.map((f) => [f.name, f]))
+    expect(byName.get("for")?.kind).toBe("relation")
+    expect(byName.get("for")?.config.target).toBe(accountId)
+    expect(byName.get("based_on")?.config.target).toBe(templateId)
+    expect(byName.get("status")?.config.transitions?.draft).toContain("active")
+    expect(byName.get("owner")?.kind).toBe("user")
+  })
+
+  it("AccountNote carries a user (author) field", async () => {
+    const org = randomUUID()
+    await run(org, seedKingsmaker)
+    const author = await run(
+      org,
+      Effect.gen(function* () {
+        const concepts = yield* ConceptService
+        const fieldSvc = yield* FieldService
+        const note = yield* concepts.getByName("AccountNote")
+        const fs = yield* fieldSvc.listFields(note.id)
+        return fs.find((f) => f.name === "author")
+      }),
+    )
+    expect(author?.kind).toBe("user")
   })
 })

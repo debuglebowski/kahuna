@@ -1,13 +1,68 @@
 import { useMemo, useState } from "react"
 import { Button, Field, Input, Select } from "../components/ui"
 import type { Field as FieldDef } from "../lib/api"
+import { useFullOrg } from "./settings/SettingsLayout"
 
 /**
  * Kinds a user can set when creating an instance. Mirrors the engine's
  * `validateValue` — relation/file/computed are derived or set elsewhere
  * (RelationService / attachments / computed) and are excluded from the form.
  */
-const EDITABLE = new Set(["text", "number", "date", "bool", "enum"])
+const EDITABLE = new Set(["text", "number", "date", "bool", "enum", "user", "json", "money"])
+
+/** Map a text `format` to a friendlier native input type. */
+const FORMAT_INPUT_TYPE: Record<string, string> = { email: "email", url: "url", phone: "tel" }
+
+/** Picks org member(s) for a `user` field, fed by the BetterAuth org. */
+function MemberPicker({
+  value,
+  multiple,
+  onChange,
+}: {
+  value: unknown
+  multiple: boolean
+  onChange: (v: unknown) => void
+}) {
+  const org = useFullOrg()
+  const members = org.data?.members ?? []
+
+  if (multiple) {
+    const selected = new Set(Array.isArray(value) ? (value as string[]) : [])
+    return (
+      <div className="space-y-1">
+        {members.map((m) => (
+          <label key={m.userId} className="flex items-center gap-2 text-sm text-gray-700">
+            <input
+              type="checkbox"
+              checked={selected.has(m.userId)}
+              onChange={(e) => {
+                const next = new Set(selected)
+                if (e.target.checked) next.add(m.userId)
+                else next.delete(m.userId)
+                onChange([...next])
+              }}
+            />
+            {m.user?.name?.trim() || m.user?.email || m.userId}
+          </label>
+        ))}
+        {members.length === 0 && <p className="text-xs text-gray-400">No members.</p>}
+      </div>
+    )
+  }
+  return (
+    <Select
+      value={typeof value === "string" ? value : ""}
+      onChange={(e) => onChange(e.target.value || undefined)}
+    >
+      <option value="">—</option>
+      {members.map((m) => (
+        <option key={m.userId} value={m.userId}>
+          {m.user?.name?.trim() || m.user?.email || m.userId}
+        </option>
+      ))}
+    </Select>
+  )
+}
 
 /** A dynamic create form driven by a concept's field defs. */
 export function InstanceForm({
@@ -23,10 +78,9 @@ export function InstanceForm({
 }) {
   const editable = useMemo(() => fields.filter((f) => EDITABLE.has(f.kind)), [fields])
   const omitted = fields.length - editable.length
-  const [values, setValues] = useState<Record<string, string | boolean>>({})
+  const [values, setValues] = useState<Record<string, unknown>>({})
 
-  const set = (name: string, v: string | boolean) =>
-    setValues((prev) => ({ ...prev, [name]: v }))
+  const set = (name: string, v: unknown) => setValues((prev) => ({ ...prev, [name]: v }))
 
   // Coerce raw inputs into the wire shape, omitting blanks (the engine rejects
   // wrong types, so we only send fields the user actually filled).
@@ -34,8 +88,45 @@ export function InstanceForm({
     const out: Record<string, unknown> = {}
     for (const f of editable) {
       const raw = values[f.name]
+      const multiple = !!f.config.multiple
       if (f.kind === "bool") {
         out[f.name] = raw === true
+        continue
+      }
+      if (f.kind === "user") {
+        if (multiple) {
+          const arr = (Array.isArray(raw) ? raw : []).filter((x): x is string => !!x)
+          if (arr.length) out[f.name] = arr
+        } else if (typeof raw === "string" && raw) {
+          out[f.name] = raw
+        }
+        continue
+      }
+      if (f.kind === "money") {
+        const m = (raw ?? {}) as { amount?: string; currency?: string }
+        const amount = Number(m.amount)
+        if (m.amount !== undefined && m.amount !== "" && Number.isFinite(amount)) {
+          out[f.name] = { amount, currency: (m.currency || "USD").toUpperCase() }
+        }
+        continue
+      }
+      if (f.kind === "json") {
+        const s = typeof raw === "string" ? raw.trim() : ""
+        if (!s) continue
+        try {
+          out[f.name] = JSON.parse(s)
+        } catch {
+          out[f.name] = s
+        }
+        continue
+      }
+      // text / number / date (+ optional multiple)
+      if (multiple) {
+        const parts = (typeof raw === "string" ? raw.split("\n") : Array.isArray(raw) ? raw : [])
+          .map((x) => String(x).trim())
+          .filter(Boolean)
+        const vals = f.kind === "number" ? parts.map(Number).filter(Number.isFinite) : parts
+        if (vals.length) out[f.name] = vals
         continue
       }
       const s = typeof raw === "string" ? raw.trim() : ""
@@ -51,6 +142,7 @@ export function InstanceForm({
   }
 
   const renderInput = (f: FieldDef) => {
+    const multiple = !!f.config.multiple
     switch (f.kind) {
       case "bool":
         return (
@@ -64,6 +156,30 @@ export function InstanceForm({
           </label>
         )
       case "enum":
+        if (multiple) {
+          const selected = new Set(
+            Array.isArray(values[f.name]) ? (values[f.name] as string[]) : [],
+          )
+          return (
+            <div className="space-y-1">
+              {(f.config.options ?? []).map((o) => (
+                <label key={o} className="flex items-center gap-2 text-sm text-gray-700">
+                  <input
+                    type="checkbox"
+                    checked={selected.has(o)}
+                    onChange={(e) => {
+                      const next = new Set(selected)
+                      if (e.target.checked) next.add(o)
+                      else next.delete(o)
+                      set(f.name, [...next])
+                    }}
+                  />
+                  {o}
+                </label>
+              ))}
+            </div>
+          )
+        }
         return (
           <Select
             value={String(values[f.name] ?? "")}
@@ -77,10 +193,71 @@ export function InstanceForm({
             ))}
           </Select>
         )
+      case "user":
+        return (
+          <MemberPicker
+            value={values[f.name]}
+            multiple={multiple}
+            onChange={(v) => set(f.name, v)}
+          />
+        )
+      case "money": {
+        const m = (values[f.name] ?? {}) as { amount?: string; currency?: string }
+        return (
+          <div className="flex gap-2">
+            <Input
+              type="number"
+              placeholder="0.00"
+              value={m.amount ?? ""}
+              onChange={(e) => set(f.name, { ...m, amount: e.target.value })}
+            />
+            <Input
+              className="w-20"
+              placeholder="USD"
+              value={m.currency ?? ""}
+              onChange={(e) => set(f.name, { ...m, currency: e.target.value })}
+            />
+          </div>
+        )
+      }
+      case "json":
+        return (
+          <textarea
+            rows={3}
+            className="w-full rounded-md border border-gray-300 px-3 py-1.5 font-mono text-xs outline-none focus:border-gray-500"
+            placeholder='{ "key": "value" }'
+            value={typeof values[f.name] === "string" ? (values[f.name] as string) : ""}
+            onChange={(e) => set(f.name, e.target.value)}
+          />
+        )
       default:
+        // text / number / date
+        if (multiple) {
+          return (
+            <textarea
+              rows={3}
+              className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm outline-none focus:border-gray-500"
+              placeholder="one value per line"
+              value={
+                Array.isArray(values[f.name])
+                  ? (values[f.name] as string[]).join("\n")
+                  : typeof values[f.name] === "string"
+                    ? (values[f.name] as string)
+                    : ""
+              }
+              onChange={(e) => set(f.name, e.target.value)}
+            />
+          )
+        }
         return (
           <Input
-            type={f.kind === "number" ? "number" : f.kind === "date" ? "date" : "text"}
+            type={
+              f.kind === "number"
+                ? "number"
+                : f.kind === "date"
+                  ? "date"
+                  : (FORMAT_INPUT_TYPE[f.config.format ?? ""] ?? "text")
+            }
             value={String(values[f.name] ?? "")}
             onChange={(e) => set(f.name, e.target.value)}
           />
@@ -96,7 +273,9 @@ export function InstanceForm({
         <div className="grid grid-cols-2 gap-3">
           {editable.map((f) =>
             f.kind === "bool" ? (
-              <div key={f.id} className="flex items-end">{renderInput(f)}</div>
+              <div key={f.id} className="flex items-end">
+                {renderInput(f)}
+              </div>
             ) : (
               <Field key={f.id} label={f.name}>
                 {renderInput(f)}

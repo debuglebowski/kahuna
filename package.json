@@ -19,6 +19,7 @@
     "health": "bun apps/web/server/health.ts",
     "db:generate": "bun run --filter @kingsmaker/db generate",
     "db:migrate": "bun run --filter @kingsmaker/db migrate",
+    "snapshot": "bash scripts/snapshot.sh",
     "dev:web": "bun run --filter @kingsmaker/web dev",
     "serve:web": "bun run --filter @kingsmaker/web serve"
   },

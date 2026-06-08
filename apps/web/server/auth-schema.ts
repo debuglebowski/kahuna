@@ -1,7 +1,15 @@
 import { relations } from "drizzle-orm"
 import { boolean, index, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core"
 
-export const user = pgTable("user", {
+/**
+ * BetterAuth identity tables. The SQL table names are `bauth_`-prefixed so they
+ * visually group apart from the engine tables in the DB. The exported consts and
+ * BetterAuth model keys stay unprefixed (`user`, `session`, …) — the Drizzle
+ * adapter resolves each model by its schema key, so no `modelName` config is
+ * needed and the rest of the codebase is unaffected.
+ */
+
+export const user = pgTable("bauth_user", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   email: text("email").notNull().unique(),
@@ -15,7 +23,7 @@ export const user = pgTable("user", {
 })
 
 export const session = pgTable(
-  "session",
+  "bauth_session",
   {
     id: text("id").primaryKey(),
     expiresAt: timestamp("expires_at").notNull(),
@@ -35,7 +43,7 @@ export const session = pgTable(
 )
 
 export const account = pgTable(
-  "account",
+  "bauth_account",
   {
     id: text("id").primaryKey(),
     accountId: text("account_id").notNull(),
@@ -59,7 +67,7 @@ export const account = pgTable(
 )
 
 export const verification = pgTable(
-  "verification",
+  "bauth_verification",
   {
     id: text("id").primaryKey(),
     identifier: text("identifier").notNull(),
@@ -75,7 +83,7 @@ export const verification = pgTable(
 )
 
 export const organization = pgTable(
-  "organization",
+  "bauth_organization",
   {
     id: text("id").primaryKey(),
     name: text("name").notNull(),
@@ -88,7 +96,7 @@ export const organization = pgTable(
 )
 
 export const member = pgTable(
-  "member",
+  "bauth_member",
   {
     id: text("id").primaryKey(),
     organizationId: text("organization_id")
@@ -107,7 +115,7 @@ export const member = pgTable(
 )
 
 export const invitation = pgTable(
-  "invitation",
+  "bauth_invitation",
   {
     id: text("id").primaryKey(),
     organizationId: text("organization_id")

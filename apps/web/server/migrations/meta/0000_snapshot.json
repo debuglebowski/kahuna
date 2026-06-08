@@ -1,11 +1,11 @@
 {
-  "id": "e212b18b-279b-48a4-b8c4-5629d50c9e7a",
+  "id": "209a6fda-7852-48d4-bb56-6d0bcde33ebd",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
-    "public.account": {
-      "name": "account",
+    "public.bauth_account": {
+      "name": "bauth_account",
       "schema": "",
       "columns": {
         "id": {
@@ -106,10 +106,10 @@
         }
       },
       "foreignKeys": {
-        "account_user_id_user_id_fk": {
-          "name": "account_user_id_user_id_fk",
-          "tableFrom": "account",
-          "tableTo": "user",
+        "bauth_account_user_id_bauth_user_id_fk": {
+          "name": "bauth_account_user_id_bauth_user_id_fk",
+          "tableFrom": "bauth_account",
+          "tableTo": "bauth_user",
           "columnsFrom": [
             "user_id"
           ],
@@ -126,8 +126,8 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.invitation": {
-      "name": "invitation",
+    "public.bauth_invitation": {
+      "name": "bauth_invitation",
       "schema": "",
       "columns": {
         "id": {
@@ -214,10 +214,10 @@
         }
       },
       "foreignKeys": {
-        "invitation_organization_id_organization_id_fk": {
-          "name": "invitation_organization_id_organization_id_fk",
-          "tableFrom": "invitation",
-          "tableTo": "organization",
+        "bauth_invitation_organization_id_bauth_organization_id_fk": {
+          "name": "bauth_invitation_organization_id_bauth_organization_id_fk",
+          "tableFrom": "bauth_invitation",
+          "tableTo": "bauth_organization",
           "columnsFrom": [
             "organization_id"
           ],
@@ -227,10 +227,10 @@
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
-        "invitation_inviter_id_user_id_fk": {
-          "name": "invitation_inviter_id_user_id_fk",
-          "tableFrom": "invitation",
-          "tableTo": "user",
+        "bauth_invitation_inviter_id_bauth_user_id_fk": {
+          "name": "bauth_invitation_inviter_id_bauth_user_id_fk",
+          "tableFrom": "bauth_invitation",
+          "tableTo": "bauth_user",
           "columnsFrom": [
             "inviter_id"
           ],
@@ -247,8 +247,8 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.member": {
-      "name": "member",
+    "public.bauth_member": {
+      "name": "bauth_member",
       "schema": "",
       "columns": {
         "id": {
@@ -316,10 +316,10 @@
         }
       },
       "foreignKeys": {
-        "member_organization_id_organization_id_fk": {
-          "name": "member_organization_id_organization_id_fk",
-          "tableFrom": "member",
-          "tableTo": "organization",
+        "bauth_member_organization_id_bauth_organization_id_fk": {
+          "name": "bauth_member_organization_id_bauth_organization_id_fk",
+          "tableFrom": "bauth_member",
+          "tableTo": "bauth_organization",
           "columnsFrom": [
             "organization_id"
           ],
@@ -329,10 +329,10 @@
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
-        "member_user_id_user_id_fk": {
-          "name": "member_user_id_user_id_fk",
-          "tableFrom": "member",
-          "tableTo": "user",
+        "bauth_member_user_id_bauth_user_id_fk": {
+          "name": "bauth_member_user_id_bauth_user_id_fk",
+          "tableFrom": "bauth_member",
+          "tableTo": "bauth_user",
           "columnsFrom": [
             "user_id"
           ],
@@ -349,8 +349,8 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.organization": {
-      "name": "organization",
+    "public.bauth_organization": {
+      "name": "bauth_organization",
       "schema": "",
       "columns": {
         "id": {
@@ -410,8 +410,8 @@
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
-        "organization_slug_unique": {
-          "name": "organization_slug_unique",
+        "bauth_organization_slug_unique": {
+          "name": "bauth_organization_slug_unique",
           "nullsNotDistinct": false,
           "columns": [
             "slug"
@@ -422,8 +422,8 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.session": {
-      "name": "session",
+    "public.bauth_session": {
+      "name": "bauth_session",
       "schema": "",
       "columns": {
         "id": {
@@ -500,10 +500,10 @@
         }
       },
       "foreignKeys": {
-        "session_user_id_user_id_fk": {
-          "name": "session_user_id_user_id_fk",
-          "tableFrom": "session",
-          "tableTo": "user",
+        "bauth_session_user_id_bauth_user_id_fk": {
+          "name": "bauth_session_user_id_bauth_user_id_fk",
+          "tableFrom": "bauth_session",
+          "tableTo": "bauth_user",
           "columnsFrom": [
             "user_id"
           ],
@@ -516,8 +516,8 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
-        "session_token_unique": {
-          "name": "session_token_unique",
+        "bauth_session_token_unique": {
+          "name": "bauth_session_token_unique",
           "nullsNotDistinct": false,
           "columns": [
             "token"
@@ -528,8 +528,8 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.user": {
-      "name": "user",
+    "public.bauth_user": {
+      "name": "bauth_user",
       "schema": "",
       "columns": {
         "id": {
@@ -582,8 +582,8 @@
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
-        "user_email_unique": {
-          "name": "user_email_unique",
+        "bauth_user_email_unique": {
+          "name": "bauth_user_email_unique",
           "nullsNotDistinct": false,
           "columns": [
             "email"
@@ -594,8 +594,8 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.verification": {
-      "name": "verification",
+    "public.bauth_verification": {
+      "name": "bauth_verification",
       "schema": "",
       "columns": {
         "id": {

@@ -16,21 +16,49 @@ import { FieldService } from "./FieldService"
 import { OrgContext } from "./OrgContext"
 import { type InstanceRow, toInstance } from "./rows"
 
-const validateValue = (
+/** Built-in `config.format` validators for text / number scalars. */
+const TEXT_FORMATS: Record<string, (v: string) => boolean> = {
+  email: (v) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v),
+  url: (v) => /^https?:\/\/\S+$/.test(v),
+  phone: (v) => /^\+?[0-9][0-9 ().-]{4,}$/.test(v),
+  slug: (v) => /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(v),
+  color: (v) => /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(v),
+}
+const NUMBER_FORMATS: Record<string, (v: number) => boolean> = {
+  percent: (v) => v >= 0 && v <= 100,
+}
+
+const isMoney = (v: unknown): v is { readonly amount: number; readonly currency: string } =>
+  typeof v === "object" &&
+  v !== null &&
+  typeof (v as { amount?: unknown }).amount === "number" &&
+  Number.isFinite((v as { amount: number }).amount) &&
+  typeof (v as { currency?: unknown }).currency === "string" &&
+  /^[A-Z]{3}$/.test((v as { currency: string }).currency)
+
+/** Validate a single (non-array) value against a field def. */
+const validateScalar = (
   def: Field,
   value: unknown,
 ): Effect.Effect<unknown, FieldValidationError> => {
   const fail = (message: string) =>
     Effect.fail(new FieldValidationError({ message, field: def.name }))
   switch (def.kind) {
-    case "text":
-      return typeof value === "string"
-        ? Effect.succeed(value)
-        : fail(`field "${def.name}" expects text`)
-    case "number":
-      return typeof value === "number" && Number.isFinite(value)
-        ? Effect.succeed(value)
-        : fail(`field "${def.name}" expects a number`)
+    case "text": {
+      if (typeof value !== "string") return fail(`field "${def.name}" expects text`)
+      const fmt = def.config.format
+      if (fmt && TEXT_FORMATS[fmt] && !TEXT_FORMATS[fmt](value))
+        return fail(`field "${def.name}" must be a valid ${fmt}`)
+      return Effect.succeed(value)
+    }
+    case "number": {
+      if (typeof value !== "number" || !Number.isFinite(value))
+        return fail(`field "${def.name}" expects a number`)
+      const fmt = def.config.format
+      if (fmt && NUMBER_FORMATS[fmt] && !NUMBER_FORMATS[fmt](value))
+        return fail(`field "${def.name}" must be a valid ${fmt}`)
+      return Effect.succeed(value)
+    }
     case "bool":
       return typeof value === "boolean"
         ? Effect.succeed(value)
@@ -44,6 +72,21 @@ const validateValue = (
       return typeof value === "string" && (def.config.options ?? []).includes(value)
         ? Effect.succeed(value)
         : fail(`field "${def.name}" must be one of ${(def.config.options ?? []).join(", ")}`)
+    // A reference to a real org member (bauth_user.id). The engine only checks
+    // shape here — actual membership is enforced at the app boundary, exactly
+    // like the org_id / actor logical FKs the engine never validates itself.
+    case "user":
+      return typeof value === "string" && value.length > 0
+        ? Effect.succeed(value)
+        : fail(`field "${def.name}" expects a user id`)
+    case "json":
+      return value !== undefined
+        ? Effect.succeed(value)
+        : fail(`field "${def.name}" expects a value`)
+    case "money":
+      return isMoney(value)
+        ? Effect.succeed({ amount: value.amount, currency: value.currency })
+        : fail(`field "${def.name}" expects { amount, currency }`)
     case "relation":
       return fail(`field "${def.name}" is a relation — use RelationService`)
     case "file":
@@ -51,6 +94,24 @@ const validateValue = (
     case "computed":
       return fail(`field "${def.name}" is computed and cannot be set`)
   }
+}
+
+/** Validate a field value, fanning out over the array when `config.multiple`. */
+const validateValue = (
+  def: Field,
+  value: unknown,
+): Effect.Effect<unknown, FieldValidationError> => {
+  if (def.config.multiple) {
+    if (!Array.isArray(value))
+      return Effect.fail(
+        new FieldValidationError({
+          message: `field "${def.name}" expects a list`,
+          field: def.name,
+        }),
+      )
+    return Effect.forEach(value, (v) => validateScalar(def, v))
+  }
+  return validateScalar(def, value)
 }
 
 const validateFields = (defs: ReadonlyArray<Field>, input: Record<string, unknown>) =>

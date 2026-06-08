@@ -289,3 +289,84 @@ describe("engine (integration)", () => {
     expect(Exit.isFailure(exit)).toBe(true)
   })
 })
+
+describe("field primitives (user / json / money / multiple / format)", () => {
+  it.effect("user field stores a member id; multiple wants a list", () =>
+    Effect.gen(function* () {
+      const concepts = yield* ConceptService
+      const fields = yield* FieldService
+      const instances = yield* InstanceService
+      const team = yield* concepts.create({ name: "Team" })
+      yield* fields.addField({ conceptId: team.id, name: "owner", kind: "user" })
+      yield* fields.addField({
+        conceptId: team.id,
+        name: "reviewers",
+        kind: "user",
+        config: { multiple: true },
+      })
+
+      const t = yield* instances.create({
+        conceptId: team.id,
+        fields: { owner: "user-1", reviewers: ["user-2", "user-3"] },
+      })
+      expect(t.state.owner).toBe("user-1")
+      expect(t.state.reviewers).toEqual(["user-2", "user-3"])
+
+      // a `multiple` field rejects a non-array value
+      const err = yield* instances
+        .create({ conceptId: team.id, fields: { reviewers: "user-2" } })
+        .pipe(Effect.flip)
+      expect(err._tag).toBe("FieldValidationError")
+    }).pipe(Effect.provide(testLayer(newOrgId()))),
+  )
+
+  it.effect("json stores arbitrary structure; money wants { amount, currency }", () =>
+    Effect.gen(function* () {
+      const concepts = yield* ConceptService
+      const fields = yield* FieldService
+      const instances = yield* InstanceService
+      const c = yield* concepts.create({ name: "Doc" })
+      yield* fields.addField({ conceptId: c.id, name: "meta", kind: "json" })
+      yield* fields.addField({ conceptId: c.id, name: "price", kind: "money" })
+
+      const ok = yield* instances.create({
+        conceptId: c.id,
+        fields: { meta: { a: 1, tags: ["x"] }, price: { amount: 99.5, currency: "USD" } },
+      })
+      expect(ok.state.meta).toEqual({ a: 1, tags: ["x"] })
+      expect(ok.state.price).toEqual({ amount: 99.5, currency: "USD" })
+
+      const err = yield* instances
+        .create({ conceptId: c.id, fields: { price: { amount: 10 } } })
+        .pipe(Effect.flip)
+      expect(err._tag).toBe("FieldValidationError")
+    }).pipe(Effect.provide(testLayer(newOrgId()))),
+  )
+
+  it.effect("text format validates values; unknown format is rejected at config time", () =>
+    Effect.gen(function* () {
+      const concepts = yield* ConceptService
+      const fields = yield* FieldService
+      const instances = yield* InstanceService
+      const c = yield* concepts.create({ name: "Person" })
+      yield* fields.addField({
+        conceptId: c.id,
+        name: "email",
+        kind: "text",
+        config: { format: "email" },
+      })
+
+      const ok = yield* instances.create({ conceptId: c.id, fields: { email: "a@b.com" } })
+      expect(ok.state.email).toBe("a@b.com")
+      const badValue = yield* instances
+        .create({ conceptId: c.id, fields: { email: "nope" } })
+        .pipe(Effect.flip)
+      expect(badValue._tag).toBe("FieldValidationError")
+
+      const badConfig = yield* fields
+        .addField({ conceptId: c.id, name: "weird", kind: "text", config: { format: "bogus" } })
+        .pipe(Effect.flip)
+      expect(badConfig._tag).toBe("FieldConfigInvalid")
+    }).pipe(Effect.provide(testLayer(newOrgId()))),
+  )
+})
