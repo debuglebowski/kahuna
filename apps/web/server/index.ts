@@ -1,11 +1,12 @@
 import "./env" // Load repo-root .env into process.env before any DB-touching import.
 import path from "node:path"
-import { healthCheck, PgLive } from "@kingsmaker/engine"
-import { Effect } from "effect"
+import { healthCheck } from "@kingsmaker/engine"
 import { auth } from "./auth"
 import { startDecayTick } from "./decay-tick"
 import { handleApi } from "./router"
 import { rpcHandler } from "./rpc"
+import { AppRuntime } from "./runtime"
+import { installGracefulShutdown } from "./shutdown"
 import { startHub, streamHandler } from "./stream"
 
 const port = Number(process.env.PORT ?? 3000)
@@ -31,9 +32,8 @@ const server = Bun.serve({
     if (url.pathname === "/api/stream") return streamHandler(req)
 
     if (url.pathname === "/api/health") {
-      const ok = await Effect.runPromise(healthCheck.pipe(Effect.provide(PgLive))).catch(
-        () => false,
-      )
+      // Probe the live runtime's pool — reflects real DB health, no per-request churn.
+      const ok = await AppRuntime.runPromise(healthCheck).catch(() => false)
       return Response.json({ ok }, { status: ok ? 200 : 503 })
     }
 
@@ -52,5 +52,7 @@ const server = Bun.serve({
     return new Response("Kingsmaker — run `vite build` to serve the SPA.", { status: 200 })
   },
 })
+
+installGracefulShutdown(server)
 
 console.log(`Kingsmaker server listening on http://localhost:${server.port}`)

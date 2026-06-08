@@ -136,6 +136,19 @@ export const startHub = (): void => {
   AppRuntime.runFork(Effect.forever(listen))
 }
 
+/**
+ * Close every open SSE stream (clearing its heartbeat) and drop the registry —
+ * called on graceful shutdown so these long-lived responses end and the HTTP
+ * server can actually drain. The process-wide LISTEN fiber is torn down
+ * separately, by disposing the runtime.
+ */
+export const closeHub = (): void => {
+  hubStarted = false
+  // Snapshot each set: `close()` unregisters, mutating the set mid-iteration.
+  for (const set of clients.values()) for (const c of [...set]) c.close()
+  clients.clear()
+}
+
 const SSE_HEADERS = {
   "content-type": "text/event-stream",
   "cache-control": "no-cache",
@@ -188,6 +201,7 @@ export const streamHandler = async (req: Request): Promise<Response> => {
       client = {
         send,
         close: () => {
+          teardown() // clear heartbeat + unregister before ending the response
           try {
             controller.close()
           } catch {
