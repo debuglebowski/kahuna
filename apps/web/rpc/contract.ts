@@ -102,6 +102,32 @@ export const DemandItem = Schema.Struct({
 })
 export type DemandItem = typeof DemandItem.Type
 
+/** A node in the concept graph — one concept. */
+export const ConceptGraphNode = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+  slug: Schema.String,
+})
+export type ConceptGraphNode = typeof ConceptGraphNode.Type
+
+/** A directed edge — a relation field on `from` pointing at concept `to`. */
+export const ConceptGraphEdge = Schema.Struct({
+  id: Schema.String,
+  from: Schema.String,
+  to: Schema.String,
+  relationType: Schema.String,
+  cardinality: Schema.Literal("one", "many"),
+  fieldName: Schema.String,
+})
+export type ConceptGraphEdge = typeof ConceptGraphEdge.Type
+
+/** Concepts + their relationships, for the settings graph view. */
+export const ConceptGraph = Schema.Struct({
+  nodes: Schema.Array(ConceptGraphNode),
+  edges: Schema.Array(ConceptGraphEdge),
+})
+export type ConceptGraph = typeof ConceptGraph.Type
+
 /** One serializable error for the whole API; `code` mirrors the old HTTP codes. */
 export class RpcError extends Schema.TaggedError<RpcError>()("RpcError", {
   code: Schema.String,
@@ -139,6 +165,7 @@ export class KingsmakerRpcs extends RpcGroup.make(
     success: Schema.Array(Field),
     error: RpcError,
   }),
+  Rpc.make("getConceptGraph", { success: ConceptGraph, error: RpcError }),
   Rpc.make("addField", {
     payload: {
       conceptId: Schema.String,

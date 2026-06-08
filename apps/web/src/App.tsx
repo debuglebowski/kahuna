@@ -7,6 +7,7 @@ import { ConceptView } from "./pages/ConceptView"
 import { Dashboard } from "./pages/Dashboard"
 import { Placeholder } from "./pages/Placeholder"
 import { Concepts } from "./pages/settings/Concepts"
+import { ConceptsGraph } from "./pages/settings/ConceptsGraph"
 import { Organization } from "./pages/settings/Organization"
 import { Profile } from "./pages/settings/Profile"
 import { SettingsLayout } from "./pages/settings/SettingsLayout"
@@ -34,6 +35,7 @@ export function App() {
           <Route path="organization" element={<Organization />} />
           <Route path="members" element={<Members />} />
           <Route path="concepts" element={<Concepts />} />
+          <Route path="concepts-graph" element={<ConceptsGraph />} />
         </Route>
         <Route path="/concepts/:id" element={<ConceptView />} />
         <Route path="*" element={<Navigate to="/" replace />} />

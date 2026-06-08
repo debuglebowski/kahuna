@@ -71,6 +71,32 @@ export const deleteConcept = (id: string): UC<unknown> =>
 export const listFields = (conceptId: string): UC<unknown> =>
   Effect.flatMap(FieldService, (f) => f.listFields(conceptId))
 
+/**
+ * The concept relationship graph: every concept is a node, and every relation
+ * field is a directed edge from its concept to the field's target concept.
+ * Edges whose target concept no longer exists (dangling) are dropped.
+ */
+export const getConceptGraph: UC<unknown> = Effect.gen(function* () {
+  const concepts = yield* Effect.flatMap(ConceptService, (c) => c.list())
+  const fields = yield* FieldService
+  const fieldsPerConcept = yield* Effect.forEach(concepts, (c) => fields.listFields(c.id))
+  const ids = new Set(concepts.map((c) => c.id))
+  return {
+    nodes: concepts.map((c) => ({ id: c.id, name: c.name, slug: c.slug })),
+    edges: fieldsPerConcept
+      .flat()
+      .filter((f) => f.kind === "relation" && !!f.config.target && ids.has(f.config.target))
+      .map((f) => ({
+        id: f.id,
+        from: f.conceptId,
+        to: f.config.target as string,
+        relationType: f.config.relationType ?? f.name,
+        cardinality: f.config.cardinality ?? ("many" as const),
+        fieldName: f.name,
+      })),
+  }
+})
+
 export const addField = (input: {
   readonly conceptId: string
   readonly name: string

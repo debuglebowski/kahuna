@@ -6,6 +6,9 @@ import { type FieldConfig, type FieldKind, KingsmakerRpcs } from "../../rpc/cont
 export type {
   Attachment,
   Concept,
+  ConceptGraph,
+  ConceptGraphEdge,
+  ConceptGraphNode,
   DemandItem,
   FeedItem,
   Field,
@@ -54,6 +57,7 @@ export const api = {
     call((c) => c.updateConcept({ id, name: patch.name, description: patch.description })),
   deleteConcept: (id: string) => call((c) => c.deleteConcept({ id })),
   listFields: (conceptId: string) => call((c) => c.listFields({ conceptId })),
+  getConceptGraph: () => call((c) => c.getConceptGraph()),
   addField: (input: {
     conceptId: string
     name: string

@@ -4,6 +4,7 @@ import { type EngineServices, OrgContext, type OrgScope } from "@kingsmaker/engi
 import { Effect, Layer } from "effect"
 import {
   type Concept,
+  type ConceptGraph,
   type DemandItem,
   type Field,
   KingsmakerRpcs,
@@ -108,6 +109,7 @@ const HandlersLive = ServerRpcs.toLayer({
     admin<Concept>(uc.updateConcept(id, { name, description })),
   deleteConcept: ({ id }) => admin<Concept>(uc.deleteConcept(id)),
   listFields: ({ conceptId }) => as<ReadonlyArray<Field>>(uc.listFields(conceptId)),
+  getConceptGraph: () => as<ConceptGraph>(uc.getConceptGraph),
   addField: ({ conceptId, name, kind, config, formula }) =>
     admin<Field>(uc.addField({ conceptId, name, kind, config, formula })),
   updateField: ({ id, config, formula }) => admin<Field>(uc.updateField({ id, config, formula })),
