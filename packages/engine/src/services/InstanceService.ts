@@ -281,7 +281,7 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
           const { orgId } = yield* OrgContext
           const rows = yield* sql<InstanceRow>`
             SELECT * FROM instances
-            WHERE id = ${input.instanceId} AND org_id = ${orgId} AND deleted_at IS NULL
+            WHERE id = ${input.instanceId} AND org_id = ${orgId} AND archived_at IS NULL
             FOR UPDATE`
           const row = rows[0]
           if (!row)
@@ -315,7 +315,7 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
             conceptName: concept.name,
           })
           const folded = applyEvent(
-            { state: current.state, version: current.version, deletedAt: null },
+            { state: current.state, version: current.version, archivedAt: null },
             event,
           )
           if (Either.isLeft(folded)) return yield* Effect.fail(folded.left)
@@ -339,14 +339,14 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
       })
 
     /** Archive an instance (soft, restorable) — event-sourced like every write:
-     *  appends `InstanceArchived`, which the reducer folds to a set `deletedAt`. */
+     *  appends `InstanceArchived`, which the reducer folds to a set `archivedAt`. */
     const archive = (input: { readonly instanceId: string; readonly expectedVersion: number }) =>
       sql.withTransaction(
         Effect.gen(function* () {
           const { orgId } = yield* OrgContext
           const rows = yield* sql<InstanceRow>`
             SELECT * FROM instances
-            WHERE id = ${input.instanceId} AND org_id = ${orgId} AND deleted_at IS NULL
+            WHERE id = ${input.instanceId} AND org_id = ${orgId} AND archived_at IS NULL
             FOR UPDATE`
           const row = rows[0]
           if (!row)
@@ -370,26 +370,26 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
             conceptName: concept.name,
           })
           const folded = applyEvent(
-            { state: current.state, version: current.version, deletedAt: null },
+            { state: current.state, version: current.version, archivedAt: null },
             event,
           )
           if (Either.isLeft(folded)) return yield* Effect.fail(folded.left)
           const updated = yield* sql<InstanceRow>`
-            UPDATE instances SET version = ${folded.right.version}, deleted_at = ${folded.right.deletedAt}
+            UPDATE instances SET version = ${folded.right.version}, archived_at = ${folded.right.archivedAt}
             WHERE id = ${current.id} AND org_id = ${orgId} RETURNING *`
           return toInstance(updated[0]!)
         }),
       )
 
     /** Restore an archived instance — appends `InstanceRestored`, which the
-     *  reducer folds to clear `deletedAt`. Refuses if not currently archived. */
+     *  reducer folds to clear `archivedAt`. Refuses if not currently archived. */
     const restore = (input: { readonly instanceId: string; readonly expectedVersion: number }) =>
       sql.withTransaction(
         Effect.gen(function* () {
           const { orgId } = yield* OrgContext
           const rows = yield* sql<InstanceRow>`
             SELECT * FROM instances
-            WHERE id = ${input.instanceId} AND org_id = ${orgId} AND deleted_at IS NOT NULL
+            WHERE id = ${input.instanceId} AND org_id = ${orgId} AND archived_at IS NOT NULL
             FOR UPDATE`
           const row = rows[0]
           if (!row)
@@ -413,20 +413,30 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
             conceptName: concept.name,
           })
           const folded = applyEvent(
-            { state: current.state, version: current.version, deletedAt: current.deletedAt },
+            { state: current.state, version: current.version, archivedAt: current.archivedAt },
             event,
           )
           if (Either.isLeft(folded)) return yield* Effect.fail(folded.left)
           const updated = yield* sql<InstanceRow>`
-            UPDATE instances SET version = ${folded.right.version}, deleted_at = ${folded.right.deletedAt}
+            UPDATE instances SET version = ${folded.right.version}, archived_at = ${folded.right.archivedAt}
             WHERE id = ${current.id} AND org_id = ${orgId} RETURNING *`
           return toInstance(updated[0]!)
         }),
       )
 
-    /** Permanently delete an instance and its entire event stream + attachments.
-     *  Refused while relation edges still reference it (archive instead). This is
-     *  out-of-band of the event log (the stream is destroyed), so it emits nothing. */
+    /**
+     * Permanently delete an instance row + its attachments. Refused while relation
+     * edges still reference it (archive instead).
+     *
+     * The event stream is deliberately KEPT as an immutable audit trail: in an
+     * event-sourced engine the log is the system of record, so a hard delete drops
+     * the live projection (the row) without rewriting history. The events become
+     * orphans of a now-gone subject — safe here because nothing replays the whole
+     * log into instances (`rebuild` is per-id and never called for a purged id),
+     * and `events` has no FK to `instances`. A `InstancePurged` tombstone records
+     * the deletion itself in the feed. (For true erasure / GDPR, add an explicit
+     * payload-scrubbing redaction — never a blind `DELETE FROM events`.)
+     */
     const purge = (input: { readonly instanceId: string }) =>
       sql.withTransaction(
         Effect.gen(function* () {
@@ -439,9 +449,17 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
           if (relationCount > 0) {
             return yield* Effect.fail(new InstanceInUse({ instanceId: instance.id, relationCount }))
           }
+          const concept = yield* concepts.getById(instance.conceptId)
           yield* sql`DELETE FROM attachments WHERE org_id = ${orgId} AND instance_id = ${instance.id}`
-          yield* sql`DELETE FROM events WHERE org_id = ${orgId} AND subject_kind = 'instance' AND subject_id = ${instance.id}`
           yield* sql`DELETE FROM instances WHERE org_id = ${orgId} AND id = ${instance.id}`
+          // Tombstone — recorded AFTER the row is gone so the feed shows the delete.
+          yield* events.append({
+            subjectKind: "instance",
+            subjectId: instance.id,
+            eventType: "InstancePurged",
+            payload: { _tag: "InstancePurged" },
+            conceptName: concept.name,
+          })
           return instance
         }),
       )
@@ -451,7 +469,7 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
         const { orgId } = yield* OrgContext
         const rows = yield* sql<InstanceRow>`
           SELECT * FROM instances
-          WHERE id = ${instanceId} AND org_id = ${orgId} AND deleted_at IS NULL LIMIT 1`
+          WHERE id = ${instanceId} AND org_id = ${orgId} AND archived_at IS NULL LIMIT 1`
         const row = rows[0]
         if (!row) return yield* Effect.fail(new InstanceNotFound({ instanceId }))
         return toInstance(row)
@@ -472,7 +490,7 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
           state: fs.state,
           version: fs.version,
           createdAt: meta.createdAt,
-          deletedAt: fs.deletedAt,
+          archivedAt: fs.archivedAt,
         } satisfies Instance
       })
 
@@ -488,7 +506,7 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
           if (!fs) return yield* Effect.fail(new InstanceNotFound({ instanceId }))
           const updated = yield* sql<InstanceRow>`
             UPDATE instances
-            SET state = ${sql.json(fs.state)}, version = ${fs.version}, deleted_at = ${fs.deletedAt}
+            SET state = ${sql.json(fs.state)}, version = ${fs.version}, archived_at = ${fs.archivedAt}
             WHERE id = ${meta.id} AND org_id = ${orgId} RETURNING *`
           return toInstance(updated[0]!)
         }),
@@ -520,7 +538,7 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
           Effect.gen(function* () {
             const rows = yield* sql<InstanceRow>`
               SELECT * FROM instances
-              WHERE id = ${instanceId} AND org_id = ${orgId} AND deleted_at IS NULL
+              WHERE id = ${instanceId} AND org_id = ${orgId} AND archived_at IS NULL
               FOR UPDATE`
             const row = rows[0]
             if (!row) return [] as EngineEvent[]
@@ -546,7 +564,7 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
               conceptName: concept.name,
             })
             const folded = applyEvent(
-              { state: current.state, version: current.version, deletedAt: null },
+              { state: current.state, version: current.version, archivedAt: null },
               event,
             )
             if (Either.isLeft(folded)) return yield* Effect.fail(folded.left)

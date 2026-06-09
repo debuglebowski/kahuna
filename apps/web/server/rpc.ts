@@ -116,7 +116,7 @@ async function assertMembers(
   values: Record<string, unknown>,
 ): Promise<void> {
   const defs = await pool.query<{ id: string }>(
-    "SELECT id FROM fields WHERE org_id = $1 AND concept_id = $2 AND kind = 'user' AND deleted_at IS NULL",
+    "SELECT id FROM fields WHERE org_id = $1 AND concept_id = $2 AND kind = 'user' AND archived_at IS NULL",
     [orgId, conceptId],
   )
   if (defs.rows.length === 0) return
@@ -179,8 +179,8 @@ const checkThen = <A>(
 const ServerRpcs = KingsmakerRpcs.middleware(AuthMiddleware)
 
 const HandlersLive = ServerRpcs.toLayer({
-  listConcepts: ({ includeArchived }) =>
-    as<ReadonlyArray<Concept>>(uc.listConcepts(includeArchived)),
+  listConcepts: ({ includeArchived, withCounts }) =>
+    as<ReadonlyArray<Concept>>(uc.listConcepts(includeArchived, withCounts)),
   createConcept: ({ name }) => as<Concept>(uc.createConcept(name)),
   updateConcept: ({ id, name, pluralName, description, icon, staticLabelIds, defaultLabelIds }) =>
     admin<Concept>(

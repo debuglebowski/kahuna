@@ -50,6 +50,13 @@
       "when": 1781012355959,
       "tag": "0006_overrated_nova",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1781025331560,
+      "tag": "0007_rename_archived_at",
+      "breakpoints": true
     }
   ]
 }

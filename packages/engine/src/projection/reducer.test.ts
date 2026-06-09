@@ -26,7 +26,7 @@ describe("reducer / fold", () => {
     if (Either.isRight(result) && result.right) {
       expect(result.right.state).toEqual({ status: "qualified", value: 2 })
       expect(result.right.version).toBe(2)
-      expect(result.right.deletedAt).toBeNull()
+      expect(result.right.archivedAt).toBeNull()
     }
   })
 
@@ -45,7 +45,7 @@ describe("reducer / fold", () => {
     expect(Either.isLeft(result)).toBe(true)
   })
 
-  it("delete sets deletedAt and bumps version", () => {
+  it("delete sets archivedAt and bumps version", () => {
     const result = foldEvents([
       ev(1, { _tag: "InstanceCreated", conceptId: "c", fields: {} }),
       ev(2, { _tag: "InstanceDeleted" }, new Date(5)),
@@ -53,11 +53,11 @@ describe("reducer / fold", () => {
     expect(Either.isRight(result)).toBe(true)
     if (Either.isRight(result) && result.right) {
       expect(result.right.version).toBe(1)
-      expect(result.right.deletedAt).toEqual(new Date(5))
+      expect(result.right.archivedAt).toEqual(new Date(5))
     }
   })
 
-  it("archive sets deletedAt; restore clears it; version bumps each step", () => {
+  it("archive sets archivedAt; restore clears it; version bumps each step", () => {
     const result = foldEvents([
       ev(1, { _tag: "InstanceCreated", conceptId: "c", fields: { a: 1 } }),
       ev(2, { _tag: "InstanceArchived" }, new Date(5)),
@@ -68,7 +68,7 @@ describe("reducer / fold", () => {
     if (Either.isRight(result) && result.right) {
       expect(result.right.state).toEqual({ a: 2 })
       expect(result.right.version).toBe(3)
-      expect(result.right.deletedAt).toBeNull()
+      expect(result.right.archivedAt).toBeNull()
     }
   })
 

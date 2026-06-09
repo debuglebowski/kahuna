@@ -60,7 +60,7 @@ export class FieldService extends Effect.Service<FieldService>()("engine/FieldSe
     const sql = yield* PgClient.PgClient
     const events = yield* EventStore
 
-    /** A concept's field defs, ordered by name. Archived (deleted_at set) are
+    /** A concept's field defs, ordered by name. Archived (archived_at set) are
      *  excluded unless `includeArchived` — only the settings editor passes it; all
      *  read/validation paths keep the live-only default. */
     const listFields = (
@@ -69,7 +69,7 @@ export class FieldService extends Effect.Service<FieldService>()("engine/FieldSe
     ): Effect.Effect<ReadonlyArray<Field>, never, OrgContext> =>
       Effect.gen(function* () {
         const { orgId } = yield* OrgContext
-        const liveOnly = opts.includeArchived ? sql`` : sql` AND deleted_at IS NULL`
+        const liveOnly = opts.includeArchived ? sql`` : sql` AND archived_at IS NULL`
         const rows = yield* sql<FieldRow>`
           SELECT * FROM fields
           WHERE org_id = ${orgId} AND concept_id = ${conceptId}${liveOnly}
@@ -100,7 +100,7 @@ export class FieldService extends Effect.Service<FieldService>()("engine/FieldSe
 
           const existing = yield* sql<{ readonly id: string }>`
             SELECT id FROM fields
-            WHERE concept_id = ${input.conceptId} AND name = ${input.name} AND deleted_at IS NULL
+            WHERE concept_id = ${input.conceptId} AND name = ${input.name} AND archived_at IS NULL
             LIMIT 1`
           if (existing[0]) {
             return yield* Effect.fail(
@@ -153,7 +153,7 @@ export class FieldService extends Effect.Service<FieldService>()("engine/FieldSe
             const clash = yield* sql<{ readonly id: string }>`
               SELECT id FROM fields
               WHERE concept_id = ${current.conceptId} AND name = ${name}
-                AND deleted_at IS NULL AND id <> ${input.id}
+                AND archived_at IS NULL AND id <> ${input.id}
               LIMIT 1`
             if (clash[0]) {
               return yield* Effect.fail(
@@ -184,7 +184,7 @@ export class FieldService extends Effect.Service<FieldService>()("engine/FieldSe
       )
 
     /**
-     * Archive a field def (soft, restorable). The row is retained (deleted_at set)
+     * Archive a field def (soft, restorable). The row is retained (archived_at set)
      * so its id stays resolvable to a name for any orphaned `state` keys /
      * historical events / relation edges that still reference it. Existing
      * instance.state keeps the orphaned key harmlessly (validation is write-time).
@@ -195,7 +195,7 @@ export class FieldService extends Effect.Service<FieldService>()("engine/FieldSe
           const { orgId } = yield* OrgContext
           const field = yield* getById(id)
           const rows = yield* sql<FieldRow>`
-            UPDATE fields SET deleted_at = COALESCE(deleted_at, now())
+            UPDATE fields SET archived_at = COALESCE(archived_at, now())
             WHERE org_id = ${orgId} AND id = ${id} RETURNING *`
           yield* events.append({
             subjectKind: "field",
@@ -217,14 +217,14 @@ export class FieldService extends Effect.Service<FieldService>()("engine/FieldSe
           const clash = yield* sql<{ readonly id: string }>`
             SELECT id FROM fields
             WHERE concept_id = ${field.conceptId} AND name = ${field.name}
-              AND deleted_at IS NULL AND id <> ${id} LIMIT 1`
+              AND archived_at IS NULL AND id <> ${id} LIMIT 1`
           if (clash[0]) {
             return yield* Effect.fail(
               new FieldNameConflict({ conceptId: field.conceptId, name: field.name }),
             )
           }
           const rows = yield* sql<FieldRow>`
-            UPDATE fields SET deleted_at = NULL WHERE org_id = ${orgId} AND id = ${id} RETURNING *`
+            UPDATE fields SET archived_at = NULL WHERE org_id = ${orgId} AND id = ${id} RETURNING *`
           yield* events.append({
             subjectKind: "field",
             subjectId: id,

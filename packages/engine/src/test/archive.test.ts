@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest"
 import { Effect } from "effect"
 import { ConceptService } from "../services/ConceptService"
+import { EventStore } from "../services/EventStore"
 import { FieldService } from "../services/FieldService"
 import { InstanceService } from "../services/InstanceService"
 import { QueryService } from "../services/QueryService"
@@ -20,7 +21,7 @@ describe("instance archive / restore / purge", () => {
         instanceId: inst.id,
         expectedVersion: inst.version,
       })
-      expect(archived.deletedAt).not.toBeNull()
+      expect(archived.archivedAt).not.toBeNull()
       expect(archived.version).toBe(inst.version + 1)
 
       // Live query excludes it; get() 404s; includeArchived surfaces it.
@@ -35,7 +36,7 @@ describe("instance archive / restore / purge", () => {
         instanceId: inst.id,
         expectedVersion: archived.version,
       })
-      expect(restored.deletedAt).toBeNull()
+      expect(restored.archivedAt).toBeNull()
       expect(restored.version).toBe(archived.version + 1)
       const liveAgain = yield* query.findInstances({ conceptId: c.id })
       expect(liveAgain.find((x) => x.id === inst.id)).toBeDefined()
@@ -54,7 +55,7 @@ describe("instance archive / restore / purge", () => {
       const r = yield* instances.restore({ instanceId: inst.id, expectedVersion: a.version })
 
       const rebuilt = yield* instances.rebuild(inst.id)
-      expect(rebuilt.deletedAt).toBeNull()
+      expect(rebuilt.archivedAt).toBeNull()
       expect(rebuilt.version).toBe(r.version)
       expect(rebuilt.state).toEqual({ [f.id]: "hi" })
     }).pipe(Effect.provide(testLayer(newOrgId()))),
@@ -73,17 +74,22 @@ describe("instance archive / restore / purge", () => {
     }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
 
-  it.effect("purge removes the row permanently (archived or live)", () =>
+  it.effect("purge removes the row permanently but keeps the event history", () =>
     Effect.gen(function* () {
       const concepts = yield* ConceptService
       const instances = yield* InstanceService
       const query = yield* QueryService
+      const events = yield* EventStore
       const c = yield* concepts.create({ name: "Lead" })
       const inst = yield* instances.create({ conceptId: c.id, fields: {} })
       yield* instances.purge({ instanceId: inst.id })
       const all = yield* query.findInstances({ conceptId: c.id, includeArchived: true })
       expect(all.find((x) => x.id === inst.id)).toBeUndefined()
-      // A second purge can't find it.
+      // The event log survives as an audit trail (InstanceCreated + InstancePurged).
+      const stream = yield* events.readStream(inst.id)
+      expect(stream.length).toBeGreaterThanOrEqual(2)
+      expect(stream.some((e) => e.eventType === "InstancePurged")).toBe(true)
+      // A second purge can't find the (now-gone) row.
       const gone = yield* instances.purge({ instanceId: inst.id }).pipe(Effect.flip)
       expect(gone._tag).toBe("InstanceNotFound")
     }).pipe(Effect.provide(testLayer(newOrgId()))),

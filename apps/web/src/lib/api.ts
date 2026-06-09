@@ -64,8 +64,10 @@ type Fields = Record<string, unknown>
 
 /** Typed, end-to-end client — replaces the old hand-written fetch wrappers. */
 export const api = {
-  listConcepts: (opts?: { includeArchived?: boolean }) =>
-    call((c) => c.listConcepts({ includeArchived: opts?.includeArchived })),
+  listConcepts: (opts?: { includeArchived?: boolean; withCounts?: boolean }) =>
+    call((c) =>
+      c.listConcepts({ includeArchived: opts?.includeArchived, withCounts: opts?.withCounts }),
+    ),
   createConcept: (name: string) => call((c) => c.createConcept({ name })),
   updateConcept: (
     id: string,

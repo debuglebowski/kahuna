@@ -211,7 +211,7 @@ describe("concept configuration (settings)", () => {
       const live = yield* concepts.list()
       expect(live.find((x) => x.id === c.id)).toBeUndefined()
       const all = yield* concepts.list({ includeArchived: true })
-      expect(all.find((x) => x.id === c.id)?.deletedAt).not.toBeNull()
+      expect(all.find((x) => x.id === c.id)?.archivedAt).not.toBeNull()
       // Its display name is free to reuse while archived (partial unique index).
       const reused = yield* concepts.create({ name: "Vendor" })
       expect(reused.id).not.toBe(c.id)
@@ -220,7 +220,7 @@ describe("concept configuration (settings)", () => {
       expect(clash._tag).toBe("ConceptNameConflict")
       yield* concepts.archive(reused.id)
       const restored = yield* concepts.restore(c.id)
-      expect(restored.deletedAt).toBeNull()
+      expect(restored.archivedAt).toBeNull()
       const liveAgain = yield* concepts.list()
       expect(liveAgain.find((x) => x.id === c.id)).toBeDefined()
     }).pipe(Effect.provide(testLayer(newOrgId()))),
@@ -249,10 +249,10 @@ describe("concept configuration (settings)", () => {
       yield* fields.archive(f.id)
       expect((yield* fields.listFields(c.id)).length).toBe(0)
       const withArchived = yield* fields.listFields(c.id, { includeArchived: true })
-      expect(withArchived.find((x) => x.id === f.id)?.deletedAt).not.toBeNull()
+      expect(withArchived.find((x) => x.id === f.id)?.archivedAt).not.toBeNull()
 
       const restored = yield* fields.restore(f.id)
-      expect(restored.deletedAt).toBeNull()
+      expect(restored.archivedAt).toBeNull()
       expect((yield* fields.listFields(c.id)).length).toBe(1)
 
       yield* fields.purge(f.id)

@@ -42,7 +42,7 @@ describe("label vocabulary (LabelService)", () => {
       yield* labels.archive(l.id)
       // Stays resolvable by id (mirrors soft-deleted fields), but drops from list.
       const got = yield* labels.getById(l.id)
-      expect(got.deletedAt).not.toBeNull()
+      expect(got.archivedAt).not.toBeNull()
       const live = yield* labels.list()
       expect(live.length).toBe(0)
     }).pipe(Effect.provide(testLayer(newOrgId()))),
@@ -68,7 +68,7 @@ describe("label vocabulary (LabelService)", () => {
       expect((yield* labels.list({ includeArchived: true })).length).toBe(1)
 
       const restored = yield* labels.restore(l.id)
-      expect(restored.deletedAt).toBeNull()
+      expect(restored.archivedAt).toBeNull()
       expect((yield* labels.list()).length).toBe(1)
 
       yield* labels.purge(l.id)

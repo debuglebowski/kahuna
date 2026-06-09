@@ -32,7 +32,7 @@ export class RelationService extends Effect.Service<RelationService>()("engine/R
       Effect.gen(function* () {
         const rows = yield* sql<{ readonly concept_id: string }>`
           SELECT concept_id FROM instances
-          WHERE id = ${instanceId} AND org_id = ${orgId} AND deleted_at IS NULL LIMIT 1`
+          WHERE id = ${instanceId} AND org_id = ${orgId} AND archived_at IS NULL LIMIT 1`
         const row = rows[0]
         if (!row) return yield* Effect.fail(new InstanceNotFound({ instanceId }))
         return row.concept_id
@@ -49,7 +49,7 @@ export class RelationService extends Effect.Service<RelationService>()("engine/R
         Effect.gen(function* () {
           const { orgId } = yield* OrgContext
           const field = yield* fieldsSvc.getById(input.fieldId)
-          if (field.deletedAt !== null)
+          if (field.archivedAt !== null)
             return yield* Effect.fail(new FieldNotFound({ fieldId: input.fieldId }))
           if (field.kind !== "relation")
             return yield* Effect.fail(
@@ -119,11 +119,11 @@ export class RelationService extends Effect.Service<RelationService>()("engine/R
           const { orgId } = yield* OrgContext
           const rows = yield* sql<RelationRow>`
             SELECT * FROM relations
-            WHERE id = ${input.relationId} AND org_id = ${orgId} AND deleted_at IS NULL FOR UPDATE`
+            WHERE id = ${input.relationId} AND org_id = ${orgId} AND archived_at IS NULL FOR UPDATE`
           if (!rows[0])
             return yield* Effect.fail(new RelationNotFound({ relationId: input.relationId }))
           const updated = yield* sql<RelationRow>`
-            UPDATE relations SET deleted_at = now()
+            UPDATE relations SET archived_at = now()
             WHERE id = ${input.relationId} AND org_id = ${orgId} RETURNING *`
           yield* events.append({
             subjectKind: "relation",
@@ -141,11 +141,11 @@ export class RelationService extends Effect.Service<RelationService>()("engine/R
         const rows = fieldId
           ? yield* sql<RelationRow>`
               SELECT * FROM relations
-              WHERE org_id = ${orgId} AND from_id = ${fromId} AND field_id = ${fieldId} AND deleted_at IS NULL
+              WHERE org_id = ${orgId} AND from_id = ${fromId} AND field_id = ${fieldId} AND archived_at IS NULL
               ORDER BY created_at ASC`
           : yield* sql<RelationRow>`
               SELECT * FROM relations
-              WHERE org_id = ${orgId} AND from_id = ${fromId} AND deleted_at IS NULL ORDER BY created_at ASC`
+              WHERE org_id = ${orgId} AND from_id = ${fromId} AND archived_at IS NULL ORDER BY created_at ASC`
         return rows.map(toRelation)
       })
 
@@ -155,11 +155,11 @@ export class RelationService extends Effect.Service<RelationService>()("engine/R
         const rows = fieldId
           ? yield* sql<RelationRow>`
               SELECT * FROM relations
-              WHERE org_id = ${orgId} AND to_id = ${toId} AND field_id = ${fieldId} AND deleted_at IS NULL
+              WHERE org_id = ${orgId} AND to_id = ${toId} AND field_id = ${fieldId} AND archived_at IS NULL
               ORDER BY created_at ASC`
           : yield* sql<RelationRow>`
               SELECT * FROM relations
-              WHERE org_id = ${orgId} AND to_id = ${toId} AND deleted_at IS NULL ORDER BY created_at ASC`
+              WHERE org_id = ${orgId} AND to_id = ${toId} AND archived_at IS NULL ORDER BY created_at ASC`
         return rows.map(toRelation)
       })
 

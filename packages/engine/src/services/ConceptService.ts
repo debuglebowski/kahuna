@@ -52,14 +52,21 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
         return toConcept(row)
       })
 
-    /** Concepts ordered by name. Archived (deleted_at set) are excluded unless
-     *  `includeArchived` — the settings page passes it to render the archive. */
-    const list = (opts: { readonly includeArchived?: boolean } = {}) =>
+    /** Concepts ordered by name. Archived (archived_at set) are excluded unless
+     *  `includeArchived`. With `withCounts`, each concept carries `itemCount` (its
+     *  total instances, live + archived) — what blocks a purge — so the settings
+     *  UI can show "N items" on archived concepts and never silently strand them. */
+    const list = (
+      opts: { readonly includeArchived?: boolean; readonly withCounts?: boolean } = {},
+    ) =>
       Effect.gen(function* () {
         const { orgId } = yield* OrgContext
-        const liveOnly = opts.includeArchived ? sql`` : sql` AND deleted_at IS NULL`
+        const liveOnly = opts.includeArchived ? sql`` : sql` AND archived_at IS NULL`
+        const countCol = opts.withCounts
+          ? sql`, (SELECT COUNT(*)::int FROM instances i WHERE i.org_id = c.org_id AND i.concept_id = c.id) AS item_count`
+          : sql``
         const rows = yield* sql<ConceptRow>`
-          SELECT * FROM concepts WHERE org_id = ${orgId}${liveOnly} ORDER BY name ASC`
+          SELECT c.*${countCol} FROM concepts c WHERE c.org_id = ${orgId}${liveOnly} ORDER BY c.name ASC`
         return rows.map(toConcept)
       })
 
@@ -78,7 +85,7 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
           // archived concept's name is free to reuse.
           const existing = yield* sql<{ readonly id: string }>`
             SELECT id FROM concepts
-            WHERE org_id = ${orgId} AND name = ${input.name} AND deleted_at IS NULL LIMIT 1`
+            WHERE org_id = ${orgId} AND name = ${input.name} AND archived_at IS NULL LIMIT 1`
           if (existing[0]) return yield* Effect.fail(new ConceptNameConflict({ name: input.name }))
           // Derive a stable, unique slug from the initial name (suffix on collision).
           const all = yield* sql<{ readonly slug: string }>`
@@ -128,7 +135,7 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
           if (name && name !== current.name) {
             const clash = yield* sql<{ readonly id: string }>`
               SELECT id FROM concepts
-              WHERE org_id = ${orgId} AND name = ${name} AND deleted_at IS NULL AND id <> ${input.id}
+              WHERE org_id = ${orgId} AND name = ${name} AND archived_at IS NULL AND id <> ${input.id}
               LIMIT 1`
             if (clash[0]) return yield* Effect.fail(new ConceptNameConflict({ name }))
           }
@@ -185,7 +192,7 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
           const { orgId } = yield* OrgContext
           yield* getById(id) // 404 if missing / cross-org
           const rows = yield* sql<ConceptRow>`
-            UPDATE concepts SET deleted_at = COALESCE(deleted_at, now())
+            UPDATE concepts SET archived_at = COALESCE(archived_at, now())
             WHERE org_id = ${orgId} AND id = ${id} RETURNING *`
           yield* events.append({
             subjectKind: "concept",
@@ -206,11 +213,11 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
           const concept = yield* getById(id)
           const clash = yield* sql<{ readonly id: string }>`
             SELECT id FROM concepts
-            WHERE org_id = ${orgId} AND name = ${concept.name} AND deleted_at IS NULL
+            WHERE org_id = ${orgId} AND name = ${concept.name} AND archived_at IS NULL
               AND id <> ${id} LIMIT 1`
           if (clash[0]) return yield* Effect.fail(new ConceptNameConflict({ name: concept.name }))
           const rows = yield* sql<ConceptRow>`
-            UPDATE concepts SET deleted_at = NULL WHERE org_id = ${orgId} AND id = ${id}
+            UPDATE concepts SET archived_at = NULL WHERE org_id = ${orgId} AND id = ${id}
             RETURNING *`
           yield* events.append({
             subjectKind: "concept",

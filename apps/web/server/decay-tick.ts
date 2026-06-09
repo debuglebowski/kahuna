@@ -42,7 +42,7 @@ const runForOrg = (orgId: string) =>
 const tickOnce = Effect.gen(function* () {
   const sql = yield* PgClient.PgClient
   const orgs = yield* sql<{ org_id: string }>`
-    SELECT DISTINCT org_id FROM instances WHERE deleted_at IS NULL`
+    SELECT DISTINCT org_id FROM instances WHERE archived_at IS NULL`
   yield* Effect.forEach(orgs, (o) => runForOrg(o.org_id), { discard: true })
 })
 

@@ -33,7 +33,7 @@ export class AttachmentService extends Effect.Service<AttachmentService>()(
             const { orgId } = yield* OrgContext
             const owner = yield* sql<{ readonly id: string }>`
             SELECT id FROM instances
-            WHERE id = ${input.instanceId} AND org_id = ${orgId} AND deleted_at IS NULL LIMIT 1`
+            WHERE id = ${input.instanceId} AND org_id = ${orgId} AND archived_at IS NULL LIMIT 1`
             if (!owner[0])
               return yield* Effect.fail(new InstanceNotFound({ instanceId: input.instanceId }))
 

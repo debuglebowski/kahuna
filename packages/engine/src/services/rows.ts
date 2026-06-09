@@ -27,7 +27,9 @@ export interface ConceptRow {
   readonly static_label_ids: unknown
   readonly default_label_ids: unknown
   readonly created_at: Date
-  readonly deleted_at: Date | null
+  readonly archived_at: Date | null
+  /** Present only when ConceptService.list is called withCounts. */
+  readonly item_count?: number | string
 }
 export interface LabelRow {
   readonly id: string
@@ -36,7 +38,7 @@ export interface LabelRow {
   readonly color: string | null
   readonly is_primary: boolean
   readonly created_at: Date
-  readonly deleted_at: Date | null
+  readonly archived_at: Date | null
 }
 export interface FieldRow {
   readonly id: string
@@ -47,7 +49,7 @@ export interface FieldRow {
   readonly formula: string | null
   readonly config: unknown
   readonly icon: string | null
-  readonly deleted_at: Date | null
+  readonly archived_at: Date | null
 }
 export interface InstanceRow {
   readonly id: string
@@ -56,7 +58,7 @@ export interface InstanceRow {
   readonly state: InstanceState
   readonly version: number | string
   readonly created_at: Date
-  readonly deleted_at: Date | null
+  readonly archived_at: Date | null
 }
 export interface RelationRow {
   readonly id: string
@@ -66,7 +68,7 @@ export interface RelationRow {
   readonly to_id: string
   readonly properties: Record<string, unknown>
   readonly created_at: Date
-  readonly deleted_at: Date | null
+  readonly archived_at: Date | null
 }
 export interface EventRow {
   readonly id: number | string
@@ -97,7 +99,8 @@ export const toConcept = (r: ConceptRow): Concept => ({
   staticLabelIds: toIdArray(r.static_label_ids),
   defaultLabelIds: toIdArray(r.default_label_ids),
   createdAt: r.created_at,
-  deletedAt: r.deleted_at,
+  archivedAt: r.archived_at,
+  ...(r.item_count == null ? {} : { itemCount: Number(r.item_count) }),
 })
 
 export const toLabel = (r: LabelRow): Label => ({
@@ -107,7 +110,7 @@ export const toLabel = (r: LabelRow): Label => ({
   color: r.color,
   primary: r.is_primary,
   createdAt: r.created_at,
-  deletedAt: r.deleted_at,
+  archivedAt: r.archived_at,
 })
 
 export const toField = (r: FieldRow): Field => ({
@@ -119,7 +122,7 @@ export const toField = (r: FieldRow): Field => ({
   formula: r.formula,
   config: toFieldConfig(r.config),
   icon: r.icon,
-  deletedAt: r.deleted_at,
+  archivedAt: r.archived_at,
 })
 
 export const toInstance = (r: InstanceRow): Instance => ({
@@ -129,7 +132,7 @@ export const toInstance = (r: InstanceRow): Instance => ({
   state: r.state ?? {},
   version: Number(r.version),
   createdAt: r.created_at,
-  deletedAt: r.deleted_at,
+  archivedAt: r.archived_at,
 })
 
 export const toRelation = (r: RelationRow): Relation => ({
@@ -140,7 +143,7 @@ export const toRelation = (r: RelationRow): Relation => ({
   toId: r.to_id,
   properties: r.properties ?? {},
   createdAt: r.created_at,
-  deletedAt: r.deleted_at,
+  archivedAt: r.archived_at,
 })
 
 export interface AttachmentRow {

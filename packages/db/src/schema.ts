@@ -50,13 +50,13 @@ export const concepts = pgTable(
     // Archive marker (mirrors `fields`/`labels`): a non-null value hides the
     // concept from the live list but keeps the row (restorable). A true *delete*
     // removes the row outright (`ConceptService.purge`).
-    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
   },
   (t) => [
     // Partial on name so an archived concept's display name frees up for reuse
     // (a restore re-checks the live set). Slug stays globally unique — it's the
     // immutable handle the app pins by, so it must never collide on restore.
-    uniqueIndex("concepts_org_name_uq").on(t.orgId, t.name).where(sql`${t.deletedAt} IS NULL`),
+    uniqueIndex("concepts_org_name_uq").on(t.orgId, t.name).where(sql`${t.archivedAt} IS NULL`),
     uniqueIndex("concepts_org_slug_uq").on(t.orgId, t.slug),
   ],
 )
@@ -78,10 +78,12 @@ export const labels = pgTable(
     // A plain flag for now (rendered with a crown); future features key off it.
     isPrimary: boolean("is_primary").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
   },
   // Partial unique so a name can be reused after its label is soft-deleted.
-  (t) => [uniqueIndex("labels_org_name_uq").on(t.orgId, t.name).where(sql`${t.deletedAt} IS NULL`)],
+  (t) => [
+    uniqueIndex("labels_org_name_uq").on(t.orgId, t.name).where(sql`${t.archivedAt} IS NULL`),
+  ],
 )
 
 export const fields = pgTable(
@@ -102,13 +104,13 @@ export const fields = pgTable(
     icon: text("icon"),
     // Soft delete: a field is never hard-deleted, so any id it ever owned stays
     // resolvable to a name for orphaned `state` keys / historical events.
-    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
   },
   // Partial unique so a name can be reused after its field is soft-deleted.
   (t) => [
     uniqueIndex("fields_concept_name_uq")
       .on(t.conceptId, t.name)
-      .where(sql`${t.deletedAt} IS NULL`),
+      .where(sql`${t.archivedAt} IS NULL`),
   ],
 )
 
@@ -123,7 +125,7 @@ export const instances = pgTable(
     state: jsonb("state").notNull().default(sql`'{}'::jsonb`),
     version: bigint("version", { mode: "number" }).notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
   },
   (t) => [
     index("instances_org_concept_idx").on(t.orgId, t.conceptId),
@@ -150,7 +152,7 @@ export const relations = pgTable(
       .references(() => instances.id),
     properties: jsonb("properties").notNull().default(sql`'{}'::jsonb`),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
   },
   (t) => [
     index("relations_from_idx").on(t.orgId, t.fromId, t.fieldId),

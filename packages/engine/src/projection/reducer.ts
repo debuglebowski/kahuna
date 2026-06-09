@@ -9,7 +9,7 @@ import { EventCorruption } from "../errors"
 export interface FoldState {
   readonly state: InstanceState
   readonly version: number
-  readonly deletedAt: Date | null
+  readonly archivedAt: Date | null
 }
 
 /**
@@ -33,7 +33,7 @@ export const applyEvent = (
         new EventCorruption({ reason: "create event after instance exists", eventId: event.id }),
       )
     }
-    return Either.right({ state: { ...p.fields }, version: 0, deletedAt: null })
+    return Either.right({ state: { ...p.fields }, version: 0, archivedAt: null })
   }
 
   if (acc === null) {
@@ -45,14 +45,14 @@ export const applyEvent = (
   // Un-archive: the only event legal on an already-archived instance. Handled
   // before the guard below so an archived → restored → … lifecycle replays.
   if (p._tag === "InstanceRestored") {
-    if (acc.deletedAt === null) {
+    if (acc.archivedAt === null) {
       return Either.left(
         new EventCorruption({ reason: "restore on a live instance", eventId: event.id }),
       )
     }
-    return Either.right({ state: acc.state, version: acc.version + 1, deletedAt: null })
+    return Either.right({ state: acc.state, version: acc.version + 1, archivedAt: null })
   }
-  if (acc.deletedAt !== null) {
+  if (acc.archivedAt !== null) {
     return Either.left(
       new EventCorruption({
         reason: "event after archive (only restore is legal)",
@@ -66,7 +66,7 @@ export const applyEvent = (
       return Either.right({
         state: { ...acc.state, ...p.patch },
         version: acc.version + 1,
-        deletedAt: null,
+        archivedAt: null,
       })
     // `InstanceDeleted` is the legacy archive tag (kept for replay); new archives
     // emit `InstanceArchived`. Both mark the instance archived identically.
@@ -75,7 +75,7 @@ export const applyEvent = (
       return Either.right({
         state: acc.state,
         version: acc.version + 1,
-        deletedAt: event.occurredAt,
+        archivedAt: event.occurredAt,
       })
     case "AttachmentAdded":
       // Attachments are recorded against the instance but do not change its
@@ -88,7 +88,7 @@ export const applyEvent = (
       return Either.right({
         state: { ...acc.state, __bands: { ...bands, [p.field]: p.to } },
         version: acc.version,
-        deletedAt: acc.deletedAt,
+        archivedAt: acc.archivedAt,
       })
     }
     default:

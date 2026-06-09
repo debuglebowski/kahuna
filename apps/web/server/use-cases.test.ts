@@ -5,14 +5,40 @@ import { describe, expect, it } from "vitest"
 import { runEngineOrThrow } from "./runtime"
 import { seedKingsmaker } from "./seed/seed"
 import {
+  addField,
+  archiveConcept,
+  archiveField,
+  archiveInstance,
+  archiveLabel,
+  createConcept,
   createInstance,
+  createLabel,
+  deleteConcept,
+  deleteField,
+  deleteInstance,
+  deleteLabel,
   getChanged,
   getConceptGraph,
   getInstanceDetail,
   linkRelation,
   listConcepts,
   listFields,
+  listInstances,
+  listLabels,
+  restoreConcept,
+  restoreField,
+  restoreInstance,
+  restoreLabel,
 } from "./use-cases"
+
+type WithId = { readonly id: string }
+type Archivable = {
+  readonly id: string
+  readonly archivedAt: Date | null
+  readonly version: number
+}
+const ids = (xs: unknown) => (xs as ReadonlyArray<WithId>).map((x) => x.id)
+const has = (xs: unknown, id: string) => ids(xs).includes(id)
 
 const run = <A, E>(orgId: string, eff: Effect.Effect<A, E, OrgContext | EngineServices>) =>
   runEngineOrThrow({ orgId, actor: "system" }, eff)
@@ -85,5 +111,79 @@ describe("use-cases (UI backbone)", () => {
     // "What changed": events recorded across the workflow.
     const changed = (await run(org, getChanged)) as ReadonlyArray<unknown>
     expect(changed.length).toBeGreaterThan(2)
+  })
+})
+
+describe("archive / restore / delete (end-to-end use-case wiring)", () => {
+  it("concepts: archive hides, restore brings back, withCounts reports, delete removes", async () => {
+    const org = randomUUID()
+    const c = (await run(org, createConcept("Widget"))) as WithId
+
+    expect(has(await run(org, listConcepts()), c.id)).toBe(true)
+    await run(org, archiveConcept(c.id))
+    expect(has(await run(org, listConcepts()), c.id)).toBe(false)
+    const archived = (await run(org, listConcepts(true))) as ReadonlyArray<Archivable>
+    expect(archived.find((x) => x.id === c.id)?.archivedAt).not.toBeNull()
+
+    await run(org, restoreConcept(c.id))
+    expect(has(await run(org, listConcepts()), c.id)).toBe(true)
+
+    const counted = (await run(org, listConcepts(true, true))) as ReadonlyArray<
+      WithId & { itemCount?: number }
+    >
+    expect(counted.find((x) => x.id === c.id)?.itemCount).toBe(0)
+
+    await run(org, deleteConcept(c.id))
+    expect(has(await run(org, listConcepts(true)), c.id)).toBe(false)
+  })
+
+  it("fields: archive/restore round-trip then hard delete", async () => {
+    const org = randomUUID()
+    const c = (await run(org, createConcept("Gadget"))) as WithId
+    const f = (await run(org, addField({ conceptId: c.id, name: "note", kind: "text" }))) as WithId
+
+    await run(org, archiveField(f.id))
+    expect(has(await run(org, listFields(c.id)), f.id)).toBe(false)
+    expect(has(await run(org, listFields(c.id, true)), f.id)).toBe(true)
+    await run(org, restoreField(f.id))
+    expect(has(await run(org, listFields(c.id)), f.id)).toBe(true)
+    await run(org, deleteField(f.id))
+    expect(has(await run(org, listFields(c.id, true)), f.id)).toBe(false)
+  })
+
+  it("labels: archive/restore round-trip then hard delete", async () => {
+    const org = randomUUID()
+    const l = (await run(org, createLabel("Hot"))) as WithId
+
+    await run(org, archiveLabel(l.id))
+    expect(has(await run(org, listLabels()), l.id)).toBe(false)
+    await run(org, restoreLabel(l.id))
+    expect(has(await run(org, listLabels()), l.id)).toBe(true)
+    await run(org, deleteLabel(l.id))
+    expect(has(await run(org, listLabels(true)), l.id)).toBe(false)
+  })
+
+  it("instances: archive/restore round-trip, concept purge blocked until items cleared", async () => {
+    const org = randomUUID()
+    const c = (await run(org, createConcept("Lead"))) as WithId
+    const inst = (await run(org, createInstance(c.id, {}))) as Archivable
+
+    const archived = (await run(org, archiveInstance(inst.id, inst.version))) as Archivable
+    expect(archived.archivedAt).not.toBeNull()
+    expect(has(await run(org, listInstances(c.id)), inst.id)).toBe(false)
+    expect(has(await run(org, listInstances(c.id, { includeArchived: true })), inst.id)).toBe(true)
+
+    // A concept with any item (even archived) refuses a hard delete. The thrown
+    // ConceptInUse serialises as its fields, so match the distinctive instanceCount.
+    await expect(run(org, deleteConcept(c.id))).rejects.toThrow(/instanceCount/)
+
+    await run(org, restoreInstance(inst.id, archived.version))
+    expect(has(await run(org, listInstances(c.id)), inst.id)).toBe(true)
+
+    await run(org, deleteInstance(inst.id))
+    expect(has(await run(org, listInstances(c.id, { includeArchived: true })), inst.id)).toBe(false)
+    // Now empty, the concept deletes cleanly.
+    await run(org, deleteConcept(c.id))
+    expect(has(await run(org, listConcepts(true)), c.id)).toBe(false)
   })
 })

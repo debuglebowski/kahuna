@@ -141,8 +141,8 @@ export const getInstanceDetail = (id: string): UC<unknown> =>
     }
   })
 
-export const listConcepts = (includeArchived = false): UC<unknown> =>
-  Effect.flatMap(ConceptService, (c) => c.list({ includeArchived }))
+export const listConcepts = (includeArchived = false, withCounts = false): UC<unknown> =>
+  Effect.flatMap(ConceptService, (c) => c.list({ includeArchived, withCounts }))
 
 export const createConcept = (name: string, description?: string): UC<unknown> =>
   Effect.flatMap(ConceptService, (c) => c.create({ name, description }))

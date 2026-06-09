@@ -55,7 +55,7 @@ describe("tier 0 (BetterAuth) + scoping", () => {
     await runEngineOrThrow({ orgId: a.orgId, actor: "system" }, seedKingsmaker)
     const created = await runEngineOrThrow(
       { orgId: a.orgId, actor: "system" },
-      Effect.flatMap(InstanceService, (i) => i.create({ conceptName: "Account", fields: {} })),
+      Effect.flatMap(InstanceService, (i) => i.create({ conceptName: "Company", fields: {} })),
     )
     const reqB = new Request("http://localhost/x", { headers: b.headers })
     const res = await runScoped(
@@ -71,7 +71,7 @@ describe("tier 0 (BetterAuth) + scoping", () => {
     await runEngineOrThrow({ orgId, actor: "system" }, seedKingsmaker)
     await runEngineOrThrow(
       { orgId, actor: "system" },
-      Effect.flatMap(InstanceService, (i) => i.create({ conceptName: "Account", fields: {} })),
+      Effect.flatMap(InstanceService, (i) => i.create({ conceptName: "Company", fields: {} })),
     )
     const before = await runEngineOrThrow({ orgId, actor: "system" }, listConcepts)
     expect(before.length).toBe(7)

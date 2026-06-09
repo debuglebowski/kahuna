@@ -29,11 +29,11 @@ export class ComputedFields extends Effect.Service<ComputedFields>()("engine/Com
           FROM relations r_for
           JOIN relations r_on
             ON r_on.to_id = r_for.to_id AND r_on.org_id = r_for.org_id
-            AND r_on.field_id = ${onRel} AND r_on.deleted_at IS NULL
+            AND r_on.field_id = ${onRel} AND r_on.archived_at IS NULL
           JOIN instances i
-            ON i.id = r_on.from_id AND i.org_id = r_for.org_id AND i.deleted_at IS NULL
+            ON i.id = r_on.from_id AND i.org_id = r_for.org_id AND i.archived_at IS NULL
           WHERE r_for.org_id = ${orgId} AND r_for.from_id = ${instanceId}
-            AND r_for.field_id = ${forRel} AND r_for.deleted_at IS NULL
+            AND r_for.field_id = ${forRel} AND r_for.archived_at IS NULL
             AND (i.state->>${dateField}) IS NOT NULL`
         return rows
           .map((r) => r.occurred_on)

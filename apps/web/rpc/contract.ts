@@ -21,7 +21,7 @@ const InstanceFields = {
   state: State,
   version: Schema.Number,
   createdAt: Schema.Date,
-  deletedAt: Schema.NullOr(Schema.Date),
+  archivedAt: Schema.NullOr(Schema.Date),
 }
 export const Instance = Schema.Struct(InstanceFields)
 export type Instance = typeof Instance.Type
@@ -41,7 +41,9 @@ export const Concept = Schema.Struct({
   staticLabelIds: Schema.Array(Schema.String),
   defaultLabelIds: Schema.Array(Schema.String),
   /** Archive marker: non-null = archived (hidden from the live list, restorable). */
-  deletedAt: Schema.NullOr(Schema.Date),
+  archivedAt: Schema.NullOr(Schema.Date),
+  /** Total instances (live + archived) — present only on a `withCounts` list. */
+  itemCount: Schema.optional(Schema.Number),
 })
 export type Concept = typeof Concept.Type
 
@@ -52,7 +54,7 @@ export const Label = Schema.Struct({
   color: Schema.NullOr(Schema.String),
   /** A plain flag for now (rendered with a crown); future features key off it. */
   primary: Schema.Boolean,
-  deletedAt: Schema.NullOr(Schema.Date),
+  archivedAt: Schema.NullOr(Schema.Date),
 })
 export type Label = typeof Label.Type
 
@@ -99,7 +101,7 @@ export const Field = Schema.Struct({
   /** Display glyph: literal emoji or `lucide:Name` (see `Concept.icon`). */
   icon: Schema.NullOr(Schema.String),
   /** Archive marker: non-null = archived (hidden from the live list, restorable). */
-  deletedAt: Schema.NullOr(Schema.Date),
+  archivedAt: Schema.NullOr(Schema.Date),
 })
 export type Field = typeof Field.Type
 
@@ -283,7 +285,10 @@ const Fields = Schema.Record({ key: Schema.String, value: Schema.Unknown })
 
 export class KingsmakerRpcs extends RpcGroup.make(
   Rpc.make("listConcepts", {
-    payload: { includeArchived: Schema.optional(Schema.Boolean) },
+    payload: {
+      includeArchived: Schema.optional(Schema.Boolean),
+      withCounts: Schema.optional(Schema.Boolean),
+    },
     success: Schema.Array(Concept),
     error: RpcError,
   }),

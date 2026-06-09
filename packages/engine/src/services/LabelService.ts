@@ -27,13 +27,13 @@ export class LabelService extends Effect.Service<LabelService>()("engine/LabelSe
         return toLabel(row)
       })
 
-    /** Labels ordered by name. Archived (deleted_at set) are excluded unless
+    /** Labels ordered by name. Archived (archived_at set) are excluded unless
      *  `includeArchived` — the pickers/resolve keep the live-only default; only
      *  the settings vocabulary editor passes it to render the archive. */
     const list = (opts: { readonly includeArchived?: boolean } = {}) =>
       Effect.gen(function* () {
         const { orgId } = yield* OrgContext
-        const liveOnly = opts.includeArchived ? sql`` : sql` AND deleted_at IS NULL`
+        const liveOnly = opts.includeArchived ? sql`` : sql` AND archived_at IS NULL`
         const rows = yield* sql<LabelRow>`
           SELECT * FROM labels
           WHERE org_id = ${orgId}${liveOnly}
@@ -49,7 +49,7 @@ export class LabelService extends Effect.Service<LabelService>()("engine/LabelSe
         if (ids.length === 0) return [] as ReadonlyArray<Label>
         const { orgId } = yield* OrgContext
         const rows = yield* sql<LabelRow>`
-          SELECT * FROM labels WHERE org_id = ${orgId} AND deleted_at IS NULL`
+          SELECT * FROM labels WHERE org_id = ${orgId} AND archived_at IS NULL`
         const byId = new Map(rows.map((r) => [r.id, toLabel(r)] as const))
         return ids
           .flatMap((id) => {
@@ -65,7 +65,7 @@ export class LabelService extends Effect.Service<LabelService>()("engine/LabelSe
         if (ids.length === 0) return new Set<string>()
         const { orgId } = yield* OrgContext
         const rows = yield* sql<{ readonly id: string }>`
-          SELECT id FROM labels WHERE org_id = ${orgId} AND deleted_at IS NULL`
+          SELECT id FROM labels WHERE org_id = ${orgId} AND archived_at IS NULL`
         return new Set(rows.map((r) => r.id))
       })
 
@@ -82,7 +82,7 @@ export class LabelService extends Effect.Service<LabelService>()("engine/LabelSe
           const primary = input.primary ?? false
           const existing = yield* sql<{ readonly id: string }>`
             SELECT id FROM labels
-            WHERE org_id = ${orgId} AND name = ${name} AND deleted_at IS NULL LIMIT 1`
+            WHERE org_id = ${orgId} AND name = ${name} AND archived_at IS NULL LIMIT 1`
           if (existing[0]) return yield* Effect.fail(new LabelNameConflict({ name }))
           const rows = yield* sql<LabelRow>`
             INSERT INTO labels (org_id, name, color, is_primary)
@@ -122,7 +122,7 @@ export class LabelService extends Effect.Service<LabelService>()("engine/LabelSe
           if (name !== current.name) {
             const clash = yield* sql<{ readonly id: string }>`
               SELECT id FROM labels
-              WHERE org_id = ${orgId} AND name = ${name} AND deleted_at IS NULL AND id <> ${input.id}
+              WHERE org_id = ${orgId} AND name = ${name} AND archived_at IS NULL AND id <> ${input.id}
               LIMIT 1`
             if (clash[0]) return yield* Effect.fail(new LabelNameConflict({ name }))
           }
@@ -156,7 +156,7 @@ export class LabelService extends Effect.Service<LabelService>()("engine/LabelSe
           const { orgId } = yield* OrgContext
           yield* getById(id) // 404 if missing / cross-org
           const rows = yield* sql<LabelRow>`
-            UPDATE labels SET deleted_at = COALESCE(deleted_at, now())
+            UPDATE labels SET archived_at = COALESCE(archived_at, now())
             WHERE org_id = ${orgId} AND id = ${id} RETURNING *`
           yield* events.append({
             subjectKind: "label",
@@ -177,11 +177,11 @@ export class LabelService extends Effect.Service<LabelService>()("engine/LabelSe
           const label = yield* getById(id)
           const clash = yield* sql<{ readonly id: string }>`
             SELECT id FROM labels
-            WHERE org_id = ${orgId} AND name = ${label.name} AND deleted_at IS NULL AND id <> ${id}
+            WHERE org_id = ${orgId} AND name = ${label.name} AND archived_at IS NULL AND id <> ${id}
             LIMIT 1`
           if (clash[0]) return yield* Effect.fail(new LabelNameConflict({ name: label.name }))
           const rows = yield* sql<LabelRow>`
-            UPDATE labels SET deleted_at = NULL WHERE org_id = ${orgId} AND id = ${id} RETURNING *`
+            UPDATE labels SET archived_at = NULL WHERE org_id = ${orgId} AND id = ${id} RETURNING *`
           yield* events.append({
             subjectKind: "label",
             subjectId: id,

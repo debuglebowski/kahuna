@@ -80,7 +80,10 @@ export interface Concept {
   readonly createdAt: Date
   /** Archive marker (mirrors `Field`/`Label`/`Instance`): non-null = archived
    *  (hidden from the live list but restorable). A true delete removes the row. */
-  readonly deletedAt: Date | null
+  readonly archivedAt: Date | null
+  /** Total instances (live + archived) — present only when listed `withCounts`.
+   *  Drives the settings "N items" hint + what blocks a concept purge. */
+  readonly itemCount?: number
 }
 
 /** A label in the org-wide, flat vocabulary. Keyed by `id`; `name`/`color` are
@@ -94,7 +97,7 @@ export interface Label {
   /** A plain flag for now (rendered with a crown); future features key off it. */
   readonly primary: boolean
   readonly createdAt: Date
-  readonly deletedAt: Date | null
+  readonly archivedAt: Date | null
 }
 
 /** Identify a concept by exactly one handle (compile-time exclusive). */
@@ -113,7 +116,7 @@ export interface Field {
   readonly icon: string | null
   /** Soft-delete marker; non-null fields are hidden from `listFields` but stay
    *  resolvable by `id` (so orphaned state keys / historical edges resolve). */
-  readonly deletedAt: Date | null
+  readonly archivedAt: Date | null
 }
 
 export interface Instance {
@@ -123,7 +126,7 @@ export interface Instance {
   readonly state: InstanceState
   readonly version: number
   readonly createdAt: Date
-  readonly deletedAt: Date | null
+  readonly archivedAt: Date | null
 }
 
 export interface Relation {
@@ -135,7 +138,7 @@ export interface Relation {
   readonly toId: Id
   readonly properties: Record<string, unknown>
   readonly createdAt: Date
-  readonly deletedAt: Date | null
+  readonly archivedAt: Date | null
 }
 
 export type EventPayload =
@@ -143,10 +146,14 @@ export type EventPayload =
   | { readonly _tag: "InstanceUpdated"; readonly patch: InstanceState }
   // Archive (soft, restorable). `InstanceDeleted` is the legacy archive tag kept
   // for replay; new archives emit `InstanceArchived`. Both fold to a set
-  // `deletedAt`; `InstanceRestored` clears it again (see projection/reducer).
+  // `archivedAt`; `InstanceRestored` clears it again (see projection/reducer).
   | { readonly _tag: "InstanceDeleted" }
   | { readonly _tag: "InstanceArchived" }
   | { readonly _tag: "InstanceRestored" }
+  // Audit tombstone for a hard delete: the row + attachments are gone, but the
+  // prior events stay as history. Never folded (the subject no longer loads), so
+  // the reducer doesn't handle it — it only surfaces in the activity feed.
+  | { readonly _tag: "InstancePurged" }
   | {
       readonly _tag: "RelationCreated"
       readonly fieldId: Id
