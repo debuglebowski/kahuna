@@ -19,6 +19,7 @@ import {
   type SidebarSource,
 } from "../../lib/api"
 import { IconPicker } from "../IconPicker"
+import { MultiCombobox } from "../MultiCombobox"
 import { Button, Field as FieldRow, IconButton, Input, Modal } from "../ui"
 
 /**
@@ -86,35 +87,20 @@ function ConceptMultiSelect({
   selectedIds: readonly string[]
   onChange: (ids: string[]) => void
 }) {
-  const selected = new Set(selectedIds)
   if (concepts.length === 0)
     return <p className="text-xs text-muted-foreground">No concepts yet.</p>
+  const options = [...concepts]
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((c) => ({ id: c.id, label: c.pluralName || c.name }))
   return (
-    <div className="flex flex-wrap gap-1.5">
-      {[...concepts]
-        .sort((a, b) => a.name.localeCompare(b.name))
-        .map((c) => {
-          const on = selected.has(c.id)
-          return (
-            <button
-              key={c.id}
-              type="button"
-              onClick={() => {
-                const next = new Set(selected)
-                next.has(c.id) ? next.delete(c.id) : next.add(c.id)
-                onChange([...next])
-              }}
-              className={
-                on
-                  ? "rounded-full border border-transparent bg-primary px-2 py-0.5 text-xs font-medium text-primary-foreground"
-                  : "rounded-full border border-input bg-background px-2 py-0.5 text-xs font-medium text-muted-foreground hover:bg-accent"
-              }
-            >
-              {c.pluralName || c.name}
-            </button>
-          )
-        })}
-    </div>
+    <MultiCombobox
+      options={options}
+      selectedIds={selectedIds}
+      onChange={onChange}
+      placeholder="Concept"
+      searchPlaceholder="Search concepts…"
+      emptyText="No matching concepts."
+    />
   )
 }
 
@@ -252,7 +238,7 @@ function RuleList({
   return (
     <div className="space-y-2">
       {rules.map((rule, i) => (
-        <div key={i} className="rounded-md border border-gray-200 p-2">
+        <div key={i} className="rounded-md border border-border p-2">
           <div className="mb-1.5 flex items-center gap-1.5">
             <Select
               value={rule.target}

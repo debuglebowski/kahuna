@@ -70,7 +70,7 @@ export function Views() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <p className="max-w-lg text-sm text-gray-500">
+        <p className="max-w-lg text-sm text-muted-foreground">
           Views are configurable sidebar layouts you switch between via the pager. Org views are
           shared with everyone; personal views are only yours.
         </p>
@@ -80,7 +80,7 @@ export function Views() {
       </div>
 
       {sorted.length === 0 ? (
-        <Card className="p-6 text-sm text-gray-400">
+        <Card className="p-6 text-sm text-muted-foreground">
           No views yet — the default layout is shown.
         </Card>
       ) : (
@@ -116,13 +116,13 @@ function ViewRow({ view, onEdit }: { view: SidebarView; onEdit: () => void }) {
     <div
       ref={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition }}
-      className={`flex items-center gap-2 rounded-md border border-gray-200 bg-white px-3 py-2 ${
+      className={`flex items-center gap-2 rounded-md border border-border bg-background px-3 py-2 ${
         isDragging ? "opacity-60 shadow" : ""
       }`}
     >
       <button
         type="button"
-        className="cursor-grab text-gray-300 hover:text-gray-500 active:cursor-grabbing"
+        className="cursor-grab text-muted-foreground hover:text-foreground active:cursor-grabbing"
         aria-label="Drag to reorder"
         {...attributes}
         {...listeners}
@@ -130,7 +130,7 @@ function ViewRow({ view, onEdit }: { view: SidebarView; onEdit: () => void }) {
         <GripVertical size={16} />
       </button>
       <ConceptIcon value={view.icon || "lucide:LayoutGrid"} size={16} />
-      <span className="flex-1 truncate text-sm font-medium text-gray-800">{view.name}</span>
+      <span className="flex-1 truncate text-sm font-medium text-foreground">{view.name}</span>
       <Badge tone={view.ownerId ? "gray" : "blue"}>{view.ownerId ? "Personal" : "Org"}</Badge>
       {view.hidden && <Badge tone="amber">Hidden</Badge>}
       <IconButton aria-label="Edit view" onClick={onEdit}>
@@ -229,7 +229,7 @@ function ViewEditor({
           <SectionList sections={sections} concepts={concepts} onChange={setSections} />
         </Field>
 
-        <div className="border-t border-gray-100 pt-3">
+        <div className="border-t border-border pt-3">
           <Button
             variant="destructive"
             onClick={() => del.mutate()}
@@ -239,7 +239,7 @@ function ViewEditor({
             <Trash2 size={15} /> {del.isPending ? "Deleting…" : "Delete view"}
           </Button>
           {!canDelete && (
-            <p className="mt-1.5 text-xs text-gray-400">
+            <p className="mt-1.5 text-xs text-muted-foreground">
               This is the last shared view — it can't be deleted.
             </p>
           )}

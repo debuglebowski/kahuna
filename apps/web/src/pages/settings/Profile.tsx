@@ -1,6 +1,9 @@
 import { useMutation } from "@tanstack/react-query"
 import { Check } from "lucide-react"
 import { useState } from "react"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Label } from "@/components/ui/label"
 import { Button, Card, CardHeader, Field, Input } from "../../components/ui"
 import { authClient, useSession } from "../../lib/auth-client"
 import { Feedback } from "./parts"
@@ -31,7 +34,7 @@ function ProfileInfo() {
           </Button>
         }
       />
-      <div className="max-w-md space-y-4 p-4">
+      <div className="max-w-md space-y-4 p-6">
         <Field label="Name">
           <Input value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
@@ -39,7 +42,10 @@ function ProfileInfo() {
           <Input value={image} onChange={(e) => setImage(e.target.value)} placeholder="https://…" />
         </Field>
         {image.trim() && (
-          <img src={image} alt="Avatar preview" className="h-12 w-12 rounded-full object-cover" />
+          <Avatar className="size-12">
+            <AvatarImage src={image} alt="Avatar preview" />
+            <AvatarFallback>{(name.trim()[0] ?? "?").toUpperCase()}</AvatarFallback>
+          </Avatar>
         )}
         <Feedback ok={save.isSuccess} okText="Profile saved." error={save.error} />
       </div>
@@ -81,21 +87,17 @@ function ChangePassword() {
           </Button>
         }
       />
-      <div className="max-w-md space-y-4 p-4">
+      <div className="max-w-md space-y-4 p-6">
         <Field label="Current password">
           <Input type="password" value={current} onChange={(e) => setCurrent(e.target.value)} />
         </Field>
         <Field label="New password (min 8 chars)">
           <Input type="password" value={next} onChange={(e) => setNext(e.target.value)} />
         </Field>
-        <label className="flex items-center gap-2 text-sm text-gray-600">
-          <input
-            type="checkbox"
-            checked={revokeOthers}
-            onChange={(e) => setRevokeOthers(e.target.checked)}
-          />
+        <Label className="flex items-center gap-2 text-sm font-normal text-foreground">
+          <Checkbox checked={revokeOthers} onCheckedChange={(c) => setRevokeOthers(c === true)} />
           Sign out other sessions
-        </label>
+        </Label>
         <Feedback ok={save.isSuccess} okText="Password changed." error={save.error} />
       </div>
     </Card>
@@ -125,8 +127,8 @@ function ChangeEmail() {
           </Button>
         }
       />
-      <div className="max-w-md space-y-4 p-4">
-        <p className="text-xs text-gray-500">Current: {session?.user.email}</p>
+      <div className="max-w-md space-y-4 p-6">
+        <p className="text-xs text-muted-foreground">Current: {session?.user.email}</p>
         <Field label="New email">
           <Input
             type="email"
@@ -155,10 +157,10 @@ function DeleteAccount() {
   })
 
   return (
-    <Card className="border-red-200">
+    <Card className="border-destructive/30">
       <CardHeader title="Delete account" />
-      <div className="max-w-md space-y-4 p-4">
-        <p className="text-sm text-gray-600">
+      <div className="max-w-md space-y-4 p-6">
+        <p className="text-sm text-muted-foreground">
           Permanently deletes your account, sessions, and memberships. This cannot be undone.
         </p>
         <Field label="Confirm with your password">

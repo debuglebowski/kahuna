@@ -1,5 +1,7 @@
 import { Check, Plus, X } from "lucide-react"
 import { useMemo, useState } from "react"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Label } from "@/components/ui/label"
 import {
   Select,
   SelectContent,
@@ -180,14 +182,10 @@ export function FieldForm({
       </div>
 
       {MULTIPLE_KINDS.has(kind) && (
-        <label className="flex items-center gap-2 text-sm text-gray-700">
-          <input
-            type="checkbox"
-            checked={multiple}
-            onChange={(e) => setMultiple(e.target.checked)}
-          />
+        <Label className="flex items-center gap-2 text-sm font-normal text-foreground">
+          <Checkbox checked={multiple} onCheckedChange={(c) => setMultiple(c === true)} />
           Allow multiple values
-        </label>
+        </Label>
       )}
 
       {kind === "enum" && (
@@ -201,24 +199,27 @@ export function FieldForm({
           </Field>
           {options.length > 1 && (
             <div>
-              <span className="text-xs font-medium text-gray-500">
+              <span className="text-xs font-medium text-muted-foreground">
                 Transitions (optional) — allowed next states per state
               </span>
               <div className="mt-2 space-y-1.5">
                 {options.map((from) => (
                   <div key={from} className="flex flex-wrap items-center gap-2 text-xs">
-                    <span className="w-28 shrink-0 font-medium text-gray-700">{from} →</span>
+                    <span className="w-28 shrink-0 font-medium text-foreground">{from} →</span>
                     {options
                       .filter((to) => to !== from)
                       .map((to) => (
-                        <label key={to} className="flex items-center gap-1 text-gray-600">
-                          <input
-                            type="checkbox"
+                        <Label
+                          key={to}
+                          className="flex items-center gap-1 text-xs font-normal text-muted-foreground"
+                        >
+                          <Checkbox
+                            className="size-3.5"
                             checked={(transitions[from] ?? []).includes(to)}
-                            onChange={() => toggleTransition(from, to)}
+                            onCheckedChange={() => toggleTransition(from, to)}
                           />
                           {to}
-                        </label>
+                        </Label>
                       ))}
                   </div>
                 ))}

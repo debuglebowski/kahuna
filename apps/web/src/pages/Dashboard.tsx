@@ -1,17 +1,16 @@
 import { LayoutDashboard } from "lucide-react"
-import { Card } from "../components/ui"
 
 export function Dashboard() {
   return (
-    <Card className="flex flex-col items-center justify-center px-6 py-20 text-center">
-      <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-gray-100 text-gray-400">
-        <LayoutDashboard size={22} />
+    <div className="flex min-h-[400px] flex-col items-center justify-center rounded-xl border border-dashed p-12 text-center">
+      <div className="mb-4 flex size-10 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+        <LayoutDashboard size={20} />
       </div>
-      <h2 className="mb-1 text-base font-semibold text-gray-900">Nothing to show yet</h2>
-      <p className="max-w-sm text-sm text-gray-500">
+      <h2 className="mb-1 text-lg font-medium text-foreground">Nothing to show yet</h2>
+      <p className="max-w-sm text-sm text-balance text-muted-foreground">
         Your overview will fill in as you and your team work. Create a concept and add a few
         instances to start tracking activity here.
       </p>
-    </Card>
+    </div>
   )
 }

@@ -88,7 +88,7 @@ export function Members() {
   })
 
   if (org.isPending) return <Spinner />
-  if (org.error) return <p className="text-sm text-red-600">{(org.error as Error).message}</p>
+  if (org.error) return <p className="text-sm text-destructive">{(org.error as Error).message}</p>
 
   const members = org.data?.members ?? []
   const ownerCount = members.filter((m) => m.role === "owner").length
@@ -97,8 +97,8 @@ export function Members() {
     <div className="space-y-5">
       <Card>
         <CardHeader title="Add member" />
-        <div className="space-y-3 p-4">
-          <p className="text-xs text-gray-500">
+        <div className="space-y-3 p-6">
+          <p className="text-xs text-muted-foreground">
             Add an existing user by email. They must already have an account.
           </p>
           <div className="flex gap-2">
@@ -129,18 +129,18 @@ export function Members() {
 
       <Card>
         <CardHeader title={`Members (${members.length})`} />
-        <ul className="divide-y divide-gray-100">
+        <ul className="divide-y divide-border">
           {members.map((m) => {
             const isSelf = m.userId === session?.user.id
             const lockOwner = m.role === "owner" && ownerCount <= 1
             return (
-              <li key={m.id} className="flex items-center gap-3 px-4 py-3">
+              <li key={m.id} className="flex items-center gap-3 px-6 py-3">
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-medium text-gray-900">
+                  <div className="truncate text-sm font-medium text-foreground">
                     {m.user?.name?.trim() || m.user?.email}
-                    {isSelf && <span className="ml-1 text-xs text-gray-400">(you)</span>}
+                    {isSelf && <span className="ml-1 text-xs text-muted-foreground">(you)</span>}
                   </div>
-                  <div className="truncate text-xs text-gray-500">{m.user?.email}</div>
+                  <div className="truncate text-xs text-muted-foreground">{m.user?.email}</div>
                 </div>
                 <Badge tone={roleTone(m.role)}>{m.role}</Badge>
                 <IconButton
@@ -169,7 +169,7 @@ export function Members() {
             )
           })}
         </ul>
-        <div className="px-4 pb-3">
+        <div className="px-6 pb-4">
           <Feedback error={remove.error} />
         </div>
       </Card>
@@ -177,9 +177,9 @@ export function Members() {
       {editing && (
         <Modal title="Change role" onClose={() => setEditing(null)}>
           <div className="space-y-4">
-            <p className="text-sm text-gray-600">
-              Update the role for <span className="font-medium text-gray-900">{editing.label}</span>
-              .
+            <p className="text-sm text-muted-foreground">
+              Update the role for{" "}
+              <span className="font-medium text-foreground">{editing.label}</span>.
             </p>
             <Field label="Role">
               <Select value={draftRole} onValueChange={setDraftRole}>

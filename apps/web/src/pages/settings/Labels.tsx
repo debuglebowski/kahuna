@@ -2,6 +2,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Archive, ArchiveRestore, Check, Pencil, Plus, Trash2, X } from "lucide-react"
 import { useState } from "react"
 import { useOutletContext } from "react-router-dom"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Label as FieldLabel } from "@/components/ui/label"
 import {
   Button,
   Card,
@@ -37,7 +39,7 @@ function ColorPicker({ value, onChange }: { value: string; onChange: (v: string)
         aria-label="Label color"
         value={HEX6.test(value) ? value : DEFAULT_COLOR}
         onChange={(e) => onChange(e.target.value)}
-        className="h-8 w-9 shrink-0 cursor-pointer rounded border border-gray-300 bg-white p-0.5"
+        className="h-8 w-9 shrink-0 cursor-pointer rounded border border-input bg-background p-0.5"
       />
       <Input
         value={value}
@@ -81,7 +83,7 @@ function LabelModal({
     <Modal title={initial ? "Edit label" : "New label"} onClose={onClose}>
       <div className="space-y-3">
         <div className="space-y-1">
-          <span className="text-xs font-medium text-gray-500">Name</span>
+          <span className="block text-sm leading-none font-medium text-foreground">Name</span>
           <Input
             autoFocus
             value={name}
@@ -93,13 +95,13 @@ function LabelModal({
           />
         </div>
         <div className="space-y-1">
-          <span className="text-xs font-medium text-gray-500">Color</span>
+          <span className="block text-sm leading-none font-medium text-foreground">Color</span>
           <ColorPicker value={color} onChange={setColor} />
         </div>
-        <label className="flex items-center gap-1.5 text-sm text-gray-700">
-          <input type="checkbox" checked={primary} onChange={(e) => setPrimary(e.target.checked)} />
+        <FieldLabel className="flex items-center gap-1.5 text-sm font-normal text-foreground">
+          <Checkbox checked={primary} onCheckedChange={(c) => setPrimary(c === true)} />
           Primary
-        </label>
+        </FieldLabel>
         <div className="flex gap-2">
           <Button onClick={submit} disabled={save.isPending || !name.trim()}>
             <Check size={15} />
@@ -155,28 +157,29 @@ export function Labels() {
   })
 
   if (labels.isPending) return <Spinner />
-  if (labels.error) return <p className="text-sm text-red-600">{(labels.error as Error).message}</p>
+  if (labels.error)
+    return <p className="text-sm text-destructive">{(labels.error as Error).message}</p>
 
   const sorted = [...(labels.data ?? [])].sort((a, b) => a.name.localeCompare(b.name))
-  const live = sorted.filter((l) => !l.deletedAt)
-  const archived = sorted.filter((l) => l.deletedAt)
+  const live = sorted.filter((l) => !l.archivedAt)
+  const archived = sorted.filter((l) => l.archivedAt)
 
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <p className="text-sm text-gray-500">
+        <p className="text-sm text-muted-foreground">
           A shared vocabulary of labels — apply them to a concept (in Concepts) or to individual
           items{admin ? "" : "; managing the vocabulary is admin-only"}.
         </p>
         <div className="flex items-center gap-3">
           {admin && archived.length > 0 && (
-            <button
-              type="button"
+            <Button
+              variant="link"
               onClick={() => setShowArchived((v) => !v)}
-              className="whitespace-nowrap text-xs text-gray-500 hover:text-gray-800"
+              className="h-auto whitespace-nowrap p-0 text-xs font-normal text-muted-foreground hover:text-foreground"
             >
               {showArchived ? "Hide" : "Show"} archived ({archived.length})
-            </button>
+            </Button>
           )}
           {admin && (
             <Button className="shrink-0 whitespace-nowrap" onClick={() => setCreating(true)}>
@@ -200,9 +203,9 @@ export function Labels() {
       <Card>
         <CardHeader title={`Labels (${live.length})`} />
         {live.length === 0 ? (
-          <p className="p-4 text-sm text-gray-400">No labels yet.</p>
+          <p className="p-6 text-sm text-muted-foreground">No labels yet.</p>
         ) : (
-          <ul className="divide-y divide-gray-100">
+          <ul className="divide-y divide-border">
             {live.map((l) => (
               <LabelRow
                 key={l.id}
@@ -220,7 +223,7 @@ export function Labels() {
       {showArchived && archived.length > 0 && (
         <Card>
           <CardHeader title={`Archived (${archived.length})`} />
-          <ul className="divide-y divide-gray-100">
+          <ul className="divide-y divide-border">
             {archived.map((l) => (
               <LabelRow
                 key={l.id}
@@ -235,7 +238,7 @@ export function Labels() {
           </ul>
         </Card>
       )}
-      {restore.error && <p className="text-sm text-red-600">{labelMsg(restore.error)}</p>}
+      {restore.error && <p className="text-sm text-destructive">{labelMsg(restore.error)}</p>}
 
       {dialog?.kind === "archive" && (
         <ConfirmDialog
@@ -264,8 +267,8 @@ export function Labels() {
           }
           confirmLabel="Delete"
           confirmVariant="danger"
-          secondaryLabel={dialog.label.deletedAt ? undefined : "Archive instead"}
-          onSecondary={dialog.label.deletedAt ? undefined : () => archive.mutate(dialog.label.id)}
+          secondaryLabel={dialog.label.archivedAt ? undefined : "Archive instead"}
+          onSecondary={dialog.label.archivedAt ? undefined : () => archive.mutate(dialog.label.id)}
           pending={del.isPending || archive.isPending}
           error={del.error ? labelMsg(del.error) : undefined}
           onConfirm={() => del.mutate(dialog.label.id)}
@@ -276,7 +279,7 @@ export function Labels() {
   )
 }
 
-/** One vocabulary row: chip + color. Live rows offer edit/archive/delete;
+/** One vocabulary row. Live rows offer edit/archive/delete;
  *  archived rows offer restore/delete. */
 function LabelRow({
   label,
@@ -298,11 +301,11 @@ function LabelRow({
   onDelete?: () => void
 }) {
   return (
-    <li className={`flex items-center gap-3 px-4 py-3${archived ? " opacity-60" : ""}`}>
+    <li className={`flex items-center gap-3 px-6 py-3${archived ? " opacity-60" : ""}`}>
       <LabelChip color={label.color} primary={label.primary}>
         {label.name}
       </LabelChip>
-      <span className="flex-1 truncate text-xs text-gray-400">{label.color ?? "no color"}</span>
+      <span className="flex-1" />
       {admin &&
         (archived ? (
           <>

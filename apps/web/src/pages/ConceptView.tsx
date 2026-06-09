@@ -3,6 +3,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Archive, ArchiveRestore, Plus, Trash2 } from "lucide-react"
 import { useMemo, useState } from "react"
 import { useNavigate, useParams } from "react-router-dom"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
 import { Button, Card, ConfirmDialog, IconButton, Input, Modal, Spinner } from "../components/ui"
 import { api, type Instance } from "../lib/api"
 import { useSession } from "../lib/auth-client"
@@ -69,7 +77,7 @@ export function ConceptView() {
     queryFn: () => api.listInstances(id, { includeArchived: true }),
     enabled: !!id && showArchived,
   })
-  const archivedRows = (archivedQ.data ?? []).filter((i) => i.deletedAt)
+  const archivedRows = (archivedQ.data ?? []).filter((i) => i.archivedAt)
   const refetchAll = () => {
     collection.utils.refetch()
     qc.invalidateQueries({ queryKey: ["instances", id, "archived"] })
@@ -139,15 +147,15 @@ export function ConceptView() {
     <>
       <div className="space-y-3">
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-gray-800">{name}</h2>
+          <h2 className="text-2xl font-bold tracking-tight text-foreground">{name}</h2>
           <div className="flex items-center gap-3">
-            <button
-              type="button"
+            <Button
+              variant="link"
               onClick={() => setShowArchived((v) => !v)}
-              className="whitespace-nowrap text-xs text-gray-500 hover:text-gray-800"
+              className="h-auto whitespace-nowrap p-0 text-xs font-normal text-muted-foreground hover:text-foreground"
             >
               {showArchived ? "Hide" : "Show"} archived
-            </button>
+            </Button>
             <Input
               placeholder="filter…"
               value={filter}
@@ -164,86 +172,84 @@ export function ConceptView() {
           {instances.isLoading ? (
             <Spinner />
           ) : rows.length === 0 ? (
-            <div className="p-6 text-sm text-gray-400">No {name} instances yet.</div>
+            <div className="p-6 text-sm text-muted-foreground">No {name} instances yet.</div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm">
-                <thead>
-                  <tr className="border-b border-gray-100 text-xs uppercase text-gray-400">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  {columns.map((c) => (
+                    <TableHead
+                      key={c.id}
+                      className="cursor-pointer px-6"
+                      onClick={() => {
+                        if (sortKey === c.id) setAsc(!asc)
+                        else {
+                          setSortKey(c.id)
+                          setAsc(true)
+                        }
+                      }}
+                    >
+                      {c.name}
+                      {sortKey === c.id ? (asc ? " ▲" : " ▼") : ""}
+                    </TableHead>
+                  ))}
+                  <TableHead className="px-6" />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {rows.map((r) => (
+                  <TableRow
+                    key={r.id}
+                    className="cursor-pointer"
+                    onClick={() => navigate(`/instances/${r.id}`)}
+                  >
                     {columns.map((c) => (
-                      <th
-                        key={c.id}
-                        className="cursor-pointer px-4 py-2"
-                        onClick={() => {
-                          if (sortKey === c.id) setAsc(!asc)
-                          else {
-                            setSortKey(c.id)
-                            setAsc(true)
-                          }
+                      <TableCell key={c.id} className="px-6 text-foreground">
+                        {showValue(r.state[c.id])}
+                      </TableCell>
+                    ))}
+                    <TableCell className="px-2 text-right whitespace-nowrap">
+                      <IconButton
+                        aria-label={`Archive ${rowLabel(r.state)}`}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setDialog({ kind: "archive", inst: r })
                         }}
                       >
-                        {c.name}
-                        {sortKey === c.id ? (asc ? " ▲" : " ▼") : ""}
-                      </th>
-                    ))}
-                    <th className="px-4 py-2" />
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((r) => (
-                    <tr
-                      key={r.id}
-                      className="cursor-pointer border-b border-gray-50 hover:bg-gray-50"
-                      onClick={() => navigate(`/instances/${r.id}`)}
-                    >
-                      {columns.map((c) => (
-                        <td key={c.id} className="px-4 py-2 text-gray-700">
-                          {showValue(r.state[c.id])}
-                        </td>
-                      ))}
-                      <td className="px-2 py-1 text-right whitespace-nowrap">
+                        <Archive size={15} />
+                      </IconButton>
+                      {admin && (
                         <IconButton
-                          aria-label={`Archive ${rowLabel(r.state)}`}
+                          variant="danger"
+                          aria-label={`Delete ${rowLabel(r.state)}`}
                           onClick={(e) => {
                             e.stopPropagation()
-                            setDialog({ kind: "archive", inst: r })
+                            setDialog({ kind: "delete", inst: r })
                           }}
                         >
-                          <Archive size={15} />
+                          <Trash2 size={15} />
                         </IconButton>
-                        {admin && (
-                          <IconButton
-                            variant="danger"
-                            aria-label={`Delete ${rowLabel(r.state)}`}
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              setDialog({ kind: "delete", inst: r })
-                            }}
-                          >
-                            <Trash2 size={15} />
-                          </IconButton>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
           )}
         </Card>
 
         {showArchived && (
           <Card>
-            <div className="border-b border-gray-100 px-4 py-2 text-xs font-medium uppercase tracking-wide text-gray-400">
+            <div className="border-b border-border px-6 py-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
               Archived{archivedQ.isFetching ? " · loading…" : ` (${archivedRows.length})`}
             </div>
             {archivedRows.length === 0 ? (
-              <p className="p-4 text-sm text-gray-400">No archived {name} items.</p>
+              <p className="p-6 text-sm text-muted-foreground">No archived {name} items.</p>
             ) : (
-              <ul className="divide-y divide-gray-50">
+              <ul className="divide-y divide-border">
                 {archivedRows.map((r) => (
-                  <li key={r.id} className="flex items-center gap-2 px-4 py-2 opacity-70">
-                    <span className="flex-1 truncate text-sm text-gray-700">
+                  <li key={r.id} className="flex items-center gap-2 px-6 py-2 opacity-70">
+                    <span className="flex-1 truncate text-sm text-foreground">
                       {rowLabel(r.state)}
                     </span>
                     <IconButton
@@ -267,7 +273,7 @@ export function ConceptView() {
               </ul>
             )}
             {restoreInst.error && (
-              <p className="px-4 pb-3 text-sm text-red-600">
+              <p className="px-6 pb-4 text-sm text-destructive">
                 {(restoreInst.error as { message?: string }).message ?? "Could not restore."}
               </p>
             )}
@@ -306,8 +312,8 @@ export function ConceptView() {
           }
           confirmLabel="Delete"
           confirmVariant="danger"
-          secondaryLabel={dialog.inst.deletedAt ? undefined : "Archive instead"}
-          onSecondary={dialog.inst.deletedAt ? undefined : () => archiveInst.mutate(dialog.inst)}
+          secondaryLabel={dialog.inst.archivedAt ? undefined : "Archive instead"}
+          onSecondary={dialog.inst.archivedAt ? undefined : () => archiveInst.mutate(dialog.inst)}
           pending={delInst.isPending || archiveInst.isPending}
           error={
             delInst.error
@@ -333,7 +339,7 @@ export function ConceptView() {
             />
           )}
           {create.error && (
-            <p className="mt-3 text-sm text-red-600">
+            <p className="mt-3 text-sm text-destructive">
               {(create.error as { message?: string }).message ?? "Could not create."}
             </p>
           )}

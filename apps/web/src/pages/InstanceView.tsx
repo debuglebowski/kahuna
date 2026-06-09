@@ -41,7 +41,7 @@ const labelOf = (state: Record<string, unknown>, fields: ReadonlyArray<Field>): 
 function FieldValue({ field, value }: { field: Field; value: unknown }) {
   if (field.kind === "computed" && field.config.computedKind === "decay") {
     const d = value as DecayValue | undefined
-    if (!d) return <span className="text-gray-400">—</span>
+    if (!d) return <span className="text-muted-foreground">—</span>
     return (
       <Badge tone={decayTone(d.band)}>
         {d.band} · {d.days ?? "—"}d
@@ -50,10 +50,10 @@ function FieldValue({ field, value }: { field: Field; value: unknown }) {
   }
   if (field.kind === "computed" && field.config.computedKind === "momentum") {
     const m = value as MomentumValue | undefined
-    if (!m) return <span className="text-gray-400">—</span>
+    if (!m) return <span className="text-muted-foreground">—</span>
     return <Badge tone={momentumTone(m.label)}>{m.label}</Badge>
   }
-  return <span className="text-gray-700">{showValue(value)}</span>
+  return <span className="text-foreground">{showValue(value)}</span>
 }
 
 /** Connected instances grouped by direction + relation type, each click-through. */
@@ -68,16 +68,16 @@ function Connections({ related }: { related: ReadonlyArray<RelatedInstance> }) {
   }
 
   if (related.length === 0)
-    return <div className="p-4 text-sm text-gray-400">Nothing connected yet.</div>
+    return <div className="p-6 text-sm text-muted-foreground">Nothing connected yet.</div>
 
   return (
-    <div className="divide-y divide-gray-100">
+    <div className="divide-y divide-border">
       {[...groups.entries()].map(([key, items]) => {
         const first = items[0]!
         const arrow = first.direction === "out" ? "→" : "←"
         return (
-          <div key={key} className="px-4 py-3">
-            <div className="mb-2 text-xs font-medium uppercase tracking-wide text-gray-400">
+          <div key={key} className="px-6 py-3">
+            <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
               {arrow} {first.relationName}
             </div>
             <div className="space-y-1">
@@ -85,9 +85,9 @@ function Connections({ related }: { related: ReadonlyArray<RelatedInstance> }) {
                 <Link
                   key={r.relationId}
                   to={`/instances/${r.instance.id}`}
-                  className="flex items-center justify-between rounded px-2 py-1 hover:bg-gray-50"
+                  className="flex items-center justify-between rounded px-2 py-1 hover:bg-accent"
                 >
-                  <span className="text-sm text-gray-700">{r.label}</span>
+                  <span className="text-sm text-foreground">{r.label}</span>
                   <Badge tone="blue">{r.conceptName}</Badge>
                 </Link>
               ))}
@@ -149,10 +149,10 @@ function LabelsCard({
           )
         }
       />
-      <div className="space-y-3 p-4">
+      <div className="space-y-3 p-6">
         {staticLabels.length > 0 && (
           <div className="space-y-1.5">
-            <span className="text-xs font-medium text-gray-500">Inherited</span>
+            <span className="text-xs font-medium text-muted-foreground">Inherited</span>
             <div className="flex flex-wrap gap-1.5">
               {staticLabels.map((l) => (
                 <LabelChip
@@ -168,7 +168,7 @@ function LabelsCard({
           </div>
         )}
         <div className="space-y-1.5">
-          <span className="text-xs font-medium text-gray-500">This item</span>
+          <span className="text-xs font-medium text-muted-foreground">This item</span>
           {hasVocab ? (
             <LabelMultiSelect
               all={vocab.data ?? []}
@@ -186,10 +186,10 @@ function LabelsCard({
               ))}
             </div>
           ) : (
-            <p className="text-xs text-gray-400">None.</p>
+            <p className="text-xs text-muted-foreground">None.</p>
           )}
         </div>
-        {save.error && <p className="text-sm text-red-600">{(save.error as Error).message}</p>}
+        {save.error && <p className="text-sm text-destructive">{(save.error as Error).message}</p>}
       </div>
     </Card>
   )
@@ -249,11 +249,13 @@ export function InstanceView() {
         <div>
           <Link
             to={`/concepts/${concept.id}`}
-            className="text-xs text-gray-400 hover:text-gray-600"
+            className="text-xs text-muted-foreground hover:text-muted-foreground"
           >
             ← {concept.name}
           </Link>
-          <h2 className="text-lg font-semibold text-gray-800">{labelOf(instance.state, fields)}</h2>
+          <h2 className="text-2xl font-bold tracking-tight text-foreground">
+            {labelOf(instance.state, fields)}
+          </h2>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <Button variant="outline" onClick={() => setDialog("archive")}>
@@ -272,19 +274,19 @@ export function InstanceView() {
       <div className="grid gap-3 lg:grid-cols-2">
         <Card>
           <CardHeader title="Details" />
-          <dl className="divide-y divide-gray-100 text-sm">
+          <dl className="divide-y divide-border text-sm">
             {fields.map((f) => (
-              <div key={f.id} className="flex items-center justify-between px-4 py-2">
-                <dt className="text-gray-400">{f.name}</dt>
+              <div key={f.id} className="flex items-center justify-between px-6 py-2">
+                <dt className="text-muted-foreground">{f.name}</dt>
                 <dd className="text-right">
                   <FieldValue field={f} value={instance.state[f.id]} />
                 </dd>
               </div>
             ))}
             {extras.map((k) => (
-              <div key={k} className="flex items-center justify-between px-4 py-2">
-                <dt className="text-gray-400">{k}</dt>
-                <dd className="text-right text-gray-700">{showValue(instance.state[k])}</dd>
+              <div key={k} className="flex items-center justify-between px-6 py-2">
+                <dt className="text-muted-foreground">{k}</dt>
+                <dd className="text-right text-foreground">{showValue(instance.state[k])}</dd>
               </div>
             ))}
           </dl>

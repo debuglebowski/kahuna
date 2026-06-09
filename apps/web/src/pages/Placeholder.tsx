@@ -1,10 +1,10 @@
-import { Card, CardHeader } from "../components/ui"
-
 export function Placeholder({ title }: { title: string }) {
   return (
-    <Card>
-      <CardHeader title={title} />
-      <div className="p-10 text-sm text-gray-400">{title} — coming soon.</div>
-    </Card>
+    <div className="space-y-5">
+      <h2 className="text-2xl font-bold tracking-tight text-foreground">{title}</h2>
+      <div className="flex min-h-[300px] items-center justify-center rounded-xl border border-dashed p-12">
+        <p className="text-sm text-muted-foreground">{title} — coming soon.</p>
+      </div>
+    </div>
   )
 }

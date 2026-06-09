@@ -69,7 +69,7 @@ export function SectionList({
       <button
         type="button"
         onClick={() => setEditing(newSection())}
-        className="flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-gray-300 py-2 text-xs font-medium text-gray-500 hover:border-gray-400 hover:text-gray-700"
+        className="flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-input py-2 text-xs font-medium text-muted-foreground hover:border-ring hover:text-foreground"
       >
         <Plus size={14} /> Add section
       </button>
@@ -122,13 +122,13 @@ function Row({
     <div
       ref={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition }}
-      className={`flex items-center gap-2 rounded-md border border-gray-200 bg-white px-2 py-1.5 ${
+      className={`flex items-center gap-2 rounded-md border border-border bg-background px-2 py-1.5 ${
         isDragging ? "opacity-60 shadow" : ""
       }`}
     >
       <button
         type="button"
-        className="cursor-grab text-gray-300 hover:text-gray-500 active:cursor-grabbing"
+        className="cursor-grab text-muted-foreground hover:text-foreground active:cursor-grabbing"
         aria-label="Drag to reorder"
         {...attributes}
         {...listeners}
@@ -137,10 +137,10 @@ function Row({
       </button>
       {section.icon && <ConceptIcon value={section.icon} size={15} />}
       <div className="min-w-0 flex-1">
-        <div className="truncate text-sm font-medium text-gray-800">
+        <div className="truncate text-sm font-medium text-foreground">
           {section.title || "(untitled section)"}
         </div>
-        <div className="truncate text-xs text-gray-400">{describe(section, concepts)}</div>
+        <div className="truncate text-xs text-muted-foreground">{describe(section, concepts)}</div>
       </div>
       <IconButton aria-label="Edit section" onClick={onEdit}>
         <Pencil size={14} />

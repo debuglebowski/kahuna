@@ -41,10 +41,10 @@ export function AuthPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gray-50">
+    <div className="flex min-h-screen items-center justify-center bg-muted/40">
       <Card className="w-full max-w-sm p-6">
-        <h1 className="mb-1 text-lg font-semibold text-gray-900">Kingsmaker</h1>
-        <p className="mb-4 text-sm text-gray-500">
+        <h1 className="mb-1 text-xl font-semibold tracking-tight text-foreground">Kingsmaker</h1>
+        <p className="mb-4 text-sm text-muted-foreground">
           {mode === "in" ? "Sign in to your org" : "Create your account and org"}
         </p>
         <form onSubmit={submit} className="space-y-3">
@@ -70,18 +70,18 @@ export function AuthPage() {
               <Input value={org} onChange={(e) => setOrg(e.target.value)} required />
             </Field>
           )}
-          {error && <p className="text-sm text-red-600">{error}</p>}
+          {error && <p className="text-sm text-destructive">{error}</p>}
           <Button type="submit" className="w-full" disabled={busy}>
             {busy ? "…" : mode === "in" ? "Sign in" : "Create account"}
           </Button>
         </form>
-        <button
-          type="button"
-          className="mt-3 text-sm text-gray-500 underline"
+        <Button
+          variant="link"
+          className="mt-3 h-auto p-0 text-sm font-normal text-muted-foreground"
           onClick={() => setMode(mode === "in" ? "up" : "in")}
         >
           {mode === "in" ? "Need an account? Sign up" : "Have an account? Sign in"}
-        </button>
+        </Button>
       </Card>
     </div>
   )

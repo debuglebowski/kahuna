@@ -45,8 +45,8 @@ function ConceptNode({ data }: NodeProps) {
     <div
       className={
         selected
-          ? "cursor-pointer rounded-lg border-2 border-gray-900 bg-white px-4 py-2 text-center text-sm font-medium text-gray-900 shadow"
-          : "cursor-pointer rounded-lg border border-gray-300 bg-white px-4 py-2 text-center text-sm font-medium text-gray-800 shadow-sm hover:border-gray-500"
+          ? "cursor-pointer rounded-lg border-2 border-primary bg-background px-4 py-2 text-center text-sm font-medium text-foreground shadow"
+          : "cursor-pointer rounded-lg border border-input bg-background px-4 py-2 text-center text-sm font-medium text-foreground shadow-sm hover:border-ring"
       }
     >
       <Handle type="target" position={targetPos} className="!h-2 !w-2 !border-0 !bg-gray-300" />
@@ -80,7 +80,7 @@ function SelfLoopEdge({
             style={{
               transform: `translate(-50%, -50%) translate(${(sourceX + targetX) / 2}px, ${Math.min(sourceY, targetY) - 64}px)`,
             }}
-            className="pointer-events-none absolute rounded bg-white px-1.5 py-0.5 text-[11px] text-gray-600"
+            className="pointer-events-none absolute rounded bg-background px-1.5 py-0.5 text-[11px] text-muted-foreground"
           >
             {label}
           </div>
@@ -211,13 +211,13 @@ export function ConceptGraphCanvas({
   if (graph.error)
     return (
       <Card>
-        <div className="p-6 text-sm text-red-600">Failed to load the concept graph.</div>
+        <div className="p-6 text-sm text-destructive">Failed to load the concept graph.</div>
       </Card>
     )
   if (graph.data.nodes.length === 0)
     return (
       <Card>
-        <div className="p-6 text-sm text-gray-400">
+        <div className="p-6 text-sm text-muted-foreground">
           No concepts yet. Create a concept to get started.
         </div>
       </Card>
@@ -229,7 +229,7 @@ export function ConceptGraphCanvas({
   return (
     <div className="space-y-3">
       {graph.data.edges.length === 0 && (
-        <p className="text-sm text-gray-400">
+        <p className="text-sm text-muted-foreground">
           No relationships yet — add relation fields to your concepts to connect them.
         </p>
       )}

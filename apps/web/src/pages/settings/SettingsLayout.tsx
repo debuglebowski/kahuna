@@ -53,8 +53,8 @@ export function SettingsLayout() {
 
   return (
     <div className="space-y-5">
-      <h2 className="text-xl font-semibold text-gray-900">Settings</h2>
-      <nav className="flex gap-1 border-b border-gray-200">
+      <h2 className="text-2xl font-bold tracking-tight text-foreground">Settings</h2>
+      <nav className="flex gap-1 border-b border-border">
         {tabs.map((t) => {
           const active = seg === t.to
           return (
@@ -64,8 +64,8 @@ export function SettingsLayout() {
               className={cn(
                 "-mb-px border-b-2 px-3 py-2 text-sm font-medium",
                 active
-                  ? "border-gray-900 text-gray-900"
-                  : "border-transparent text-gray-500 hover:text-gray-800",
+                  ? "border-primary text-foreground"
+                  : "border-transparent text-muted-foreground hover:text-foreground",
               )}
             >
               {t.label}

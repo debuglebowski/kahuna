@@ -1,6 +1,8 @@
 import { useQuery } from "@tanstack/react-query"
 import { Plus, X } from "lucide-react"
 import { useMemo, useState } from "react"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Label } from "@/components/ui/label"
 import {
   Select,
   SelectContent,
@@ -8,6 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { Textarea } from "@/components/ui/textarea"
 import { LABELS_KEY } from "../../rpc/contract"
 import { LabelMultiSelect } from "../components/LabelMultiSelect"
 import { Button, Field, Input } from "../components/ui"
@@ -42,21 +45,23 @@ function MemberPicker({
     return (
       <div className="space-y-1">
         {members.map((m) => (
-          <label key={m.userId} className="flex items-center gap-2 text-sm text-gray-700">
-            <input
-              type="checkbox"
+          <Label
+            key={m.userId}
+            className="flex items-center gap-2 text-sm font-normal text-foreground"
+          >
+            <Checkbox
               checked={selected.has(m.userId)}
-              onChange={(e) => {
+              onCheckedChange={(c) => {
                 const next = new Set(selected)
-                if (e.target.checked) next.add(m.userId)
+                if (c === true) next.add(m.userId)
                 else next.delete(m.userId)
                 onChange([...next])
               }}
             />
             {m.user?.name?.trim() || m.user?.email || m.userId}
-          </label>
+          </Label>
         ))}
-        {members.length === 0 && <p className="text-xs text-gray-400">No members.</p>}
+        {members.length === 0 && <p className="text-xs text-muted-foreground">No members.</p>}
       </div>
     )
   }
@@ -177,14 +182,13 @@ export function InstanceForm({
     switch (f.kind) {
       case "bool":
         return (
-          <label className="flex items-center gap-2 text-sm text-gray-700">
-            <input
-              type="checkbox"
+          <Label className="flex items-center gap-2 text-sm font-normal text-foreground">
+            <Checkbox
               checked={values[f.name] === true}
-              onChange={(e) => set(f.name, e.target.checked)}
+              onCheckedChange={(c) => set(f.name, c === true)}
             />
             {f.name}
-          </label>
+          </Label>
         )
       case "enum":
         if (multiple) {
@@ -194,19 +198,21 @@ export function InstanceForm({
           return (
             <div className="space-y-1">
               {(f.config.options ?? []).map((o) => (
-                <label key={o} className="flex items-center gap-2 text-sm text-gray-700">
-                  <input
-                    type="checkbox"
+                <Label
+                  key={o}
+                  className="flex items-center gap-2 text-sm font-normal text-foreground"
+                >
+                  <Checkbox
                     checked={selected.has(o)}
-                    onChange={(e) => {
+                    onCheckedChange={(c) => {
                       const next = new Set(selected)
-                      if (e.target.checked) next.add(o)
+                      if (c === true) next.add(o)
                       else next.delete(o)
                       set(f.name, [...next])
                     }}
                   />
                   {o}
-                </label>
+                </Label>
               ))}
             </div>
           )
@@ -260,9 +266,9 @@ export function InstanceForm({
       }
       case "json":
         return (
-          <textarea
+          <Textarea
             rows={3}
-            className="w-full rounded-md border border-gray-300 px-3 py-1.5 font-mono text-xs outline-none focus:border-gray-500"
+            className="font-mono text-xs"
             placeholder='{ "key": "value" }'
             value={typeof values[f.name] === "string" ? (values[f.name] as string) : ""}
             onChange={(e) => set(f.name, e.target.value)}
@@ -272,9 +278,8 @@ export function InstanceForm({
         // text / number / date
         if (multiple) {
           return (
-            <textarea
+            <Textarea
               rows={3}
-              className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm outline-none focus:border-gray-500"
               placeholder="one value per line"
               value={
                 Array.isArray(values[f.name])
@@ -306,7 +311,7 @@ export function InstanceForm({
   return (
     <div className="space-y-4">
       {editable.length === 0 ? (
-        <p className="text-sm text-gray-500">This concept has no editable fields.</p>
+        <p className="text-sm text-muted-foreground">This concept has no editable fields.</p>
       ) : (
         <div className="grid grid-cols-2 gap-3">
           {editable.map((f) =>
@@ -324,7 +329,7 @@ export function InstanceForm({
       )}
 
       {omitted > 0 && (
-        <p className="text-xs text-gray-400">
+        <p className="text-xs text-muted-foreground">
           {omitted} relation/file/computed field{omitted > 1 ? "s" : ""} are set after creating.
         </p>
       )}

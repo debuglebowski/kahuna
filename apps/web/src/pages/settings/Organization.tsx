@@ -53,7 +53,7 @@ export function Organization() {
   })
 
   if (org.isPending) return <Spinner />
-  if (org.error) return <p className="text-sm text-red-600">{(org.error as Error).message}</p>
+  if (org.error) return <p className="text-sm text-destructive">{(org.error as Error).message}</p>
 
   const myRole = org.data?.members?.find((m) => m.userId === session?.user.id)?.role
   const isOwner = myRole === "owner"
@@ -70,7 +70,7 @@ export function Organization() {
             </Button>
           }
         />
-        <div className="max-w-md space-y-4 p-4">
+        <div className="max-w-md space-y-4 p-6">
           <Field label="Name">
             <Input value={name} onChange={(e) => setName(e.target.value)} />
           </Field>
@@ -84,8 +84,8 @@ export function Organization() {
       {isOwner && (
         <Card className="border-red-200">
           <CardHeader title="Danger zone" />
-          <div className="max-w-md space-y-3 p-4">
-            <p className="text-sm text-gray-600">
+          <div className="max-w-md space-y-3 p-6">
+            <p className="text-sm text-muted-foreground">
               Permanently delete <strong>{org.data?.name}</strong> and all of its data — concepts,
               records, history, and members. This cannot be undone.
             </p>

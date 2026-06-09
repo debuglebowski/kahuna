@@ -10,7 +10,9 @@ export function Feedback({
 }) {
   if (error) {
     return (
-      <p className="text-sm text-red-600">{(error as Error)?.message ?? "Something went wrong."}</p>
+      <p className="text-sm text-destructive">
+        {(error as Error)?.message ?? "Something went wrong."}
+      </p>
     )
   }
   if (ok) return <p className="text-sm text-green-600">{okText ?? "Saved."}</p>

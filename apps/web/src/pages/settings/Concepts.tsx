@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Archive, ArchiveRestore, Check, Pencil, Plus, Trash2, X } from "lucide-react"
 import { useEffect, useState } from "react"
 import { Link, useOutletContext } from "react-router-dom"
+import { Textarea } from "@/components/ui/textarea"
 import { IconPicker } from "../../components/IconPicker"
 import { LabelMultiSelect } from "../../components/LabelMultiSelect"
 import {
@@ -37,7 +38,7 @@ function ReadOnlyLabels({
       return l ? [l] : []
     })
     .sort((a, b) => a.name.localeCompare(b.name))
-  if (resolved.length === 0) return <p className="text-xs text-gray-400">None.</p>
+  if (resolved.length === 0) return <p className="text-xs text-muted-foreground">None.</p>
   return (
     <div className="flex flex-wrap gap-1.5">
       {resolved.map((l) => (
@@ -103,10 +104,10 @@ export function Concepts() {
   // graph) are derived from this. The sidebar/graph elsewhere stay live-only.
   const concepts = useQuery({
     queryKey: ["concepts", "withArchived"],
-    queryFn: () => api.listConcepts({ includeArchived: true }),
+    queryFn: () => api.listConcepts({ includeArchived: true, withCounts: true }),
   })
-  const liveConcepts = concepts.data?.filter((c) => !c.deletedAt) ?? []
-  const archivedConcepts = concepts.data?.filter((c) => c.deletedAt) ?? []
+  const liveConcepts = concepts.data?.filter((c) => !c.archivedAt) ?? []
+  const archivedConcepts = concepts.data?.filter((c) => c.archivedAt) ?? []
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [name, setName] = useState("")
   const [pluralName, setPluralName] = useState("")
@@ -148,8 +149,8 @@ export function Concepts() {
     queryFn: () => api.listFields(selectedId!, { includeArchived: true }),
     enabled: !!selectedId,
   })
-  const liveFields = fields.data?.filter((f) => !f.deletedAt) ?? []
-  const archivedFields = fields.data?.filter((f) => f.deletedAt) ?? []
+  const liveFields = fields.data?.filter((f) => !f.archivedAt) ?? []
+  const archivedFields = fields.data?.filter((f) => f.archivedAt) ?? []
 
   const refetchFields = () => {
     qc.invalidateQueries({ queryKey: ["fields", selectedId, "withArchived"] })
@@ -277,12 +278,14 @@ export function Concepts() {
   /** One field row — live rows offer edit/archive/delete; archived rows restore/delete. */
   const renderFieldRow = (f: Field, archived: boolean) => (
     <li key={f.id} className={`flex items-center gap-2 py-2.5${archived ? " opacity-60" : ""}`}>
-      <span className="flex w-5 shrink-0 justify-center text-gray-500">
+      <span className="flex w-5 shrink-0 justify-center text-muted-foreground">
         <ConceptIcon value={f.icon || DEFAULT_FIELD_ICON} size={16} />
       </span>
-      <span className="w-36 shrink-0 truncate text-sm font-medium text-gray-900">{f.name}</span>
+      <span className="w-36 shrink-0 truncate text-sm font-medium text-foreground">{f.name}</span>
       <Badge>{f.kind}</Badge>
-      <span className="flex-1 truncate text-xs text-gray-500">{summarize(f, conceptName)}</span>
+      <span className="flex-1 truncate text-xs text-muted-foreground">
+        {summarize(f, conceptName)}
+      </span>
       {admin &&
         (archived ? (
           <>
@@ -332,18 +335,18 @@ export function Concepts() {
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <p className="text-sm text-gray-500">
+        <p className="text-sm text-muted-foreground">
           Click a concept to view{admin ? " or edit" : ""} its settings.
         </p>
         <div className="flex items-center gap-3">
           {admin && archivedConcepts.length > 0 && (
-            <button
-              type="button"
+            <Button
+              variant="link"
               onClick={() => setShowArchived((v) => !v)}
-              className="text-xs text-gray-500 hover:text-gray-800"
+              className="h-auto p-0 text-xs font-normal text-muted-foreground hover:text-foreground"
             >
               {showArchived ? "Hide" : "Show"} archived ({archivedConcepts.length})
-            </button>
+            </Button>
           )}
           {admin && (
             <Button onClick={() => setCreatingConcept(true)}>
@@ -359,19 +362,22 @@ export function Concepts() {
       {showArchived && archivedConcepts.length > 0 && (
         <Card>
           <CardHeader title={`Archived concepts (${archivedConcepts.length})`} />
-          <ul className="divide-y divide-gray-100">
+          <ul className="divide-y divide-border">
             {archivedConcepts.map((c) => (
-              <li key={c.id} className="flex items-center gap-2 px-4 py-2.5">
-                <span className="flex w-5 shrink-0 justify-center text-gray-500">
+              <li key={c.id} className="flex items-center gap-2 px-6 py-2.5">
+                <span className="flex w-5 shrink-0 justify-center text-muted-foreground">
                   <ConceptIcon value={c.icon || DEFAULT_CONCEPT_ICON} size={16} />
                 </span>
                 <button
                   type="button"
                   onClick={() => setSelectedId(c.id)}
-                  className="flex-1 truncate text-left text-sm font-medium text-gray-700 hover:text-gray-900"
+                  className="truncate text-left text-sm font-medium text-muted-foreground hover:text-foreground"
                 >
                   {c.name}
                 </button>
+                <span className="flex-1 text-xs text-muted-foreground">
+                  {c.itemCount ? `${c.itemCount} item${c.itemCount === 1 ? "" : "s"}` : "empty"}
+                </span>
                 {admin && (
                   <>
                     <IconButton
@@ -425,7 +431,7 @@ export function Concepts() {
               </Button>
             </div>
             {createConcept.error && (
-              <p className="text-xs text-red-600">{msgOf(createConcept.error)}</p>
+              <p className="text-xs text-destructive">{msgOf(createConcept.error)}</p>
             )}
           </div>
         </Modal>
@@ -443,7 +449,7 @@ export function Concepts() {
           headerAction={
             <Link
               to={`/concepts/${selected.id}`}
-              className="text-xs text-gray-500 hover:text-gray-800"
+              className="text-xs text-muted-foreground hover:text-foreground"
             >
               View instances
             </Link>
@@ -465,8 +471,8 @@ export function Concepts() {
                   )
                 }
               />
-              <div className="space-y-2 p-4">
-                <span className="text-xs font-medium text-gray-500">Name</span>
+              <div className="space-y-2 p-6">
+                <span className="block text-sm leading-none font-medium text-foreground">Name</span>
                 <div className="flex items-center gap-2">
                   <IconPicker value={icon} onChange={setIcon} disabled={!admin} />
                   <Input
@@ -476,26 +482,29 @@ export function Concepts() {
                     className="flex-1"
                   />
                 </div>
-                <span className="text-xs font-medium text-gray-500">Plural name</span>
+                <span className="block text-sm leading-none font-medium text-foreground">
+                  Plural name
+                </span>
                 <Input
                   value={pluralName}
                   onChange={(e) => setPluralName(e.target.value)}
                   disabled={!admin}
                   placeholder={name ? `${name}s` : "Plural name…"}
                 />
-                <p className="text-xs text-gray-400">
+                <p className="text-xs text-muted-foreground">
                   Shown in the sidebar; falls back to the singular name when blank.
                 </p>
-                <span className="text-xs font-medium text-gray-500">Description</span>
-                <textarea
+                <span className="block text-sm leading-none font-medium text-foreground">
+                  Description
+                </span>
+                <Textarea
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   rows={2}
                   disabled={!admin}
-                  className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm outline-none focus:border-gray-500 disabled:bg-gray-50 disabled:text-gray-500"
                 />
                 {saveConcept.error && (
-                  <p className="text-sm text-red-600">{msgOf(saveConcept.error)}</p>
+                  <p className="text-sm text-destructive">{msgOf(saveConcept.error)}</p>
                 )}
               </div>
             </Card>
@@ -512,10 +521,12 @@ export function Concepts() {
                   )
                 }
               />
-              <div className="space-y-4 p-4">
+              <div className="space-y-4 p-6">
                 <div className="space-y-1.5">
-                  <span className="text-xs font-medium text-gray-500">Always applied (static)</span>
-                  <p className="text-xs text-gray-400">
+                  <span className="text-xs font-medium text-muted-foreground">
+                    Always applied (static)
+                  </span>
+                  <p className="text-xs text-muted-foreground">
                     Inherited by every item of this concept; can't be removed per item.
                   </p>
                   {admin ? (
@@ -529,8 +540,10 @@ export function Concepts() {
                   )}
                 </div>
                 <div className="space-y-1.5">
-                  <span className="text-xs font-medium text-gray-500">Default on new items</span>
-                  <p className="text-xs text-gray-400">
+                  <span className="text-xs font-medium text-muted-foreground">
+                    Default on new items
+                  </span>
+                  <p className="text-xs text-muted-foreground">
                     Pre-applied when an item is created; editable per item afterward.
                   </p>
                   {admin ? (
@@ -545,7 +558,7 @@ export function Concepts() {
                   )}
                 </div>
                 {admin && (labelVocab.data?.length ?? 0) === 0 && (
-                  <p className="text-xs text-gray-400">
+                  <p className="text-xs text-muted-foreground">
                     No labels yet — create some in{" "}
                     <Link to="/settings/labels" className="underline">
                       Labels
@@ -554,7 +567,7 @@ export function Concepts() {
                   </p>
                 )}
                 {saveLabels.error && (
-                  <p className="text-sm text-red-600">{msgOf(saveLabels.error)}</p>
+                  <p className="text-sm text-destructive">{msgOf(saveLabels.error)}</p>
                 )}
               </div>
             </Card>
@@ -566,13 +579,13 @@ export function Concepts() {
                   admin && (
                     <div className="flex items-center gap-2">
                       {archivedFields.length > 0 && (
-                        <button
-                          type="button"
+                        <Button
+                          variant="link"
                           onClick={() => setShowArchivedFields((v) => !v)}
-                          className="text-xs text-gray-500 hover:text-gray-800"
+                          className="h-auto p-0 text-xs font-normal text-muted-foreground hover:text-foreground"
                         >
                           {showArchivedFields ? "Hide" : "Show"} archived ({archivedFields.length})
-                        </button>
+                        </Button>
                       )}
                       <Button variant="outline" onClick={() => setFieldModal({ mode: "add" })}>
                         <Plus size={15} />
@@ -582,26 +595,26 @@ export function Concepts() {
                   )
                 }
               />
-              <div className="space-y-3 p-4">
+              <div className="space-y-3 p-6">
                 {fields.isPending && <Spinner />}
                 {!fields.isPending && liveFields.length === 0 && (
-                  <p className="text-xs text-gray-400">No fields yet.</p>
+                  <p className="text-xs text-muted-foreground">No fields yet.</p>
                 )}
-                <ul className="divide-y divide-gray-100">
+                <ul className="divide-y divide-border">
                   {liveFields.map((f) => renderFieldRow(f, false))}
                 </ul>
                 {showArchivedFields && archivedFields.length > 0 && (
-                  <div className="space-y-1 border-t border-gray-100 pt-3">
-                    <p className="text-xs font-medium uppercase tracking-wide text-gray-400">
+                  <div className="space-y-1 border-t border-border pt-3">
+                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                       Archived
                     </p>
-                    <ul className="divide-y divide-gray-100">
+                    <ul className="divide-y divide-border">
                       {archivedFields.map((f) => renderFieldRow(f, true))}
                     </ul>
                   </div>
                 )}
                 {(archiveField.error || restoreField.error || delField.error) && (
-                  <p className="text-sm text-red-600">
+                  <p className="text-sm text-destructive">
                     {msgOf(archiveField.error ?? restoreField.error ?? delField.error)}
                   </p>
                 )}
@@ -609,50 +622,50 @@ export function Concepts() {
             </Card>
 
             {admin && (
-              <div className="space-y-2 border-t border-gray-100 pt-4">
-                {selected.deletedAt ? (
+              <div className="space-y-2 border-t border-border pt-4">
+                {selected.archivedAt ? (
                   <div className="flex flex-wrap items-center gap-4">
                     <Badge tone="amber">Archived</Badge>
-                    <button
-                      type="button"
+                    <Button
+                      variant="link"
                       disabled={restoreConcept.isPending}
                       onClick={() => restoreConcept.mutate(selected.id)}
-                      className="inline-flex items-center gap-1.5 text-xs text-gray-500 transition hover:text-gray-800 disabled:opacity-50"
+                      className="h-auto gap-1.5 p-0 text-xs font-normal text-muted-foreground hover:text-foreground"
                     >
                       <ArchiveRestore size={14} />
                       {restoreConcept.isPending ? "Restoring…" : "Restore concept"}
-                    </button>
-                    <button
-                      type="button"
+                    </Button>
+                    <Button
+                      variant="link"
                       onClick={() => setDialog({ kind: "deleteConcept" })}
-                      className="inline-flex items-center gap-1.5 text-xs text-gray-400 transition hover:text-red-600"
+                      className="h-auto gap-1.5 p-0 text-xs font-normal text-muted-foreground hover:text-destructive"
                     >
                       <Trash2 size={14} />
                       Delete permanently
-                    </button>
+                    </Button>
                   </div>
                 ) : (
                   <div className="flex flex-wrap items-center gap-4">
-                    <button
-                      type="button"
+                    <Button
+                      variant="link"
                       onClick={() => setDialog({ kind: "archiveConcept" })}
-                      className="inline-flex items-center gap-1.5 text-xs text-gray-400 transition hover:text-gray-800"
+                      className="h-auto gap-1.5 p-0 text-xs font-normal text-muted-foreground hover:text-foreground"
                     >
                       <Archive size={14} />
                       Archive concept
-                    </button>
-                    <button
-                      type="button"
+                    </Button>
+                    <Button
+                      variant="link"
                       onClick={() => setDialog({ kind: "deleteConcept" })}
-                      className="inline-flex items-center gap-1.5 text-xs text-gray-400 transition hover:text-red-600"
+                      className="h-auto gap-1.5 p-0 text-xs font-normal text-muted-foreground hover:text-destructive"
                     >
                       <Trash2 size={14} />
                       Delete concept
-                    </button>
+                    </Button>
                   </div>
                 )}
                 {(restoreConcept.error || archiveConcept.error || delConcept.error) && (
-                  <p className="text-sm text-red-600">
+                  <p className="text-sm text-destructive">
                     {msgOf(restoreConcept.error ?? archiveConcept.error ?? delConcept.error)}
                   </p>
                 )}
@@ -684,7 +697,7 @@ export function Concepts() {
             pending={fieldModal.mode === "add" ? addField.isPending : updateField.isPending}
           />
           {(addField.error || updateField.error) && (
-            <p className="mt-3 text-sm text-red-600">
+            <p className="mt-3 text-sm text-destructive">
               {msgOf(addField.error ?? updateField.error)}
             </p>
           )}
@@ -697,7 +710,11 @@ export function Concepts() {
           message={
             <>
               Archive <strong>{selected.name}</strong>? It's hidden from the sidebar and lists, but
-              its items and fields are kept — you can restore it anytime.
+              its fields
+              {selected.itemCount
+                ? ` and ${selected.itemCount} item${selected.itemCount === 1 ? "" : "s"}`
+                : ""}{" "}
+              are kept — you can restore it anytime.
             </>
           }
           confirmLabel="Archive"
@@ -711,15 +728,23 @@ export function Concepts() {
         <ConfirmDialog
           title="Delete concept"
           message={
-            <>
-              Permanently delete <strong>{selected.name}</strong> and its fields? This can't be
-              undone, and is refused while it still has items.
-            </>
+            selected.itemCount ? (
+              <>
+                <strong>{selected.name}</strong> still has {selected.itemCount} item
+                {selected.itemCount === 1 ? "" : "s"}, so it can't be deleted. Archive it (its items
+                come back on restore), or delete its items first.
+              </>
+            ) : (
+              <>
+                Permanently delete <strong>{selected.name}</strong> and its fields? This can't be
+                undone.
+              </>
+            )
           }
           confirmLabel="Delete"
           confirmVariant="danger"
-          secondaryLabel={selected.deletedAt ? undefined : "Archive instead"}
-          onSecondary={selected.deletedAt ? undefined : () => archiveConcept.mutate(selected.id)}
+          secondaryLabel={selected.archivedAt ? undefined : "Archive instead"}
+          onSecondary={selected.archivedAt ? undefined : () => archiveConcept.mutate(selected.id)}
           pending={delConcept.isPending || archiveConcept.isPending}
           error={delConcept.error ? msgOf(delConcept.error) : undefined}
           onConfirm={() => delConcept.mutate(selected.id)}
@@ -753,9 +778,9 @@ export function Concepts() {
           }
           confirmLabel="Delete"
           confirmVariant="danger"
-          secondaryLabel={dialog.field.deletedAt ? undefined : "Archive instead"}
+          secondaryLabel={dialog.field.archivedAt ? undefined : "Archive instead"}
           onSecondary={
-            dialog.field.deletedAt ? undefined : () => archiveField.mutate(dialog.field.id)
+            dialog.field.archivedAt ? undefined : () => archiveField.mutate(dialog.field.id)
           }
           pending={delField.isPending || archiveField.isPending}
           error={delField.error ? msgOf(delField.error) : undefined}
