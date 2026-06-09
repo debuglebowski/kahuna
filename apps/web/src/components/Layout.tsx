@@ -1,15 +1,14 @@
 import { useLiveQuery } from "@tanstack/react-db"
-import { useMutation } from "@tanstack/react-query"
-import { Check, PanelLeftClose, PanelLeftOpen, Pencil, Settings2, X } from "lucide-react"
-import { type ReactNode, useMemo, useState } from "react"
+import { Check, ChevronsUpDown, PanelLeftClose, PanelLeftOpen, Settings2 } from "lucide-react"
+import { type ReactNode, useMemo, useRef, useState } from "react"
 import { Link, useLocation, useNavigate } from "react-router-dom"
 import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuTrigger,
-} from "@/components/ui/context-menu"
-import { api, type SidebarSection } from "../lib/api"
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import {
   conceptsCollection,
   KEY,
@@ -27,13 +26,16 @@ import { useLiveSync } from "../lib/useLiveSync"
 import { useSafetyRefetch } from "../lib/useSafetyRefetch"
 import { cn } from "../lib/utils"
 import { IdentityMenu } from "./IdentityMenu"
-import { SectionList } from "./sidebar/SectionList"
 import { ThemeButton } from "./ThemeButton"
-import { Button, IconButton } from "./ui"
+import { IconButton } from "./ui"
 
-/** Remember whether the user minimized the sidebar, and which view is active. */
+/** Remember whether the user minimized the sidebar, its width, and which view is active. */
 const COLLAPSED_KEY = "km.sidebar.collapsed"
 const ACTIVE_VIEW_KEY = "km.sidebar.activeView"
+const WIDTH_KEY = "km.sidebar.width"
+const MIN_WIDTH = 180
+const MAX_WIDTH = 480
+const DEFAULT_WIDTH = 240
 const read = (key: string): string => {
   try {
     return localStorage.getItem(key) ?? ""
@@ -107,13 +109,81 @@ function ViewNav({ sections, collapsed }: { sections: ResolvedSection[]; collaps
   )
 }
 
+/** Drag handle on the sidebar's right edge — the ARIA "window splitter"
+ *  pattern (focusable separator, arrow keys nudge). The sidebar sits at the
+ *  viewport's left edge, so the pointer's clientX is the new width directly.
+ *  Pointer capture keeps the drag alive when the cursor outruns the handle. */
+function ResizeHandle({
+  width,
+  onResize,
+  onCommit,
+  onReset,
+}: {
+  width: number
+  onResize: (width: number) => void
+  onCommit: () => void
+  onReset: () => void
+}) {
+  const [dragging, setDragging] = useState(false)
+  const clamp = (x: number) => Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, Math.round(x)))
+  const end = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!dragging) return
+    setDragging(false)
+    e.currentTarget.releasePointerCapture(e.pointerId)
+    document.body.style.cursor = ""
+    onCommit()
+  }
+  return (
+    // biome-ignore lint/a11y/useSemanticElements: an interactive window splitter must be a focusable div, not <hr>
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize sidebar"
+      aria-valuenow={width}
+      aria-valuemin={MIN_WIDTH}
+      aria-valuemax={MAX_WIDTH}
+      tabIndex={0}
+      title="Drag to resize · double-click to reset"
+      onPointerDown={(e) => {
+        e.preventDefault()
+        e.currentTarget.setPointerCapture(e.pointerId)
+        document.body.style.cursor = "col-resize"
+        setDragging(true)
+      }}
+      onPointerMove={(e) => dragging && onResize(clamp(e.clientX))}
+      onPointerUp={end}
+      onPointerCancel={end}
+      onDoubleClick={onReset}
+      onKeyDown={(e) => {
+        if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return
+        e.preventDefault()
+        onResize(clamp(width + (e.key === "ArrowLeft" ? -16 : 16)))
+        onCommit()
+      }}
+      className={cn(
+        "absolute inset-y-0 -right-px z-10 w-[3px] cursor-col-resize transition-colors hover:bg-sidebar-primary/40 focus-visible:bg-sidebar-primary/60 focus-visible:outline-none",
+        dragging && "bg-sidebar-primary/60",
+      )}
+    />
+  )
+}
+
 export function Layout({ children }: { children: ReactNode }) {
   const loc = useLocation()
   const navigate = useNavigate()
   const [collapsed, setCollapsed] = useState(() => read(COLLAPSED_KEY) === "1")
+  const [width, setWidth] = useState(() => {
+    const n = Number(read(WIDTH_KEY))
+    return Number.isFinite(n) && n >= MIN_WIDTH && n <= MAX_WIDTH ? n : DEFAULT_WIDTH
+  })
+  // Latest width for the drag-end commit (state in the closure would be stale).
+  const widthRef = useRef(width)
+  const resizeTo = (w: number) => {
+    widthRef.current = w
+    setWidth(w)
+  }
+  const commitWidth = () => write(WIDTH_KEY, String(widthRef.current))
   const [activeViewId, setActiveViewIdState] = useState(() => read(ACTIVE_VIEW_KEY))
-  const [editing, setEditing] = useState(false)
-  const [draft, setDraft] = useState<{ sections: SidebarSection[] } | null>(null)
 
   // Single live-sync connection + safety backstop (Layout wraps every authed page).
   useLiveSync()
@@ -134,48 +204,9 @@ export function Layout({ children }: { children: ReactNode }) {
   const setActiveViewId = (id: string) => {
     setActiveViewIdState(id)
     write(ACTIVE_VIEW_KEY, id)
-    setEditing(false)
   }
 
   const { sections, loaders } = useResolvedView(activeView, concepts ?? [], loc.pathname)
-
-  const createMut = useMutation({
-    mutationFn: (input: Parameters<typeof api.createView>[0]) => api.createView(input),
-    onSuccess: async (v) => {
-      await sidebarViewsCollection.utils.refetch()
-      setActiveViewIdState(v.id)
-      write(ACTIVE_VIEW_KEY, v.id)
-    },
-  })
-  const updateMut = useMutation({
-    mutationFn: (input: Parameters<typeof api.updateView>[0]) => api.updateView(input),
-    onSuccess: () => sidebarViewsCollection.utils.refetch(),
-  })
-
-  // Enter in-place edit mode for a specific view (from the chip's right-click
-  // "Configure"). Creating/deleting/managing views lives in Settings → Sidebar.
-  const configureView = (id: string) => {
-    const v = pagerViews.find((x) => x.id === id)
-    if (!v) return
-    setActiveViewIdState(id)
-    write(ACTIVE_VIEW_KEY, id)
-    setDraft({ sections: [...v.body.sections] })
-    setEditing(true)
-  }
-  const saveEdit = () => {
-    if (!draft) return
-    const body = { sections: draft.sections }
-    if (activeView.id === DEFAULT_VIEW.id) {
-      createMut.mutate(
-        { name: "My sidebar", icon: DEFAULT_VIEW.icon, scope: "personal", body },
-        { onSuccess: () => setEditing(false) },
-      )
-    } else {
-      updateMut.mutate({ id: activeView.id, body }, { onSuccess: () => setEditing(false) })
-    }
-  }
-
-  const saving = createMut.isPending || updateMut.isPending
 
   // ── collapsed rail ───────────────────────────────────────────────────────────
   if (collapsed) {
@@ -202,18 +233,14 @@ export function Layout({ children }: { children: ReactNode }) {
             <ViewNav sections={sections} collapsed />
           </nav>
           {pagerViews.length > 1 && (
-            <div className="flex flex-col items-center gap-1 border-t border-sidebar-border py-2">
-              {pagerViews.map((v) => (
-                <PagerChip
-                  key={v.id}
-                  view={v}
-                  active={v.id === activeView.id}
-                  size="sm"
-                  onSelect={() => setActiveViewId(v.id)}
-                  onConfigure={() => configureView(v.id)}
-                  onManage={() => navigate("/settings/sidebar")}
-                />
-              ))}
+            <div className="flex flex-col items-center py-2">
+              <ViewSwitcher
+                views={pagerViews}
+                active={activeView}
+                size="sm"
+                onSelect={setActiveViewId}
+                onManage={() => navigate("/settings/sidebar")}
+              />
             </div>
           )}
         </aside>
@@ -228,7 +255,10 @@ export function Layout({ children }: { children: ReactNode }) {
   return (
     <div className="flex min-h-screen">
       {loaders}
-      <aside className="flex w-60 shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground">
+      <aside
+        style={{ width }}
+        className="relative flex shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground"
+      >
         <div className="flex items-center justify-between px-4 py-3.5">
           <span className="text-base font-semibold tracking-tight text-sidebar-foreground">
             Kingsmaker
@@ -247,61 +277,42 @@ export function Layout({ children }: { children: ReactNode }) {
           </div>
         </div>
 
-        {editing && draft ? (
-          <div className="flex-1 overflow-y-auto px-2 pb-4">
-            <p className="mb-2 px-1 text-xs text-muted-foreground">
-              Editing <span className="font-medium text-foreground">{activeView.name}</span>
+        <nav key={activeView.id} className="km-view-in flex-1 overflow-y-auto px-2 pb-4">
+          {sections.every((s) => s.entries.length === 0) && (
+            <p className="px-3 py-2 text-xs text-muted-foreground">
+              This view is empty — configure it in Settings → Sidebar.
             </p>
-            <SectionList
-              sections={draft.sections}
-              concepts={concepts ?? []}
-              onChange={(s) => setDraft({ sections: s })}
+          )}
+          <ViewNav sections={sections} collapsed={false} />
+        </nav>
+
+        {/* View switcher — only when there's more than one view to switch
+            between. Creating/editing views lives in Settings → Sidebar. */}
+        {pagerViews.length > 1 && (
+          <div className="p-2">
+            <ViewSwitcher
+              views={pagerViews}
+              active={activeView}
+              size="md"
+              onSelect={setActiveViewId}
+              onManage={() => navigate("/settings/sidebar")}
             />
           </div>
-        ) : (
-          <nav key={activeView.id} className="km-view-in flex-1 overflow-y-auto px-2 pb-4">
-            {sections.every((s) => s.entries.length === 0) && (
-              <p className="px-3 py-2 text-xs text-muted-foreground">
-                This view is empty — configure it in Settings → Sidebar.
-              </p>
-            )}
-            <ViewNav sections={sections} collapsed={false} />
-          </nav>
         )}
-
-        {/* View pager — only when there's more than one view to switch between.
-            Creating/managing views lives in Settings → Sidebar; right-click a
-            chip to configure that view in place. */}
-        {editing ? (
-          <div className="border-t border-sidebar-border p-2">
-            <div className="flex gap-2">
-              <Button className="flex-1" onClick={saveEdit} disabled={saving}>
-                <Check size={15} /> {saving ? "Saving…" : "Done"}
-              </Button>
-              <Button variant="outline" onClick={() => setEditing(false)} disabled={saving}>
-                <X size={15} /> Cancel
-              </Button>
-            </div>
-          </div>
-        ) : pagerViews.length > 1 ? (
-          <div className="flex justify-center gap-1 overflow-x-auto border-t border-sidebar-border p-2">
-            {pagerViews.map((v) => (
-              <PagerChip
-                key={v.id}
-                view={v}
-                active={v.id === activeView.id}
-                size="md"
-                onSelect={() => setActiveViewId(v.id)}
-                onConfigure={() => configureView(v.id)}
-                onManage={() => navigate("/settings/sidebar")}
-              />
-            ))}
-          </div>
-        ) : null}
 
         <div className="border-t border-sidebar-border p-2">
           <IdentityMenu />
         </div>
+
+        <ResizeHandle
+          width={width}
+          onResize={resizeTo}
+          onCommit={commitWidth}
+          onReset={() => {
+            resizeTo(DEFAULT_WIDTH)
+            commitWidth()
+          }}
+        />
       </aside>
 
       <main className="flex-1 overflow-y-auto">
@@ -311,51 +322,65 @@ export function Layout({ children }: { children: ReactNode }) {
   )
 }
 
-/** A pager chip — left-click switches view, right-click opens its context menu
- *  (configure in place, or jump to Settings → Sidebar). Built on the shadcn
- *  {@link ContextMenu}, which owns positioning / outside-click / Escape. */
-function PagerChip({
-  view,
+/** The view switcher — a single dropdown trigger showing the active view (icon,
+ *  plus name + chevron when the sidebar is wide enough). The menu lists all
+ *  views, with a quiet footer link to Settings → Sidebar where views are
+ *  created and edited. Built on the shadcn {@link DropdownMenu}, which owns
+ *  open state, outside-click, Escape, and keyboard navigation. */
+function ViewSwitcher({
+  views,
   active,
   size,
   onSelect,
-  onConfigure,
   onManage,
 }: {
-  view: { id: string; name: string; icon: string | null }
-  active: boolean
+  views: { id: string; name: string; icon: string | null }[]
+  active: { id: string; name: string; icon: string | null }
   size: "sm" | "md"
-  onSelect: () => void
-  onConfigure: () => void
+  onSelect: (id: string) => void
   onManage: () => void
 }) {
   return (
-    <ContextMenu>
-      <ContextMenuTrigger asChild>
-        <button
-          type="button"
-          title={view.name}
-          aria-label={view.name}
-          onClick={onSelect}
-          className={cn(
-            "flex shrink-0 items-center justify-center rounded-md",
-            size === "sm" ? "h-7 w-7" : "h-8 w-8",
-            active
-              ? "bg-sidebar-accent text-sidebar-accent-foreground"
-              : "text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
-          )}
-        >
-          <ConceptIcon value={view.icon || "lucide:LayoutGrid"} size={size === "sm" ? 15 : 16} />
-        </button>
-      </ContextMenuTrigger>
-      <ContextMenuContent className="w-44">
-        <ContextMenuItem onSelect={onConfigure}>
-          <Pencil size={14} /> Configure
-        </ContextMenuItem>
-        <ContextMenuItem onSelect={onManage}>
-          <Settings2 size={14} /> Manage in settings…
-        </ContextMenuItem>
-      </ContextMenuContent>
-    </ContextMenu>
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        title={active.name || "Untitled view"}
+        aria-label="Switch view"
+        className={cn(
+          "flex items-center rounded-md border border-sidebar-border bg-sidebar text-sidebar-foreground shadow-xs hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+          size === "sm" ? "h-7 w-7 justify-center" : "h-8 w-full gap-2 px-2.5",
+        )}
+      >
+        <ConceptIcon value={active.icon || "lucide:LayoutGrid"} size={size === "sm" ? 15 : 16} />
+        {size === "md" && (
+          <>
+            <span className="min-w-0 flex-1 truncate text-left text-xs font-medium">
+              {active.name || "Untitled view"}
+            </span>
+            <ChevronsUpDown size={13} className="shrink-0 text-sidebar-foreground/70" />
+          </>
+        )}
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        side={size === "sm" ? "right" : "top"}
+        align={size === "sm" ? "end" : "start"}
+        className="w-48"
+      >
+        {views.map((v) => (
+          <DropdownMenuItem
+            key={v.id}
+            onSelect={() => onSelect(v.id)}
+            className={cn(v.id === active.id && "font-medium")}
+          >
+            <ConceptIcon value={v.icon || "lucide:LayoutGrid"} size={14} />
+            <span className="min-w-0 flex-1 truncate">{v.name || "Untitled view"}</span>
+            {v.id === active.id && <Check size={14} className="shrink-0 text-muted-foreground" />}
+          </DropdownMenuItem>
+        ))}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onSelect={onManage} className="text-xs text-muted-foreground">
+          <Settings2 size={13} /> Settings
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
