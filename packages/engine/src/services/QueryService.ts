@@ -16,6 +16,8 @@ export type FindInstancesInput = ConceptRef & {
   /** `field` is a field id (or `"created_at"`). */
   readonly orderBy?: { readonly field: string; readonly dir?: "asc" | "desc" }
   readonly limit?: number
+  /** Include archived (soft-deleted) instances too — defaults to live-only. */
+  readonly includeArchived?: boolean
 }
 
 /** Read-side: JSONB-filtered, relation-aware instance queries — always org-scoped. */
@@ -33,6 +35,7 @@ export class QueryService extends Effect.Service<QueryService>()("engine/QuerySe
             : yield* concepts.getByName(input.conceptName)
         const limit = input.limit ?? 100
 
+        const liveOnly = input.includeArchived ? sql`` : sql` AND deleted_at IS NULL`
         const whereExtra = input.where ? sql` AND state @> ${sql.json(input.where)}` : sql``
         const relExtra = input.relatedToTo
           ? sql` AND id IN (SELECT from_id FROM relations WHERE org_id = ${orgId} AND field_id = ${input.relatedToTo.fieldId} AND to_id = ${input.relatedToTo.toId} AND deleted_at IS NULL)`
@@ -47,7 +50,7 @@ export class QueryService extends Effect.Service<QueryService>()("engine/QuerySe
 
         const rows = yield* sql<InstanceRow>`
           SELECT * FROM instances
-          WHERE org_id = ${orgId} AND concept_id = ${concept.id} AND deleted_at IS NULL${whereExtra}${relExtra}
+          WHERE org_id = ${orgId} AND concept_id = ${concept.id}${liveOnly}${whereExtra}${relExtra}
           ORDER BY ${orderCol} ${dir}
           LIMIT ${limit}`
         return rows.map(toInstance)

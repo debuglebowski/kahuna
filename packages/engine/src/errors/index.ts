@@ -61,6 +61,18 @@ export class ConceptInUse extends Schema.TaggedError<ConceptInUse>()("ConceptInU
   instanceCount: Schema.Number,
 }) {}
 
+/** A field can't be hard-deleted while relation edges still reference it. */
+export class FieldInUse extends Schema.TaggedError<FieldInUse>()("FieldInUse", {
+  field: Schema.String,
+  relationCount: Schema.Number,
+}) {}
+
+/** An instance can't be hard-deleted while relation edges still reference it. */
+export class InstanceInUse extends Schema.TaggedError<InstanceInUse>()("InstanceInUse", {
+  instanceId: Schema.String,
+  relationCount: Schema.Number,
+}) {}
+
 export class IllegalTransition extends Schema.TaggedError<IllegalTransition>()(
   "IllegalTransition",
   {
@@ -98,12 +110,25 @@ export class EventCorruption extends Schema.TaggedError<EventCorruption>()("Even
   eventId: Schema.Number,
 }) {}
 
+export class SidebarViewNotFound extends Schema.TaggedError<SidebarViewNotFound>()(
+  "SidebarViewNotFound",
+  { id: Schema.String },
+) {}
+
+/** The last shared (Default) view can't be deleted — the list must never empty. */
+export class SidebarViewProtected extends Schema.TaggedError<SidebarViewProtected>()(
+  "SidebarViewProtected",
+  { id: Schema.String },
+) {}
+
 export type EngineError =
   | VersionConflict
   | InstanceNotFound
   | ConceptNotFound
   | ConceptNameConflict
   | ConceptInUse
+  | FieldInUse
+  | InstanceInUse
   | FieldConfigInvalid
   | FieldNameConflict
   | FieldNotFound
@@ -116,3 +141,5 @@ export type EngineError =
   | OrgScopeViolation
   | AttachmentNotFound
   | EventCorruption
+  | SidebarViewNotFound
+  | SidebarViewProtected

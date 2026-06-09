@@ -37,6 +37,7 @@ export { LabelService } from "./services/LabelService"
 export { OrgContext, type OrgScope } from "./services/OrgContext"
 export { type FindInstancesInput, QueryService } from "./services/QueryService"
 export { type CreateRelationInput, RelationService } from "./services/RelationService"
+export { SidebarViewService } from "./services/SidebarViewService"
 
 // Infrastructure
 export { healthCheck, PgLive } from "./services/Sql"

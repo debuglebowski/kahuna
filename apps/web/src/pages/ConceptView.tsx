@@ -1,10 +1,11 @@
 import { useLiveQuery } from "@tanstack/react-db"
-import { useMutation, useQuery } from "@tanstack/react-query"
-import { Plus } from "lucide-react"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { Archive, ArchiveRestore, Plus, Trash2 } from "lucide-react"
 import { useMemo, useState } from "react"
 import { useNavigate, useParams } from "react-router-dom"
-import { Button, Card, Input, Modal, Spinner } from "../components/ui"
-import { api } from "../lib/api"
+import { Button, Card, ConfirmDialog, IconButton, Input, Modal, Spinner } from "../components/ui"
+import { api, type Instance } from "../lib/api"
+import { useSession } from "../lib/auth-client"
 import {
   conceptsCollection,
   instancesByConcept,
@@ -13,6 +14,7 @@ import {
 } from "../lib/collections"
 import { showValue } from "../lib/utils"
 import { InstanceForm } from "./InstanceForm"
+import { isAdminRole, useFullOrg } from "./settings/SettingsLayout"
 
 /** Generic instance browser for a single concept (filter + click-to-sort). */
 export function ConceptView() {
@@ -49,6 +51,49 @@ export function ConceptView() {
       collection.utils.refetch()
     },
   })
+
+  // A hard delete is admin-only (archive/restore are ordinary item writes).
+  const qc = useQueryClient()
+  const { data: session } = useSession()
+  const org = useFullOrg()
+  const myRole = org.data?.members?.find((m) => m.userId === session?.user.id)?.role
+  const admin = isAdminRole(myRole)
+
+  const [showArchived, setShowArchived] = useState(false)
+  // Archive/delete pop a confirm dialog; restore is immediate.
+  const [dialog, setDialog] = useState<{ kind: "archive" | "delete"; inst: Instance } | null>(null)
+
+  // Archived items load on demand, separate from the live collection.
+  const archivedQ = useQuery({
+    queryKey: ["instances", id, "archived"],
+    queryFn: () => api.listInstances(id, { includeArchived: true }),
+    enabled: !!id && showArchived,
+  })
+  const archivedRows = (archivedQ.data ?? []).filter((i) => i.deletedAt)
+  const refetchAll = () => {
+    collection.utils.refetch()
+    qc.invalidateQueries({ queryKey: ["instances", id, "archived"] })
+  }
+
+  const archiveInst = useMutation({
+    mutationFn: (i: Instance) => api.archiveInstance(i.id, i.version),
+    onSuccess: () => {
+      setDialog(null)
+      refetchAll()
+    },
+  })
+  const restoreInst = useMutation({
+    mutationFn: (i: Instance) => api.restoreInstance(i.id, i.version),
+    onSuccess: refetchAll,
+  })
+  const delInst = useMutation({
+    mutationFn: (i: Instance) => api.deleteInstance(i.id),
+    onSuccess: () => {
+      setDialog(null)
+      refetchAll()
+    },
+  })
+
   const closeModal = () => {
     setAdding(false)
     create.reset()
@@ -64,6 +109,15 @@ export function ConceptView() {
         .map((f) => ({ id: f.id, name: f.name })),
     [fields.data],
   )
+
+  // A human-ish label for a row: its first non-empty visible column, else a fallback.
+  const rowLabel = (state: Record<string, unknown>) => {
+    for (const c of columns) {
+      const v = state[c.id]
+      if (v !== undefined && v !== null && v !== "") return showValue(v)
+    }
+    return "this item"
+  }
 
   const rows = useMemo(() => {
     let r = [...(instances.data ?? [])]
@@ -86,7 +140,14 @@ export function ConceptView() {
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold text-gray-800">{name}</h2>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setShowArchived((v) => !v)}
+              className="whitespace-nowrap text-xs text-gray-500 hover:text-gray-800"
+            >
+              {showArchived ? "Hide" : "Show"} archived
+            </button>
             <Input
               placeholder="filter…"
               value={filter}
@@ -125,6 +186,7 @@ export function ConceptView() {
                         {sortKey === c.id ? (asc ? " ▲" : " ▼") : ""}
                       </th>
                     ))}
+                    <th className="px-4 py-2" />
                   </tr>
                 </thead>
                 <tbody>
@@ -139,6 +201,29 @@ export function ConceptView() {
                           {showValue(r.state[c.id])}
                         </td>
                       ))}
+                      <td className="px-2 py-1 text-right whitespace-nowrap">
+                        <IconButton
+                          aria-label={`Archive ${rowLabel(r.state)}`}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setDialog({ kind: "archive", inst: r })
+                          }}
+                        >
+                          <Archive size={15} />
+                        </IconButton>
+                        {admin && (
+                          <IconButton
+                            variant="danger"
+                            aria-label={`Delete ${rowLabel(r.state)}`}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setDialog({ kind: "delete", inst: r })
+                            }}
+                          >
+                            <Trash2 size={15} />
+                          </IconButton>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -146,7 +231,93 @@ export function ConceptView() {
             </div>
           )}
         </Card>
+
+        {showArchived && (
+          <Card>
+            <div className="border-b border-gray-100 px-4 py-2 text-xs font-medium uppercase tracking-wide text-gray-400">
+              Archived{archivedQ.isFetching ? " · loading…" : ` (${archivedRows.length})`}
+            </div>
+            {archivedRows.length === 0 ? (
+              <p className="p-4 text-sm text-gray-400">No archived {name} items.</p>
+            ) : (
+              <ul className="divide-y divide-gray-50">
+                {archivedRows.map((r) => (
+                  <li key={r.id} className="flex items-center gap-2 px-4 py-2 opacity-70">
+                    <span className="flex-1 truncate text-sm text-gray-700">
+                      {rowLabel(r.state)}
+                    </span>
+                    <IconButton
+                      aria-label={`Restore ${rowLabel(r.state)}`}
+                      disabled={restoreInst.isPending}
+                      onClick={() => restoreInst.mutate(r)}
+                    >
+                      <ArchiveRestore size={15} />
+                    </IconButton>
+                    {admin && (
+                      <IconButton
+                        variant="danger"
+                        aria-label={`Delete ${rowLabel(r.state)}`}
+                        onClick={() => setDialog({ kind: "delete", inst: r })}
+                      >
+                        <Trash2 size={15} />
+                      </IconButton>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {restoreInst.error && (
+              <p className="px-4 pb-3 text-sm text-red-600">
+                {(restoreInst.error as { message?: string }).message ?? "Could not restore."}
+              </p>
+            )}
+          </Card>
+        )}
       </div>
+
+      {dialog?.kind === "archive" && (
+        <ConfirmDialog
+          title={`Archive ${name}`}
+          message={
+            <>
+              Archive <strong>{rowLabel(dialog.inst.state)}</strong>? It's hidden from this list but
+              kept — you can restore it from "Show archived".
+            </>
+          }
+          confirmLabel="Archive"
+          pending={archiveInst.isPending}
+          error={
+            archiveInst.error
+              ? ((archiveInst.error as { message?: string }).message ?? "Could not archive.")
+              : undefined
+          }
+          onConfirm={() => archiveInst.mutate(dialog.inst)}
+          onCancel={() => setDialog(null)}
+        />
+      )}
+      {dialog?.kind === "delete" && (
+        <ConfirmDialog
+          title={`Delete ${name}`}
+          message={
+            <>
+              Permanently delete <strong>{rowLabel(dialog.inst.state)}</strong>? This can't be
+              undone, and is refused while other items still link to it.
+            </>
+          }
+          confirmLabel="Delete"
+          confirmVariant="danger"
+          secondaryLabel={dialog.inst.deletedAt ? undefined : "Archive instead"}
+          onSecondary={dialog.inst.deletedAt ? undefined : () => archiveInst.mutate(dialog.inst)}
+          pending={delInst.isPending || archiveInst.isPending}
+          error={
+            delInst.error
+              ? ((delInst.error as { message?: string }).message ?? "Could not delete.")
+              : undefined
+          }
+          onConfirm={() => delInst.mutate(dialog.inst)}
+          onCancel={() => setDialog(null)}
+        />
+      )}
 
       {adding && (
         <Modal title={`New ${name}`} onClose={closeModal}>

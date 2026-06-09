@@ -1,8 +1,8 @@
 import { useLiveQuery } from "@tanstack/react-db"
 import { useMutation, useQuery } from "@tanstack/react-query"
-import { Check } from "lucide-react"
+import { Archive, Check, Trash2 } from "lucide-react"
 import { useEffect, useState } from "react"
-import { Link, useParams } from "react-router-dom"
+import { Link, useNavigate, useParams } from "react-router-dom"
 import { LABELS_KEY } from "../../rpc/contract"
 import { LabelMultiSelect } from "../components/LabelMultiSelect"
 import {
@@ -10,6 +10,7 @@ import {
   Button,
   Card,
   CardHeader,
+  ConfirmDialog,
   decayTone,
   LabelChip,
   momentumTone,
@@ -23,8 +24,10 @@ import {
   type MomentumValue,
   type RelatedInstance,
 } from "../lib/api"
+import { useSession } from "../lib/auth-client"
 import { instanceDetail, KEY, useRegisterCollection } from "../lib/collections"
 import { showValue } from "../lib/utils"
+import { isAdminRole, useFullOrg } from "./settings/SettingsLayout"
 
 /** A human label for an instance — its first non-empty text field, else untitled.
  *  State is keyed by field id, so the concept's field defs are required. */
@@ -204,6 +207,34 @@ export function InstanceView() {
   )
   const detail = detailQ.data?.[0]
 
+  // A hard delete is admin-only; archive is an ordinary item write.
+  const navigate = useNavigate()
+  const { data: session } = useSession()
+  const org = useFullOrg()
+  const myRole = org.data?.members?.find((m) => m.userId === session?.user.id)?.role
+  const admin = isAdminRole(myRole)
+  const [dialog, setDialog] = useState<"archive" | "delete" | null>(null)
+
+  // Both navigate back to the concept on success (the item leaves the live view).
+  const backToConcept = () => {
+    if (detail) navigate(`/concepts/${detail.concept.id}`)
+  }
+  const archive = useMutation({
+    mutationFn: (inst: { id: string; version: number }) =>
+      api.archiveInstance(inst.id, inst.version),
+    onSuccess: () => {
+      setDialog(null)
+      backToConcept()
+    },
+  })
+  const del = useMutation({
+    mutationFn: (instId: string) => api.deleteInstance(instId),
+    onSuccess: () => {
+      setDialog(null)
+      backToConcept()
+    },
+  })
+
   if (detailQ.isLoading || !detail) return <Spinner />
 
   const { instance, concept, fields, related, staticLabels, labels } = detail
@@ -214,11 +245,28 @@ export function InstanceView() {
 
   return (
     <div className="space-y-3">
-      <div>
-        <Link to={`/concepts/${concept.id}`} className="text-xs text-gray-400 hover:text-gray-600">
-          ← {concept.name}
-        </Link>
-        <h2 className="text-lg font-semibold text-gray-800">{labelOf(instance.state, fields)}</h2>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <Link
+            to={`/concepts/${concept.id}`}
+            className="text-xs text-gray-400 hover:text-gray-600"
+          >
+            ← {concept.name}
+          </Link>
+          <h2 className="text-lg font-semibold text-gray-800">{labelOf(instance.state, fields)}</h2>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <Button variant="outline" onClick={() => setDialog("archive")}>
+            <Archive size={15} />
+            Archive
+          </Button>
+          {admin && (
+            <Button variant="destructive" onClick={() => setDialog("delete")}>
+              <Trash2 size={15} />
+              Delete
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className="grid gap-3 lg:grid-cols-2">
@@ -254,6 +302,50 @@ export function InstanceView() {
           onSaved={() => collection.utils.refetch()}
         />
       </div>
+
+      {dialog === "archive" && (
+        <ConfirmDialog
+          title="Archive item"
+          message={
+            <>
+              Archive <strong>{labelOf(instance.state, fields)}</strong>? It's hidden from lists but
+              kept — you can restore it from the {concept.name} view's "Show archived".
+            </>
+          }
+          confirmLabel="Archive"
+          pending={archive.isPending}
+          error={
+            archive.error
+              ? ((archive.error as { message?: string }).message ?? "Could not archive.")
+              : undefined
+          }
+          onConfirm={() => archive.mutate(instance)}
+          onCancel={() => setDialog(null)}
+        />
+      )}
+      {dialog === "delete" && (
+        <ConfirmDialog
+          title="Delete item"
+          message={
+            <>
+              Permanently delete <strong>{labelOf(instance.state, fields)}</strong>? This can't be
+              undone, and is refused while other items still link to it.
+            </>
+          }
+          confirmLabel="Delete"
+          confirmVariant="danger"
+          secondaryLabel="Archive instead"
+          onSecondary={() => archive.mutate(instance)}
+          pending={del.isPending || archive.isPending}
+          error={
+            del.error
+              ? ((del.error as { message?: string }).message ?? "Could not delete.")
+              : undefined
+          }
+          onConfirm={() => del.mutate(instance.id)}
+          onCancel={() => setDialog(null)}
+        />
+      )}
     </div>
   )
 }

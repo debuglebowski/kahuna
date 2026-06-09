@@ -6,10 +6,12 @@ import {
   type Concept,
   type ConceptGraph,
   type Field,
+  type Instance,
   type InstanceDetail,
   KingsmakerRpcs,
   type Label,
   RpcError,
+  type SidebarView,
 } from "../rpc/contract"
 import { auth } from "./auth"
 import { pool } from "./db"
@@ -177,7 +179,8 @@ const checkThen = <A>(
 const ServerRpcs = KingsmakerRpcs.middleware(AuthMiddleware)
 
 const HandlersLive = ServerRpcs.toLayer({
-  listConcepts: () => as<ReadonlyArray<Concept>>(uc.listConcepts),
+  listConcepts: ({ includeArchived }) =>
+    as<ReadonlyArray<Concept>>(uc.listConcepts(includeArchived)),
   createConcept: ({ name }) => as<Concept>(uc.createConcept(name)),
   updateConcept: ({ id, name, pluralName, description, icon, staticLabelIds, defaultLabelIds }) =>
     admin<Concept>(
@@ -190,20 +193,28 @@ const HandlersLive = ServerRpcs.toLayer({
         defaultLabelIds,
       }),
     ),
+  archiveConcept: ({ id }) => admin<Concept>(uc.archiveConcept(id)),
+  restoreConcept: ({ id }) => admin<Concept>(uc.restoreConcept(id)),
   deleteConcept: ({ id }) => admin<Concept>(uc.deleteConcept(id)),
-  listLabels: () => as<ReadonlyArray<Label>>(uc.listLabels),
+  listLabels: ({ includeArchived }) => as<ReadonlyArray<Label>>(uc.listLabels(includeArchived)),
   createLabel: ({ name, color, primary }) => admin<Label>(uc.createLabel(name, color, primary)),
   renameLabel: ({ id, name, color, primary }) =>
     admin<Label>(uc.renameLabel(id, { name, color, primary })),
+  archiveLabel: ({ id }) => admin<Label>(uc.archiveLabel(id)),
+  restoreLabel: ({ id }) => admin<Label>(uc.restoreLabel(id)),
   deleteLabel: ({ id }) => admin<Label>(uc.deleteLabel(id)),
-  listFields: ({ conceptId }) => as<ReadonlyArray<Field>>(uc.listFields(conceptId)),
+  listFields: ({ conceptId, includeArchived }) =>
+    as<ReadonlyArray<Field>>(uc.listFields(conceptId, includeArchived)),
   getConceptGraph: () => as<ConceptGraph>(uc.getConceptGraph),
   addField: ({ conceptId, name, kind, config, formula, icon }) =>
     admin<Field>(uc.addField({ conceptId, name, kind, config, formula, icon })),
   updateField: ({ id, name, config, formula, icon }) =>
     admin<Field>(uc.updateField({ id, name, config, formula, icon })),
+  archiveField: ({ id }) => admin<Field>(uc.archiveField(id)),
+  restoreField: ({ id }) => admin<Field>(uc.restoreField(id)),
   deleteField: ({ id }) => admin<Field>(uc.deleteField(id)),
-  listInstances: ({ conceptId }) => mapErr(uc.listInstances(conceptId, { decorate: true })),
+  listInstances: ({ conceptId, includeArchived }) =>
+    mapErr(uc.listInstances(conceptId, { decorate: true, includeArchived })),
   getInstance: ({ id }) => as<InstanceDetail>(uc.getInstanceDetail(id)),
   getChanged: () => mapErr(uc.getChanged),
   createInstance: ({ conceptId, fields }) =>
@@ -218,6 +229,20 @@ const HandlersLive = ServerRpcs.toLayer({
     ),
   transitionInstance: ({ id, expectedVersion, field, to }) =>
     mapErr(uc.transitionInstance(id, expectedVersion, field, to)),
+  // Archive/restore are ordinary item writes (any member); a hard delete is
+  // admin-only, mirroring the schema-mutating concept/field/label deletes.
+  archiveInstance: ({ id, expectedVersion }) => mapErr(uc.archiveInstance(id, expectedVersion)),
+  restoreInstance: ({ id, expectedVersion }) => mapErr(uc.restoreInstance(id, expectedVersion)),
+  deleteInstance: ({ id }) => admin<Instance>(uc.deleteInstance(id)),
+  // Views: any member may create/edit/reorder/toggle (no admin gate). The engine
+  // service blocks touching another user's personal view via its owner scoping.
+  listViews: () => as<ReadonlyArray<SidebarView>>(uc.listViews),
+  createView: ({ name, icon, scope, body }) =>
+    as<SidebarView>(uc.createView({ name, icon, scope, body })),
+  updateView: ({ id, name, icon, hidden, scope, body }) =>
+    as<SidebarView>(uc.updateView({ id, name, icon, hidden, scope, body })),
+  deleteView: ({ id }) => as<SidebarView>(uc.deleteView(id)),
+  reorderViews: ({ orders }) => as<ReadonlyArray<SidebarView>>(uc.reorderViews(orders)),
 }).pipe(Layer.provide(EngineBase))
 
 // HttpRouter.DefaultServices (HttpPlatform | Etag | FileSystem | Path) — pure

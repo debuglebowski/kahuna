@@ -22,7 +22,7 @@ describe("label vocabulary (LabelService)", () => {
       expect(dup._tag).toBe("LabelNameConflict")
 
       // Soft-delete frees the name for reuse.
-      yield* labels.remove(urgent.id)
+      yield* labels.archive(urgent.id)
       const list = yield* labels.list()
       expect(list.find((l) => l.id === urgent.id)).toBeUndefined()
       const reused = yield* labels.create({ name: "Urgent" })
@@ -39,7 +39,7 @@ describe("label vocabulary (LabelService)", () => {
       expect(renamed.name).toBe("Compliance")
       expect(renamed.color).toBe("#7c3aed")
 
-      yield* labels.remove(l.id)
+      yield* labels.archive(l.id)
       // Stays resolvable by id (mirrors soft-deleted fields), but drops from list.
       const got = yield* labels.getById(l.id)
       expect(got.deletedAt).not.toBeNull()
@@ -53,9 +53,28 @@ describe("label vocabulary (LabelService)", () => {
       const labels = yield* LabelService
       const a = yield* labels.create({ name: "A" })
       const b = yield* labels.create({ name: "B" })
-      yield* labels.remove(b.id)
+      yield* labels.archive(b.id)
       const resolved = yield* labels.resolve([b.id, a.id, randomUUID()])
       expect(resolved.map((l) => l.id)).toEqual([a.id]) // b deleted, random missing
+    }).pipe(Effect.provide(testLayer(newOrgId()))),
+  )
+
+  it.effect("archive then restore round-trips; purge removes permanently", () =>
+    Effect.gen(function* () {
+      const labels = yield* LabelService
+      const l = yield* labels.create({ name: "Hot" })
+      yield* labels.archive(l.id)
+      expect((yield* labels.list()).length).toBe(0)
+      expect((yield* labels.list({ includeArchived: true })).length).toBe(1)
+
+      const restored = yield* labels.restore(l.id)
+      expect(restored.deletedAt).toBeNull()
+      expect((yield* labels.list()).length).toBe(1)
+
+      yield* labels.purge(l.id)
+      expect((yield* labels.list({ includeArchived: true })).length).toBe(0)
+      const gone = yield* labels.getById(l.id).pipe(Effect.flip)
+      expect(gone._tag).toBe("LabelNotFound")
     }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
 
@@ -151,7 +170,7 @@ describe("per-item labels (InstanceService)", () => {
       const gone = yield* labels.create({ name: "Gone" })
       const c = yield* concepts.create({ name: "Account" })
       yield* concepts.update({ id: c.id, description: null, defaultLabelIds: [live.id, gone.id] })
-      yield* labels.remove(gone.id)
+      yield* labels.archive(gone.id)
 
       const inst = yield* instances.create({ conceptId: c.id, fields: {} })
       expect(labelsOf(inst.state)).toEqual([live.id])

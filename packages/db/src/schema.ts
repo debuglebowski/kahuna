@@ -4,6 +4,7 @@ import {
   bigserial,
   boolean,
   index,
+  integer,
   jsonb,
   pgTable,
   text,
@@ -46,9 +47,16 @@ export const concepts = pgTable(
     staticLabelIds: jsonb("static_label_ids").notNull().default(sql`'[]'::jsonb`),
     defaultLabelIds: jsonb("default_label_ids").notNull().default(sql`'[]'::jsonb`),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    // Archive marker (mirrors `fields`/`labels`): a non-null value hides the
+    // concept from the live list but keeps the row (restorable). A true *delete*
+    // removes the row outright (`ConceptService.purge`).
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
   },
   (t) => [
-    uniqueIndex("concepts_org_name_uq").on(t.orgId, t.name),
+    // Partial on name so an archived concept's display name frees up for reuse
+    // (a restore re-checks the live set). Slug stays globally unique — it's the
+    // immutable handle the app pins by, so it must never collide on restore.
+    uniqueIndex("concepts_org_name_uq").on(t.orgId, t.name).where(sql`${t.deletedAt} IS NULL`),
     uniqueIndex("concepts_org_slug_uq").on(t.orgId, t.slug),
   ],
 )
@@ -166,6 +174,37 @@ export const events = pgTable(
     index("events_subject_idx").on(t.subjectId, t.id),
     index("events_org_idx").on(t.orgId, t.id),
   ],
+)
+
+/**
+ * A user-configurable sidebar layout — a "View": an ordered stack of sections,
+ * switched via the sidebar pager. `owner_id` null = org-shared (any member sees
+ * and may edit it); non-null = personal to that user. The whole layout lives in
+ * `body` (a serializable document: sections + their content sources/rules) and
+ * is **opaque to the engine** — never read or filtered server-side; the web
+ * client resolves it against the live concept/instance collections. This keeps
+ * views off the event store and sets up "define views in code" later.
+ */
+export const sidebarViews = pgTable(
+  "sidebar_views",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: text("org_id").notNull(),
+    // null = org-shared; non-null = personal (a logical FK into bauth_user.id).
+    ownerId: text("owner_id"),
+    name: text("name").notNull(),
+    // Optional display glyph (see `concepts.icon`): literal emoji or "lucide:Name".
+    icon: text("icon"),
+    // Order within the pager (ascending); ties broken by created_at.
+    position: integer("position").notNull().default(0),
+    // Soft visibility toggle — hidden views stay editable in settings but drop
+    // out of the pager. Shared on org views (anyone may flip it).
+    hidden: boolean("hidden").notNull().default(false),
+    body: jsonb("body").notNull().default(sql`'{"sections":[]}'::jsonb`),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("sidebar_views_org_owner_idx").on(t.orgId, t.ownerId)],
 )
 
 export const attachments = pgTable("attachments", {

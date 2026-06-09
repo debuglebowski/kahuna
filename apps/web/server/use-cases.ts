@@ -16,6 +16,8 @@ import {
   type OrgContext,
   QueryService,
   RelationService,
+  type SidebarViewBody,
+  SidebarViewService,
 } from "@kingsmaker/engine"
 import { Effect } from "effect"
 
@@ -30,6 +32,7 @@ export interface ListOpts {
   readonly relatedToTo?: { readonly fieldId: string; readonly toId: string }
   readonly limit?: number
   readonly decorate?: boolean
+  readonly includeArchived?: boolean
 }
 
 export const listInstances = (
@@ -45,6 +48,7 @@ export const listInstances = (
       orderBy: opts.orderBy,
       relatedToTo: opts.relatedToTo,
       limit: opts.limit,
+      includeArchived: opts.includeArchived,
     })
     return opts.decorate ? yield* Effect.forEach(rows, (r) => computed.decorate(r)) : rows
   })
@@ -137,7 +141,8 @@ export const getInstanceDetail = (id: string): UC<unknown> =>
     }
   })
 
-export const listConcepts: UC<unknown> = Effect.flatMap(ConceptService, (c) => c.list())
+export const listConcepts = (includeArchived = false): UC<unknown> =>
+  Effect.flatMap(ConceptService, (c) => c.list({ includeArchived }))
 
 export const createConcept = (name: string, description?: string): UC<unknown> =>
   Effect.flatMap(ConceptService, (c) => c.create({ name, description }))
@@ -165,12 +170,19 @@ export const updateConcept = (
     }),
   )
 
+export const archiveConcept = (id: string): UC<unknown> =>
+  Effect.flatMap(ConceptService, (c) => c.archive(id))
+
+export const restoreConcept = (id: string): UC<unknown> =>
+  Effect.flatMap(ConceptService, (c) => c.restore(id))
+
 export const deleteConcept = (id: string): UC<unknown> =>
-  Effect.flatMap(ConceptService, (c) => c.remove(id))
+  Effect.flatMap(ConceptService, (c) => c.purge(id))
 
 // ── labels (org-wide vocabulary) ───────────────────────────────────────────────
 
-export const listLabels: UC<ReadonlyArray<Label>> = Effect.flatMap(LabelService, (l) => l.list())
+export const listLabels = (includeArchived = false): UC<ReadonlyArray<Label>> =>
+  Effect.flatMap(LabelService, (l) => l.list({ includeArchived }))
 
 export const createLabel = (name: string, color?: string | null, primary?: boolean): UC<Label> =>
   Effect.flatMap(LabelService, (l) => l.create({ name, color, primary }))
@@ -183,11 +195,44 @@ export const renameLabel = (
     l.rename({ id, name: patch.name, color: patch.color, primary: patch.primary }),
   )
 
-export const deleteLabel = (id: string): UC<Label> =>
-  Effect.flatMap(LabelService, (l) => l.remove(id))
+export const archiveLabel = (id: string): UC<Label> =>
+  Effect.flatMap(LabelService, (l) => l.archive(id))
 
-export const listFields = (conceptId: string): UC<unknown> =>
-  Effect.flatMap(FieldService, (f) => f.listFields(conceptId))
+export const restoreLabel = (id: string): UC<Label> =>
+  Effect.flatMap(LabelService, (l) => l.restore(id))
+
+export const deleteLabel = (id: string): UC<Label> =>
+  Effect.flatMap(LabelService, (l) => l.purge(id))
+
+export const listFields = (conceptId: string, includeArchived = false): UC<unknown> =>
+  Effect.flatMap(FieldService, (f) => f.listFields(conceptId, { includeArchived }))
+
+// ── sidebar views (configurable nav layouts) ───────────────────────────────────
+
+export const listViews: UC<unknown> = Effect.flatMap(SidebarViewService, (s) => s.list())
+
+export const createView = (input: {
+  readonly name: string
+  readonly icon?: string | null
+  readonly scope: "personal" | "org"
+  readonly body: SidebarViewBody
+}): UC<unknown> => Effect.flatMap(SidebarViewService, (s) => s.create(input))
+
+export const updateView = (input: {
+  readonly id: string
+  readonly name?: string
+  readonly icon?: string | null
+  readonly hidden?: boolean
+  readonly scope?: "personal" | "org"
+  readonly body?: SidebarViewBody
+}): UC<unknown> => Effect.flatMap(SidebarViewService, (s) => s.update(input))
+
+export const deleteView = (id: string): UC<unknown> =>
+  Effect.flatMap(SidebarViewService, (s) => s.remove(id))
+
+export const reorderViews = (
+  orders: ReadonlyArray<{ readonly id: string; readonly position: number }>,
+): UC<unknown> => Effect.flatMap(SidebarViewService, (s) => s.reorder(orders))
 
 /**
  * The concept relationship graph: every concept is a node, and every relation
@@ -233,8 +278,14 @@ export const updateField = (input: {
   readonly icon?: string | null
 }): UC<unknown> => Effect.flatMap(FieldService, (f) => f.update(input))
 
+export const archiveField = (id: string): UC<unknown> =>
+  Effect.flatMap(FieldService, (f) => f.archive(id))
+
+export const restoreField = (id: string): UC<unknown> =>
+  Effect.flatMap(FieldService, (f) => f.restore(id))
+
 export const deleteField = (id: string): UC<unknown> =>
-  Effect.flatMap(FieldService, (f) => f.remove(id))
+  Effect.flatMap(FieldService, (f) => f.purge(id))
 
 export interface FeedItem {
   readonly id: number
@@ -281,6 +332,15 @@ export const transitionInstance = (
   Effect.flatMap(InstanceService, (i) =>
     i.transition({ instanceId: id, expectedVersion, field, to }),
   )
+
+export const archiveInstance = (id: string, expectedVersion: number): UC<Instance> =>
+  Effect.flatMap(InstanceService, (i) => i.archive({ instanceId: id, expectedVersion }))
+
+export const restoreInstance = (id: string, expectedVersion: number): UC<Instance> =>
+  Effect.flatMap(InstanceService, (i) => i.restore({ instanceId: id, expectedVersion }))
+
+export const deleteInstance = (id: string): UC<Instance> =>
+  Effect.flatMap(InstanceService, (i) => i.purge({ instanceId: id }))
 
 export const linkRelation = (
   fieldId: string,

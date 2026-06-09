@@ -57,6 +57,38 @@ describe("reducer / fold", () => {
     }
   })
 
+  it("archive sets deletedAt; restore clears it; version bumps each step", () => {
+    const result = foldEvents([
+      ev(1, { _tag: "InstanceCreated", conceptId: "c", fields: { a: 1 } }),
+      ev(2, { _tag: "InstanceArchived" }, new Date(5)),
+      ev(3, { _tag: "InstanceRestored" }),
+      ev(4, { _tag: "InstanceUpdated", patch: { a: 2 } }),
+    ])
+    expect(Either.isRight(result)).toBe(true)
+    if (Either.isRight(result) && result.right) {
+      expect(result.right.state).toEqual({ a: 2 })
+      expect(result.right.version).toBe(3)
+      expect(result.right.deletedAt).toBeNull()
+    }
+  })
+
+  it("rejects a restore on a live (never-archived) instance", () => {
+    const result = foldEvents([
+      ev(1, { _tag: "InstanceCreated", conceptId: "c", fields: {} }),
+      ev(2, { _tag: "InstanceRestored" }),
+    ])
+    expect(Either.isLeft(result)).toBe(true)
+  })
+
+  it("rejects a non-restore event while archived", () => {
+    const result = foldEvents([
+      ev(1, { _tag: "InstanceCreated", conceptId: "c", fields: {} }),
+      ev(2, { _tag: "InstanceArchived" }),
+      ev(3, { _tag: "InstanceUpdated", patch: { a: 1 } }),
+    ])
+    expect(Either.isLeft(result)).toBe(true)
+  })
+
   it("empty stream folds to null", () => {
     const result = foldEvents([])
     expect(Either.isRight(result) && result.right === null).toBe(true)

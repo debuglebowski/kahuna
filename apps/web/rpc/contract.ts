@@ -40,6 +40,8 @@ export const Concept = Schema.Struct({
    *  instances (default). Both drawn from the org-wide label vocabulary. */
   staticLabelIds: Schema.Array(Schema.String),
   defaultLabelIds: Schema.Array(Schema.String),
+  /** Archive marker: non-null = archived (hidden from the live list, restorable). */
+  deletedAt: Schema.NullOr(Schema.Date),
 })
 export type Concept = typeof Concept.Type
 
@@ -96,6 +98,8 @@ export const Field = Schema.Struct({
   config: FieldConfig,
   /** Display glyph: literal emoji or `lucide:Name` (see `Concept.icon`). */
   icon: Schema.NullOr(Schema.String),
+  /** Archive marker: non-null = archived (hidden from the live list, restorable). */
+  deletedAt: Schema.NullOr(Schema.Date),
 })
 export type Field = typeof Field.Type
 
@@ -177,6 +181,95 @@ export const ConceptGraph = Schema.Struct({
 })
 export type ConceptGraph = typeof ConceptGraph.Type
 
+// ── sidebar views (configurable nav layouts) ───────────────────────────────────
+// A View is an ordered stack of sections, switched via the sidebar pager. The
+// whole layout is `SidebarViewBody` and is resolved CLIENT-SIDE against the live
+// concept/instance collections — the server only persists/serves the document.
+
+/** One filter condition. `field` = a field id, or `__labels` for `hasLabel`. */
+export const SidebarCondition = Schema.Struct({
+  field: Schema.String,
+  op: Schema.Literal("eq", "hasLabel"),
+  value: Schema.Unknown,
+})
+export type SidebarCondition = typeof SidebarCondition.Type
+
+/** A manually-pinned group member — a concept link or a single instance. */
+export const SidebarMember = Schema.Union(
+  Schema.Struct({ kind: Schema.Literal("concept"), conceptId: Schema.String }),
+  Schema.Struct({
+    kind: Schema.Literal("instance"),
+    conceptId: Schema.String,
+    instanceId: Schema.String,
+  }),
+)
+
+/** An auto-membership rule: matching concepts, or matching instances of a concept. */
+export const SidebarRule = Schema.Union(
+  Schema.Struct({ target: Schema.Literal("concepts"), conditions: Schema.Array(SidebarCondition) }),
+  Schema.Struct({
+    target: Schema.Literal("items"),
+    conceptId: Schema.String,
+    conditions: Schema.Array(SidebarCondition),
+  }),
+)
+
+const SidebarStaticItem = Schema.Literal("overview", "dashboards", "automations", "settings")
+
+const SidebarLink = Schema.Struct({
+  id: Schema.String,
+  label: Schema.String,
+  icon: Schema.optional(Schema.NullOr(Schema.String)),
+  /** `/instances/:id`, a concept route, or an external URL. */
+  to: Schema.String,
+})
+
+export const SidebarSource = Schema.Union(
+  Schema.Struct({ kind: Schema.Literal("static"), items: Schema.Array(SidebarStaticItem) }),
+  Schema.Struct({
+    kind: Schema.Literal("group"),
+    members: Schema.Array(SidebarMember),
+    rules: Schema.Array(SidebarRule),
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("list"),
+    conceptId: Schema.String,
+    conditions: Schema.Array(SidebarCondition),
+    orderBy: Schema.optional(Schema.NullOr(Schema.String)),
+    limit: Schema.optional(Schema.NullOr(Schema.Number)),
+  }),
+  Schema.Struct({ kind: Schema.Literal("links"), items: Schema.Array(SidebarLink) }),
+)
+export type SidebarMember = typeof SidebarMember.Type
+export type SidebarRule = typeof SidebarRule.Type
+export type SidebarSource = typeof SidebarSource.Type
+
+export const SidebarSection = Schema.Struct({
+  id: Schema.String,
+  title: Schema.NullOr(Schema.String),
+  icon: Schema.NullOr(Schema.String),
+  collapsed: Schema.optional(Schema.Boolean),
+  source: SidebarSource,
+})
+export type SidebarSection = typeof SidebarSection.Type
+
+export const SidebarViewBody = Schema.Struct({
+  sections: Schema.Array(SidebarSection),
+})
+export type SidebarViewBody = typeof SidebarViewBody.Type
+
+export const SidebarView = Schema.Struct({
+  id: Schema.String,
+  /** null = org-shared (any member); non-null = personal to that user. */
+  ownerId: Schema.NullOr(Schema.String),
+  name: Schema.String,
+  icon: Schema.NullOr(Schema.String),
+  position: Schema.Number,
+  hidden: Schema.Boolean,
+  body: SidebarViewBody,
+})
+export type SidebarView = typeof SidebarView.Type
+
 /** One serializable error for the whole API; `code` mirrors the old HTTP codes. */
 export class RpcError extends Schema.TaggedError<RpcError>()("RpcError", {
   code: Schema.String,
@@ -189,7 +282,11 @@ const Fields = Schema.Record({ key: Schema.String, value: Schema.Unknown })
 // ── procedures ────────────────────────────────────────────────────────────────
 
 export class KingsmakerRpcs extends RpcGroup.make(
-  Rpc.make("listConcepts", { success: Schema.Array(Concept), error: RpcError }),
+  Rpc.make("listConcepts", {
+    payload: { includeArchived: Schema.optional(Schema.Boolean) },
+    success: Schema.Array(Concept),
+    error: RpcError,
+  }),
   Rpc.make("createConcept", {
     payload: { name: Schema.String },
     success: Concept,
@@ -210,12 +307,27 @@ export class KingsmakerRpcs extends RpcGroup.make(
     success: Concept,
     error: RpcError,
   }),
+  Rpc.make("archiveConcept", {
+    payload: { id: Schema.String },
+    success: Concept,
+    error: RpcError,
+  }),
+  Rpc.make("restoreConcept", {
+    payload: { id: Schema.String },
+    success: Concept,
+    error: RpcError,
+  }),
+  // Hard delete — permanently removes the concept and its field defs.
   Rpc.make("deleteConcept", {
     payload: { id: Schema.String },
     success: Concept,
     error: RpcError,
   }),
-  Rpc.make("listLabels", { success: Schema.Array(Label), error: RpcError }),
+  Rpc.make("listLabels", {
+    payload: { includeArchived: Schema.optional(Schema.Boolean) },
+    success: Schema.Array(Label),
+    error: RpcError,
+  }),
   Rpc.make("createLabel", {
     payload: {
       name: Schema.String,
@@ -235,13 +347,24 @@ export class KingsmakerRpcs extends RpcGroup.make(
     success: Label,
     error: RpcError,
   }),
+  Rpc.make("archiveLabel", {
+    payload: { id: Schema.String },
+    success: Label,
+    error: RpcError,
+  }),
+  Rpc.make("restoreLabel", {
+    payload: { id: Schema.String },
+    success: Label,
+    error: RpcError,
+  }),
+  // Hard delete — permanently removes the label from the vocabulary.
   Rpc.make("deleteLabel", {
     payload: { id: Schema.String },
     success: Label,
     error: RpcError,
   }),
   Rpc.make("listFields", {
-    payload: { conceptId: Schema.String },
+    payload: { conceptId: Schema.String, includeArchived: Schema.optional(Schema.Boolean) },
     success: Schema.Array(Field),
     error: RpcError,
   }),
@@ -269,13 +392,24 @@ export class KingsmakerRpcs extends RpcGroup.make(
     success: Field,
     error: RpcError,
   }),
+  Rpc.make("archiveField", {
+    payload: { id: Schema.String },
+    success: Field,
+    error: RpcError,
+  }),
+  Rpc.make("restoreField", {
+    payload: { id: Schema.String },
+    success: Field,
+    error: RpcError,
+  }),
+  // Hard delete — permanently removes the field def.
   Rpc.make("deleteField", {
     payload: { id: Schema.String },
     success: Field,
     error: RpcError,
   }),
   Rpc.make("listInstances", {
-    payload: { conceptId: Schema.String },
+    payload: { conceptId: Schema.String, includeArchived: Schema.optional(Schema.Boolean) },
     success: Schema.Array(Instance),
     error: RpcError,
   }),
@@ -303,6 +437,57 @@ export class KingsmakerRpcs extends RpcGroup.make(
       to: Schema.String,
     },
     success: Instance,
+    error: RpcError,
+  }),
+  Rpc.make("archiveInstance", {
+    payload: { id: Schema.String, expectedVersion: Schema.Number },
+    success: Instance,
+    error: RpcError,
+  }),
+  Rpc.make("restoreInstance", {
+    payload: { id: Schema.String, expectedVersion: Schema.Number },
+    success: Instance,
+    error: RpcError,
+  }),
+  // Hard delete — permanently removes the instance and its event stream.
+  Rpc.make("deleteInstance", {
+    payload: { id: Schema.String },
+    success: Instance,
+    error: RpcError,
+  }),
+  Rpc.make("listViews", { success: Schema.Array(SidebarView), error: RpcError }),
+  Rpc.make("createView", {
+    payload: {
+      name: Schema.String,
+      icon: Schema.optional(Schema.NullOr(Schema.String)),
+      scope: Schema.Literal("personal", "org"),
+      body: SidebarViewBody,
+    },
+    success: SidebarView,
+    error: RpcError,
+  }),
+  Rpc.make("updateView", {
+    payload: {
+      id: Schema.String,
+      name: Schema.optional(Schema.String),
+      icon: Schema.optional(Schema.NullOr(Schema.String)),
+      hidden: Schema.optional(Schema.Boolean),
+      scope: Schema.optional(Schema.Literal("personal", "org")),
+      body: Schema.optional(SidebarViewBody),
+    },
+    success: SidebarView,
+    error: RpcError,
+  }),
+  Rpc.make("deleteView", {
+    payload: { id: Schema.String },
+    success: SidebarView,
+    error: RpcError,
+  }),
+  Rpc.make("reorderViews", {
+    payload: {
+      orders: Schema.Array(Schema.Struct({ id: Schema.String, position: Schema.Number })),
+    },
+    success: Schema.Array(SidebarView),
     error: RpcError,
   }),
 ) {}

@@ -8,6 +8,7 @@ import { InstanceService } from "./services/InstanceService"
 import { LabelService } from "./services/LabelService"
 import { QueryService } from "./services/QueryService"
 import { RelationService } from "./services/RelationService"
+import { SidebarViewService } from "./services/SidebarViewService"
 
 /**
  * All engine services merged. Requires a `PgClient` layer (e.g. `PgLive`) and a
@@ -23,6 +24,7 @@ export const EngineLive = Layer.mergeAll(
   ComputedFields.Default,
   AttachmentService.Default,
   LabelService.Default,
+  SidebarViewService.Default,
 )
 
 /** Union of all engine service tags — the requirements an engine effect may carry. */
@@ -36,3 +38,4 @@ export type EngineServices =
   | ComputedFields
   | AttachmentService
   | LabelService
+  | SidebarViewService

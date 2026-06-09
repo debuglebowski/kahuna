@@ -165,7 +165,7 @@ function DeleteAccount() {
           <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
         </Field>
         <Button
-          variant="danger"
+          variant="destructive"
           disabled={del.isPending || !password}
           onClick={() => {
             if (confirm("Permanently delete your account? This cannot be undone.")) del.mutate()

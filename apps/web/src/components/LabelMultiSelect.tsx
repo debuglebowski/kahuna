@@ -24,7 +24,7 @@ export function LabelMultiSelect({
   const exclude = new Set(excludeIds)
   const selected = new Set(selectedIds)
   const options = all.filter((l) => !exclude.has(l.id)).sort((a, b) => a.name.localeCompare(b.name))
-  if (options.length === 0) return <p className="text-xs text-gray-400">{emptyHint}</p>
+  if (options.length === 0) return <p className="text-xs text-muted-foreground">{emptyHint}</p>
 
   const toggle = (id: string) => {
     const next = new Set(selected)
@@ -50,8 +50,8 @@ export function LabelMultiSelect({
               on
                 ? style
                   ? "border-transparent"
-                  : "border-transparent bg-gray-800 text-white"
-                : "border-gray-300 bg-white text-gray-600 hover:bg-gray-50",
+                  : "border-transparent bg-primary text-primary-foreground"
+                : "border-input bg-background text-muted-foreground hover:bg-accent",
             )}
           >
             {l.primary && <Crown className="h-3 w-3 shrink-0" aria-label="Primary" />}

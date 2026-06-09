@@ -52,11 +52,14 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
         return toConcept(row)
       })
 
-    const list = () =>
+    /** Concepts ordered by name. Archived (deleted_at set) are excluded unless
+     *  `includeArchived` — the settings page passes it to render the archive. */
+    const list = (opts: { readonly includeArchived?: boolean } = {}) =>
       Effect.gen(function* () {
         const { orgId } = yield* OrgContext
+        const liveOnly = opts.includeArchived ? sql`` : sql` AND deleted_at IS NULL`
         const rows = yield* sql<ConceptRow>`
-          SELECT * FROM concepts WHERE org_id = ${orgId} ORDER BY name ASC`
+          SELECT * FROM concepts WHERE org_id = ${orgId}${liveOnly} ORDER BY name ASC`
         return rows.map(toConcept)
       })
 
@@ -71,8 +74,11 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
       sql.withTransaction(
         Effect.gen(function* () {
           const { orgId } = yield* OrgContext
+          // Only live concepts hold a name (the unique index is partial), so an
+          // archived concept's name is free to reuse.
           const existing = yield* sql<{ readonly id: string }>`
-            SELECT id FROM concepts WHERE org_id = ${orgId} AND name = ${input.name} LIMIT 1`
+            SELECT id FROM concepts
+            WHERE org_id = ${orgId} AND name = ${input.name} AND deleted_at IS NULL LIMIT 1`
           if (existing[0]) return yield* Effect.fail(new ConceptNameConflict({ name: input.name }))
           // Derive a stable, unique slug from the initial name (suffix on collision).
           const all = yield* sql<{ readonly slug: string }>`
@@ -122,7 +128,8 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
           if (name && name !== current.name) {
             const clash = yield* sql<{ readonly id: string }>`
               SELECT id FROM concepts
-              WHERE org_id = ${orgId} AND name = ${name} AND id <> ${input.id} LIMIT 1`
+              WHERE org_id = ${orgId} AND name = ${name} AND deleted_at IS NULL AND id <> ${input.id}
+              LIMIT 1`
             if (clash[0]) return yield* Effect.fail(new ConceptNameConflict({ name }))
           }
           // Reject any provided label id that isn't a live vocabulary entry.
@@ -170,15 +177,61 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
         }),
       )
 
-    /** Delete a concept (and its field defs). Refused while any live instance exists. */
-    const remove = (id: string) =>
+    /** Archive a concept (soft, restorable): hides it from the live list but keeps
+     *  the row and its fields/instances intact. Idempotent on an archived concept. */
+    const archive = (id: string) =>
+      sql.withTransaction(
+        Effect.gen(function* () {
+          const { orgId } = yield* OrgContext
+          yield* getById(id) // 404 if missing / cross-org
+          const rows = yield* sql<ConceptRow>`
+            UPDATE concepts SET deleted_at = COALESCE(deleted_at, now())
+            WHERE org_id = ${orgId} AND id = ${id} RETURNING *`
+          yield* events.append({
+            subjectKind: "concept",
+            subjectId: id,
+            eventType: "ConceptArchived",
+            payload: { _tag: "ConceptArchived" },
+          })
+          return toConcept(rows[0]!)
+        }),
+      )
+
+    /** Restore an archived concept. Fails ConceptNameConflict if its display name
+     *  was meanwhile taken by a live concept (the name index is partial). */
+    const restore = (id: string) =>
+      sql.withTransaction(
+        Effect.gen(function* () {
+          const { orgId } = yield* OrgContext
+          const concept = yield* getById(id)
+          const clash = yield* sql<{ readonly id: string }>`
+            SELECT id FROM concepts
+            WHERE org_id = ${orgId} AND name = ${concept.name} AND deleted_at IS NULL
+              AND id <> ${id} LIMIT 1`
+          if (clash[0]) return yield* Effect.fail(new ConceptNameConflict({ name: concept.name }))
+          const rows = yield* sql<ConceptRow>`
+            UPDATE concepts SET deleted_at = NULL WHERE org_id = ${orgId} AND id = ${id}
+            RETURNING *`
+          yield* events.append({
+            subjectKind: "concept",
+            subjectId: id,
+            eventType: "ConceptRestored",
+            payload: { _tag: "ConceptRestored" },
+          })
+          return toConcept(rows[0]!)
+        }),
+      )
+
+    /** Permanently delete a concept and its field defs. Refused while ANY instance
+     *  (live or archived) still references it — archive or remove those first. */
+    const purge = (id: string) =>
       sql.withTransaction(
         Effect.gen(function* () {
           const { orgId } = yield* OrgContext
           const concept = yield* getById(id)
           const counts = yield* sql<{ readonly count: number | string }>`
             SELECT COUNT(*)::int AS count FROM instances
-            WHERE org_id = ${orgId} AND concept_id = ${id} AND deleted_at IS NULL`
+            WHERE org_id = ${orgId} AND concept_id = ${id}`
           const instanceCount = Number(counts[0]?.count ?? 0)
           if (instanceCount > 0) {
             return yield* Effect.fail(new ConceptInUse({ concept: concept.name, instanceCount }))
@@ -195,7 +248,17 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
         }),
       )
 
-    return { create, getByName, getById, getBySlug, list, update, remove } as const
+    return {
+      create,
+      getByName,
+      getById,
+      getBySlug,
+      list,
+      update,
+      archive,
+      restore,
+      purge,
+    } as const
   }),
   dependencies: [EventStore.Default, LabelService.Default],
 }) {}

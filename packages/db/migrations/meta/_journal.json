@@ -36,6 +36,20 @@
       "when": 1780955958264,
       "tag": "0004_daily_chameleon",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1781010229022,
+      "tag": "0005_wandering_rocket_raccoon",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1781012355959,
+      "tag": "0006_overrated_nova",
+      "breakpoints": true
     }
   ]
 }

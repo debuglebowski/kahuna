@@ -1,9 +1,16 @@
 import { useQuery } from "@tanstack/react-query"
 import { Plus, X } from "lucide-react"
 import { useMemo, useState } from "react"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { LABELS_KEY } from "../../rpc/contract"
 import { LabelMultiSelect } from "../components/LabelMultiSelect"
-import { Button, Field, Input, Select } from "../components/ui"
+import { Button, Field, Input } from "../components/ui"
 import { api, type Field as FieldDef } from "../lib/api"
 import { useFullOrg } from "./settings/SettingsLayout"
 
@@ -54,16 +61,22 @@ function MemberPicker({
     )
   }
   return (
+    // Radix Select reserves "" — use a sentinel for the "none" choice.
     <Select
-      value={typeof value === "string" ? value : ""}
-      onChange={(e) => onChange(e.target.value || undefined)}
+      value={typeof value === "string" && value ? value : "__none"}
+      onValueChange={(v) => onChange(v === "__none" ? undefined : v)}
     >
-      <option value="">—</option>
-      {members.map((m) => (
-        <option key={m.userId} value={m.userId}>
-          {m.user?.name?.trim() || m.user?.email || m.userId}
-        </option>
-      ))}
+      <SelectTrigger className="w-full">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="__none">—</SelectItem>
+        {members.map((m) => (
+          <SelectItem key={m.userId} value={m.userId}>
+            {m.user?.name?.trim() || m.user?.email || m.userId}
+          </SelectItem>
+        ))}
+      </SelectContent>
     </Select>
   )
 }
@@ -200,15 +213,22 @@ export function InstanceForm({
         }
         return (
           <Select
-            value={String(values[f.name] ?? "")}
-            onChange={(e) => set(f.name, e.target.value)}
+            value={
+              values[f.name] != null && values[f.name] !== "" ? String(values[f.name]) : "__none"
+            }
+            onValueChange={(v) => set(f.name, v === "__none" ? "" : v)}
           >
-            <option value="">—</option>
-            {(f.config.options ?? []).map((o) => (
-              <option key={o} value={o}>
-                {o}
-              </option>
-            ))}
+            <SelectTrigger className="w-full">
+              <SelectValue placeholder="—" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__none">—</SelectItem>
+              {(f.config.options ?? []).map((o) => (
+                <SelectItem key={o} value={o}>
+                  {o}
+                </SelectItem>
+              ))}
+            </SelectContent>
           </Select>
         )
       case "user":
@@ -324,7 +344,7 @@ export function InstanceForm({
           <Plus size={15} />
           {pending ? "Creating…" : "Create"}
         </Button>
-        <Button variant="ghost" onClick={onCancel}>
+        <Button variant="outline" onClick={onCancel}>
           <X size={15} />
           Cancel
         </Button>

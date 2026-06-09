@@ -25,7 +25,7 @@ describe("use-cases (UI backbone)", () => {
     await run(org, seedKingsmaker)
 
     // The app identifies concepts + fields by id; resolve seeded names → ids.
-    const concepts = (await run(org, listConcepts)) as ReadonlyArray<{ id: string; name: string }>
+    const concepts = (await run(org, listConcepts())) as ReadonlyArray<{ id: string; name: string }>
     const idOf = (name: string) => concepts.find((c) => c.name === name)!.id
 
     const fieldsOf = async (conceptId: string) =>

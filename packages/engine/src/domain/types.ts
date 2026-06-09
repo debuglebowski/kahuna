@@ -78,6 +78,9 @@ export interface Concept {
    *  editable per item afterward. */
   readonly defaultLabelIds: ReadonlyArray<Id>
   readonly createdAt: Date
+  /** Archive marker (mirrors `Field`/`Label`/`Instance`): non-null = archived
+   *  (hidden from the live list but restorable). A true delete removes the row. */
+  readonly deletedAt: Date | null
 }
 
 /** A label in the org-wide, flat vocabulary. Keyed by `id`; `name`/`color` are
@@ -138,7 +141,12 @@ export interface Relation {
 export type EventPayload =
   | { readonly _tag: "InstanceCreated"; readonly conceptId: Id; readonly fields: InstanceState }
   | { readonly _tag: "InstanceUpdated"; readonly patch: InstanceState }
+  // Archive (soft, restorable). `InstanceDeleted` is the legacy archive tag kept
+  // for replay; new archives emit `InstanceArchived`. Both fold to a set
+  // `deletedAt`; `InstanceRestored` clears it again (see projection/reducer).
   | { readonly _tag: "InstanceDeleted" }
+  | { readonly _tag: "InstanceArchived" }
+  | { readonly _tag: "InstanceRestored" }
   | {
       readonly _tag: "RelationCreated"
       readonly fieldId: Id
@@ -178,6 +186,8 @@ export type EventPayload =
       readonly staticLabelIds?: ReadonlyArray<Id>
       readonly defaultLabelIds?: ReadonlyArray<Id>
     }
+  | { readonly _tag: "ConceptArchived" }
+  | { readonly _tag: "ConceptRestored" }
   | { readonly _tag: "ConceptDeleted" }
   // Label vocabulary edits (settings → Labels). subjectKind "label"; like
   // concept/field schema events these never appear in an instance stream.
@@ -193,6 +203,8 @@ export type EventPayload =
       readonly color: string | null
       readonly primary: boolean
     }
+  | { readonly _tag: "LabelArchived" }
+  | { readonly _tag: "LabelRestored" }
   | { readonly _tag: "LabelDeleted" }
   | {
       readonly _tag: "FieldUpdated"
@@ -200,6 +212,8 @@ export type EventPayload =
       readonly name: string
       readonly kind: string
     }
+  | { readonly _tag: "FieldArchived"; readonly conceptId: Id; readonly name: string }
+  | { readonly _tag: "FieldRestored"; readonly conceptId: Id; readonly name: string }
   | { readonly _tag: "FieldDeleted"; readonly conceptId: Id; readonly name: string }
 
 export interface Attachment {
@@ -211,6 +225,77 @@ export interface Attachment {
   readonly mimeType: string | null
   readonly sizeBytes: number | null
   readonly createdAt: Date
+}
+
+// ── sidebar views (configurable nav layouts) ───────────────────────────────────
+// The whole layout is the serializable `SidebarViewBody` below. It is OPAQUE to
+// the engine (never read or filtered server-side); the web client resolves it
+// against the live concept/instance collections. These mirror the contract's
+// `SidebarView*` schemas (kept separate so the contract stays engine-free).
+
+/** One filter condition. `field` is a field id, or `__labels` for `hasLabel`. */
+export interface SidebarCondition {
+  readonly field: string
+  readonly op: "eq" | "hasLabel"
+  readonly value: unknown
+}
+/** A manually-pinned group member — a concept link or a single instance. */
+export type SidebarMember =
+  | { readonly kind: "concept"; readonly conceptId: Id }
+  | { readonly kind: "instance"; readonly conceptId: Id; readonly instanceId: Id }
+/** An auto-membership rule: matching concepts, or matching instances of a concept. */
+export type SidebarRule =
+  | { readonly target: "concepts"; readonly conditions: ReadonlyArray<SidebarCondition> }
+  | {
+      readonly target: "items"
+      readonly conceptId: Id
+      readonly conditions: ReadonlyArray<SidebarCondition>
+    }
+export type SidebarStaticItem = "overview" | "dashboards" | "automations" | "settings"
+export interface SidebarLink {
+  readonly id: string
+  readonly label: string
+  readonly icon?: string | null
+  /** `/instances/:id`, a concept route, or an external URL. */
+  readonly to: string
+}
+export type SidebarSource =
+  | { readonly kind: "static"; readonly items: ReadonlyArray<SidebarStaticItem> }
+  | {
+      readonly kind: "group"
+      readonly members: ReadonlyArray<SidebarMember>
+      readonly rules: ReadonlyArray<SidebarRule>
+    }
+  | {
+      readonly kind: "list"
+      readonly conceptId: Id
+      readonly conditions: ReadonlyArray<SidebarCondition>
+      readonly orderBy?: string | null
+      readonly limit?: number | null
+    }
+  | { readonly kind: "links"; readonly items: ReadonlyArray<SidebarLink> }
+export interface SidebarSection {
+  readonly id: string
+  readonly title: string | null
+  readonly icon: string | null
+  readonly collapsed?: boolean
+  readonly source: SidebarSource
+}
+export interface SidebarViewBody {
+  readonly sections: ReadonlyArray<SidebarSection>
+}
+export interface SidebarView {
+  readonly id: Id
+  readonly orgId: OrgId
+  /** null = org-shared (any member); non-null = personal to that user. */
+  readonly ownerId: string | null
+  readonly name: string
+  readonly icon: string | null
+  readonly position: number
+  readonly hidden: boolean
+  readonly body: SidebarViewBody
+  readonly createdAt: Date
+  readonly updatedAt: Date
 }
 
 export type SubjectKind = "instance" | "relation" | "concept" | "field" | "label"

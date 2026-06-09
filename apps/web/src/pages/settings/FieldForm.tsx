@@ -1,7 +1,14 @@
 import { Check, Plus, X } from "lucide-react"
 import { useMemo, useState } from "react"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { IconPicker } from "../../components/IconPicker"
-import { Button, Field, Input, Select } from "../../components/ui"
+import { Button, Field, Input } from "../../components/ui"
 import type { Concept, FieldConfig, Field as FieldDef, FieldKind } from "../../lib/api"
 
 const KINDS: ReadonlyArray<FieldKind> = [
@@ -127,7 +134,7 @@ export function FieldForm({
     })
 
   return (
-    <div className="space-y-4 rounded-md border border-gray-200 bg-gray-50 p-4">
+    <div className="space-y-4">
       <Field label="Name">
         <div className="flex items-center gap-2">
           <IconPicker value={icon} onChange={setIcon} />
@@ -137,27 +144,36 @@ export function FieldForm({
 
       <div className="grid grid-cols-2 gap-3">
         <Field label="Kind">
-          <Select
-            value={kind}
-            disabled={editing}
-            onChange={(e) => setKind(e.target.value as FieldKind)}
-          >
-            {KINDS.map((k) => (
-              <option key={k} value={k}>
-                {k}
-              </option>
-            ))}
+          <Select value={kind} disabled={editing} onValueChange={(v) => setKind(v as FieldKind)}>
+            <SelectTrigger className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {KINDS.map((k) => (
+                <SelectItem key={k} value={k}>
+                  {k}
+                </SelectItem>
+              ))}
+            </SelectContent>
           </Select>
         </Field>
         {FORMATS[kind] && (
           <Field label="Format (optional)">
-            <Select value={format} onChange={(e) => setFormat(e.target.value)}>
-              <option value="">none</option>
-              {FORMATS[kind]?.map((fmt) => (
-                <option key={fmt} value={fmt}>
-                  {fmt}
-                </option>
-              ))}
+            <Select
+              value={format || "__none"}
+              onValueChange={(v) => setFormat(v === "__none" ? "" : v)}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none">none</SelectItem>
+                {FORMATS[kind]?.map((fmt) => (
+                  <SelectItem key={fmt} value={fmt}>
+                    {fmt}
+                  </SelectItem>
+                ))}
+              </SelectContent>
             </Select>
           </Field>
         )}
@@ -215,22 +231,32 @@ export function FieldForm({
       {kind === "relation" && (
         <div className="grid grid-cols-2 gap-3">
           <Field label="Target concept">
-            <Select value={target} onChange={(e) => setTarget(e.target.value)}>
-              <option value="">—</option>
-              {concepts.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
+            <Select
+              value={target || "__none"}
+              onValueChange={(v) => setTarget(v === "__none" ? "" : v)}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none">—</SelectItem>
+                {concepts.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>
+                    {c.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
             </Select>
           </Field>
           <Field label="Cardinality">
-            <Select
-              value={cardinality}
-              onChange={(e) => setCardinality(e.target.value as "one" | "many")}
-            >
-              <option value="many">many</option>
-              <option value="one">one</option>
+            <Select value={cardinality} onValueChange={(v) => setCardinality(v as "one" | "many")}>
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="many">many</SelectItem>
+                <SelectItem value="one">one</SelectItem>
+              </SelectContent>
             </Select>
           </Field>
         </div>
@@ -241,10 +267,15 @@ export function FieldForm({
           <Field label="Computed kind">
             <Select
               value={computedKind}
-              onChange={(e) => setComputedKind(e.target.value as "decay" | "momentum")}
+              onValueChange={(v) => setComputedKind(v as "decay" | "momentum")}
             >
-              <option value="decay">decay</option>
-              <option value="momentum">momentum</option>
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="decay">decay</SelectItem>
+                <SelectItem value="momentum">momentum</SelectItem>
+              </SelectContent>
             </Select>
           </Field>
           {(["forRelation", "onRelation", "dateField"] as const).map((key) => (
@@ -266,7 +297,7 @@ export function FieldForm({
           {editing ? <Check size={15} /> : <Plus size={15} />}
           {pending ? "Saving…" : editing ? "Save field" : "Add field"}
         </Button>
-        <Button variant="ghost" onClick={onCancel}>
+        <Button variant="outline" onClick={onCancel}>
           <X size={15} />
           Cancel
         </Button>

@@ -3,7 +3,14 @@
   "compilerOptions": {
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "jsx": "react-jsx",
-    "types": ["@types/bun"]
+    "types": ["@types/bun"],
+    "paths": {
+      "@/*": ["./src/*"],
+      "@kingsmaker/engine": ["../../packages/engine/src/index.ts"],
+      "@kingsmaker/engine/*": ["../../packages/engine/src/*"],
+      "@kingsmaker/db": ["../../packages/db/src/index.ts"],
+      "@kingsmaker/db/*": ["../../packages/db/src/*"]
+    }
   },
   "include": [
     "src",

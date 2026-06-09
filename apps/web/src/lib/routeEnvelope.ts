@@ -26,6 +26,9 @@ export const KEY = {
   instances: (concept: string) => `instances:${concept}`,
   /** A single instance's detail view (its own data + connected instances). */
   detail: (id: string) => `detail:${id}`,
+  /** Sidebar Views — not driven by engine events (no envelope routes here);
+   *  refreshed on the caller's own mutations and by the safety-refetch sweep. */
+  views: "views",
 } as const
 
 /**

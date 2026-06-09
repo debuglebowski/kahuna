@@ -41,9 +41,23 @@ export const applyEvent = (
       new EventCorruption({ reason: "mutation event before create", eventId: event.id }),
     )
   }
+
+  // Un-archive: the only event legal on an already-archived instance. Handled
+  // before the guard below so an archived → restored → … lifecycle replays.
+  if (p._tag === "InstanceRestored") {
+    if (acc.deletedAt === null) {
+      return Either.left(
+        new EventCorruption({ reason: "restore on a live instance", eventId: event.id }),
+      )
+    }
+    return Either.right({ state: acc.state, version: acc.version + 1, deletedAt: null })
+  }
   if (acc.deletedAt !== null) {
     return Either.left(
-      new EventCorruption({ reason: "event after delete (no undelete in v1)", eventId: event.id }),
+      new EventCorruption({
+        reason: "event after archive (only restore is legal)",
+        eventId: event.id,
+      }),
     )
   }
 
@@ -54,7 +68,10 @@ export const applyEvent = (
         version: acc.version + 1,
         deletedAt: null,
       })
+    // `InstanceDeleted` is the legacy archive tag (kept for replay); new archives
+    // emit `InstanceArchived`. Both mark the instance archived identically.
     case "InstanceDeleted":
+    case "InstanceArchived":
       return Either.right({
         state: acc.state,
         version: acc.version + 1,

@@ -121,7 +121,7 @@ describe("concept configuration (settings)", () => {
       const fields = yield* FieldService
       const c = yield* concepts.create({ name: "Widget" })
       yield* fields.addField({ conceptId: c.id, name: "label", kind: "text" })
-      yield* concepts.remove(c.id)
+      yield* concepts.purge(c.id)
       const list = yield* concepts.list()
       expect(list.find((x) => x.id === c.id)).toBeUndefined()
       const remainingFields = yield* fields.listFields(c.id)
@@ -135,7 +135,7 @@ describe("concept configuration (settings)", () => {
       const instances = yield* InstanceService
       const c = yield* concepts.create({ name: "Account" })
       yield* instances.create({ conceptName: "Account", fields: {} })
-      const err = yield* concepts.remove(c.id).pipe(Effect.flip)
+      const err = yield* concepts.purge(c.id).pipe(Effect.flip)
       expect(err._tag).toBe("ConceptInUse")
       // Concept still present.
       const reread = yield* concepts.getById(c.id)
@@ -186,7 +186,7 @@ describe("concept configuration (settings)", () => {
       const fields = yield* FieldService
       const c = yield* concepts.create({ name: "Deal" })
       const f = yield* fields.addField({ conceptId: c.id, name: "blocker", kind: "text" })
-      yield* fields.remove(f.id)
+      yield* fields.archive(f.id)
       const remaining = yield* fields.listFields(c.id)
       expect(remaining.length).toBe(0)
     }).pipe(Effect.provide(testLayer(newOrgId()))),
@@ -198,8 +198,87 @@ describe("concept configuration (settings)", () => {
       const missing = randomUUID()
       const e1 = yield* fields.update({ id: missing, formula: null }).pipe(Effect.flip)
       expect(e1._tag).toBe("FieldNotFound")
-      const e2 = yield* fields.remove(missing).pipe(Effect.flip)
+      const e2 = yield* fields.archive(missing).pipe(Effect.flip)
       expect(e2._tag).toBe("FieldNotFound")
+    }).pipe(Effect.provide(testLayer(newOrgId()))),
+  )
+
+  it.effect("archiveConcept hides it from the live list; restore brings it back", () =>
+    Effect.gen(function* () {
+      const concepts = yield* ConceptService
+      const c = yield* concepts.create({ name: "Vendor" })
+      yield* concepts.archive(c.id)
+      const live = yield* concepts.list()
+      expect(live.find((x) => x.id === c.id)).toBeUndefined()
+      const all = yield* concepts.list({ includeArchived: true })
+      expect(all.find((x) => x.id === c.id)?.deletedAt).not.toBeNull()
+      // Its display name is free to reuse while archived (partial unique index).
+      const reused = yield* concepts.create({ name: "Vendor" })
+      expect(reused.id).not.toBe(c.id)
+      // Restoring now clashes with the live "Vendor" — refused until renamed.
+      const clash = yield* concepts.restore(c.id).pipe(Effect.flip)
+      expect(clash._tag).toBe("ConceptNameConflict")
+      yield* concepts.archive(reused.id)
+      const restored = yield* concepts.restore(c.id)
+      expect(restored.deletedAt).toBeNull()
+      const liveAgain = yield* concepts.list()
+      expect(liveAgain.find((x) => x.id === c.id)).toBeDefined()
+    }).pipe(Effect.provide(testLayer(newOrgId()))),
+  )
+
+  it.effect("purge is refused while an archived instance still references the concept", () =>
+    Effect.gen(function* () {
+      const concepts = yield* ConceptService
+      const instances = yield* InstanceService
+      const c = yield* concepts.create({ name: "Ticket" })
+      const inst = yield* instances.create({ conceptId: c.id, fields: {} })
+      yield* instances.archive({ instanceId: inst.id, expectedVersion: inst.version })
+      // Even though the instance is archived (not "live"), it still pins the concept.
+      const err = yield* concepts.purge(c.id).pipe(Effect.flip)
+      expect(err._tag).toBe("ConceptInUse")
+    }).pipe(Effect.provide(testLayer(newOrgId()))),
+  )
+
+  it.effect("archiveField hides it from listFields; restore round-trips; purge is permanent", () =>
+    Effect.gen(function* () {
+      const concepts = yield* ConceptService
+      const fields = yield* FieldService
+      const c = yield* concepts.create({ name: "Deal" })
+      const f = yield* fields.addField({ conceptId: c.id, name: "note", kind: "text" })
+
+      yield* fields.archive(f.id)
+      expect((yield* fields.listFields(c.id)).length).toBe(0)
+      const withArchived = yield* fields.listFields(c.id, { includeArchived: true })
+      expect(withArchived.find((x) => x.id === f.id)?.deletedAt).not.toBeNull()
+
+      const restored = yield* fields.restore(f.id)
+      expect(restored.deletedAt).toBeNull()
+      expect((yield* fields.listFields(c.id)).length).toBe(1)
+
+      yield* fields.purge(f.id)
+      expect((yield* fields.listFields(c.id, { includeArchived: true })).length).toBe(0)
+    }).pipe(Effect.provide(testLayer(newOrgId()))),
+  )
+
+  it.effect("purge field is refused while a relation edge references it (FieldInUse)", () =>
+    Effect.gen(function* () {
+      const concepts = yield* ConceptService
+      const fields = yield* FieldService
+      const instances = yield* InstanceService
+      const relations = yield* RelationService
+      const account = yield* concepts.create({ name: "Account" })
+      const deal = yield* concepts.create({ name: "Deal" })
+      const rel = yield* fields.addField({
+        conceptId: deal.id,
+        name: "account",
+        kind: "relation",
+        config: { target: account.id, cardinality: "one" },
+      })
+      const acc = yield* instances.create({ conceptId: account.id, fields: {} })
+      const d = yield* instances.create({ conceptId: deal.id, fields: {} })
+      yield* relations.create({ fieldId: rel.id, fromId: d.id, toId: acc.id })
+      const err = yield* fields.purge(rel.id).pipe(Effect.flip)
+      expect(err._tag).toBe("FieldInUse")
     }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
 })

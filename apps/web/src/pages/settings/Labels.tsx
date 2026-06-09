@@ -1,11 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Check, Pencil, Plus, Trash2, X } from "lucide-react"
+import { Archive, ArchiveRestore, Check, Pencil, Plus, Trash2, X } from "lucide-react"
 import { useState } from "react"
 import { useOutletContext } from "react-router-dom"
 import {
   Button,
   Card,
   CardHeader,
+  ConfirmDialog,
   IconButton,
   Input,
   LabelChip,
@@ -14,6 +15,14 @@ import {
 } from "../../components/ui"
 import { api, type Label } from "../../lib/api"
 import { Feedback } from "./parts"
+
+/** Map engine errors to a short message for the label dialogs. */
+function labelMsg(e: unknown): string {
+  const err = e as { code?: string; message?: string }
+  if (err?.message?.includes("LabelNameConflict")) return "A label with that name already exists."
+  if (err?.code === "FORBIDDEN" || err?.message?.includes("Admin only")) return "Admins only."
+  return err?.message ?? "Something went wrong."
+}
 
 const DEFAULT_COLOR = "#6b7280" // gray-500
 
@@ -96,7 +105,7 @@ function LabelModal({
             <Check size={15} />
             {save.isPending ? "Saving…" : initial ? "Save" : "Create"}
           </Button>
-          <Button variant="ghost" onClick={onClose}>
+          <Button variant="outline" onClick={onClose}>
             <X size={15} />
             Cancel
           </Button>
@@ -107,19 +116,50 @@ function LabelModal({
   )
 }
 
+/** Which destructive confirm dialog is open for a label (null = none). */
+type LabelDialog = { kind: "archive" | "delete"; label: Label } | null
+
 export function Labels() {
   const { admin } = useOutletContext<{ admin: boolean }>()
   const qc = useQueryClient()
-  const labels = useQuery({ queryKey: ["labels"], queryFn: () => api.listLabels() })
+  // Distinct key from the live ["labels"] vocabulary read elsewhere — the editor
+  // needs archived too. Invalidating ["labels"] (prefix) refreshes both.
+  const labels = useQuery({
+    queryKey: ["labels", "withArchived"],
+    queryFn: () => api.listLabels({ includeArchived: true }),
+  })
   const [creating, setCreating] = useState(false)
   const [editing, setEditing] = useState<Label | null>(null)
+  const [showArchived, setShowArchived] = useState(false)
+  const [dialog, setDialog] = useState<LabelDialog>(null)
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["labels"] })
+
+  const archive = useMutation({
+    mutationFn: (id: string) => api.archiveLabel(id),
+    onSuccess: () => {
+      setDialog(null)
+      invalidate()
+    },
+  })
+  const restore = useMutation({
+    mutationFn: (id: string) => api.restoreLabel(id),
+    onSuccess: invalidate,
+  })
+  const del = useMutation({
+    mutationFn: (id: string) => api.deleteLabel(id),
+    onSuccess: () => {
+      setDialog(null)
+      invalidate()
+    },
+  })
 
   if (labels.isPending) return <Spinner />
   if (labels.error) return <p className="text-sm text-red-600">{(labels.error as Error).message}</p>
 
-  const all = [...(labels.data ?? [])].sort((a, b) => a.name.localeCompare(b.name))
+  const sorted = [...(labels.data ?? [])].sort((a, b) => a.name.localeCompare(b.name))
+  const live = sorted.filter((l) => !l.deletedAt)
+  const archived = sorted.filter((l) => l.deletedAt)
 
   return (
     <div className="space-y-3">
@@ -128,12 +168,23 @@ export function Labels() {
           A shared vocabulary of labels — apply them to a concept (in Concepts) or to individual
           items{admin ? "" : "; managing the vocabulary is admin-only"}.
         </p>
-        {admin && (
-          <Button className="shrink-0 whitespace-nowrap" onClick={() => setCreating(true)}>
-            <Plus size={15} />
-            New label
-          </Button>
-        )}
+        <div className="flex items-center gap-3">
+          {admin && archived.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowArchived((v) => !v)}
+              className="whitespace-nowrap text-xs text-gray-500 hover:text-gray-800"
+            >
+              {showArchived ? "Hide" : "Show"} archived ({archived.length})
+            </button>
+          )}
+          {admin && (
+            <Button className="shrink-0 whitespace-nowrap" onClick={() => setCreating(true)}>
+              <Plus size={15} />
+              New label
+            </Button>
+          )}
+        </div>
       </div>
 
       {creating && <LabelModal onClose={() => setCreating(false)} onSaved={invalidate} />}
@@ -147,71 +198,138 @@ export function Labels() {
       )}
 
       <Card>
-        <CardHeader title={`Labels (${all.length})`} />
-        {all.length === 0 ? (
+        <CardHeader title={`Labels (${live.length})`} />
+        {live.length === 0 ? (
           <p className="p-4 text-sm text-gray-400">No labels yet.</p>
         ) : (
           <ul className="divide-y divide-gray-100">
-            {all.map((l) => (
+            {live.map((l) => (
               <LabelRow
                 key={l.id}
                 label={l}
                 admin={admin}
                 onEdit={() => setEditing(l)}
-                onChanged={invalidate}
+                onArchive={() => setDialog({ kind: "archive", label: l })}
+                onDelete={() => setDialog({ kind: "delete", label: l })}
               />
             ))}
           </ul>
         )}
       </Card>
+
+      {showArchived && archived.length > 0 && (
+        <Card>
+          <CardHeader title={`Archived (${archived.length})`} />
+          <ul className="divide-y divide-gray-100">
+            {archived.map((l) => (
+              <LabelRow
+                key={l.id}
+                label={l}
+                admin={admin}
+                archived
+                restorePending={restore.isPending}
+                onRestore={() => restore.mutate(l.id)}
+                onDelete={() => setDialog({ kind: "delete", label: l })}
+              />
+            ))}
+          </ul>
+        </Card>
+      )}
+      {restore.error && <p className="text-sm text-red-600">{labelMsg(restore.error)}</p>}
+
+      {dialog?.kind === "archive" && (
+        <ConfirmDialog
+          title="Archive label"
+          message={
+            <>
+              Archive <strong>{dialog.label.name}</strong>? It drops out of pickers and chips, but
+              items keep it — you can restore it anytime.
+            </>
+          }
+          confirmLabel="Archive"
+          pending={archive.isPending}
+          error={archive.error ? labelMsg(archive.error) : undefined}
+          onConfirm={() => archive.mutate(dialog.label.id)}
+          onCancel={() => setDialog(null)}
+        />
+      )}
+      {dialog?.kind === "delete" && (
+        <ConfirmDialog
+          title="Delete label"
+          message={
+            <>
+              Permanently delete <strong>{dialog.label.name}</strong>? This can't be undone; it's
+              removed from every concept and item that used it.
+            </>
+          }
+          confirmLabel="Delete"
+          confirmVariant="danger"
+          secondaryLabel={dialog.label.deletedAt ? undefined : "Archive instead"}
+          onSecondary={dialog.label.deletedAt ? undefined : () => archive.mutate(dialog.label.id)}
+          pending={del.isPending || archive.isPending}
+          error={del.error ? labelMsg(del.error) : undefined}
+          onConfirm={() => del.mutate(dialog.label.id)}
+          onCancel={() => setDialog(null)}
+        />
+      )}
     </div>
   )
 }
 
-/** One vocabulary row: chip + color, with edit (opens the modal) + delete (admin). */
+/** One vocabulary row: chip + color. Live rows offer edit/archive/delete;
+ *  archived rows offer restore/delete. */
 function LabelRow({
   label,
   admin,
+  archived = false,
+  restorePending = false,
   onEdit,
-  onChanged,
+  onArchive,
+  onRestore,
+  onDelete,
 }: {
   label: Label
   admin: boolean
-  onEdit: () => void
-  onChanged: () => void
+  archived?: boolean
+  restorePending?: boolean
+  onEdit?: () => void
+  onArchive?: () => void
+  onRestore?: () => void
+  onDelete?: () => void
 }) {
-  const remove = useMutation({
-    mutationFn: () => api.deleteLabel(label.id),
-    onSuccess: onChanged,
-  })
-
   return (
-    <li className="flex items-center gap-3 px-4 py-3">
+    <li className={`flex items-center gap-3 px-4 py-3${archived ? " opacity-60" : ""}`}>
       <LabelChip color={label.color} primary={label.primary}>
         {label.name}
       </LabelChip>
       <span className="flex-1 truncate text-xs text-gray-400">{label.color ?? "no color"}</span>
-      {admin && (
-        <>
-          <IconButton aria-label={`Edit ${label.name}`} onClick={onEdit}>
-            <Pencil size={15} />
-          </IconButton>
-          <IconButton
-            variant="danger"
-            aria-label={`Delete ${label.name}`}
-            disabled={remove.isPending}
-            onClick={() => {
-              if (confirm(`Delete label "${label.name}"? It will be removed from pickers.`))
-                remove.mutate()
-            }}
-          >
-            <Trash2 size={15} />
-          </IconButton>
-        </>
-      )}
-      {remove.error && (
-        <span className="text-xs text-red-600">{(remove.error as Error).message}</span>
-      )}
+      {admin &&
+        (archived ? (
+          <>
+            <IconButton
+              aria-label={`Restore ${label.name}`}
+              disabled={restorePending}
+              onClick={onRestore}
+            >
+              <ArchiveRestore size={15} />
+            </IconButton>
+            <IconButton variant="danger" aria-label={`Delete ${label.name}`} onClick={onDelete}>
+              <Trash2 size={15} />
+            </IconButton>
+          </>
+        ) : (
+          <>
+            <IconButton aria-label={`Edit ${label.name}`} onClick={onEdit}>
+              <Pencil size={15} />
+            </IconButton>
+            <IconButton aria-label={`Archive ${label.name}`} onClick={onArchive}>
+              <Archive size={15} />
+            </IconButton>
+            <IconButton variant="danger" aria-label={`Delete ${label.name}`} onClick={onDelete}>
+              <Trash2 size={15} />
+            </IconButton>
+          </>
+        ))}
     </li>
   )
 }

@@ -1,7 +1,12 @@
 import { FetchHttpClient } from "@effect/platform"
 import { RpcClient, RpcSerialization } from "@effect/rpc"
 import { Context, Effect, Layer, ManagedRuntime } from "effect"
-import { type FieldConfig, type FieldKind, KingsmakerRpcs } from "../../rpc/contract"
+import {
+  type FieldConfig,
+  type FieldKind,
+  KingsmakerRpcs,
+  type SidebarViewBody,
+} from "../../rpc/contract"
 
 export type {
   Attachment,
@@ -17,6 +22,13 @@ export type {
   InstanceDetail,
   Label,
   RelatedInstance,
+  SidebarCondition,
+  SidebarMember,
+  SidebarRule,
+  SidebarSection,
+  SidebarSource,
+  SidebarView,
+  SidebarViewBody,
 } from "../../rpc/contract"
 
 /** Computed-field shapes (carried inside an instance's `state`). */
@@ -52,7 +64,8 @@ type Fields = Record<string, unknown>
 
 /** Typed, end-to-end client — replaces the old hand-written fetch wrappers. */
 export const api = {
-  listConcepts: () => call((c) => c.listConcepts()),
+  listConcepts: (opts?: { includeArchived?: boolean }) =>
+    call((c) => c.listConcepts({ includeArchived: opts?.includeArchived })),
   createConcept: (name: string) => call((c) => c.createConcept({ name })),
   updateConcept: (
     id: string,
@@ -76,16 +89,22 @@ export const api = {
         defaultLabelIds: patch.defaultLabelIds,
       }),
     ),
+  archiveConcept: (id: string) => call((c) => c.archiveConcept({ id })),
+  restoreConcept: (id: string) => call((c) => c.restoreConcept({ id })),
   deleteConcept: (id: string) => call((c) => c.deleteConcept({ id })),
-  listLabels: () => call((c) => c.listLabels()),
+  listLabels: (opts?: { includeArchived?: boolean }) =>
+    call((c) => c.listLabels({ includeArchived: opts?.includeArchived })),
   createLabel: (name: string, color?: string | null, primary?: boolean) =>
     call((c) => c.createLabel({ name, color, primary })),
   renameLabel: (id: string, patch: { name?: string; color?: string | null; primary?: boolean }) =>
     call((c) =>
       c.renameLabel({ id, name: patch.name, color: patch.color, primary: patch.primary }),
     ),
+  archiveLabel: (id: string) => call((c) => c.archiveLabel({ id })),
+  restoreLabel: (id: string) => call((c) => c.restoreLabel({ id })),
   deleteLabel: (id: string) => call((c) => c.deleteLabel({ id })),
-  listFields: (conceptId: string) => call((c) => c.listFields({ conceptId })),
+  listFields: (conceptId: string, opts?: { includeArchived?: boolean }) =>
+    call((c) => c.listFields({ conceptId, includeArchived: opts?.includeArchived })),
   getConceptGraph: () => call((c) => c.getConceptGraph()),
   addField: (input: {
     conceptId: string
@@ -102,8 +121,11 @@ export const api = {
     formula?: string | null
     icon?: string | null
   }) => call((c) => c.updateField(input)),
+  archiveField: (id: string) => call((c) => c.archiveField({ id })),
+  restoreField: (id: string) => call((c) => c.restoreField({ id })),
   deleteField: (id: string) => call((c) => c.deleteField({ id })),
-  listInstances: (conceptId: string) => call((c) => c.listInstances({ conceptId })),
+  listInstances: (conceptId: string, opts?: { includeArchived?: boolean }) =>
+    call((c) => c.listInstances({ conceptId, includeArchived: opts?.includeArchived })),
   getInstance: (id: string) => call((c) => c.getInstance({ id })),
   getChanged: () => call((c) => c.getChanged()),
   createInstance: (conceptId: string, fields: Fields) =>
@@ -112,4 +134,27 @@ export const api = {
     call((c) => c.updateInstance({ id, expectedVersion, patch })),
   transitionInstance: (id: string, expectedVersion: number, field: string, to: string) =>
     call((c) => c.transitionInstance({ id, expectedVersion, field, to })),
+  archiveInstance: (id: string, expectedVersion: number) =>
+    call((c) => c.archiveInstance({ id, expectedVersion })),
+  restoreInstance: (id: string, expectedVersion: number) =>
+    call((c) => c.restoreInstance({ id, expectedVersion })),
+  deleteInstance: (id: string) => call((c) => c.deleteInstance({ id })),
+  listViews: () => call((c) => c.listViews()),
+  createView: (input: {
+    name: string
+    icon?: string | null
+    scope: "personal" | "org"
+    body: SidebarViewBody
+  }) => call((c) => c.createView(input)),
+  updateView: (input: {
+    id: string
+    name?: string
+    icon?: string | null
+    hidden?: boolean
+    scope?: "personal" | "org"
+    body?: SidebarViewBody
+  }) => call((c) => c.updateView(input)),
+  deleteView: (id: string) => call((c) => c.deleteView({ id })),
+  reorderViews: (orders: ReadonlyArray<{ id: string; position: number }>) =>
+    call((c) => c.reorderViews({ orders })),
 }

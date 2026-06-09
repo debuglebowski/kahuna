@@ -10,6 +10,8 @@ import type {
   InstanceState,
   Label,
   Relation,
+  SidebarView,
+  SidebarViewBody,
   SubjectKind,
 } from "../domain/types"
 
@@ -25,6 +27,7 @@ export interface ConceptRow {
   readonly static_label_ids: unknown
   readonly default_label_ids: unknown
   readonly created_at: Date
+  readonly deleted_at: Date | null
 }
 export interface LabelRow {
   readonly id: string
@@ -94,6 +97,7 @@ export const toConcept = (r: ConceptRow): Concept => ({
   staticLabelIds: toIdArray(r.static_label_ids),
   defaultLabelIds: toIdArray(r.default_label_ids),
   createdAt: r.created_at,
+  deletedAt: r.deleted_at,
 })
 
 export const toLabel = (r: LabelRow): Label => ({
@@ -159,6 +163,38 @@ export const toAttachment = (r: AttachmentRow): Attachment => ({
   mimeType: r.mime_type,
   sizeBytes: r.size_bytes == null ? null : Number(r.size_bytes),
   createdAt: r.created_at,
+})
+
+export interface SidebarViewRow {
+  readonly id: string
+  readonly org_id: string
+  readonly owner_id: string | null
+  readonly name: string
+  readonly icon: string | null
+  readonly position: number | string
+  readonly hidden: boolean
+  readonly body: unknown
+  readonly created_at: Date
+  readonly updated_at: Date
+}
+
+/** Coerce a jsonb body into a well-formed view body (defensive against garbage). */
+const toViewBody = (raw: unknown): SidebarViewBody =>
+  raw && typeof raw === "object" && Array.isArray((raw as { sections?: unknown }).sections)
+    ? (raw as SidebarViewBody)
+    : { sections: [] }
+
+export const toSidebarView = (r: SidebarViewRow): SidebarView => ({
+  id: r.id,
+  orgId: r.org_id,
+  ownerId: r.owner_id,
+  name: r.name,
+  icon: r.icon,
+  position: Number(r.position),
+  hidden: r.hidden,
+  body: toViewBody(r.body),
+  createdAt: r.created_at,
+  updatedAt: r.updated_at,
 })
 
 export const toEvent = (r: EventRow): EngineEvent => ({

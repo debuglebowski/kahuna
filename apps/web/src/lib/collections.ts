@@ -1,7 +1,7 @@
 import { createCollection } from "@tanstack/db"
 import { queryCollectionOptions } from "@tanstack/query-db-collection"
 import { useEffect } from "react"
-import type { Concept, FeedItem, Instance, InstanceDetail } from "../../rpc/contract"
+import type { Concept, FeedItem, Instance, InstanceDetail, SidebarView } from "../../rpc/contract"
 import { api } from "./api"
 import { queryClient } from "./queryClient"
 
@@ -60,6 +60,15 @@ export const changedCollection = createCollection(
     queryFn: async (): Promise<FeedItem[]> => [...(await api.getChanged())],
     queryClient,
     getKey: (f: FeedItem) => f.id,
+  }),
+)
+
+export const sidebarViewsCollection = createCollection(
+  queryCollectionOptions({
+    queryKey: ["live", "views"],
+    queryFn: async (): Promise<SidebarView[]> => [...(await api.listViews())],
+    queryClient,
+    getKey: (v: SidebarView) => v.id,
   }),
 )
 

@@ -27,13 +27,16 @@ export class LabelService extends Effect.Service<LabelService>()("engine/LabelSe
         return toLabel(row)
       })
 
-    /** Live (non-deleted) labels, ordered by name — the vocabulary pickers see. */
-    const list = () =>
+    /** Labels ordered by name. Archived (deleted_at set) are excluded unless
+     *  `includeArchived` — the pickers/resolve keep the live-only default; only
+     *  the settings vocabulary editor passes it to render the archive. */
+    const list = (opts: { readonly includeArchived?: boolean } = {}) =>
       Effect.gen(function* () {
         const { orgId } = yield* OrgContext
+        const liveOnly = opts.includeArchived ? sql`` : sql` AND deleted_at IS NULL`
         const rows = yield* sql<LabelRow>`
           SELECT * FROM labels
-          WHERE org_id = ${orgId} AND deleted_at IS NULL
+          WHERE org_id = ${orgId}${liveOnly}
           ORDER BY name ASC`
         return rows.map(toLabel)
       })
@@ -145,14 +148,58 @@ export class LabelService extends Effect.Service<LabelService>()("engine/LabelSe
         }),
       )
 
-    /** Soft-delete: the id stays resolvable, but the label drops out of pickers
-     *  and live displays (stale ids on instances/concepts are filtered on read). */
-    const remove = (id: string) =>
+    /** Archive (soft, restorable): the id stays resolvable, but the label drops
+     *  out of pickers and live displays (stale ids are filtered on read). */
+    const archive = (id: string) =>
+      sql.withTransaction(
+        Effect.gen(function* () {
+          const { orgId } = yield* OrgContext
+          yield* getById(id) // 404 if missing / cross-org
+          const rows = yield* sql<LabelRow>`
+            UPDATE labels SET deleted_at = COALESCE(deleted_at, now())
+            WHERE org_id = ${orgId} AND id = ${id} RETURNING *`
+          yield* events.append({
+            subjectKind: "label",
+            subjectId: id,
+            eventType: "LabelArchived",
+            payload: { _tag: "LabelArchived" },
+          })
+          return toLabel(rows[0]!)
+        }),
+      )
+
+    /** Restore an archived label. Fails LabelNameConflict if a live label took its
+     *  name meanwhile (the name index is partial). */
+    const restore = (id: string) =>
       sql.withTransaction(
         Effect.gen(function* () {
           const { orgId } = yield* OrgContext
           const label = yield* getById(id)
-          yield* sql`UPDATE labels SET deleted_at = now() WHERE org_id = ${orgId} AND id = ${id}`
+          const clash = yield* sql<{ readonly id: string }>`
+            SELECT id FROM labels
+            WHERE org_id = ${orgId} AND name = ${label.name} AND deleted_at IS NULL AND id <> ${id}
+            LIMIT 1`
+          if (clash[0]) return yield* Effect.fail(new LabelNameConflict({ name: label.name }))
+          const rows = yield* sql<LabelRow>`
+            UPDATE labels SET deleted_at = NULL WHERE org_id = ${orgId} AND id = ${id} RETURNING *`
+          yield* events.append({
+            subjectKind: "label",
+            subjectId: id,
+            eventType: "LabelRestored",
+            payload: { _tag: "LabelRestored" },
+          })
+          return toLabel(rows[0]!)
+        }),
+      )
+
+    /** Permanently delete a label. Ids it ever owned on concepts/instances become
+     *  orphaned but harmless (read-time resolve drops anything not live). */
+    const purge = (id: string) =>
+      sql.withTransaction(
+        Effect.gen(function* () {
+          const { orgId } = yield* OrgContext
+          const label = yield* getById(id)
+          yield* sql`DELETE FROM labels WHERE org_id = ${orgId} AND id = ${id}`
           yield* events.append({
             subjectKind: "label",
             subjectId: id,
@@ -163,7 +210,17 @@ export class LabelService extends Effect.Service<LabelService>()("engine/LabelSe
         }),
       )
 
-    return { list, resolve, existingIds, getById, create, rename, remove } as const
+    return {
+      list,
+      resolve,
+      existingIds,
+      getById,
+      create,
+      rename,
+      archive,
+      restore,
+      purge,
+    } as const
   }),
   dependencies: [EventStore.Default],
 }) {}

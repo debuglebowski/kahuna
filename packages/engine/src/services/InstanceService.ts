@@ -11,6 +11,7 @@ import {
 import {
   FieldValidationError,
   IllegalTransition,
+  InstanceInUse,
   InstanceNotFound,
   VersionConflict,
 } from "../errors"
@@ -337,7 +338,9 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
         patch: { [input.field]: input.to },
       })
 
-    const softDelete = (input: { readonly instanceId: string; readonly expectedVersion: number }) =>
+    /** Archive an instance (soft, restorable) — event-sourced like every write:
+     *  appends `InstanceArchived`, which the reducer folds to a set `deletedAt`. */
+    const archive = (input: { readonly instanceId: string; readonly expectedVersion: number }) =>
       sql.withTransaction(
         Effect.gen(function* () {
           const { orgId } = yield* OrgContext
@@ -362,8 +365,8 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
           const event = yield* events.append({
             subjectKind: "instance",
             subjectId: current.id,
-            eventType: "InstanceDeleted",
-            payload: { _tag: "InstanceDeleted" },
+            eventType: "InstanceArchived",
+            payload: { _tag: "InstanceArchived" },
             conceptName: concept.name,
           })
           const folded = applyEvent(
@@ -375,6 +378,71 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
             UPDATE instances SET version = ${folded.right.version}, deleted_at = ${folded.right.deletedAt}
             WHERE id = ${current.id} AND org_id = ${orgId} RETURNING *`
           return toInstance(updated[0]!)
+        }),
+      )
+
+    /** Restore an archived instance — appends `InstanceRestored`, which the
+     *  reducer folds to clear `deletedAt`. Refuses if not currently archived. */
+    const restore = (input: { readonly instanceId: string; readonly expectedVersion: number }) =>
+      sql.withTransaction(
+        Effect.gen(function* () {
+          const { orgId } = yield* OrgContext
+          const rows = yield* sql<InstanceRow>`
+            SELECT * FROM instances
+            WHERE id = ${input.instanceId} AND org_id = ${orgId} AND deleted_at IS NOT NULL
+            FOR UPDATE`
+          const row = rows[0]
+          if (!row)
+            return yield* Effect.fail(new InstanceNotFound({ instanceId: input.instanceId }))
+          const current = toInstance(row)
+          if (current.version !== input.expectedVersion) {
+            return yield* Effect.fail(
+              new VersionConflict({
+                instanceId: current.id,
+                expected: input.expectedVersion,
+                actual: current.version,
+              }),
+            )
+          }
+          const concept = yield* concepts.getById(current.conceptId)
+          const event = yield* events.append({
+            subjectKind: "instance",
+            subjectId: current.id,
+            eventType: "InstanceRestored",
+            payload: { _tag: "InstanceRestored" },
+            conceptName: concept.name,
+          })
+          const folded = applyEvent(
+            { state: current.state, version: current.version, deletedAt: current.deletedAt },
+            event,
+          )
+          if (Either.isLeft(folded)) return yield* Effect.fail(folded.left)
+          const updated = yield* sql<InstanceRow>`
+            UPDATE instances SET version = ${folded.right.version}, deleted_at = ${folded.right.deletedAt}
+            WHERE id = ${current.id} AND org_id = ${orgId} RETURNING *`
+          return toInstance(updated[0]!)
+        }),
+      )
+
+    /** Permanently delete an instance and its entire event stream + attachments.
+     *  Refused while relation edges still reference it (archive instead). This is
+     *  out-of-band of the event log (the stream is destroyed), so it emits nothing. */
+    const purge = (input: { readonly instanceId: string }) =>
+      sql.withTransaction(
+        Effect.gen(function* () {
+          const { orgId } = yield* OrgContext
+          const instance = yield* loadAny(input.instanceId)
+          const counts = yield* sql<{ readonly count: number | string }>`
+            SELECT COUNT(*)::int AS count FROM relations
+            WHERE org_id = ${orgId} AND (from_id = ${instance.id} OR to_id = ${instance.id})`
+          const relationCount = Number(counts[0]?.count ?? 0)
+          if (relationCount > 0) {
+            return yield* Effect.fail(new InstanceInUse({ instanceId: instance.id, relationCount }))
+          }
+          yield* sql`DELETE FROM attachments WHERE org_id = ${orgId} AND instance_id = ${instance.id}`
+          yield* sql`DELETE FROM events WHERE org_id = ${orgId} AND subject_kind = 'instance' AND subject_id = ${instance.id}`
+          yield* sql`DELETE FROM instances WHERE org_id = ${orgId} AND id = ${instance.id}`
+          return instance
         }),
       )
 
@@ -494,7 +562,9 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
       create,
       update,
       transition,
-      softDelete,
+      archive,
+      restore,
+      purge,
       get,
       getAsOf,
       rebuild,

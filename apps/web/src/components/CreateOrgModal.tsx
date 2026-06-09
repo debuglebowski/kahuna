@@ -44,7 +44,7 @@ export function CreateOrgModal({ onClose }: { onClose: () => void }) {
         </Field>
         <Feedback error={create.error} />
         <div className="flex justify-end gap-2">
-          <Button type="button" variant="ghost" onClick={onClose}>
+          <Button type="button" variant="outline" onClick={onClose}>
             Cancel
           </Button>
           <Button type="submit" disabled={create.isPending || !name.trim()}>

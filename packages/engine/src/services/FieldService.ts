@@ -1,7 +1,7 @@
 import { PgClient } from "@effect/sql-pg"
 import { Effect } from "effect"
 import type { Field, FieldConfig, FieldKind } from "../domain/types"
-import { FieldConfigInvalid, FieldNameConflict, FieldNotFound } from "../errors"
+import { FieldConfigInvalid, FieldInUse, FieldNameConflict, FieldNotFound } from "../errors"
 import { EventStore } from "./EventStore"
 import { OrgContext } from "./OrgContext"
 import { type FieldRow, toField } from "./rows"
@@ -60,14 +60,19 @@ export class FieldService extends Effect.Service<FieldService>()("engine/FieldSe
     const sql = yield* PgClient.PgClient
     const events = yield* EventStore
 
+    /** A concept's field defs, ordered by name. Archived (deleted_at set) are
+     *  excluded unless `includeArchived` — only the settings editor passes it; all
+     *  read/validation paths keep the live-only default. */
     const listFields = (
       conceptId: string,
+      opts: { readonly includeArchived?: boolean } = {},
     ): Effect.Effect<ReadonlyArray<Field>, never, OrgContext> =>
       Effect.gen(function* () {
         const { orgId } = yield* OrgContext
+        const liveOnly = opts.includeArchived ? sql`` : sql` AND deleted_at IS NULL`
         const rows = yield* sql<FieldRow>`
           SELECT * FROM fields
-          WHERE org_id = ${orgId} AND concept_id = ${conceptId} AND deleted_at IS NULL
+          WHERE org_id = ${orgId} AND concept_id = ${conceptId}${liveOnly}
           ORDER BY name ASC`
         return rows.map(toField)
       }).pipe(Effect.orDie)
@@ -179,17 +184,73 @@ export class FieldService extends Effect.Service<FieldService>()("engine/FieldSe
       )
 
     /**
-     * Soft-delete a field def. The row is retained (deleted_at set) so its id
-     * stays resolvable to a name for any orphaned `state` keys / historical
-     * events / relation edges that still reference it. Existing instance.state
-     * keeps the orphaned key harmlessly (field validation is write-time only).
+     * Archive a field def (soft, restorable). The row is retained (deleted_at set)
+     * so its id stays resolvable to a name for any orphaned `state` keys /
+     * historical events / relation edges that still reference it. Existing
+     * instance.state keeps the orphaned key harmlessly (validation is write-time).
      */
-    const remove = (id: string) =>
+    const archive = (id: string) =>
       sql.withTransaction(
         Effect.gen(function* () {
           const { orgId } = yield* OrgContext
           const field = yield* getById(id)
-          yield* sql`UPDATE fields SET deleted_at = now() WHERE org_id = ${orgId} AND id = ${id}`
+          const rows = yield* sql<FieldRow>`
+            UPDATE fields SET deleted_at = COALESCE(deleted_at, now())
+            WHERE org_id = ${orgId} AND id = ${id} RETURNING *`
+          yield* events.append({
+            subjectKind: "field",
+            subjectId: id,
+            eventType: "FieldArchived",
+            payload: { _tag: "FieldArchived", conceptId: field.conceptId, name: field.name },
+          })
+          return toField(rows[0]!)
+        }),
+      )
+
+    /** Restore an archived field. Fails FieldNameConflict if a live field on the
+     *  same concept took its name meanwhile (the name index is partial). */
+    const restore = (id: string) =>
+      sql.withTransaction(
+        Effect.gen(function* () {
+          const { orgId } = yield* OrgContext
+          const field = yield* getById(id)
+          const clash = yield* sql<{ readonly id: string }>`
+            SELECT id FROM fields
+            WHERE concept_id = ${field.conceptId} AND name = ${field.name}
+              AND deleted_at IS NULL AND id <> ${id} LIMIT 1`
+          if (clash[0]) {
+            return yield* Effect.fail(
+              new FieldNameConflict({ conceptId: field.conceptId, name: field.name }),
+            )
+          }
+          const rows = yield* sql<FieldRow>`
+            UPDATE fields SET deleted_at = NULL WHERE org_id = ${orgId} AND id = ${id} RETURNING *`
+          yield* events.append({
+            subjectKind: "field",
+            subjectId: id,
+            eventType: "FieldRestored",
+            payload: { _tag: "FieldRestored", conceptId: field.conceptId, name: field.name },
+          })
+          return toField(rows[0]!)
+        }),
+      )
+
+    /** Permanently delete a field def. Refused while relation edges still
+     *  reference it (the FK would block it anyway) — archive instead. Orphaned
+     *  instance.state keys for a purged field become unresolvable (raw id shows). */
+    const purge = (id: string) =>
+      sql.withTransaction(
+        Effect.gen(function* () {
+          const { orgId } = yield* OrgContext
+          const field = yield* getById(id)
+          const counts = yield* sql<{ readonly count: number | string }>`
+            SELECT COUNT(*)::int AS count FROM relations
+            WHERE org_id = ${orgId} AND field_id = ${id}`
+          const relationCount = Number(counts[0]?.count ?? 0)
+          if (relationCount > 0) {
+            return yield* Effect.fail(new FieldInUse({ field: field.name, relationCount }))
+          }
+          yield* sql`DELETE FROM fields WHERE org_id = ${orgId} AND id = ${id}`
           yield* events.append({
             subjectKind: "field",
             subjectId: id,
@@ -200,7 +261,7 @@ export class FieldService extends Effect.Service<FieldService>()("engine/FieldSe
         }),
       )
 
-    return { addField, listFields, getById, update, remove } as const
+    return { addField, listFields, getById, update, archive, restore, purge } as const
   }),
   dependencies: [EventStore.Default],
 }) {}

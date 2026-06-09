@@ -1,102 +1,101 @@
 import { useLiveQuery } from "@tanstack/react-db"
 import { useMutation } from "@tanstack/react-query"
-import {
-  Home,
-  LayoutDashboard,
-  LogOut,
-  type LucideIcon,
-  PanelLeftClose,
-  PanelLeftOpen,
-  Settings,
-  Workflow,
-} from "lucide-react"
-import { type ReactNode, useState } from "react"
+import { Check, LogOut, PanelLeftClose, PanelLeftOpen, Pencil, Settings2, X } from "lucide-react"
+import { type ReactNode, useMemo, useState } from "react"
 import { Link, useLocation, useNavigate } from "react-router-dom"
-import { api } from "../lib/api"
+import { api, type SidebarSection } from "../lib/api"
 import { signOut, useSession } from "../lib/auth-client"
-import { conceptsCollection, KEY, useRegisterCollection } from "../lib/collections"
-import { ConceptIcon, DEFAULT_CONCEPT_ICON } from "../lib/icons"
+import {
+  conceptsCollection,
+  KEY,
+  sidebarViewsCollection,
+  useRegisterCollection,
+} from "../lib/collections"
+import { ConceptIcon } from "../lib/icons"
+import {
+  DEFAULT_VIEW,
+  type ResolvedEntry,
+  type ResolvedSection,
+  useResolvedView,
+} from "../lib/sidebarViews"
 import { useLiveSync } from "../lib/useLiveSync"
 import { useSafetyRefetch } from "../lib/useSafetyRefetch"
 import { cn } from "../lib/utils"
 import { OrgSwitcher } from "./OrgSwitcher"
-import { IconButton } from "./ui"
+import { SectionList } from "./sidebar/SectionList"
+import { Button, IconButton } from "./ui"
 
-/** Remember whether the user minimized the sidebar across reloads. */
-const SIDEBAR_KEY = "km.sidebar.collapsed"
-const readCollapsed = () => {
+/** Remember whether the user minimized the sidebar, and which view is active. */
+const COLLAPSED_KEY = "km.sidebar.collapsed"
+const ACTIVE_VIEW_KEY = "km.sidebar.activeView"
+const read = (key: string): string => {
   try {
-    return localStorage.getItem(SIDEBAR_KEY) === "1"
+    return localStorage.getItem(key) ?? ""
   } catch {
-    return false
+    return ""
   }
 }
+const write = (key: string, value: string) => {
+  try {
+    localStorage.setItem(key, value)
+  } catch {}
+}
 
-const GLOBAL: ReadonlyArray<{ to: string; label: string; icon: LucideIcon }> = [
-  { to: "/", label: "Overview", icon: Home },
-  { to: "/dashboards", label: "Dashboards", icon: LayoutDashboard },
-  { to: "/automations", label: "Automations", icon: Workflow },
-  { to: "/settings", label: "Settings", icon: Settings },
-]
-
-/** A concept's nav target — every concept browses through the generic view. */
-const conceptHref = (id: string) => `/concepts/${id}`
-
-function NavItem({
-  to,
-  label,
-  icon,
-  active,
-  collapsed,
-}: {
-  to: string
-  label: string
-  icon: ReactNode
-  active: boolean
-  collapsed: boolean
-}) {
-  return (
-    <Link
-      to={to}
-      // When collapsed the label is hidden, so surface it as a hover tooltip.
-      title={collapsed ? label : undefined}
-      className={cn(
-        "flex items-center rounded-md text-sm",
-        collapsed ? "justify-center p-2" : "gap-2.5 px-3 py-1.5",
-        active ? "bg-gray-900 text-white" : "text-gray-600 hover:bg-gray-100",
-      )}
-    >
-      <span className="flex h-5 w-5 shrink-0 items-center justify-center">{icon}</span>
-      {!collapsed && <span className="truncate">{label}</span>}
+/** One nav row — a router link, or a plain anchor for external link entries. */
+function NavEntry({ entry, collapsed }: { entry: ResolvedEntry; collapsed: boolean }) {
+  const className = cn(
+    "flex items-center rounded-md text-sm",
+    collapsed ? "justify-center p-2" : "gap-2.5 px-3 py-1.5",
+    entry.active ? "bg-gray-900 text-white" : "text-gray-600 hover:bg-gray-100",
+  )
+  const inner = (
+    <>
+      <span className="flex h-5 w-5 shrink-0 items-center justify-center">{entry.icon}</span>
+      {!collapsed && <span className="truncate">{entry.label}</span>}
+    </>
+  )
+  const title = collapsed ? entry.label : undefined
+  return entry.external ? (
+    <a href={entry.to} target="_blank" rel="noreferrer" title={title} className={className}>
+      {inner}
+    </a>
+  ) : (
+    <Link to={entry.to} title={title} className={className}>
+      {inner}
     </Link>
   )
 }
 
-/** A concept's nav glyph — its chosen icon, or the shared default when unset. */
-function conceptGlyph(icon: string | null): ReactNode {
-  return <ConceptIcon value={icon || DEFAULT_CONCEPT_ICON} size={16} />
-}
-
-/** Up to two initials from a name, falling back to the email's first letter. */
-function initialsOf(name: string | null | undefined, email: string) {
-  const source = name?.trim() || email
-  const letters = source
-    .split(/[\s@._-]+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((w) => w[0])
-    .join("")
-  return (letters || email[0] || "?").toUpperCase()
-}
-
-function SectionLabel({ children, action }: { children: ReactNode; action?: ReactNode }) {
+/** A view's resolved sections, with collapsible titled groups. */
+function ViewNav({ sections, collapsed }: { sections: ResolvedSection[]; collapsed: boolean }) {
+  const [closed, setClosed] = useState<Record<string, boolean>>({})
   return (
-    <div className="mt-5 mb-1 flex items-center justify-between px-3">
-      <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">
-        {children}
-      </span>
-      {action}
-    </div>
+    <>
+      {sections.map((section, i) => {
+        const isClosed = closed[section.id] ?? section.collapsed
+        // The title is optional. When present it's a collapsible header; when
+        // absent the section still renders its entries — just delimited by a
+        // little spacing (so an untitled section after another reads as its own).
+        const hasTitle = !collapsed && !!section.title
+        return (
+          <div key={section.id} className={!collapsed && !hasTitle && i > 0 ? "mt-3" : undefined}>
+            {hasTitle && (
+              <button
+                type="button"
+                onClick={() => setClosed((c) => ({ ...c, [section.id]: !isClosed }))}
+                className="mt-5 mb-1 flex w-full items-center gap-1.5 px-3 text-xs font-semibold uppercase tracking-wide text-gray-400 hover:text-gray-600"
+              >
+                {section.icon && <ConceptIcon value={section.icon} size={12} />}
+                <span className="truncate">{section.title}</span>
+              </button>
+            )}
+            {collapsed && i > 0 && <div className="mx-2 my-2 border-t border-gray-100" />}
+            {!isClosed &&
+              section.entries.map((e) => <NavEntry key={e.key} entry={e} collapsed={collapsed} />)}
+          </div>
+        )
+      })}
+    </>
   )
 }
 
@@ -104,81 +103,133 @@ export function Layout({ children }: { children: ReactNode }) {
   const { data } = useSession()
   const loc = useLocation()
   const navigate = useNavigate()
-  const [creating, setCreating] = useState(false)
-  const [name, setName] = useState("")
-  const [collapsed, setCollapsed] = useState(readCollapsed)
+  const [collapsed, setCollapsed] = useState(() => read(COLLAPSED_KEY) === "1")
+  const [activeViewId, setActiveViewIdState] = useState(() => read(ACTIVE_VIEW_KEY))
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState<{ sections: SidebarSection[] } | null>(null)
+  // Right-click context menu over a pager chip (only when >1 view exists).
+  const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null)
 
-  const toggleSidebar = () =>
-    setCollapsed((v) => {
-      const next = !v
-      try {
-        localStorage.setItem(SIDEBAR_KEY, next ? "1" : "0")
-      } catch {}
-      return next
-    })
-
-  // Mount the single live-sync connection + safety backstop here (Layout wraps
-  // every authed page). The concepts sidebar is a live query.
+  // Single live-sync connection + safety backstop (Layout wraps every authed page).
   useLiveSync()
   useSafetyRefetch()
   useRegisterCollection(KEY.concepts, conceptsCollection)
+  useRegisterCollection(KEY.views, sidebarViewsCollection)
   const { data: concepts } = useLiveQuery((q) => q.from({ c: conceptsCollection }))
+  const { data: views } = useLiveQuery((q) => q.from({ v: sidebarViewsCollection }))
 
-  const createConcept = useMutation({
-    mutationFn: (n: string) => api.createConcept(n),
-    onSuccess: (c) => {
-      void conceptsCollection.utils.refetch()
-      setCreating(false)
-      setName("")
-      navigate(conceptHref(c.id))
-    },
-  })
+  // Pager shows non-hidden views, ordered by `position` — the same order the
+  // Settings → Sidebar list uses (and what drag-reorder there persists).
+  const pagerViews = useMemo(() => {
+    const visible = (views ?? []).filter((v) => !v.hidden).sort((a, b) => a.position - b.position)
+    return visible.length > 0 ? visible : [DEFAULT_VIEW]
+  }, [views])
+  const activeView = pagerViews.find((v) => v.id === activeViewId) ?? pagerViews[0] ?? DEFAULT_VIEW
 
-  const submitNewConcept = () => {
-    const trimmed = name.trim()
-    if (trimmed) createConcept.mutate(trimmed)
+  const setActiveViewId = (id: string) => {
+    setActiveViewIdState(id)
+    write(ACTIVE_VIEW_KEY, id)
+    setEditing(false)
   }
 
-  const isActive = (to: string) => (to === "/" ? loc.pathname === "/" : loc.pathname.startsWith(to))
+  const { sections, loaders } = useResolvedView(activeView, concepts ?? [], loc.pathname)
 
+  const createMut = useMutation({
+    mutationFn: (input: Parameters<typeof api.createView>[0]) => api.createView(input),
+    onSuccess: async (v) => {
+      await sidebarViewsCollection.utils.refetch()
+      setActiveViewIdState(v.id)
+      write(ACTIVE_VIEW_KEY, v.id)
+    },
+  })
+  const updateMut = useMutation({
+    mutationFn: (input: Parameters<typeof api.updateView>[0]) => api.updateView(input),
+    onSuccess: () => sidebarViewsCollection.utils.refetch(),
+  })
+
+  // Enter in-place edit mode for a specific view (from the chip's right-click
+  // "Configure"). Creating/deleting/managing views lives in Settings → Sidebar.
+  const configureView = (id: string) => {
+    const v = pagerViews.find((x) => x.id === id)
+    if (!v) return
+    setMenu(null)
+    setActiveViewIdState(id)
+    write(ACTIVE_VIEW_KEY, id)
+    setDraft({ sections: [...v.body.sections] })
+    setEditing(true)
+  }
+  const saveEdit = () => {
+    if (!draft) return
+    const body = { sections: draft.sections }
+    if (activeView.id === DEFAULT_VIEW.id) {
+      createMut.mutate(
+        { name: "My sidebar", icon: DEFAULT_VIEW.icon, scope: "personal", body },
+        { onSuccess: () => setEditing(false) },
+      )
+    } else {
+      updateMut.mutate({ id: activeView.id, body }, { onSuccess: () => setEditing(false) })
+    }
+  }
+
+  const saving = createMut.isPending || updateMut.isPending
+
+  // ── collapsed rail ───────────────────────────────────────────────────────────
   if (collapsed) {
     return (
       <div className="flex min-h-screen bg-gray-50">
+        {loaders}
         <aside className="flex w-12 shrink-0 flex-col border-r border-gray-200 bg-white">
           <div className="flex justify-center py-4">
-            <IconButton onClick={toggleSidebar} aria-label="Expand sidebar">
+            <IconButton
+              onClick={() => {
+                setCollapsed(false)
+                write(COLLAPSED_KEY, "0")
+              }}
+              aria-label="Expand sidebar"
+            >
               <PanelLeftOpen size={18} />
             </IconButton>
           </div>
-          <nav className="flex flex-1 flex-col overflow-y-auto px-1.5 pb-4">
-            {GLOBAL.map(({ to, label, icon: Icon }) => (
-              <NavItem
-                key={to}
-                to={to}
-                label={label}
-                icon={<Icon size={16} />}
-                active={isActive(to)}
-                collapsed
-              />
-            ))}
-            {concepts && concepts.length > 0 && (
-              <div className="mx-2 my-2 border-t border-gray-100" />
-            )}
-            {concepts?.map((c) => {
-              const href = conceptHref(c.id)
-              return (
-                <NavItem
-                  key={c.id}
-                  to={href}
-                  label={c.pluralName || c.name}
-                  icon={conceptGlyph(c.icon)}
-                  active={loc.pathname === href}
-                  collapsed
-                />
-              )
-            })}
+          <nav
+            key={activeView.id}
+            className="km-view-in flex flex-1 flex-col overflow-y-auto px-1.5 pb-4"
+          >
+            <ViewNav sections={sections} collapsed />
           </nav>
+          {pagerViews.length > 1 && (
+            <div className="flex flex-col items-center gap-1 border-t border-gray-100 py-2">
+              {pagerViews.map((v) => (
+                <button
+                  key={v.id}
+                  type="button"
+                  title={v.name}
+                  aria-label={v.name}
+                  onClick={() => setActiveViewId(v.id)}
+                  onContextMenu={(e) => {
+                    e.preventDefault()
+                    setMenu({ id: v.id, x: e.clientX, y: e.clientY })
+                  }}
+                  className={cn(
+                    "flex h-7 w-7 items-center justify-center rounded-md",
+                    v.id === activeView.id
+                      ? "bg-gray-900 text-white"
+                      : "text-gray-500 hover:bg-gray-100",
+                  )}
+                >
+                  <ConceptIcon value={v.icon || "lucide:LayoutGrid"} size={15} />
+                </button>
+              ))}
+            </div>
+          )}
         </aside>
+        {menu && (
+          <ViewMenu
+            menu={menu}
+            onConfigure={configureView}
+            onManage={() => navigate("/settings/sidebar")}
+            onClose={() => setMenu(null)}
+          />
+        )}
         <main className="flex-1 overflow-y-auto">
           <div className="mx-auto max-w-6xl px-6 py-6">{children}</div>
         </main>
@@ -186,73 +237,86 @@ export function Layout({ children }: { children: ReactNode }) {
     )
   }
 
+  // ── expanded sidebar ─────────────────────────────────────────────────────────
   return (
     <div className="flex min-h-screen bg-gray-50">
+      {loaders}
       <aside className="flex w-60 shrink-0 flex-col border-r border-gray-200 bg-white">
         <div className="flex items-center justify-between px-4 py-4">
           <span className="text-lg font-semibold text-gray-900">Kingsmaker</span>
-          <IconButton onClick={toggleSidebar} aria-label="Collapse sidebar">
+          <IconButton
+            onClick={() => {
+              setCollapsed(true)
+              write(COLLAPSED_KEY, "1")
+            }}
+            aria-label="Collapse sidebar"
+          >
             <PanelLeftClose size={18} />
           </IconButton>
         </div>
 
-        <nav className="flex-1 overflow-y-auto px-2 pb-4">
-          {GLOBAL.map(({ to, label, icon: Icon }) => (
-            <NavItem
-              key={to}
-              to={to}
-              label={label}
-              icon={<Icon size={16} />}
-              active={isActive(to)}
-              collapsed={false}
+        {editing && draft ? (
+          <div className="flex-1 overflow-y-auto px-2 pb-4">
+            <p className="mb-2 px-1 text-xs text-gray-400">
+              Editing <span className="font-medium text-gray-600">{activeView.name}</span>
+            </p>
+            <SectionList
+              sections={draft.sections}
+              concepts={concepts ?? []}
+              onChange={(s) => setDraft({ sections: s })}
             />
-          ))}
+          </div>
+        ) : (
+          <nav key={activeView.id} className="km-view-in flex-1 overflow-y-auto px-2 pb-4">
+            {sections.every((s) => s.entries.length === 0) && (
+              <p className="px-3 py-2 text-xs text-gray-400">
+                This view is empty — configure it in Settings → Sidebar.
+              </p>
+            )}
+            <ViewNav sections={sections} collapsed={false} />
+          </nav>
+        )}
 
-          <SectionLabel>Concepts</SectionLabel>
-
-          {creating && (
-            <div className="px-1 pb-1">
-              <input
-                // biome-ignore lint/a11y/noAutofocus: focus the field the user just opened.
-                autoFocus
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") submitNewConcept()
-                  if (e.key === "Escape") {
-                    setCreating(false)
-                    setName("")
-                  }
-                }}
-                onBlur={() => !name.trim() && setCreating(false)}
-                placeholder="New concept name…"
-                className="w-full rounded-md border border-gray-300 px-2 py-1 text-sm outline-none focus:border-gray-500"
-              />
-              {createConcept.isError && (
-                <p className="px-1 pt-1 text-xs text-red-600">
-                  {(createConcept.error as Error).message}
-                </p>
-              )}
+        {/* View pager — only when there's more than one view to switch between.
+            Creating/managing views lives in Settings → Sidebar; right-click a
+            chip to configure that view in place. */}
+        {editing ? (
+          <div className="border-t border-gray-100 p-2">
+            <div className="flex gap-2">
+              <Button className="flex-1" onClick={saveEdit} disabled={saving}>
+                <Check size={15} /> {saving ? "Saving…" : "Done"}
+              </Button>
+              <Button variant="outline" onClick={() => setEditing(false)} disabled={saving}>
+                <X size={15} /> Cancel
+              </Button>
             </div>
-          )}
-
-          {concepts?.length === 0 && !creating && (
-            <p className="px-3 py-1 text-xs text-gray-400">No concepts yet.</p>
-          )}
-          {concepts?.map((c) => {
-            const href = conceptHref(c.id)
-            return (
-              <NavItem
-                key={c.id}
-                to={href}
-                label={c.pluralName || c.name}
-                icon={conceptGlyph(c.icon)}
-                active={loc.pathname === href}
-                collapsed={false}
-              />
-            )
-          })}
-        </nav>
+          </div>
+        ) : pagerViews.length > 1 ? (
+          <div className="flex justify-center gap-1 overflow-x-auto border-t border-gray-100 p-2">
+            {pagerViews.map((v) => (
+              <button
+                key={v.id}
+                type="button"
+                onClick={() => setActiveViewId(v.id)}
+                onContextMenu={(e) => {
+                  e.preventDefault()
+                  setMenu({ id: v.id, x: e.clientX, y: e.clientY })
+                }}
+                // Icon-only — the name surfaces as a hover/aria tooltip.
+                title={v.name}
+                aria-label={v.name}
+                className={cn(
+                  "flex h-8 w-8 shrink-0 items-center justify-center rounded-md",
+                  v.id === activeView.id
+                    ? "bg-gray-900 text-white"
+                    : "text-gray-500 hover:bg-gray-100",
+                )}
+              >
+                <ConceptIcon value={v.icon || "lucide:LayoutGrid"} size={16} />
+              </button>
+            ))}
+          </div>
+        ) : null}
 
         <div className="border-t border-gray-100 p-2">
           <OrgSwitcher />
@@ -283,6 +347,76 @@ export function Layout({ children }: { children: ReactNode }) {
       <main className="flex-1 overflow-y-auto">
         <div className="mx-auto max-w-6xl px-6 py-6">{children}</div>
       </main>
+
+      {menu && (
+        <ViewMenu
+          menu={menu}
+          onConfigure={configureView}
+          onManage={() => navigate("/settings/sidebar")}
+          onClose={() => setMenu(null)}
+        />
+      )}
     </div>
   )
+}
+
+/** Right-click menu for a pager chip: configure this view, or jump to settings. */
+function ViewMenu({
+  menu,
+  onConfigure,
+  onManage,
+  onClose,
+}: {
+  menu: { id: string; x: number; y: number }
+  onConfigure: (id: string) => void
+  onManage: () => void
+  onClose: () => void
+}) {
+  return (
+    <>
+      <button
+        type="button"
+        aria-label="Close menu"
+        onClick={onClose}
+        className="fixed inset-0 z-40 cursor-default"
+      />
+      <div
+        role="menu"
+        style={{ left: menu.x, top: menu.y }}
+        className="fixed z-50 w-44 rounded-md border border-gray-200 bg-white py-1 shadow-lg"
+      >
+        <button
+          type="button"
+          role="menuitem"
+          onClick={() => onConfigure(menu.id)}
+          className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-gray-700 hover:bg-gray-100"
+        >
+          <Pencil size={14} /> Configure
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          onClick={() => {
+            onClose()
+            onManage()
+          }}
+          className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-gray-700 hover:bg-gray-100"
+        >
+          <Settings2 size={14} /> Manage in settings…
+        </button>
+      </div>
+    </>
+  )
+}
+
+/** Up to two initials from a name, falling back to the email's first letter. */
+function initialsOf(name: string | null | undefined, email: string) {
+  const source = name?.trim() || email
+  const letters = source
+    .split(/[\s@._-]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((w) => w[0])
+    .join("")
+  return (letters || email[0] || "?").toUpperCase()
 }

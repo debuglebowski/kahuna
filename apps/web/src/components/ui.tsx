@@ -1,39 +1,29 @@
 import { Crown, ServerCrash, X } from "lucide-react"
+import type { ButtonHTMLAttributes, ReactNode } from "react"
 import {
-  type ButtonHTMLAttributes,
-  type InputHTMLAttributes,
-  type ReactNode,
-  type SelectHTMLAttributes,
-  useEffect,
-} from "react"
-import { cn } from "../lib/utils"
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+import { Button } from "@/components/ui/button"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { cn } from "@/lib/utils"
 
-export function Button({
-  className,
-  variant = "primary",
-  ...props
-}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: "primary" | "ghost" | "danger" }) {
-  const styles = {
-    primary: "bg-gray-900 text-white hover:bg-gray-700",
-    ghost: "bg-white text-gray-700 border border-gray-300 hover:bg-gray-50",
-    danger: "bg-red-600 text-white hover:bg-red-500",
-  }[variant]
-  return (
-    <button
-      className={cn(
-        "inline-flex items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition disabled:opacity-50",
-        styles,
-        className,
-      )}
-      {...props}
-    />
-  )
-}
+// The plain form primitives are 1:1 shadcn — re-export so existing
+// `import { Button, Input } from "../ui"` call sites keep resolving.
+export { Button } from "@/components/ui/button"
+export { Input } from "@/components/ui/input"
 
 /**
- * Square, icon-only button. Requires an `aria-label` (also used as the hover
- * tooltip) so the icon stays accessible. Use for repeated row actions where a
- * full text Button would crowd the layout.
+ * Square, icon-only button. Requires an `aria-label` (also the tooltip label)
+ * so the icon stays accessible. Use for repeated row actions where a full text
+ * Button would crowd the layout. Built on the shadcn ghost {@link Button} and
+ * wrapped in a shadcn {@link Tooltip} (needs a `TooltipProvider` at the root).
  */
 export function IconButton({
   className,
@@ -45,28 +35,32 @@ export function IconButton({
   variant?: "default" | "danger"
   "aria-label": string
 }) {
-  const styles = {
-    default: "text-gray-400 hover:bg-gray-100 hover:text-gray-700",
-    danger: "text-gray-400 hover:bg-red-50 hover:text-red-600",
-  }[variant]
   return (
-    <button
-      type="button"
-      aria-label={ariaLabel}
-      title={title ?? ariaLabel}
-      className={cn(
-        "inline-flex items-center justify-center rounded-md p-1.5 transition disabled:opacity-50",
-        styles,
-        className,
-      )}
-      {...props}
-    />
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          aria-label={ariaLabel}
+          className={cn(
+            "text-muted-foreground",
+            variant === "danger"
+              ? "hover:bg-destructive/10 hover:text-destructive"
+              : "hover:text-foreground",
+            className,
+          )}
+          {...props}
+        />
+      </TooltipTrigger>
+      <TooltipContent>{title ?? ariaLabel}</TooltipContent>
+    </Tooltip>
   )
 }
 
 export function Card({ className, children }: { className?: string; children: ReactNode }) {
   return (
-    <div className={cn("rounded-lg border border-gray-200 bg-white shadow-sm", className)}>
+    <div className={cn("rounded-lg border bg-card text-card-foreground shadow-sm", className)}>
       {children}
     </div>
   )
@@ -74,43 +68,17 @@ export function Card({ className, children }: { className?: string; children: Re
 
 export function CardHeader({ title, action }: { title: ReactNode; action?: ReactNode }) {
   return (
-    <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3">
-      <h3 className="text-sm font-semibold text-gray-700">{title}</h3>
+    <div className="flex items-center justify-between border-b px-4 py-3">
+      <h3 className="text-sm font-semibold text-foreground">{title}</h3>
       {action}
     </div>
-  )
-}
-
-export function Input({ className, ...props }: InputHTMLAttributes<HTMLInputElement>) {
-  return (
-    <input
-      className={cn(
-        "w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm outline-none focus:border-gray-500",
-        className,
-      )}
-      {...props}
-    />
-  )
-}
-
-export function Select({ className, children, ...props }: SelectHTMLAttributes<HTMLSelectElement>) {
-  return (
-    <select
-      className={cn(
-        "w-full rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-gray-500",
-        className,
-      )}
-      {...props}
-    >
-      {children}
-    </select>
   )
 }
 
 export function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="block space-y-1">
-      <span className="text-xs font-medium text-gray-500">{label}</span>
+      <span className="text-xs font-medium text-muted-foreground">{label}</span>
       {children}
     </div>
   )
@@ -131,7 +99,7 @@ export function Badge({ children, tone = "gray" }: { children: ReactNode; tone?:
 
 type Tone = "gray" | "green" | "amber" | "red" | "blue"
 const TONES: Record<Tone, string> = {
-  gray: "bg-gray-100 text-gray-700",
+  gray: "bg-muted text-muted-foreground",
   green: "bg-green-100 text-green-700",
   amber: "bg-amber-100 text-amber-800",
   red: "bg-red-100 text-red-700",
@@ -191,7 +159,7 @@ export function LabelChip({
       style={style}
       className={cn(
         "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium",
-        style ? "" : "bg-gray-100 text-gray-700",
+        style ? "" : "bg-muted text-muted-foreground",
       )}
     >
       {primary && <Crown className="h-3 w-3 shrink-0" aria-label="Primary" />}
@@ -211,7 +179,7 @@ export function LabelChip({
 }
 
 export function Spinner() {
-  return <div className="p-8 text-sm text-gray-400">Loading…</div>
+  return <div className="p-8 text-sm text-muted-foreground">Loading…</div>
 }
 
 /** Full-screen "can't reach the server" state with an optional retry. */
@@ -227,13 +195,13 @@ export function ErrorScreen({
   retrying?: boolean
 }) {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gray-50 p-4">
+    <div className="flex min-h-screen items-center justify-center bg-muted/30 p-4">
       <Card className="w-full max-w-sm p-6 text-center">
-        <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-red-50 text-red-600">
+        <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-destructive/10 text-destructive">
           <ServerCrash size={22} />
         </div>
-        <h1 className="mb-1 text-lg font-semibold text-gray-900">{title}</h1>
-        <p className="mb-5 text-sm text-gray-500">{message}</p>
+        <h1 className="mb-1 text-lg font-semibold text-foreground">{title}</h1>
+        <p className="mb-5 text-sm text-muted-foreground">{message}</p>
         {onRetry && (
           <Button onClick={onRetry} disabled={retrying} className="w-full">
             {retrying ? "Retrying…" : "Try again"}
@@ -244,7 +212,11 @@ export function ErrorScreen({
   )
 }
 
-/** A centered modal over a dimmed backdrop. Closes on Escape or backdrop click. */
+/**
+ * A centered modal dialog. Mount it to open; it calls `onClose` on Escape,
+ * backdrop click, or the close button. Built on the shadcn {@link Dialog}
+ * (Radix), so focus trapping and layered Escape handling come for free.
+ */
 export function Modal({
   title,
   onClose,
@@ -254,41 +226,85 @@ export function Modal({
   onClose: () => void
   children: ReactNode
 }) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose()
-    }
-    document.addEventListener("keydown", onKey)
-    return () => document.removeEventListener("keydown", onKey)
-  }, [onClose])
-
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 pt-20">
-      {/* Backdrop as a real button → click-to-close stays keyboard-accessible. */}
-      <button
-        type="button"
-        aria-label="Close"
-        onClick={onClose}
-        className="absolute inset-0 cursor-default bg-black/30"
-      />
-      <div
-        role="dialog"
-        aria-modal="true"
-        className="relative w-full max-w-lg rounded-lg border border-gray-200 bg-white shadow-xl"
-      >
-        <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3">
-          <h3 className="text-sm font-semibold text-gray-700">{title}</h3>
-          <IconButton onClick={onClose} aria-label="Close">
-            <X size={16} />
-          </IconButton>
-        </div>
-        <div className="p-4">{children}</div>
-      </div>
-    </div>
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent aria-describedby={undefined} className="max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+        </DialogHeader>
+        {children}
+      </DialogContent>
+    </Dialog>
   )
 }
 
-/** Right-anchored slide-over panel. Floats over the page; Esc or backdrop closes it. */
+/**
+ * A focused confirm dialog over the shadcn {@link AlertDialog}. Used for
+ * destructive actions: an "Archive" confirm (single primary action), or a
+ * "Delete" confirm with a red CTA plus an optional secondary ("Archive
+ * instead") escape hatch. The parent owns open/close — it keeps this mounted
+ * while a mutation runs (`pending`) and unmounts it on success; pass `error`
+ * to surface a failure. Buttons stay plain (not AlertDialogAction) so a click
+ * never auto-dismisses mid-mutation.
+ */
+export function ConfirmDialog({
+  title,
+  message,
+  confirmLabel,
+  confirmVariant = "primary",
+  onConfirm,
+  onCancel,
+  secondaryLabel,
+  onSecondary,
+  pending = false,
+  error,
+}: {
+  title: ReactNode
+  message: ReactNode
+  confirmLabel: string
+  confirmVariant?: "primary" | "danger"
+  onConfirm: () => void
+  onCancel: () => void
+  /** Optional middle action (e.g. "Archive instead" on a delete dialog). */
+  secondaryLabel?: string
+  onSecondary?: () => void
+  pending?: boolean
+  error?: ReactNode
+}) {
+  return (
+    <AlertDialog open onOpenChange={(open) => !open && !pending && onCancel()}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{title}</AlertDialogTitle>
+          <AlertDialogDescription asChild>
+            <div className="text-sm text-muted-foreground">{message}</div>
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        {error && <p className="text-sm text-destructive">{error}</p>}
+        <AlertDialogFooter>
+          <Button variant="outline" onClick={onCancel} disabled={pending}>
+            Cancel
+          </Button>
+          {secondaryLabel && onSecondary && (
+            <Button variant="outline" onClick={onSecondary} disabled={pending}>
+              {secondaryLabel}
+            </Button>
+          )}
+          <Button
+            variant={confirmVariant === "danger" ? "destructive" : "default"}
+            onClick={onConfirm}
+            disabled={pending}
+          >
+            {pending ? "Working…" : confirmLabel}
+          </Button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  )
+}
+
+/** Right-anchored slide-over panel. Built on the shadcn {@link Sheet}; Esc or
+ *  backdrop closes it. The header carries an optional action plus a close X. */
 export function Drawer({
   title,
   onClose,
@@ -300,30 +316,18 @@ export function Drawer({
   headerAction?: ReactNode
   children: ReactNode
 }) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose()
-    }
-    document.addEventListener("keydown", onKey)
-    return () => document.removeEventListener("keydown", onKey)
-  }, [onClose])
-
   return (
-    <div className="fixed inset-0 z-50">
-      {/* Backdrop as a real button → click-to-close stays keyboard-accessible. */}
-      <button
-        type="button"
-        aria-label="Close"
-        onClick={onClose}
-        className="absolute inset-0 cursor-default bg-black/30"
-      />
-      <div
-        role="dialog"
-        aria-modal="true"
-        className="absolute inset-y-0 right-0 flex w-[640px] max-w-[95vw] flex-col border-l border-gray-200 bg-white shadow-xl"
+    <Sheet open onOpenChange={(open) => !open && onClose()}>
+      <SheetContent
+        side="right"
+        showCloseButton={false}
+        aria-describedby={undefined}
+        className="w-[640px] max-w-[95vw] gap-0 p-0 sm:max-w-[640px]"
       >
-        <div className="flex items-center justify-between gap-2 border-b border-gray-100 px-4 py-3">
-          <h3 className="min-w-0 truncate text-sm font-semibold text-gray-700">{title}</h3>
+        <div className="flex items-center justify-between gap-2 border-b px-4 py-3">
+          <SheetTitle className="min-w-0 truncate text-sm font-semibold text-foreground">
+            {title}
+          </SheetTitle>
           <div className="flex shrink-0 items-center gap-2">
             {headerAction}
             <IconButton onClick={onClose} aria-label="Close">
@@ -332,7 +336,7 @@ export function Drawer({
           </div>
         </div>
         <div className="flex-1 overflow-y-auto p-4">{children}</div>
-      </div>
-    </div>
+      </SheetContent>
+    </Sheet>
   )
 }

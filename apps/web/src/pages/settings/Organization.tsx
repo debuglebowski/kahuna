@@ -93,7 +93,7 @@ export function Organization() {
               <Input value={confirm} onChange={(e) => setConfirm(e.target.value)} />
             </Field>
             <Button
-              variant="danger"
+              variant="destructive"
               disabled={del.isPending || confirm !== org.data?.name}
               onClick={() => del.mutate()}
             >

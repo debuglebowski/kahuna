@@ -13,6 +13,7 @@ import { Members } from "./pages/settings/Members"
 import { Organization } from "./pages/settings/Organization"
 import { Profile } from "./pages/settings/Profile"
 import { SettingsLayout } from "./pages/settings/SettingsLayout"
+import { Views } from "./pages/settings/Views"
 
 export function App() {
   const { data: session, isPending, error, isRefetching, refetch } = useSession()
@@ -38,6 +39,7 @@ export function App() {
           <Route path="concepts" element={<Concepts />} />
           <Route path="concepts-graph" element={<Navigate to="/settings/concepts" replace />} />
           <Route path="labels" element={<Labels />} />
+          <Route path="sidebar" element={<Views />} />
         </Route>
         <Route path="/concepts/:id" element={<ConceptView />} />
         <Route path="/instances/:id" element={<InstanceView />} />

@@ -274,6 +274,9 @@ export const ICON_NAMES: ReadonlyArray<string> = Object.keys(ICONS)
 /** Fallback glyph shown for a concept that hasn't chosen an icon of its own. */
 export const DEFAULT_CONCEPT_ICON = `${ICON_PREFIX}Shapes`
 
+/** Fallback glyph shown for a field that hasn't chosen an icon of its own. */
+export const DEFAULT_FIELD_ICON = `${ICON_PREFIX}CircleDot`
+
 /**
  * Curated emoji set with search keywords (CRM/business-leaning, grouped by
  * theme). `kw` feeds the picker's filter; the leading word is also a label.

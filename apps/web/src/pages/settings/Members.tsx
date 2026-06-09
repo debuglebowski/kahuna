@@ -1,14 +1,22 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query"
-import { Plus, Trash2 } from "lucide-react"
+import { Pencil, Plus, Trash2 } from "lucide-react"
 import { useState } from "react"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import {
   Badge,
   Button,
   Card,
   CardHeader,
+  Field,
   IconButton,
   Input,
-  Select,
+  Modal,
   Spinner,
 } from "../../components/ui"
 import { authClient, useSession } from "../../lib/auth-client"
@@ -43,6 +51,9 @@ export function Members() {
   const { data: session } = useSession()
   const [email, setEmail] = useState("")
   const [role, setRole] = useState("member")
+  // Role changes happen in a modal; null = closed.
+  const [editing, setEditing] = useState<{ id: string; label: string; role: string } | null>(null)
+  const [draftRole, setDraftRole] = useState("member")
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["fullOrg"] })
 
@@ -62,7 +73,10 @@ export function Members() {
       })
       if (error) throw new Error(error.message ?? "Failed to update role")
     },
-    onSuccess: invalidate,
+    onSuccess: () => {
+      setEditing(null)
+      invalidate()
+    },
   })
 
   const remove = useMutation({
@@ -95,12 +109,15 @@ export function Members() {
               placeholder="teammate@example.com"
               className="flex-1"
             />
-            <div className="w-32">
-              <Select value={role} onChange={(e) => setRole(e.target.value)}>
-                <option value="member">Member</option>
-                <option value="admin">Admin</option>
-              </Select>
-            </div>
+            <Select value={role} onValueChange={setRole}>
+              <SelectTrigger className="w-32">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="member">Member</SelectItem>
+                <SelectItem value="admin">Admin</SelectItem>
+              </SelectContent>
+            </Select>
             <Button onClick={() => add.mutate()} disabled={add.isPending || !email.includes("@")}>
               <Plus size={15} />
               {add.isPending ? "Adding…" : "Add"}
@@ -126,17 +143,17 @@ export function Members() {
                   <div className="truncate text-xs text-gray-500">{m.user?.email}</div>
                 </div>
                 <Badge tone={roleTone(m.role)}>{m.role}</Badge>
-                <div className="w-28">
-                  <Select
-                    value={m.role}
-                    disabled={lockOwner || changeRole.isPending}
-                    onChange={(e) => changeRole.mutate({ memberId: m.id, role: e.target.value })}
-                  >
-                    <option value="member">member</option>
-                    <option value="admin">admin</option>
-                    <option value="owner">owner</option>
-                  </Select>
-                </div>
+                <IconButton
+                  aria-label={`Change role for ${m.user?.email ?? "member"}`}
+                  disabled={lockOwner}
+                  onClick={() => {
+                    const label = m.user?.name?.trim() || m.user?.email || "this member"
+                    setEditing({ id: m.id, label, role: m.role })
+                    setDraftRole(m.role)
+                  }}
+                >
+                  <Pencil size={15} />
+                </IconButton>
                 <IconButton
                   variant="danger"
                   aria-label={`Remove ${m.user?.email ?? "member"}`}
@@ -153,9 +170,44 @@ export function Members() {
           })}
         </ul>
         <div className="px-4 pb-3">
-          <Feedback error={changeRole.error ?? remove.error} />
+          <Feedback error={remove.error} />
         </div>
       </Card>
+
+      {editing && (
+        <Modal title="Change role" onClose={() => setEditing(null)}>
+          <div className="space-y-4">
+            <p className="text-sm text-gray-600">
+              Update the role for <span className="font-medium text-gray-900">{editing.label}</span>
+              .
+            </p>
+            <Field label="Role">
+              <Select value={draftRole} onValueChange={setDraftRole}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="member">member</SelectItem>
+                  <SelectItem value="admin">admin</SelectItem>
+                  <SelectItem value="owner">owner</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+            <div className="flex gap-2">
+              <Button
+                onClick={() => changeRole.mutate({ memberId: editing.id, role: draftRole })}
+                disabled={changeRole.isPending || draftRole === editing.role}
+              >
+                {changeRole.isPending ? "Saving…" : "Save"}
+              </Button>
+              <Button variant="outline" onClick={() => setEditing(null)}>
+                Cancel
+              </Button>
+            </div>
+            <Feedback error={changeRole.error} />
+          </div>
+        </Modal>
+      )}
     </div>
   )
 }
