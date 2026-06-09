@@ -22,6 +22,7 @@
     "@effect/platform": "0.96.1",
     "@effect/rpc": "0.75.1",
     "@effect/sql-pg": "0.52.1",
+    "@fontsource-variable/geist": "^5.2.9",
     "@kingsmaker/engine": "workspace:*",
     "@tanstack/db": "0.6.8",
     "@tanstack/query-db-collection": "1.0.39",

@@ -9,3 +9,15 @@ export const showValue = (v: unknown): string => {
   if (typeof v === "object") return JSON.stringify(v)
   return String(v)
 }
+
+/** Up to two initials from a name, falling back to the email's first letter. */
+export const initialsOf = (name: string | null | undefined, email: string): string => {
+  const source = name?.trim() || email
+  const letters = source
+    .split(/[\s@._-]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((w) => w[0])
+    .join("")
+  return (letters || email[0] || "?").toUpperCase()
+}
