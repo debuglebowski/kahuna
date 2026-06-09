@@ -6,6 +6,7 @@ import { TooltipProvider } from "@/components/ui/tooltip"
 import { App } from "./App"
 import "./index.css"
 import { queryClient } from "./lib/queryClient"
+import "./lib/theme"
 
 const root = document.getElementById("root")
 if (!root) throw new Error("root element missing")
