@@ -10,3 +10,4 @@ snapshots/
 .DS_Store
 coverage/
 .vite/
+screenshots/
