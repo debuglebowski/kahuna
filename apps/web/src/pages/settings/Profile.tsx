@@ -157,8 +157,8 @@ function DeleteAccount() {
   })
 
   return (
-    <Card className="border-destructive/30">
-      <CardHeader title="Delete account" />
+    <Card className="border-destructive/40">
+      <CardHeader title={<span className="text-destructive">Danger zone</span>} />
       <div className="max-w-md space-y-4 p-6">
         <p className="text-sm text-muted-foreground">
           Permanently deletes your account, sessions, and memberships. This cannot be undone.

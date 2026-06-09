@@ -12,12 +12,12 @@ import {
   Badge,
   Button,
   Card,
-  CardHeader,
   Field,
   IconButton,
   Input,
   Modal,
   Spinner,
+  Toolbar,
 } from "../../components/ui"
 import { authClient, useSession } from "../../lib/auth-client"
 import { Feedback } from "./parts"
@@ -51,6 +51,9 @@ export function Members() {
   const { data: session } = useSession()
   const [email, setEmail] = useState("")
   const [role, setRole] = useState("member")
+  const [filter, setFilter] = useState("")
+  // Adding happens in a modal; false = closed.
+  const [adding, setAdding] = useState(false)
   // Role changes happen in a modal; null = closed.
   const [editing, setEditing] = useState<{ id: string; label: string; role: string } | null>(null)
   const [draftRole, setDraftRole] = useState("member")
@@ -60,7 +63,7 @@ export function Members() {
   const add = useMutation({
     mutationFn: () => addMemberByEmail(email.trim(), role),
     onSuccess: () => {
-      setEmail("")
+      setAdding(false)
       invalidate()
     },
   })
@@ -92,87 +95,123 @@ export function Members() {
 
   const members = org.data?.members ?? []
   const ownerCount = members.filter((m) => m.role === "owner").length
+  const q = filter.trim().toLowerCase()
+  const shown = members.filter(
+    (m) =>
+      (m.user?.name ?? "").toLowerCase().includes(q) ||
+      (m.user?.email ?? "").toLowerCase().includes(q),
+  )
 
   return (
-    <div className="space-y-5">
-      <Card>
-        <CardHeader title="Add member" />
-        <div className="space-y-3 p-6">
-          <p className="text-xs text-muted-foreground">
-            Add an existing user by email. They must already have an account.
-          </p>
-          <div className="flex gap-2">
-            <Input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="teammate@example.com"
-              className="flex-1"
-            />
-            <Select value={role} onValueChange={setRole}>
-              <SelectTrigger className="w-32">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="member">Member</SelectItem>
-                <SelectItem value="admin">Admin</SelectItem>
-              </SelectContent>
-            </Select>
-            <Button onClick={() => add.mutate()} disabled={add.isPending || !email.includes("@")}>
-              <Plus size={15} />
-              {add.isPending ? "Adding…" : "Add"}
-            </Button>
-          </div>
-          <Feedback ok={add.isSuccess} okText="Member added." error={add.error} />
-        </div>
-      </Card>
+    <div className="space-y-3">
+      <Toolbar filter={filter} onFilter={setFilter} placeholder="Filter members…">
+        <Button
+          size="sm"
+          onClick={() => {
+            add.reset()
+            setEmail("")
+            setRole("member")
+            setAdding(true)
+          }}
+        >
+          <Plus size={15} />
+          Add member
+        </Button>
+      </Toolbar>
 
       <Card>
-        <CardHeader title={`Members (${members.length})`} />
-        <ul className="divide-y divide-border">
-          {members.map((m) => {
-            const isSelf = m.userId === session?.user.id
-            const lockOwner = m.role === "owner" && ownerCount <= 1
-            return (
-              <li key={m.id} className="flex items-center gap-3 px-6 py-3">
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-medium text-foreground">
-                    {m.user?.name?.trim() || m.user?.email}
-                    {isSelf && <span className="ml-1 text-xs text-muted-foreground">(you)</span>}
+        {shown.length === 0 ? (
+          <p className="p-6 text-sm text-muted-foreground">
+            {q ? `No members match "${filter.trim()}".` : "No members yet."}
+          </p>
+        ) : (
+          <ul className="divide-y divide-border">
+            {shown.map((m) => {
+              const isSelf = m.userId === session?.user.id
+              const lockOwner = m.role === "owner" && ownerCount <= 1
+              return (
+                <li key={m.id} className="flex items-center gap-3 px-6 py-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-medium text-foreground">
+                      {m.user?.name?.trim() || m.user?.email}
+                      {isSelf && <span className="ml-1 text-xs text-muted-foreground">(you)</span>}
+                    </div>
+                    <div className="truncate text-xs text-muted-foreground">{m.user?.email}</div>
                   </div>
-                  <div className="truncate text-xs text-muted-foreground">{m.user?.email}</div>
-                </div>
-                <Badge tone={roleTone(m.role)}>{m.role}</Badge>
-                <IconButton
-                  aria-label={`Change role for ${m.user?.email ?? "member"}`}
-                  disabled={lockOwner}
-                  onClick={() => {
-                    const label = m.user?.name?.trim() || m.user?.email || "this member"
-                    setEditing({ id: m.id, label, role: m.role })
-                    setDraftRole(m.role)
-                  }}
-                >
-                  <Pencil size={15} />
-                </IconButton>
-                <IconButton
-                  variant="danger"
-                  aria-label={`Remove ${m.user?.email ?? "member"}`}
-                  disabled={lockOwner || remove.isPending}
-                  onClick={() => {
-                    if (confirm(`Remove ${m.user?.email ?? "this member"} from the org?`))
-                      remove.mutate(m.id)
-                  }}
-                >
-                  <Trash2 size={15} />
-                </IconButton>
-              </li>
-            )
-          })}
-        </ul>
+                  <Badge tone={roleTone(m.role)}>{m.role}</Badge>
+                  <IconButton
+                    aria-label={`Change role for ${m.user?.email ?? "member"}`}
+                    disabled={lockOwner}
+                    onClick={() => {
+                      const label = m.user?.name?.trim() || m.user?.email || "this member"
+                      setEditing({ id: m.id, label, role: m.role })
+                      setDraftRole(m.role)
+                    }}
+                  >
+                    <Pencil size={15} />
+                  </IconButton>
+                  <IconButton
+                    variant="danger"
+                    aria-label={`Remove ${m.user?.email ?? "member"}`}
+                    disabled={lockOwner || remove.isPending}
+                    onClick={() => {
+                      if (confirm(`Remove ${m.user?.email ?? "this member"} from the org?`))
+                        remove.mutate(m.id)
+                    }}
+                  >
+                    <Trash2 size={15} />
+                  </IconButton>
+                </li>
+              )
+            })}
+          </ul>
+        )}
         <div className="px-6 pb-4">
           <Feedback error={remove.error} />
         </div>
       </Card>
+
+      {adding && (
+        <Modal title="Add member" onClose={() => setAdding(false)}>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Add an existing user by email — they must already have an account.
+            </p>
+            <div className="flex gap-2">
+              <Input
+                autoFocus
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && email.includes("@")) add.mutate()
+                }}
+                placeholder="teammate@example.com"
+                className="flex-1"
+              />
+              <Select value={role} onValueChange={setRole}>
+                <SelectTrigger className="w-32">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="member">Member</SelectItem>
+                  <SelectItem value="admin">Admin</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex gap-2">
+              <Button onClick={() => add.mutate()} disabled={add.isPending || !email.includes("@")}>
+                <Plus size={15} />
+                {add.isPending ? "Adding…" : "Add"}
+              </Button>
+              <Button variant="outline" onClick={() => setAdding(false)}>
+                Cancel
+              </Button>
+            </div>
+            <Feedback error={add.error} />
+          </div>
+        </Modal>
+      )}
 
       {editing && (
         <Modal title="Change role" onClose={() => setEditing(null)}>

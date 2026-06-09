@@ -26,7 +26,17 @@ import {
 } from "@/components/ui/select"
 import { IconPicker } from "../../components/IconPicker"
 import { SectionList } from "../../components/sidebar/SectionList"
-import { Badge, Button, Card, Drawer, Field, IconButton, Input, Spinner } from "../../components/ui"
+import {
+  Badge,
+  Button,
+  Card,
+  Drawer,
+  Field,
+  IconButton,
+  Input,
+  Spinner,
+  Toolbar,
+} from "../../components/ui"
 import { api, type SidebarSection, type SidebarView } from "../../lib/api"
 import { conceptsCollection, sidebarViewsCollection } from "../../lib/collections"
 import { ConceptIcon } from "../../lib/icons"
@@ -39,7 +49,12 @@ export function Views() {
   const { data: views } = useLiveQuery((q) => q.from({ v: sidebarViewsCollection }))
   const { data: concepts } = useLiveQuery((q) => q.from({ c: conceptsCollection }))
   const [editing, setEditing] = useState<SidebarView | null>(null)
+  const [filter, setFilter] = useState("")
   const sorted = [...(views ?? [])].sort((a, b) => a.position - b.position)
+  // Filtering shows a subset of the position-ordered list, so drag-reorder is
+  // disabled while a filter is active (positions wouldn't be meaningful).
+  const q = filter.trim().toLowerCase()
+  const filtered = q ? sorted.filter((v) => v.name.toLowerCase().includes(q)) : sorted
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }))
 
   const createMut = useMutation({
@@ -69,26 +84,24 @@ export function Views() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <p className="max-w-lg text-sm text-muted-foreground">
-          Views are configurable sidebar layouts you switch between via the pager. Org views are
-          shared with everyone; personal views are only yours.
-        </p>
-        <Button onClick={() => createMut.mutate()} disabled={createMut.isPending}>
+      <Toolbar filter={filter} onFilter={setFilter} placeholder="Filter views…">
+        <Button size="sm" onClick={() => createMut.mutate()} disabled={createMut.isPending}>
           <Plus size={15} /> New view
         </Button>
-      </div>
+      </Toolbar>
 
-      {sorted.length === 0 ? (
+      {filtered.length === 0 ? (
         <Card className="p-6 text-sm text-muted-foreground">
-          No views yet — the default layout is shown.
+          {q
+            ? `No views match "${filter.trim()}".`
+            : "No views yet — the default layout is shown. Views are configurable sidebar layouts you switch between via the pager; org views are shared with everyone, personal views are only yours."}
         </Card>
       ) : (
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
-          <SortableContext items={sorted.map((v) => v.id)} strategy={verticalListSortingStrategy}>
+          <SortableContext items={filtered.map((v) => v.id)} strategy={verticalListSortingStrategy}>
             <div className="space-y-1.5">
-              {sorted.map((v) => (
-                <ViewRow key={v.id} view={v} onEdit={() => setEditing(v)} />
+              {filtered.map((v) => (
+                <ViewRow key={v.id} view={v} sortable={!q} onEdit={() => setEditing(v)} />
               ))}
             </div>
           </SortableContext>
@@ -108,9 +121,18 @@ export function Views() {
   )
 }
 
-function ViewRow({ view, onEdit }: { view: SidebarView; onEdit: () => void }) {
+function ViewRow({
+  view,
+  sortable,
+  onEdit,
+}: {
+  view: SidebarView
+  sortable: boolean
+  onEdit: () => void
+}) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: view.id,
+    disabled: !sortable,
   })
   return (
     <div
@@ -122,15 +144,22 @@ function ViewRow({ view, onEdit }: { view: SidebarView; onEdit: () => void }) {
     >
       <button
         type="button"
-        className="cursor-grab text-muted-foreground hover:text-foreground active:cursor-grabbing"
+        className={
+          sortable
+            ? "cursor-grab text-muted-foreground hover:text-foreground active:cursor-grabbing"
+            : "cursor-default text-muted-foreground/40"
+        }
         aria-label="Drag to reorder"
+        disabled={!sortable}
         {...attributes}
         {...listeners}
       >
         <GripVertical size={16} />
       </button>
       <ConceptIcon value={view.icon || "lucide:LayoutGrid"} size={16} />
-      <span className="flex-1 truncate text-sm font-medium text-foreground">{view.name}</span>
+      <span className="flex-1 truncate text-sm font-medium text-foreground">
+        {view.name || <span className="text-muted-foreground">(untitled view)</span>}
+      </span>
       <Badge tone={view.ownerId ? "gray" : "blue"}>{view.ownerId ? "Personal" : "Org"}</Badge>
       {view.hidden && <Badge tone="amber">Hidden</Badge>}
       <IconButton aria-label="Edit view" onClick={onEdit}>
@@ -159,7 +188,7 @@ function ViewEditor({
 
   const save = useMutation({
     mutationFn: () =>
-      api.updateView({ id: view.id, name, icon, scope, hidden, body: { sections } }),
+      api.updateView({ id: view.id, name: name.trim(), icon, scope, hidden, body: { sections } }),
     onSuccess: async () => {
       await refetchViews()
       onClose()
@@ -178,7 +207,7 @@ function ViewEditor({
       title="Edit view"
       onClose={onClose}
       headerAction={
-        <Button onClick={() => save.mutate()} disabled={save.isPending || !name.trim()}>
+        <Button onClick={() => save.mutate()} disabled={save.isPending}>
           {save.isPending ? "Saving…" : "Save"}
         </Button>
       }
@@ -187,7 +216,7 @@ function ViewEditor({
         <div className="flex items-end gap-2">
           <IconPicker value={icon} onChange={setIcon} />
           <div className="flex-1">
-            <Field label="Name">
+            <Field label="Name (optional)">
               <Input
                 value={name}
                 onChange={(e) => setName(e.target.value)}

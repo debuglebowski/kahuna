@@ -105,7 +105,8 @@ export class SidebarViewService extends Effect.Service<SidebarViewService>()(
               AND (owner_id IS NULL OR owner_id = ${actor}) LIMIT 1`
           const cur = found[0]
           if (!cur) return yield* Effect.fail(new SidebarViewNotFound({ id: input.id }))
-          const name = input.name?.trim() || cur.name
+          // Name is optional — an explicit empty string clears it (icon-only view).
+          const name = input.name === undefined ? cur.name : input.name.trim()
           const icon = input.icon === undefined ? cur.icon : input.icon
           const hidden = input.hidden === undefined ? cur.hidden : input.hidden
           const ownerId =
@@ -150,8 +151,10 @@ export class SidebarViewService extends Effect.Service<SidebarViewService>()(
         sql.withTransaction(
           Effect.gen(function* () {
             const { orgId, actor } = yield* OrgContext
-            yield* Effect.forEach(orders, (o) =>
-              sql`UPDATE sidebar_views SET position = ${o.position}, updated_at = now()
+            yield* Effect.forEach(
+              orders,
+              (o) =>
+                sql`UPDATE sidebar_views SET position = ${o.position}, updated_at = now()
                   WHERE org_id = ${orgId} AND id = ${o.id}
                     AND (owner_id IS NULL OR owner_id = ${actor})`,
             )

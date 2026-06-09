@@ -1,19 +1,24 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Archive, ArchiveRestore, Check, Pencil, Plus, Trash2, X } from "lucide-react"
+import type { ReactNode } from "react"
 import { useState } from "react"
 import { useOutletContext } from "react-router-dom"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Label as FieldLabel } from "@/components/ui/label"
 import {
+  Badge,
   Button,
   Card,
   CardHeader,
   ConfirmDialog,
+  Drawer,
   IconButton,
   Input,
   LabelChip,
   Modal,
   Spinner,
+  ToggleChip,
+  Toolbar,
 } from "../../components/ui"
 import { api, type Label } from "../../lib/api"
 import { Feedback } from "./parts"
@@ -51,25 +56,65 @@ function ColorPicker({ value, onChange }: { value: string; onChange: (v: string)
   )
 }
 
-/** Create or edit a label in a modal. `initial` present → edit, else create. */
-function LabelModal({
-  initial,
-  onClose,
-  onSaved,
+/** Shared name / color / primary fields for the create modal and edit drawer. */
+function LabelFields({
+  name,
+  setName,
+  color,
+  setColor,
+  primary,
+  setPrimary,
+  onSubmit,
+  disabled = false,
 }: {
-  initial?: Label
-  onClose: () => void
-  onSaved: () => void
+  name: string
+  setName: (v: string) => void
+  color: string
+  setColor: (v: string) => void
+  primary: boolean
+  setPrimary: (v: boolean) => void
+  onSubmit?: () => void
+  disabled?: boolean
 }) {
-  const [name, setName] = useState(initial?.name ?? "")
-  const [color, setColor] = useState(initial?.color ?? DEFAULT_COLOR)
-  const [primary, setPrimary] = useState(initial?.primary ?? false)
+  return (
+    <div className="space-y-3">
+      <div className="space-y-1">
+        <span className="block text-sm leading-none font-medium text-foreground">Name</span>
+        <Input
+          autoFocus
+          value={name}
+          disabled={disabled}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") onSubmit?.()
+          }}
+          placeholder="e.g. Urgent"
+        />
+      </div>
+      <div className="space-y-1">
+        <span className="block text-sm leading-none font-medium text-foreground">Color</span>
+        <ColorPicker value={color} onChange={setColor} />
+      </div>
+      <FieldLabel className="flex items-center gap-1.5 text-sm font-normal text-foreground">
+        <Checkbox
+          checked={primary}
+          disabled={disabled}
+          onCheckedChange={(c) => setPrimary(c === true)}
+        />
+        Primary
+      </FieldLabel>
+    </div>
+  )
+}
+
+/** Create a new label in a modal (editing happens in the drawer). */
+function CreateLabelModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+  const [name, setName] = useState("")
+  const [color, setColor] = useState(DEFAULT_COLOR)
+  const [primary, setPrimary] = useState(false)
 
   const save = useMutation({
-    mutationFn: () =>
-      initial
-        ? api.renameLabel(initial.id, { name: name.trim(), color: color.trim() || null, primary })
-        : api.createLabel(name.trim(), color.trim() || null, primary),
+    mutationFn: () => api.createLabel(name.trim(), color.trim() || null, primary),
     onSuccess: () => {
       onSaved()
       onClose()
@@ -80,32 +125,21 @@ function LabelModal({
   }
 
   return (
-    <Modal title={initial ? "Edit label" : "New label"} onClose={onClose}>
+    <Modal title="New label" onClose={onClose}>
       <div className="space-y-3">
-        <div className="space-y-1">
-          <span className="block text-sm leading-none font-medium text-foreground">Name</span>
-          <Input
-            autoFocus
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") submit()
-            }}
-            placeholder="e.g. Urgent"
-          />
-        </div>
-        <div className="space-y-1">
-          <span className="block text-sm leading-none font-medium text-foreground">Color</span>
-          <ColorPicker value={color} onChange={setColor} />
-        </div>
-        <FieldLabel className="flex items-center gap-1.5 text-sm font-normal text-foreground">
-          <Checkbox checked={primary} onCheckedChange={(c) => setPrimary(c === true)} />
-          Primary
-        </FieldLabel>
+        <LabelFields
+          name={name}
+          setName={setName}
+          color={color}
+          setColor={setColor}
+          primary={primary}
+          setPrimary={setPrimary}
+          onSubmit={submit}
+        />
         <div className="flex gap-2">
           <Button onClick={submit} disabled={save.isPending || !name.trim()}>
             <Check size={15} />
-            {save.isPending ? "Saving…" : initial ? "Save" : "Create"}
+            {save.isPending ? "Saving…" : "Create"}
           </Button>
           <Button variant="outline" onClick={onClose}>
             <X size={15} />
@@ -115,6 +149,147 @@ function LabelModal({
         <Feedback error={save.error} />
       </div>
     </Modal>
+  )
+}
+
+/** Edit a label in a drawer: the form, plus a Danger zone (archive/restore/delete). */
+function LabelDrawer({
+  label,
+  admin,
+  onClose,
+  onSaved,
+  onArchive,
+  onRestore,
+  onDelete,
+  restorePending,
+  restoreError,
+}: {
+  label: Label
+  admin: boolean
+  onClose: () => void
+  onSaved: () => void
+  onArchive: () => void
+  onRestore: () => void
+  onDelete: () => void
+  restorePending: boolean
+  restoreError?: ReactNode
+}) {
+  const [name, setName] = useState(label.name)
+  const [color, setColor] = useState(label.color ?? DEFAULT_COLOR)
+  const [primary, setPrimary] = useState(label.primary)
+
+  const save = useMutation({
+    mutationFn: () =>
+      api.renameLabel(label.id, { name: name.trim(), color: color.trim() || null, primary }),
+    onSuccess: onSaved,
+  })
+  const submit = () => {
+    if (name.trim()) save.mutate()
+  }
+
+  return (
+    <Drawer
+      title={
+        <span className="flex items-center gap-2">
+          <LabelChip color={label.color} primary={label.primary}>
+            {label.name}
+          </LabelChip>
+        </span>
+      }
+      onClose={onClose}
+    >
+      <div className="space-y-5">
+        <Card>
+          <CardHeader
+            title="Label"
+            action={
+              admin && (
+                <Button onClick={submit} disabled={save.isPending || !name.trim()}>
+                  <Check size={15} />
+                  {save.isPending ? "Saving…" : "Save"}
+                </Button>
+              )
+            }
+          />
+          <div className="space-y-3 p-4">
+            <LabelFields
+              name={name}
+              setName={setName}
+              color={color}
+              setColor={setColor}
+              primary={primary}
+              setPrimary={setPrimary}
+              onSubmit={submit}
+              disabled={!admin}
+            />
+            <Feedback error={save.error} />
+          </div>
+        </Card>
+
+        {admin && (
+          <Card className="border-destructive/40">
+            <CardHeader
+              title={<span className="text-destructive">Danger zone</span>}
+              action={label.archivedAt ? <Badge tone="amber">Archived</Badge> : undefined}
+            />
+            <div className="divide-y divide-border">
+              {label.archivedAt ? (
+                <div className="flex items-center justify-between gap-4 px-4 py-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-foreground">Restore this label</p>
+                    <p className="text-xs text-muted-foreground">
+                      Brings it back to pickers and chips.
+                    </p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="shrink-0"
+                    disabled={restorePending}
+                    onClick={onRestore}
+                  >
+                    <ArchiveRestore size={14} />
+                    {restorePending ? "Restoring…" : "Restore"}
+                  </Button>
+                </div>
+              ) : (
+                <div className="flex items-center justify-between gap-4 px-4 py-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-foreground">Archive this label</p>
+                    <p className="text-xs text-muted-foreground">
+                      Hides it from pickers and chips; items keep it. Restore anytime.
+                    </p>
+                  </div>
+                  <Button variant="outline" size="sm" className="shrink-0" onClick={onArchive}>
+                    <Archive size={14} />
+                    Archive
+                  </Button>
+                </div>
+              )}
+              <div className="flex items-center justify-between gap-4 px-4 py-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-foreground">Delete this label</p>
+                  <p className="text-xs text-muted-foreground">
+                    Permanently removes it from every concept and item that used it. This can't be
+                    undone.
+                  </p>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0 border-destructive/50 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                  onClick={onDelete}
+                >
+                  <Trash2 size={14} />
+                  Delete
+                </Button>
+              </div>
+            </div>
+            {restoreError && <p className="px-4 pb-3 text-sm text-destructive">{restoreError}</p>}
+          </Card>
+        )}
+      </div>
+    </Drawer>
   )
 }
 
@@ -133,25 +308,33 @@ export function Labels() {
   const [creating, setCreating] = useState(false)
   const [editing, setEditing] = useState<Label | null>(null)
   const [showArchived, setShowArchived] = useState(false)
+  const [filter, setFilter] = useState("")
   const [dialog, setDialog] = useState<LabelDialog>(null)
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["labels"] })
 
+  // Archive / delete close both the confirm dialog and the edit drawer; restore
+  // closes the drawer too (all three "remove" the label from where you were).
   const archive = useMutation({
     mutationFn: (id: string) => api.archiveLabel(id),
     onSuccess: () => {
       setDialog(null)
+      setEditing(null)
       invalidate()
     },
   })
   const restore = useMutation({
     mutationFn: (id: string) => api.restoreLabel(id),
-    onSuccess: invalidate,
+    onSuccess: () => {
+      setEditing(null)
+      invalidate()
+    },
   })
   const del = useMutation({
     mutationFn: (id: string) => api.deleteLabel(id),
     onSuccess: () => {
       setDialog(null)
+      setEditing(null)
       invalidate()
     },
   })
@@ -161,84 +344,60 @@ export function Labels() {
     return <p className="text-sm text-destructive">{(labels.error as Error).message}</p>
 
   const sorted = [...(labels.data ?? [])].sort((a, b) => a.name.localeCompare(b.name))
-  const live = sorted.filter((l) => !l.archivedAt)
   const archived = sorted.filter((l) => l.archivedAt)
+  // Archived rows render inline (dimmed) when toggled on; the filter applies to both.
+  const q = filter.trim().toLowerCase()
+  const rows = sorted.filter(
+    (l) => (showArchived || !l.archivedAt) && l.name.toLowerCase().includes(q),
+  )
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">
-          A shared vocabulary of labels — apply them to a concept (in Concepts) or to individual
-          items{admin ? "" : "; managing the vocabulary is admin-only"}.
-        </p>
-        <div className="flex items-center gap-3">
-          {admin && archived.length > 0 && (
-            <Button
-              variant="link"
-              onClick={() => setShowArchived((v) => !v)}
-              className="h-auto whitespace-nowrap p-0 text-xs font-normal text-muted-foreground hover:text-foreground"
-            >
-              {showArchived ? "Hide" : "Show"} archived ({archived.length})
-            </Button>
-          )}
-          {admin && (
-            <Button className="shrink-0 whitespace-nowrap" onClick={() => setCreating(true)}>
-              <Plus size={15} />
-              New label
-            </Button>
-          )}
-        </div>
-      </div>
+      <Toolbar filter={filter} onFilter={setFilter} placeholder="Filter labels…">
+        {admin && archived.length > 0 && (
+          <ToggleChip pressed={showArchived} onPressedChange={setShowArchived}>
+            Archived ({archived.length})
+          </ToggleChip>
+        )}
+        {admin && (
+          <Button size="sm" onClick={() => setCreating(true)}>
+            <Plus size={15} />
+            New label
+          </Button>
+        )}
+      </Toolbar>
 
-      {creating && <LabelModal onClose={() => setCreating(false)} onSaved={invalidate} />}
+      {creating && <CreateLabelModal onClose={() => setCreating(false)} onSaved={invalidate} />}
       {editing && (
-        <LabelModal
+        <LabelDrawer
           key={editing.id}
-          initial={editing}
+          label={editing}
+          admin={admin}
           onClose={() => setEditing(null)}
           onSaved={invalidate}
+          onArchive={() => setDialog({ kind: "archive", label: editing })}
+          onRestore={() => restore.mutate(editing.id)}
+          onDelete={() => setDialog({ kind: "delete", label: editing })}
+          restorePending={restore.isPending}
+          restoreError={restore.error ? labelMsg(restore.error) : undefined}
         />
       )}
 
       <Card>
-        <CardHeader title={`Labels (${live.length})`} />
-        {live.length === 0 ? (
-          <p className="p-6 text-sm text-muted-foreground">No labels yet.</p>
+        {rows.length === 0 ? (
+          <p className="p-6 text-sm text-muted-foreground">
+            {q
+              ? `No labels match "${filter.trim()}".`
+              : "No labels yet — a shared vocabulary you apply to concepts (in Concepts) or to individual items."}
+          </p>
         ) : (
           <ul className="divide-y divide-border">
-            {live.map((l) => (
-              <LabelRow
-                key={l.id}
-                label={l}
-                admin={admin}
-                onEdit={() => setEditing(l)}
-                onArchive={() => setDialog({ kind: "archive", label: l })}
-                onDelete={() => setDialog({ kind: "delete", label: l })}
-              />
+            {rows.map((l) => (
+              <LabelRow key={l.id} label={l} onEdit={admin ? () => setEditing(l) : undefined} />
             ))}
           </ul>
         )}
       </Card>
-
-      {showArchived && archived.length > 0 && (
-        <Card>
-          <CardHeader title={`Archived (${archived.length})`} />
-          <ul className="divide-y divide-border">
-            {archived.map((l) => (
-              <LabelRow
-                key={l.id}
-                label={l}
-                admin={admin}
-                archived
-                restorePending={restore.isPending}
-                onRestore={() => restore.mutate(l.id)}
-                onDelete={() => setDialog({ kind: "delete", label: l })}
-              />
-            ))}
-          </ul>
-        </Card>
-      )}
-      {restore.error && <p className="text-sm text-destructive">{labelMsg(restore.error)}</p>}
 
       {dialog?.kind === "archive" && (
         <ConfirmDialog
@@ -279,60 +438,22 @@ export function Labels() {
   )
 }
 
-/** One vocabulary row. Live rows offer edit/archive/delete;
- *  archived rows offer restore/delete. */
-function LabelRow({
-  label,
-  admin,
-  archived = false,
-  restorePending = false,
-  onEdit,
-  onArchive,
-  onRestore,
-  onDelete,
-}: {
-  label: Label
-  admin: boolean
-  archived?: boolean
-  restorePending?: boolean
-  onEdit?: () => void
-  onArchive?: () => void
-  onRestore?: () => void
-  onDelete?: () => void
-}) {
+/** One vocabulary row — chip + color, with an edit pencil (opens the drawer) for admins.
+ *  Archived rows render dimmed with a badge; archive/restore/delete live in the
+ *  drawer's Danger zone, not on the row. */
+function LabelRow({ label, onEdit }: { label: Label; onEdit?: () => void }) {
   return (
-    <li className={`flex items-center gap-3 px-6 py-3${archived ? " opacity-60" : ""}`}>
+    <li className={`flex items-center gap-3 px-6 py-3${label.archivedAt ? " opacity-60" : ""}`}>
       <LabelChip color={label.color} primary={label.primary}>
         {label.name}
       </LabelChip>
+      {label.archivedAt && <Badge tone="amber">archived</Badge>}
       <span className="flex-1" />
-      {admin &&
-        (archived ? (
-          <>
-            <IconButton
-              aria-label={`Restore ${label.name}`}
-              disabled={restorePending}
-              onClick={onRestore}
-            >
-              <ArchiveRestore size={15} />
-            </IconButton>
-            <IconButton variant="danger" aria-label={`Delete ${label.name}`} onClick={onDelete}>
-              <Trash2 size={15} />
-            </IconButton>
-          </>
-        ) : (
-          <>
-            <IconButton aria-label={`Edit ${label.name}`} onClick={onEdit}>
-              <Pencil size={15} />
-            </IconButton>
-            <IconButton aria-label={`Archive ${label.name}`} onClick={onArchive}>
-              <Archive size={15} />
-            </IconButton>
-            <IconButton variant="danger" aria-label={`Delete ${label.name}`} onClick={onDelete}>
-              <Trash2 size={15} />
-            </IconButton>
-          </>
-        ))}
+      {onEdit && (
+        <IconButton aria-label={`Edit ${label.name}`} onClick={onEdit}>
+          <Pencil size={15} />
+        </IconButton>
+      )}
     </li>
   )
 }

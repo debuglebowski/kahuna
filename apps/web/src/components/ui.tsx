@@ -1,4 +1,4 @@
-import { Crown, ServerCrash, X } from "lucide-react"
+import { Crown, Search, ServerCrash, X } from "lucide-react"
 import type { ButtonHTMLAttributes, ReactNode } from "react"
 import {
   AlertDialog,
@@ -11,6 +11,7 @@ import {
 import { Badge as BadgePrimitive } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
@@ -74,6 +75,66 @@ export function CardHeader({ title, action }: { title: ReactNode; action?: React
       <h3 className="text-sm leading-none font-semibold text-card-foreground">{title}</h3>
       {action}
     </div>
+  )
+}
+
+/**
+ * Functional toolbar for list pages that can create things: a filter input
+ * on the left, toggles + the create action on the right. Replaces descriptive
+ * header prose — explanations belong in empty states (or an info tooltip).
+ */
+export function Toolbar({
+  filter,
+  onFilter,
+  placeholder,
+  children,
+}: {
+  filter: string
+  onFilter: (v: string) => void
+  placeholder: string
+  children?: ReactNode
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <div className="relative w-full max-w-xs">
+        <Search
+          size={14}
+          className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-muted-foreground"
+        />
+        <Input
+          value={filter}
+          onChange={(e) => onFilter(e.target.value)}
+          placeholder={placeholder}
+          className="h-8 pl-8"
+        />
+      </div>
+      {children && <div className="flex shrink-0 items-center gap-2">{children}</div>}
+    </div>
+  )
+}
+
+/** Outline toggle chip for {@link Toolbar} filters (e.g. "Archived"); pressed
+ *  renders as an accent fill. */
+export function ToggleChip({
+  pressed,
+  onPressedChange,
+  children,
+}: {
+  pressed: boolean
+  onPressedChange: (v: boolean) => void
+  children: ReactNode
+}) {
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      aria-pressed={pressed}
+      onClick={() => onPressedChange(!pressed)}
+      className={pressed ? "bg-accent text-accent-foreground" : "text-muted-foreground"}
+    >
+      {children}
+    </Button>
   )
 }
 

@@ -82,8 +82,8 @@ export function Organization() {
       </Card>
 
       {isOwner && (
-        <Card className="border-red-200">
-          <CardHeader title="Danger zone" />
+        <Card className="border-destructive/40">
+          <CardHeader title={<span className="text-destructive">Danger zone</span>} />
           <div className="max-w-md space-y-3 p-6">
             <p className="text-sm text-muted-foreground">
               Permanently delete <strong>{org.data?.name}</strong> and all of its data — concepts,

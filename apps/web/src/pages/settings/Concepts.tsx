@@ -17,6 +17,8 @@ import {
   LabelChip,
   Modal,
   Spinner,
+  ToggleChip,
+  Toolbar,
 } from "../../components/ui"
 import { api, type Field, type Label } from "../../lib/api"
 import { ConceptIcon, DEFAULT_CONCEPT_ICON, DEFAULT_FIELD_ICON } from "../../lib/icons"
@@ -123,6 +125,7 @@ export function Concepts() {
   const [defaultLabelIds, setDefaultLabelIds] = useState<string[]>([])
   const [showArchived, setShowArchived] = useState(false)
   const [showArchivedFields, setShowArchivedFields] = useState(false)
+  const [filter, setFilter] = useState("")
   const [dialog, setDialog] = useState<Dialog>(null)
 
   const selected = concepts.data?.find((c) => c.id === selectedId) ?? null
@@ -332,38 +335,33 @@ export function Concepts() {
 
   if (concepts.isPending) return <Spinner />
 
+  // The find-filter narrows the archived list too (the canvas dims live ones).
+  const q = filter.trim().toLowerCase()
+  const archivedShown = archivedConcepts.filter((c) => c.name.toLowerCase().includes(q))
+
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">
-          Click a concept to view{admin ? " or edit" : ""} its settings.
-        </p>
-        <div className="flex items-center gap-3">
-          {admin && archivedConcepts.length > 0 && (
-            <Button
-              variant="link"
-              onClick={() => setShowArchived((v) => !v)}
-              className="h-auto p-0 text-xs font-normal text-muted-foreground hover:text-foreground"
-            >
-              {showArchived ? "Hide" : "Show"} archived ({archivedConcepts.length})
-            </Button>
-          )}
-          {admin && (
-            <Button onClick={() => setCreatingConcept(true)}>
-              <Plus size={15} />
-              New concept
-            </Button>
-          )}
-        </div>
-      </div>
+      <Toolbar filter={filter} onFilter={setFilter} placeholder="Find concept…">
+        {admin && archivedConcepts.length > 0 && (
+          <ToggleChip pressed={showArchived} onPressedChange={setShowArchived}>
+            Archived ({archivedConcepts.length})
+          </ToggleChip>
+        )}
+        {admin && (
+          <Button size="sm" onClick={() => setCreatingConcept(true)}>
+            <Plus size={15} />
+            New concept
+          </Button>
+        )}
+      </Toolbar>
 
-      <ConceptGraphCanvas selectedId={selectedId} onSelect={setSelectedId} />
+      <ConceptGraphCanvas selectedId={selectedId} onSelect={setSelectedId} filter={filter} />
 
-      {showArchived && archivedConcepts.length > 0 && (
+      {showArchived && archivedShown.length > 0 && (
         <Card>
-          <CardHeader title={`Archived concepts (${archivedConcepts.length})`} />
+          <CardHeader title={`Archived concepts (${archivedShown.length})`} />
           <ul className="divide-y divide-border">
-            {archivedConcepts.map((c) => (
+            {archivedShown.map((c) => (
               <li key={c.id} className="flex items-center gap-2 px-6 py-2.5">
                 <span className="flex w-5 shrink-0 justify-center text-muted-foreground">
                   <ConceptIcon value={c.icon || DEFAULT_CONCEPT_ICON} size={16} />
@@ -622,54 +620,78 @@ export function Concepts() {
             </Card>
 
             {admin && (
-              <div className="space-y-2 border-t border-border pt-4">
-                {selected.archivedAt ? (
-                  <div className="flex flex-wrap items-center gap-4">
-                    <Badge tone="amber">Archived</Badge>
+              <Card className="border-destructive/40">
+                <CardHeader
+                  title={<span className="text-destructive">Danger zone</span>}
+                  action={selected.archivedAt ? <Badge tone="amber">Archived</Badge> : undefined}
+                />
+                <div className="divide-y divide-border">
+                  {selected.archivedAt ? (
+                    <div className="flex items-center justify-between gap-4 px-4 py-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-foreground">Restore this concept</p>
+                        <p className="text-xs text-muted-foreground">
+                          Brings it back to the sidebar, lists, and graph.
+                        </p>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="shrink-0"
+                        disabled={restoreConcept.isPending}
+                        onClick={() => restoreConcept.mutate(selected.id)}
+                      >
+                        <ArchiveRestore size={14} />
+                        {restoreConcept.isPending ? "Restoring…" : "Restore"}
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-between gap-4 px-4 py-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-foreground">Archive this concept</p>
+                        <p className="text-xs text-muted-foreground">
+                          Hides it from the sidebar and lists; its fields
+                          {selected.itemCount
+                            ? ` and ${selected.itemCount} item${selected.itemCount === 1 ? "" : "s"}`
+                            : ""}{" "}
+                          are kept. Restore anytime.
+                        </p>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="shrink-0"
+                        onClick={() => setDialog({ kind: "archiveConcept" })}
+                      >
+                        <Archive size={14} />
+                        Archive
+                      </Button>
+                    </div>
+                  )}
+                  <div className="flex items-center justify-between gap-4 px-4 py-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-foreground">Delete this concept</p>
+                      <p className="text-xs text-muted-foreground">
+                        Permanently removes it and its fields. This can't be undone.
+                      </p>
+                    </div>
                     <Button
-                      variant="link"
-                      disabled={restoreConcept.isPending}
-                      onClick={() => restoreConcept.mutate(selected.id)}
-                      className="h-auto gap-1.5 p-0 text-xs font-normal text-muted-foreground hover:text-foreground"
-                    >
-                      <ArchiveRestore size={14} />
-                      {restoreConcept.isPending ? "Restoring…" : "Restore concept"}
-                    </Button>
-                    <Button
-                      variant="link"
+                      variant="outline"
+                      size="sm"
+                      className="shrink-0 border-destructive/50 text-destructive hover:bg-destructive/10 hover:text-destructive"
                       onClick={() => setDialog({ kind: "deleteConcept" })}
-                      className="h-auto gap-1.5 p-0 text-xs font-normal text-muted-foreground hover:text-destructive"
                     >
                       <Trash2 size={14} />
-                      Delete permanently
+                      Delete
                     </Button>
                   </div>
-                ) : (
-                  <div className="flex flex-wrap items-center gap-4">
-                    <Button
-                      variant="link"
-                      onClick={() => setDialog({ kind: "archiveConcept" })}
-                      className="h-auto gap-1.5 p-0 text-xs font-normal text-muted-foreground hover:text-foreground"
-                    >
-                      <Archive size={14} />
-                      Archive concept
-                    </Button>
-                    <Button
-                      variant="link"
-                      onClick={() => setDialog({ kind: "deleteConcept" })}
-                      className="h-auto gap-1.5 p-0 text-xs font-normal text-muted-foreground hover:text-destructive"
-                    >
-                      <Trash2 size={14} />
-                      Delete concept
-                    </Button>
-                  </div>
-                )}
+                </div>
                 {(restoreConcept.error || archiveConcept.error || delConcept.error) && (
-                  <p className="text-sm text-destructive">
+                  <p className="px-4 pb-3 text-sm text-destructive">
                     {msgOf(restoreConcept.error ?? archiveConcept.error ?? delConcept.error)}
                   </p>
                 )}
-              </div>
+              </Card>
             )}
           </div>
         </Drawer>
