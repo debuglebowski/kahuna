@@ -19,6 +19,10 @@ startDecayTick()
 
 const server = Bun.serve({
   port,
+  // Must exceed the SSE heartbeat (25s in stream.ts): Bun's default 10s idle
+  // kill fired BETWEEN pings and tore the live-sync stream down on a loop.
+  // 60s keeps streams alive while still shedding genuinely dead connections.
+  idleTimeout: 60,
   async fetch(req) {
     const url = new URL(req.url)
 

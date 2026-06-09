@@ -20,7 +20,15 @@ import {
   useReactFlow,
 } from "@xyflow/react"
 import { ChevronDown, Redo2, Undo2, Workflow } from "lucide-react"
-import { type CSSProperties, useCallback, useEffect, useMemo, useReducer, useRef } from "react"
+import {
+  type CSSProperties,
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from "react"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -44,6 +52,10 @@ import {
   NODE_W,
 } from "../../lib/graphLayouts"
 import { ConceptIcon, DEFAULT_CONCEPT_ICON } from "../../lib/icons"
+import { useGraphPositions } from "./useGraphPositions"
+
+/** Stable empty fallback — a fresh `{}` would re-run the layout memo per render. */
+const NO_SAVED: GraphLayout = {}
 
 /** Handle sides per layout flow direction (target side first). */
 const DIR_HANDLES: Record<LayoutDir, [Position, Position]> = {
@@ -196,103 +208,19 @@ function Flow({
   const [nodes, setNodes, onNodesChange] = useNodesState(initial.nodes)
   const [edges, , onEdgesChange] = useEdgesState(initial.edges)
 
-  // ── position persistence (debounced) + client-side undo/redo ───────────────
-  const nodesRef = useRef(nodes)
-  useEffect(() => {
-    nodesRef.current = nodes
-  }, [nodes])
-  const currentPositions = useCallback((): GraphLayout => {
-    return Object.fromEntries(nodesRef.current.map((n) => [n.id, { ...n.position }]))
-  }, [])
-
-  // Every position change (drag, layout, undo/redo) saves the FULL map after a
-  // quiet period — last write wins org-wide, stale concept ids wash out.
-  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const scheduleSave = useCallback(() => {
-    if (saveTimer.current) clearTimeout(saveTimer.current)
-    saveTimer.current = setTimeout(() => {
-      saveTimer.current = null
-      api.saveGraphLayout(currentPositions()).catch((e) => {
-        console.warn("graph layout save failed", e)
-      })
-    }, 800)
-  }, [currentPositions])
-  // Flush a pending save on unmount so a quick navigation doesn't lose the move.
-  useEffect(
-    () => () => {
-      if (saveTimer.current) {
-        clearTimeout(saveTimer.current)
-        api.saveGraphLayout(currentPositions()).catch(() => {})
-      }
-    },
-    [currentPositions],
-  )
-
-  // Undo/redo over position snapshots. Refs hold the stacks (no re-render per
-  // tick); the reducer bump refreshes button disabled-states.
-  const history = useRef<{ past: GraphLayout[]; future: GraphLayout[] }>({ past: [], future: [] })
-  const [, bump] = useReducer((c: number) => c + 1, 0)
-  const pushHistory = useCallback(() => {
-    history.current.past.push(currentPositions())
-    history.current.future = []
-    bump()
-  }, [currentPositions])
-
-  const applyPositions = useCallback(
-    (layout: GraphLayout) => {
-      setNodes((ns) => ns.map((n) => ({ ...n, position: layout[n.id] ?? n.position })))
-      scheduleSave()
-    },
-    [setNodes, scheduleSave],
-  )
-  const undo = useCallback(() => {
-    const prev = history.current.past.pop()
-    if (!prev) return
-    history.current.future.push(currentPositions())
-    applyPositions(prev)
-    bump()
-  }, [applyPositions, currentPositions])
-  const redo = useCallback(() => {
-    const next = history.current.future.pop()
-    if (!next) return
-    history.current.past.push(currentPositions())
-    applyPositions(next)
-    bump()
-  }, [applyPositions, currentPositions])
-
-  // Cmd/Ctrl+Z / Shift+Cmd+Z (or Ctrl+Y) while interacting with the canvas.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey)) return
-      const target = e.target as HTMLElement | null
-      if (!target?.closest(".react-flow")) return
-      if (e.key.toLowerCase() === "z") {
-        e.preventDefault()
-        if (e.shiftKey) redo()
-        else undo()
-      } else if (e.key.toLowerCase() === "y") {
-        e.preventDefault()
-        redo()
-      }
-    }
-    window.addEventListener("keydown", onKey)
-    return () => window.removeEventListener("keydown", onKey)
-  }, [undo, redo])
-
-  // A drag is one undo step: snapshot at grab, commit at release.
-  const dragSnap = useRef<GraphLayout | null>(null)
-  const onNodeDragStart = useCallback(() => {
-    dragSnap.current = currentPositions()
-  }, [currentPositions])
-  const onNodeDragStop = useCallback(() => {
-    if (dragSnap.current) {
-      history.current.past.push(dragSnap.current)
-      history.current.future = []
-      dragSnap.current = null
-      bump()
-    }
-    scheduleSave()
-  }, [scheduleSave])
+  // Debounced patch persistence + undo/redo over positions (see the hook).
+  const {
+    saveState,
+    markDirty,
+    scheduleSave,
+    pushHistory,
+    undo,
+    redo,
+    canUndo,
+    canRedo,
+    onNodeDragStart,
+    onNodeDragStop,
+  } = useGraphPositions(nodes, setNodes)
 
   // Reflect selection + find-filter without re-running layout (preserves pan/zoom).
   const q = filter.trim().toLowerCase()
@@ -323,11 +251,12 @@ function Flow({
             data: { ...n.data, direction, selected: n.id === selectedId },
           })),
         )
+        markDirty("all")
         scheduleSave()
         requestAnimationFrame(() => fitView({ padding: 0.2 }))
       })
     },
-    [graph, selectedId, setNodes, fitView, pushHistory, scheduleSave],
+    [graph, selectedId, setNodes, fitView, pushHistory, markDirty, scheduleSave],
   )
 
   return (
@@ -380,7 +309,7 @@ function Flow({
           className="shadow-sm"
           aria-label="Undo move"
           title="Undo (⌘Z)"
-          disabled={history.current.past.length === 0}
+          disabled={!canUndo}
           onClick={undo}
         >
           <Undo2 />
@@ -391,11 +320,20 @@ function Flow({
           className="shadow-sm"
           aria-label="Redo move"
           title="Redo (⇧⌘Z)"
-          disabled={history.current.future.length === 0}
+          disabled={!canRedo}
           onClick={redo}
         >
           <Redo2 />
         </Button>
+        {saveState !== "idle" && (
+          <span
+            className={
+              saveState === "error" ? "text-xs text-destructive" : "text-xs text-muted-foreground"
+            }
+          >
+            {saveState === "error" ? "Save failed — retrying" : "Saving…"}
+          </span>
+        )}
       </Panel>
     </ReactFlow>
   )
@@ -463,7 +401,7 @@ export function ConceptGraphCanvas({
               selectedId={selectedId}
               onSelect={onSelect}
               filter={filter}
-              savedPositions={layout.data ?? {}}
+              savedPositions={layout.data ?? NO_SAVED}
             />
           </ReactFlowProvider>
         </div>

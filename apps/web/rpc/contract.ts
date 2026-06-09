@@ -184,10 +184,12 @@ export const ConceptGraph = Schema.Struct({
 export type ConceptGraph = typeof ConceptGraph.Type
 
 /** Saved canvas positions for the concept graph: concept id → { x, y }.
- *  Shared org-wide presentation state (like sidebar views — no admin gate). */
+ *  Shared org-wide presentation state (like sidebar views — no admin gate).
+ *  Coordinates must be finite — NaN/Infinity would poison the stored layout. */
+const FiniteNumber = Schema.Number.pipe(Schema.finite())
 export const GraphLayout = Schema.Record({
   key: Schema.String,
-  value: Schema.Struct({ x: Schema.Number, y: Schema.Number }),
+  value: Schema.Struct({ x: FiniteNumber, y: FiniteNumber }),
 })
 export type GraphLayout = typeof GraphLayout.Type
 

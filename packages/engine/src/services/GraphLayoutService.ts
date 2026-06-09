@@ -31,18 +31,34 @@ export class GraphLayoutService extends Effect.Service<GraphLayoutService>()(
           return rows[0]?.positions ?? {}
         })
 
-      /** Replace the org's saved positions wholesale (the client always sends
-       *  the full map, so stale entries for deleted concepts wash out). */
-      const save = (positions: GraphLayoutPositions) =>
-        Effect.gen(function* () {
-          const { orgId } = yield* OrgContext
-          yield* sql`
-            INSERT INTO concept_graph_layouts (org_id, positions, updated_at)
-            VALUES (${orgId}, ${JSON.stringify(positions)}::jsonb, now())
-            ON CONFLICT (org_id)
-            DO UPDATE SET positions = EXCLUDED.positions, updated_at = now()`
-          return positions
-        })
+      /**
+       * Merge a partial position patch into the org's saved layout (jsonb `||`,
+       * so concurrent editors moving DIFFERENT nodes don't clobber each other —
+       * last write wins only per node). After merging, entries whose concept no
+       * longer exists are pruned, which doubles as id validation and keeps the
+       * document bounded. Returns the resulting full map.
+       */
+      const save = (patch: GraphLayoutPositions) =>
+        sql.withTransaction(
+          Effect.gen(function* () {
+            const { orgId } = yield* OrgContext
+            yield* sql`
+              INSERT INTO concept_graph_layouts (org_id, positions, updated_at)
+              VALUES (${orgId}, ${JSON.stringify(patch)}::jsonb, now())
+              ON CONFLICT (org_id)
+              DO UPDATE SET positions = concept_graph_layouts.positions || EXCLUDED.positions,
+                            updated_at = now()`
+            const rows = yield* sql<LayoutRow>`
+              UPDATE concept_graph_layouts SET positions = (
+                SELECT COALESCE(jsonb_object_agg(e.key, e.value), '{}'::jsonb)
+                FROM jsonb_each(positions) AS e
+                WHERE e.key IN (SELECT id::text FROM concepts WHERE org_id = ${orgId})
+              )
+              WHERE org_id = ${orgId}
+              RETURNING positions`
+            return rows[0]?.positions ?? {}
+          }),
+        )
 
       return { get, save } as const
     }),

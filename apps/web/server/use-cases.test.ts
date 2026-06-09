@@ -191,22 +191,44 @@ describe("archive / restore / delete (end-to-end use-case wiring)", () => {
 })
 
 describe("concept graph layout (shared canvas positions)", () => {
-  it("round-trips: empty by default, upsert replaces wholesale, org-scoped", async () => {
+  it("merges patches per node, prunes unknown ids, and stays org-scoped", async () => {
     const orgA = randomUUID()
     const orgB = randomUUID()
+    const a = (await run(orgA, createConcept("Alpha"))) as WithId
+    const b = (await run(orgA, createConcept("Beta"))) as WithId
 
     // Empty before anything is saved.
     expect(await run(orgA, getGraphLayout)).toEqual({})
 
-    // First save inserts; the full map is stored as-is.
-    const v1 = { "concept-1": { x: 10, y: 20 }, "concept-2": { x: -5.5, y: 0 } }
-    await run(orgA, saveGraphLayout(v1))
-    expect(await run(orgA, getGraphLayout)).toEqual(v1)
+    // First patch inserts.
+    await run(orgA, saveGraphLayout({ [a.id]: { x: 10, y: 20 } }))
+    expect(await run(orgA, getGraphLayout)).toEqual({ [a.id]: { x: 10, y: 20 } })
 
-    // Second save upserts wholesale — dropped ids wash out, no merging.
-    const v2 = { "concept-2": { x: 300, y: 400 } }
-    await run(orgA, saveGraphLayout(v2))
-    expect(await run(orgA, getGraphLayout)).toEqual(v2)
+    // A later patch for a DIFFERENT node merges instead of clobbering — two
+    // editors moving different nodes both keep their changes.
+    await run(orgA, saveGraphLayout({ [b.id]: { x: -5.5, y: 0 } }))
+    expect(await run(orgA, getGraphLayout)).toEqual({
+      [a.id]: { x: 10, y: 20 },
+      [b.id]: { x: -5.5, y: 0 },
+    })
+
+    // Same node: last write wins per node.
+    await run(orgA, saveGraphLayout({ [a.id]: { x: 300, y: 400 } }))
+    expect((await run(orgA, getGraphLayout)) as Record<string, unknown>).toMatchObject({
+      [a.id]: { x: 300, y: 400 },
+      [b.id]: { x: -5.5, y: 0 },
+    })
+
+    // Ids that aren't this org's concepts are pruned (validation + GC).
+    await run(orgA, saveGraphLayout({ [randomUUID()]: { x: 1, y: 1 } }))
+    expect(Object.keys((await run(orgA, getGraphLayout)) as object).sort()).toEqual(
+      [a.id, b.id].sort(),
+    )
+
+    // Hard-deleting a concept washes its entry out on the next save.
+    await run(orgA, deleteConcept(b.id))
+    await run(orgA, saveGraphLayout({ [a.id]: { x: 1, y: 2 } }))
+    expect(await run(orgA, getGraphLayout)).toEqual({ [a.id]: { x: 1, y: 2 } })
 
     // Other orgs never see it.
     expect(await run(orgB, getGraphLayout)).toEqual({})
