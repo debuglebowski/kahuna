@@ -1,11 +1,11 @@
 import { Crown } from "lucide-react"
 import type { Label } from "../lib/api"
-import { cn } from "../lib/utils"
-import { readableOn } from "./ui"
+import { MultiCombobox } from "./MultiCombobox"
+import { LabelChip } from "./ui"
 
 /**
- * Toggle-chip multi-select over the org label vocabulary. Selected chips render
- * in the label's color; unselected render as neutral outlines. `excludeIds`
+ * Multi-select over the org label vocabulary — selected labels render as
+ * colored chips (with ×), and a searchable combobox adds more. `excludeIds`
  * hides options (e.g. static labels when picking item-level / default labels).
  */
 export function LabelMultiSelect({
@@ -22,43 +22,35 @@ export function LabelMultiSelect({
   emptyHint?: string
 }) {
   const exclude = new Set(excludeIds)
-  const selected = new Set(selectedIds)
-  const options = all.filter((l) => !exclude.has(l.id)).sort((a, b) => a.name.localeCompare(b.name))
+  const byId = new Map(all.map((l) => [l.id, l]))
+  const options = all
+    .filter((l) => !exclude.has(l.id))
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((l) => ({
+      id: l.id,
+      label: l.name,
+      icon: l.primary ? (
+        <Crown className="size-3 shrink-0 text-muted-foreground" aria-label="Primary" />
+      ) : undefined,
+    }))
   if (options.length === 0) return <p className="text-xs text-muted-foreground">{emptyHint}</p>
 
-  const toggle = (id: string) => {
-    const next = new Set(selected)
-    if (next.has(id)) next.delete(id)
-    else next.add(id)
-    onChange([...next])
-  }
-
   return (
-    <div className="flex flex-wrap gap-1.5">
-      {options.map((l) => {
-        const on = selected.has(l.id)
-        const style =
-          on && l.color ? { backgroundColor: l.color, color: readableOn(l.color) } : undefined
+    <MultiCombobox
+      options={options}
+      selectedIds={selectedIds}
+      onChange={onChange}
+      placeholder="Label"
+      searchPlaceholder="Search labels…"
+      emptyText="No matching labels."
+      renderChip={(o, remove) => {
+        const l = byId.get(o.id)
         return (
-          <button
-            key={l.id}
-            type="button"
-            onClick={() => toggle(l.id)}
-            style={style}
-            className={cn(
-              "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium transition",
-              on
-                ? style
-                  ? "border-transparent"
-                  : "border-transparent bg-primary text-primary-foreground"
-                : "border-input bg-background text-muted-foreground hover:bg-accent",
-            )}
-          >
-            {l.primary && <Crown className="h-3 w-3 shrink-0" aria-label="Primary" />}
-            {l.name}
-          </button>
+          <LabelChip color={l?.color ?? null} primary={l?.primary} onRemove={remove}>
+            {o.label}
+          </LabelChip>
         )
-      })}
-    </div>
+      }}
+    />
   )
 }

@@ -8,9 +8,11 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
+import { Badge as BadgePrimitive } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
+import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
 
@@ -60,7 +62,7 @@ export function IconButton({
 
 export function Card({ className, children }: { className?: string; children: ReactNode }) {
   return (
-    <div className={cn("rounded-lg border bg-card text-card-foreground shadow-sm", className)}>
+    <div className={cn("rounded-xl border bg-card text-card-foreground shadow-sm", className)}>
       {children}
     </div>
   )
@@ -68,8 +70,8 @@ export function Card({ className, children }: { className?: string; children: Re
 
 export function CardHeader({ title, action }: { title: ReactNode; action?: ReactNode }) {
   return (
-    <div className="flex items-center justify-between border-b px-4 py-3">
-      <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+    <div className="flex min-h-12 items-center justify-between gap-2 border-b px-6 py-2.5">
+      <h3 className="text-sm leading-none font-semibold text-card-foreground">{title}</h3>
       {action}
     </div>
   )
@@ -77,33 +79,30 @@ export function CardHeader({ title, action }: { title: ReactNode; action?: React
 
 export function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="block space-y-1">
-      <span className="text-xs font-medium text-muted-foreground">{label}</span>
+    <div className="block space-y-2">
+      <span className="block text-sm leading-none font-medium text-foreground">{label}</span>
       {children}
     </div>
   )
 }
 
+/** Tonal status badge over the shadcn {@link BadgePrimitive}, colored via the
+ *  theme's status tokens (success/warning/info/destructive) as soft tints. */
 export function Badge({ children, tone = "gray" }: { children: ReactNode; tone?: Tone }) {
   return (
-    <span
-      className={cn(
-        "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium",
-        TONES[tone],
-      )}
-    >
+    <BadgePrimitive variant="secondary" className={TONES[tone]}>
       {children}
-    </span>
+    </BadgePrimitive>
   )
 }
 
 type Tone = "gray" | "green" | "amber" | "red" | "blue"
-const TONES: Record<Tone, string> = {
-  gray: "bg-muted text-muted-foreground",
-  green: "bg-green-100 text-green-700",
-  amber: "bg-amber-100 text-amber-800",
-  red: "bg-red-100 text-red-700",
-  blue: "bg-blue-100 text-blue-700",
+const TONES: Record<Tone, string | undefined> = {
+  gray: undefined,
+  green: "bg-success/15 text-success",
+  amber: "bg-warning/15 text-warning",
+  red: "bg-destructive/15 text-destructive",
+  blue: "bg-info/15 text-info",
 }
 
 export const decayTone = (band?: string): Tone =>
@@ -178,8 +177,15 @@ export function LabelChip({
   )
 }
 
+/** Content-shaped loading placeholder (shadcn Skeleton rows). */
 export function Spinner() {
-  return <div className="p-8 text-sm text-muted-foreground">Loading…</div>
+  return (
+    <div className="space-y-3 p-6">
+      <Skeleton className="h-4 w-1/3" />
+      <Skeleton className="h-4 w-2/3" />
+      <Skeleton className="h-4 w-1/2" />
+    </div>
+  )
 }
 
 /** Full-screen "can't reach the server" state with an optional retry. */
@@ -324,10 +330,8 @@ export function Drawer({
         aria-describedby={undefined}
         className="w-[640px] max-w-[95vw] gap-0 p-0 sm:max-w-[640px]"
       >
-        <div className="flex items-center justify-between gap-2 border-b px-4 py-3">
-          <SheetTitle className="min-w-0 truncate text-sm font-semibold text-foreground">
-            {title}
-          </SheetTitle>
+        <div className="flex items-center justify-between gap-2 border-b px-6 py-4">
+          <SheetTitle className="min-w-0 truncate">{title}</SheetTitle>
           <div className="flex shrink-0 items-center gap-2">
             {headerAction}
             <IconButton onClick={onClose} aria-label="Close">
@@ -335,7 +339,7 @@ export function Drawer({
             </IconButton>
           </div>
         </div>
-        <div className="flex-1 overflow-y-auto p-4">{children}</div>
+        <div className="flex-1 overflow-y-auto p-6">{children}</div>
       </SheetContent>
     </Sheet>
   )

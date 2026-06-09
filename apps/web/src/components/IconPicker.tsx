@@ -1,6 +1,8 @@
 import { Smile } from "lucide-react"
 import { useMemo, useRef, useState } from "react"
+import { Input } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ConceptIcon, EMOJIS, ICON_NAMES, ICON_PREFIX, ICONS } from "../lib/icons"
 import { cn } from "../lib/utils"
 
@@ -69,102 +71,83 @@ export function IconPicker({
           inputRef.current?.focus()
         }}
       >
-        <div className="mb-2 flex items-center gap-1">
-          <Tab active={tab === "emoji"} onClick={() => setTab("emoji")}>
-            Emoji
-          </Tab>
-          <Tab active={tab === "icon"} onClick={() => setTab("icon")}>
-            Icon
-          </Tab>
-          <button
-            type="button"
-            onClick={() => pick(null)}
-            disabled={!value}
-            className="ml-auto rounded px-2 py-1 text-xs text-muted-foreground hover:bg-accent disabled:opacity-40"
-          >
-            None
-          </button>
-        </div>
+        <Tabs value={tab} onValueChange={(v) => setTab(v as "emoji" | "icon")} className="gap-2">
+          <div className="flex items-center gap-1">
+            <TabsList className="h-8">
+              <TabsTrigger value="emoji" className="text-xs">
+                Emoji
+              </TabsTrigger>
+              <TabsTrigger value="icon" className="text-xs">
+                Icon
+              </TabsTrigger>
+            </TabsList>
+            <button
+              type="button"
+              onClick={() => pick(null)}
+              disabled={!value}
+              className="ml-auto rounded px-2 py-1 text-xs text-muted-foreground hover:bg-accent disabled:opacity-40"
+            >
+              None
+            </button>
+          </div>
 
-        <input
-          ref={inputRef}
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder={tab === "emoji" ? "Search emoji…" : "Search icons…"}
-          className="mb-2 w-full rounded-md border border-input bg-transparent px-2.5 py-1.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
-        />
+          <Input
+            ref={inputRef}
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder={tab === "emoji" ? "Search emoji…" : "Search icons…"}
+          />
 
-        <div className="max-h-56 overflow-y-auto">
-          {tab === "emoji" ? (
-            <div className="grid grid-cols-8 gap-0.5">
-              {emojis.map((e) => (
-                <button
-                  key={e.char}
-                  type="button"
-                  title={e.kw.split(" ")[0]}
-                  aria-label={e.kw.split(" ")[0]}
-                  onClick={() => pick(e.char)}
-                  className={cn(
-                    "flex h-8 w-8 items-center justify-center rounded text-xl leading-none hover:bg-accent",
-                    value === e.char && "bg-accent ring-1 ring-ring",
-                  )}
-                >
-                  {e.char}
-                </button>
-              ))}
-              {emojis.length === 0 && <Empty />}
-            </div>
-          ) : (
-            <div className="grid grid-cols-7 gap-0.5">
-              {icons.map((name) => {
-                const Cmp = ICONS[name]
-                if (!Cmp) return null
-                const stored = `${ICON_PREFIX}${name}`
-                return (
+          <div className="max-h-56 overflow-y-auto">
+            <TabsContent value="emoji" className="mt-0">
+              <div className="grid grid-cols-8 gap-0.5">
+                {emojis.map((e) => (
                   <button
-                    key={name}
+                    key={e.char}
                     type="button"
-                    title={iconKeywords(name)}
-                    aria-label={iconKeywords(name)}
-                    onClick={() => pick(stored)}
+                    title={e.kw.split(" ")[0]}
+                    aria-label={e.kw.split(" ")[0]}
+                    onClick={() => pick(e.char)}
                     className={cn(
-                      "flex h-8 w-8 items-center justify-center rounded text-foreground hover:bg-accent",
-                      value === stored && "bg-accent ring-1 ring-ring",
+                      "flex h-8 w-8 items-center justify-center rounded text-xl leading-none hover:bg-accent",
+                      value === e.char && "bg-accent ring-1 ring-ring",
                     )}
                   >
-                    <Cmp size={18} />
+                    {e.char}
                   </button>
-                )
-              })}
-              {icons.length === 0 && <Empty />}
-            </div>
-          )}
-        </div>
+                ))}
+                {emojis.length === 0 && <Empty />}
+              </div>
+            </TabsContent>
+            <TabsContent value="icon" className="mt-0">
+              <div className="grid grid-cols-7 gap-0.5">
+                {icons.map((name) => {
+                  const Cmp = ICONS[name]
+                  if (!Cmp) return null
+                  const stored = `${ICON_PREFIX}${name}`
+                  return (
+                    <button
+                      key={name}
+                      type="button"
+                      title={iconKeywords(name)}
+                      aria-label={iconKeywords(name)}
+                      onClick={() => pick(stored)}
+                      className={cn(
+                        "flex h-8 w-8 items-center justify-center rounded text-foreground hover:bg-accent",
+                        value === stored && "bg-accent ring-1 ring-ring",
+                      )}
+                    >
+                      <Cmp size={18} />
+                    </button>
+                  )
+                })}
+                {icons.length === 0 && <Empty />}
+              </div>
+            </TabsContent>
+          </div>
+        </Tabs>
       </PopoverContent>
     </Popover>
-  )
-}
-
-function Tab({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean
-  onClick: () => void
-  children: React.ReactNode
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        "rounded px-2.5 py-1 text-xs font-medium transition",
-        active ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent",
-      )}
-    >
-      {children}
-    </button>
   )
 }
 
