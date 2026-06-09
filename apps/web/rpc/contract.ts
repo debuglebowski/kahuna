@@ -183,6 +183,14 @@ export const ConceptGraph = Schema.Struct({
 })
 export type ConceptGraph = typeof ConceptGraph.Type
 
+/** Saved canvas positions for the concept graph: concept id → { x, y }.
+ *  Shared org-wide presentation state (like sidebar views — no admin gate). */
+export const GraphLayout = Schema.Record({
+  key: Schema.String,
+  value: Schema.Struct({ x: Schema.Number, y: Schema.Number }),
+})
+export type GraphLayout = typeof GraphLayout.Type
+
 // ── sidebar views (configurable nav layouts) ───────────────────────────────────
 // A View is an ordered stack of sections, switched via the sidebar pager. The
 // whole layout is `SidebarViewBody` and is resolved CLIENT-SIDE against the live
@@ -374,6 +382,12 @@ export class KingsmakerRpcs extends RpcGroup.make(
     error: RpcError,
   }),
   Rpc.make("getConceptGraph", { success: ConceptGraph, error: RpcError }),
+  Rpc.make("getGraphLayout", { success: GraphLayout, error: RpcError }),
+  Rpc.make("saveGraphLayout", {
+    payload: { positions: GraphLayout },
+    success: GraphLayout,
+    error: RpcError,
+  }),
   Rpc.make("addField", {
     payload: {
       conceptId: Schema.String,

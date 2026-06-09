@@ -31,6 +31,10 @@ export {
   EventStore,
 } from "./services/EventStore"
 export { type AddFieldInput, FieldService } from "./services/FieldService"
+export {
+  type GraphLayoutPositions,
+  GraphLayoutService,
+} from "./services/GraphLayoutService"
 export { InstanceService } from "./services/InstanceService"
 export { LabelService } from "./services/LabelService"
 // Services

@@ -19,6 +19,7 @@ import {
   deleteLabel,
   getChanged,
   getConceptGraph,
+  getGraphLayout,
   getInstanceDetail,
   linkRelation,
   listConcepts,
@@ -29,6 +30,7 @@ import {
   restoreField,
   restoreInstance,
   restoreLabel,
+  saveGraphLayout,
 } from "./use-cases"
 
 type WithId = { readonly id: string }
@@ -185,5 +187,28 @@ describe("archive / restore / delete (end-to-end use-case wiring)", () => {
     // Now empty, the concept deletes cleanly.
     await run(org, deleteConcept(c.id))
     expect(has(await run(org, listConcepts(true)), c.id)).toBe(false)
+  })
+})
+
+describe("concept graph layout (shared canvas positions)", () => {
+  it("round-trips: empty by default, upsert replaces wholesale, org-scoped", async () => {
+    const orgA = randomUUID()
+    const orgB = randomUUID()
+
+    // Empty before anything is saved.
+    expect(await run(orgA, getGraphLayout)).toEqual({})
+
+    // First save inserts; the full map is stored as-is.
+    const v1 = { "concept-1": { x: 10, y: 20 }, "concept-2": { x: -5.5, y: 0 } }
+    await run(orgA, saveGraphLayout(v1))
+    expect(await run(orgA, getGraphLayout)).toEqual(v1)
+
+    // Second save upserts wholesale — dropped ids wash out, no merging.
+    const v2 = { "concept-2": { x: 300, y: 400 } }
+    await run(orgA, saveGraphLayout(v2))
+    expect(await run(orgA, getGraphLayout)).toEqual(v2)
+
+    // Other orgs never see it.
+    expect(await run(orgB, getGraphLayout)).toEqual({})
   })
 })

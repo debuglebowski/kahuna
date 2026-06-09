@@ -209,6 +209,18 @@ export const sidebarViews = pgTable(
   (t) => [index("sidebar_views_org_owner_idx").on(t.orgId, t.ownerId)],
 )
 
+/**
+ * Saved node positions for the org's concept graph canvas — one row per org
+ * holding a `{ [conceptId]: { x, y } }` document. Pure presentation state
+ * (like `sidebar_views`): opaque to the engine, shared org-wide, last write
+ * wins, no admin gate.
+ */
+export const conceptGraphLayouts = pgTable("concept_graph_layouts", {
+  orgId: text("org_id").primaryKey(),
+  positions: jsonb("positions").notNull().default(sql`'{}'::jsonb`),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+})
+
 export const attachments = pgTable("attachments", {
   id: uuid("id").primaryKey().defaultRandom(),
   orgId: text("org_id").notNull(),

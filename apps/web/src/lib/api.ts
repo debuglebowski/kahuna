@@ -4,6 +4,7 @@ import { Context, Effect, Layer, ManagedRuntime } from "effect"
 import {
   type FieldConfig,
   type FieldKind,
+  type GraphLayout,
   KingsmakerRpcs,
   type SidebarViewBody,
 } from "../../rpc/contract"
@@ -18,6 +19,7 @@ export type {
   Field,
   FieldConfig,
   FieldKind,
+  GraphLayout,
   Instance,
   InstanceDetail,
   Label,
@@ -108,6 +110,8 @@ export const api = {
   listFields: (conceptId: string, opts?: { includeArchived?: boolean }) =>
     call((c) => c.listFields({ conceptId, includeArchived: opts?.includeArchived })),
   getConceptGraph: () => call((c) => c.getConceptGraph()),
+  getGraphLayout: () => call((c) => c.getGraphLayout()),
+  saveGraphLayout: (positions: GraphLayout) => call((c) => c.saveGraphLayout({ positions })),
   addField: (input: {
     conceptId: string
     name: string

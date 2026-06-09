@@ -8,6 +8,8 @@ import {
   type FieldConfig,
   type FieldKind,
   FieldService,
+  type GraphLayoutPositions,
+  GraphLayoutService,
   type Instance,
   InstanceService,
   LABELS_KEY,
@@ -233,6 +235,15 @@ export const deleteView = (id: string): UC<unknown> =>
 export const reorderViews = (
   orders: ReadonlyArray<{ readonly id: string; readonly position: number }>,
 ): UC<unknown> => Effect.flatMap(SidebarViewService, (s) => s.reorder(orders))
+
+// ── concept graph layout (shared canvas positions) ─────────────────────────────
+
+export const getGraphLayout: UC<GraphLayoutPositions> = Effect.flatMap(GraphLayoutService, (s) =>
+  s.get(),
+)
+
+export const saveGraphLayout = (positions: GraphLayoutPositions): UC<GraphLayoutPositions> =>
+  Effect.flatMap(GraphLayoutService, (s) => s.save(positions))
 
 /**
  * The concept relationship graph: every concept is a node, and every relation

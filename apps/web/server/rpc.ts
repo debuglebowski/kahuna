@@ -6,6 +6,7 @@ import {
   type Concept,
   type ConceptGraph,
   type Field,
+  type GraphLayout,
   type Instance,
   type InstanceDetail,
   KingsmakerRpcs,
@@ -206,6 +207,8 @@ const HandlersLive = ServerRpcs.toLayer({
   listFields: ({ conceptId, includeArchived }) =>
     as<ReadonlyArray<Field>>(uc.listFields(conceptId, includeArchived)),
   getConceptGraph: () => as<ConceptGraph>(uc.getConceptGraph),
+  getGraphLayout: () => as<GraphLayout>(uc.getGraphLayout),
+  saveGraphLayout: ({ positions }) => as<GraphLayout>(uc.saveGraphLayout(positions)),
   addField: ({ conceptId, name, kind, config, formula, icon }) =>
     admin<Field>(uc.addField({ conceptId, name, kind, config, formula, icon })),
   updateField: ({ id, name, config, formula, icon }) =>

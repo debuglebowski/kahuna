@@ -4,7 +4,11 @@
 
 @custom-variant dark (&:is(.dark *));
 
-:root {
+/* `.force-light` pins a subtree to the light palette regardless of the global
+   theme (custom properties resolve from the nearest scope, so this wins over
+   `.dark` on <html>). Used by the concept graph canvas. */
+:root,
+.force-light {
   color-scheme: light;
   --radius: 0.625rem;
   --background: oklch(1 0 0);
@@ -132,6 +136,27 @@
     @apply bg-background font-sans text-foreground antialiased;
     margin: 0;
   }
+}
+
+/* React Flow chrome (controls, attribution) follows the app theme — the stock
+   stylesheet hardcodes light colors; these vars re-point it at our tokens so it
+   flips with `.dark` automatically (see ConceptGraphCanvas). */
+.react-flow {
+  --xy-controls-button-background-color: var(--card);
+  --xy-controls-button-background-color-hover: var(--accent);
+  --xy-controls-button-color: var(--foreground);
+  --xy-controls-button-color-hover: var(--accent-foreground);
+  --xy-controls-button-border-color: var(--border);
+  --xy-controls-box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --xy-attribution-background-color: transparent;
+}
+.react-flow__controls {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.react-flow__attribution a {
+  color: var(--muted-foreground);
 }
 
 /* Sidebar view-switch cross-fade (keyed on the active view id). */

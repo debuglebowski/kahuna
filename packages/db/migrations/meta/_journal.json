@@ -57,6 +57,13 @@
       "when": 1781025331560,
       "tag": "0007_rename_archived_at",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1781034822149,
+      "tag": "0008_military_silver_surfer",
+      "breakpoints": true
     }
   ]
 }
