@@ -203,6 +203,48 @@ describe("concept configuration (settings)", () => {
     }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
 
+  it.effect("addField appends at the end; reorder rewrites the display order", () =>
+    Effect.gen(function* () {
+      const concepts = yield* ConceptService
+      const fields = yield* FieldService
+      const c = yield* concepts.create({ name: "Deal" })
+      // Created out of alphabetical order — listFields must keep creation order
+      // (by position), not fall back to name.
+      const zeta = yield* fields.addField({ conceptId: c.id, name: "zeta", kind: "text" })
+      const alpha = yield* fields.addField({ conceptId: c.id, name: "alpha", kind: "text" })
+      const mid = yield* fields.addField({ conceptId: c.id, name: "mid", kind: "text" })
+      expect((yield* fields.listFields(c.id)).map((f) => f.name)).toEqual(["zeta", "alpha", "mid"])
+
+      // Move alpha to the front, zeta to the back.
+      const reordered = yield* fields.reorder(c.id, [
+        { id: alpha.id, position: 0 },
+        { id: mid.id, position: 1 },
+        { id: zeta.id, position: 2 },
+      ])
+      expect(reordered.map((f) => f.name)).toEqual(["alpha", "mid", "zeta"])
+      // Persisted (a fresh list returns the new order).
+      expect((yield* fields.listFields(c.id)).map((f) => f.name)).toEqual(["alpha", "mid", "zeta"])
+    }).pipe(Effect.provide(testLayer(newOrgId()))),
+  )
+
+  it.effect("reorder is scoped to its concept — a foreign field id is a no-op", () =>
+    Effect.gen(function* () {
+      const concepts = yield* ConceptService
+      const fields = yield* FieldService
+      const a = yield* concepts.create({ name: "Account" })
+      const d = yield* concepts.create({ name: "Deal" })
+      const aField = yield* fields.addField({ conceptId: a.id, name: "owner", kind: "text" })
+      const dField = yield* fields.addField({ conceptId: d.id, name: "stage", kind: "text" })
+      // Try to push Account's field via Deal's reorder — the concept_id guard skips it.
+      yield* fields.reorder(d.id, [{ id: aField.id, position: 99 }])
+      const aAfter = yield* fields.listFields(a.id)
+      expect(aAfter[0]?.id).toBe(aField.id)
+      expect(aAfter[0]?.position).toBe(0)
+      const dAfter = yield* fields.listFields(d.id)
+      expect(dAfter[0]?.id).toBe(dField.id)
+    }).pipe(Effect.provide(testLayer(newOrgId()))),
+  )
+
   it.effect("archiveConcept hides it from the live list; restore brings it back", () =>
     Effect.gen(function* () {
       const concepts = yield* ConceptService

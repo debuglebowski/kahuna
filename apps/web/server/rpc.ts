@@ -216,6 +216,8 @@ const HandlersLive = ServerRpcs.toLayer({
   archiveField: ({ id }) => admin<Field>(uc.archiveField(id)),
   restoreField: ({ id }) => admin<Field>(uc.restoreField(id)),
   deleteField: ({ id }) => admin<Field>(uc.deleteField(id)),
+  reorderFields: ({ conceptId, orders }) =>
+    admin<ReadonlyArray<Field>>(uc.reorderFields(conceptId, orders)),
   listInstances: ({ conceptId, includeArchived }) =>
     mapErr(uc.listInstances(conceptId, { decorate: true, includeArchived })),
   getInstance: ({ id }) => as<InstanceDetail>(uc.getInstanceDetail(id)),

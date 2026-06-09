@@ -49,6 +49,7 @@ export interface FieldRow {
   readonly formula: string | null
   readonly config: unknown
   readonly icon: string | null
+  readonly position: number | string
   readonly archived_at: Date | null
 }
 export interface InstanceRow {
@@ -122,6 +123,7 @@ export const toField = (r: FieldRow): Field => ({
   formula: r.formula,
   config: toFieldConfig(r.config),
   icon: r.icon,
+  position: Number(r.position),
   archivedAt: r.archived_at,
 })
 

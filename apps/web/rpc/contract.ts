@@ -100,6 +100,8 @@ export const Field = Schema.Struct({
   config: FieldConfig,
   /** Display glyph: literal emoji or `lucide:Name` (see `Concept.icon`). */
   icon: Schema.NullOr(Schema.String),
+  /** Display order within the concept (ascending); ties broken by name. */
+  position: Schema.Number,
   /** Archive marker: non-null = archived (hidden from the live list, restorable). */
   archivedAt: Schema.NullOr(Schema.Date),
 })
@@ -427,6 +429,15 @@ export class KingsmakerRpcs extends RpcGroup.make(
   Rpc.make("deleteField", {
     payload: { id: Schema.String },
     success: Field,
+    error: RpcError,
+  }),
+  // Batch-set field display positions for a concept (drag reorder).
+  Rpc.make("reorderFields", {
+    payload: {
+      conceptId: Schema.String,
+      orders: Schema.Array(Schema.Struct({ id: Schema.String, position: Schema.Number })),
+    },
+    success: Schema.Array(Field),
     error: RpcError,
   }),
   Rpc.make("listInstances", {

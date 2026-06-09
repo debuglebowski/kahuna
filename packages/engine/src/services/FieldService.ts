@@ -60,9 +60,10 @@ export class FieldService extends Effect.Service<FieldService>()("engine/FieldSe
     const sql = yield* PgClient.PgClient
     const events = yield* EventStore
 
-    /** A concept's field defs, ordered by name. Archived (archived_at set) are
-     *  excluded unless `includeArchived` — only the settings editor passes it; all
-     *  read/validation paths keep the live-only default. */
+    /** A concept's field defs, in display order (`position` asc, ties by name).
+     *  Archived (archived_at set) are excluded unless `includeArchived` — only the
+     *  settings editor passes it; all read/validation paths keep the live-only
+     *  default. */
     const listFields = (
       conceptId: string,
       opts: { readonly includeArchived?: boolean } = {},
@@ -73,7 +74,7 @@ export class FieldService extends Effect.Service<FieldService>()("engine/FieldSe
         const rows = yield* sql<FieldRow>`
           SELECT * FROM fields
           WHERE org_id = ${orgId} AND concept_id = ${conceptId}${liveOnly}
-          ORDER BY name ASC`
+          ORDER BY position ASC, name ASC`
         return rows.map(toField)
       }).pipe(Effect.orDie)
 
@@ -108,9 +109,14 @@ export class FieldService extends Effect.Service<FieldService>()("engine/FieldSe
             )
           }
 
+          // Append to the end of the concept's field order.
+          const max = yield* sql<{ readonly max: number | string | null }>`
+            SELECT MAX(position) AS max FROM fields
+            WHERE org_id = ${orgId} AND concept_id = ${input.conceptId}`
+          const position = Number(max[0]?.max ?? -1) + 1
           const rows = yield* sql<FieldRow>`
-            INSERT INTO fields (org_id, concept_id, name, kind, formula, config, icon)
-            VALUES (${orgId}, ${input.conceptId}, ${input.name}, ${input.kind}, ${input.formula ?? null}, ${sql.json(config)}, ${input.icon ?? null})
+            INSERT INTO fields (org_id, concept_id, name, kind, formula, config, icon, position)
+            VALUES (${orgId}, ${input.conceptId}, ${input.name}, ${input.kind}, ${input.formula ?? null}, ${sql.json(config)}, ${input.icon ?? null}, ${position})
             RETURNING *`
           const field = toField(rows[0]!)
           yield* events.append({
@@ -261,7 +267,28 @@ export class FieldService extends Effect.Service<FieldService>()("engine/FieldSe
         }),
       )
 
-    return { addField, listFields, getById, update, archive, restore, purge } as const
+    /** Batch-set field display positions (drag reorder in the concept settings
+     *  editor). Scoped to one concept so an id from another concept can't be
+     *  moved; returns the concept's refreshed field list (incl. archived, as the
+     *  editor shows them). Pure presentation — no event is emitted. */
+    const reorder = (
+      conceptId: string,
+      orders: ReadonlyArray<{ readonly id: string; readonly position: number }>,
+    ) =>
+      sql.withTransaction(
+        Effect.gen(function* () {
+          const { orgId } = yield* OrgContext
+          yield* Effect.forEach(
+            orders,
+            (o) =>
+              sql`UPDATE fields SET position = ${o.position}
+              WHERE org_id = ${orgId} AND concept_id = ${conceptId} AND id = ${o.id}`,
+          )
+          return yield* listFields(conceptId, { includeArchived: true })
+        }),
+      )
+
+    return { addField, listFields, getById, update, archive, restore, purge, reorder } as const
   }),
   dependencies: [EventStore.Default],
 }) {}

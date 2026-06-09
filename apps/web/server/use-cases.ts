@@ -298,6 +298,11 @@ export const restoreField = (id: string): UC<unknown> =>
 export const deleteField = (id: string): UC<unknown> =>
   Effect.flatMap(FieldService, (f) => f.purge(id))
 
+export const reorderFields = (
+  conceptId: string,
+  orders: ReadonlyArray<{ readonly id: string; readonly position: number }>,
+): UC<unknown> => Effect.flatMap(FieldService, (f) => f.reorder(conceptId, orders))
+
 export interface FeedItem {
   readonly id: number
   readonly occurredAt: Date

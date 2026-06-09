@@ -1,5 +1,20 @@
+import {
+  closestCenter,
+  DndContext,
+  type DragEndEvent,
+  PointerSensor,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core"
+import {
+  arrayMove,
+  SortableContext,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable"
+import { CSS } from "@dnd-kit/utilities"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Archive, ArchiveRestore, Check, Pencil, Plus, Trash2, X } from "lucide-react"
+import { Archive, ArchiveRestore, Check, GripVertical, Pencil, Plus, Trash2, X } from "lucide-react"
 import { useEffect, useState } from "react"
 import { Link, useOutletContext } from "react-router-dom"
 import { Textarea } from "@/components/ui/textarea"
@@ -89,6 +104,31 @@ function summarize(f: Field, nameOf: (id: string) => string): string {
     default:
       return f.config.multiple ? "multiple" : ""
   }
+}
+
+/** A live field row wrapped for drag-reorder: grip handle + the shared row body. */
+function SortableFieldRow({ field, children }: { field: Field; children: React.ReactNode }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: field.id,
+  })
+  return (
+    <li
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      className={`flex items-center gap-2 py-2.5${isDragging ? " opacity-60" : ""}`}
+    >
+      <button
+        type="button"
+        className="cursor-grab text-muted-foreground hover:text-foreground active:cursor-grabbing"
+        aria-label={`Drag ${field.name} to reorder`}
+        {...attributes}
+        {...listeners}
+      >
+        <GripVertical size={16} />
+      </button>
+      {children}
+    </li>
+  )
 }
 
 /** Which destructive confirm dialog is open (null = none). */
@@ -277,10 +317,35 @@ export function Concepts() {
       refetchGraph()
     },
   })
+  const reorderFieldsMut = useMutation({
+    mutationFn: (orders: { id: string; position: number }[]) =>
+      api.reorderFields(selectedId!, orders),
+    onSuccess: refetchFields,
+  })
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }))
 
-  /** One field row — live rows offer edit/archive/delete; archived rows restore/delete. */
-  const renderFieldRow = (f: Field, archived: boolean) => (
-    <li key={f.id} className={`flex items-center gap-2 py-2.5${archived ? " opacity-60" : ""}`}>
+  const onFieldDragEnd = (e: DragEndEvent) => {
+    const { active, over } = e
+    if (!over || active.id === over.id) return
+    const from = liveFields.findIndex((f) => f.id === active.id)
+    const to = liveFields.findIndex((f) => f.id === over.id)
+    if (from < 0 || to < 0) return
+    const next = arrayMove(liveFields, from, to)
+    // Reflect the new order immediately so the row doesn't snap back before the
+    // refetch lands (live list reads server array order, not `position`).
+    qc.setQueryData<Field[]>(["fields", selectedId, "withArchived"], (old) => {
+      if (!old) return old
+      const rank = new Map(next.map((f, i) => [f.id, i]))
+      return [...old].sort((a, b) => (rank.get(a.id) ?? Infinity) - (rank.get(b.id) ?? Infinity))
+    })
+    reorderFieldsMut.mutate(next.map((f, i) => ({ id: f.id, position: i })))
+  }
+
+  /** Shared body of a field row — live rows offer edit/archive/delete; archived rows
+   *  restore/delete. Wrapped in a plain <li> (archived/read-only) or a drag-sortable
+   *  <li> (admin, live) by the caller. */
+  const fieldRowBody = (f: Field, archived: boolean) => (
+    <>
       <span className="flex w-5 shrink-0 justify-center text-muted-foreground">
         <ConceptIcon value={f.icon || DEFAULT_FIELD_ICON} size={16} />
       </span>
@@ -330,6 +395,13 @@ export function Concepts() {
             </IconButton>
           </>
         ))}
+    </>
+  )
+
+  /** A non-sortable field row (archived rows, or live rows for non-admins). */
+  const renderFieldRow = (f: Field, archived: boolean) => (
+    <li key={f.id} className={`flex items-center gap-2 py-2.5${archived ? " opacity-60" : ""}`}>
+      {fieldRowBody(f, archived)}
     </li>
   )
 
@@ -598,9 +670,31 @@ export function Concepts() {
                 {!fields.isPending && liveFields.length === 0 && (
                   <p className="text-xs text-muted-foreground">No fields yet.</p>
                 )}
-                <ul className="divide-y divide-border">
-                  {liveFields.map((f) => renderFieldRow(f, false))}
-                </ul>
+                {liveFields.length > 0 &&
+                  (admin ? (
+                    <DndContext
+                      sensors={sensors}
+                      collisionDetection={closestCenter}
+                      onDragEnd={onFieldDragEnd}
+                    >
+                      <SortableContext
+                        items={liveFields.map((f) => f.id)}
+                        strategy={verticalListSortingStrategy}
+                      >
+                        <ul className="divide-y divide-border">
+                          {liveFields.map((f) => (
+                            <SortableFieldRow key={f.id} field={f}>
+                              {fieldRowBody(f, false)}
+                            </SortableFieldRow>
+                          ))}
+                        </ul>
+                      </SortableContext>
+                    </DndContext>
+                  ) : (
+                    <ul className="divide-y divide-border">
+                      {liveFields.map((f) => renderFieldRow(f, false))}
+                    </ul>
+                  ))}
                 {showArchivedFields && archivedFields.length > 0 && (
                   <div className="space-y-1 border-t border-border pt-3">
                     <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">

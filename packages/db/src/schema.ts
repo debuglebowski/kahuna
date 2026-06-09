@@ -102,6 +102,10 @@ export const fields = pgTable(
     config: jsonb("config").notNull().default(sql`'{}'::jsonb`),
     // Optional display glyph (see `concepts.icon`): literal emoji or "lucide:Name".
     icon: text("icon"),
+    // Display order within the concept (ascending); ties broken by name. New
+    // fields append at the end (max+1). Pure presentation, drag-reorderable in
+    // the concept settings editor (see FieldService.reorder).
+    position: integer("position").notNull().default(0),
     // Soft delete: a field is never hard-deleted, so any id it ever owned stays
     // resolvable to a name for orphaned `state` keys / historical events.
     archivedAt: timestamp("archived_at", { withTimezone: true }),

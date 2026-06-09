@@ -130,6 +130,8 @@ export const api = {
   archiveField: (id: string) => call((c) => c.archiveField({ id })),
   restoreField: (id: string) => call((c) => c.restoreField({ id })),
   deleteField: (id: string) => call((c) => c.deleteField({ id })),
+  reorderFields: (conceptId: string, orders: ReadonlyArray<{ id: string; position: number }>) =>
+    call((c) => c.reorderFields({ conceptId, orders })),
   listInstances: (conceptId: string, opts?: { includeArchived?: boolean }) =>
     call((c) => c.listInstances({ conceptId, includeArchived: opts?.includeArchived })),
   getInstance: (id: string) => call((c) => c.getInstance({ id })),

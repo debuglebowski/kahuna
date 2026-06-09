@@ -114,6 +114,8 @@ export interface Field {
   readonly config: FieldConfig
   /** Optional display glyph (see `Concept.icon`): literal emoji or `lucide:Name`. */
   readonly icon: string | null
+  /** Display order within the concept (ascending); ties broken by name. */
+  readonly position: number
   /** Soft-delete marker; non-null fields are hidden from `listFields` but stay
    *  resolvable by `id` (so orphaned state keys / historical edges resolve). */
   readonly archivedAt: Date | null
