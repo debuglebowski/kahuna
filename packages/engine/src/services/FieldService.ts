@@ -52,6 +52,9 @@ const validateConfig = (
     if (config.multiple && (kind === "relation" || kind === "file" || kind === "computed")) {
       return yield* invalid("config.multiple is not valid on relation/file/computed fields")
     }
+    if (config.requirement && (kind === "relation" || kind === "file" || kind === "computed")) {
+      return yield* invalid("config.requirement is not valid on relation/file/computed fields")
+    }
   })
 
 /** Manages field definitions on concepts (the schema-as-data). */

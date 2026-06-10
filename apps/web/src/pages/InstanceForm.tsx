@@ -27,6 +27,10 @@ const EDITABLE = new Set(["text", "number", "date", "bool", "enum", "user", "jso
 /** Map a text `format` to a friendlier native input type. */
 const FORMAT_INPUT_TYPE: Record<string, string> = { email: "email", url: "url", phone: "tel" }
 
+/** Mirrors the engine's `isMissing` (requirement checks). */
+const isMissing = (v: unknown): boolean =>
+  v === undefined || v === null || v === "" || (Array.isArray(v) && v.length === 0)
+
 /** Picks org member(s) for a `user` field, fed by the BetterAuth org. */
 function MemberPicker({
   value,
@@ -104,6 +108,7 @@ export function InstanceForm({
   const editable = useMemo(() => fields.filter((f) => EDITABLE.has(f.kind)), [fields])
   const omitted = fields.length - editable.length
   const [values, setValues] = useState<Record<string, unknown>>({})
+  const [missing, setMissing] = useState<string[]>([])
   const labelVocab = useQuery({ queryKey: ["labels"], queryFn: () => api.listLabels() })
   const [labelIds, setLabelIds] = useState<string[]>(() => [...defaultLabelIds])
 
@@ -125,7 +130,7 @@ export function InstanceForm({
       if (f.kind === "user") {
         if (multiple) {
           const arr = (Array.isArray(raw) ? raw : []).filter((x): x is string => !!x)
-          if (arr.length) out[f.name] = arr
+          if (arr.length) out[f.id] = arr
         } else if (typeof raw === "string" && raw) {
           out[f.id] = raw
         }
@@ -155,14 +160,14 @@ export function InstanceForm({
           .map((x) => String(x).trim())
           .filter(Boolean)
         const vals = f.kind === "number" ? parts.map(Number).filter(Number.isFinite) : parts
-        if (vals.length) out[f.name] = vals
+        if (vals.length) out[f.id] = vals
         continue
       }
       const s = typeof raw === "string" ? raw.trim() : ""
       if (!s) continue
       if (f.kind === "number") {
         const n = Number(s)
-        if (Number.isFinite(n)) out[f.name] = n
+        if (Number.isFinite(n)) out[f.id] = n
       } else {
         out[f.id] = s
       }
@@ -320,7 +325,10 @@ export function InstanceForm({
                 {renderInput(f)}
               </div>
             ) : (
-              <Field key={f.id} label={f.name}>
+              <Field
+                key={f.id}
+                label={f.config.requirement === "required" ? `${f.name} *` : f.name}
+              >
                 {renderInput(f)}
               </Field>
             ),
@@ -344,8 +352,24 @@ export function InstanceForm({
         </Field>
       )}
 
+      {missing.length > 0 && (
+        <p className="text-sm text-destructive">Required: {missing.join(", ")}</p>
+      )}
+
       <div className="flex gap-2">
-        <Button disabled={pending} onClick={() => onSubmit(build())}>
+        <Button
+          disabled={pending}
+          onClick={() => {
+            // Pre-check required values (the engine enforces this too) so the
+            // user gets field names instead of a generic validation error.
+            const out = build()
+            const miss = editable
+              .filter((f) => f.config.requirement === "required" && isMissing(out[f.id]))
+              .map((f) => f.name)
+            setMissing(miss)
+            if (miss.length === 0) onSubmit(out)
+          }}
+        >
           <Plus size={15} />
           {pending ? "Creating…" : "Create"}
         </Button>

@@ -44,6 +44,12 @@ export interface FieldConfig {
   readonly multiple?: boolean
   /** text/number: an extra format constraint (email/url/phone/slug/color | percent). */
   readonly format?: string
+  /** How required a value is (scalar kinds only — never relation/file/computed).
+   *  `required` blocks create without a value and blocks clearing it; on a
+   *  versioned concept publish is gated too (a draft may predate the rule).
+   *  `flagged` never blocks — missing values are surfaced in the UI.
+   *  Absent = `optional`. */
+  readonly requirement?: "required" | "flagged" | "optional"
 }
 
 /** Instance field values, keyed by field **id** (`fields.id`). Synthetic keys

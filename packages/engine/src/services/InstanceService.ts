@@ -128,6 +128,35 @@ const validateValue = (
   return validateScalar(def, value)
 }
 
+/** "No value" for requirement checks: unset, null, empty string, empty list. */
+const isMissing = (v: unknown): boolean =>
+  v === undefined || v === null || v === "" || (Array.isArray(v) && v.length === 0)
+
+/** Enforce `requirement: "required"` over a state/patch. `keys: "all"` checks
+ *  every required def (create/publish); `"present"` only the ones the payload
+ *  touches (update — rows that predate the rule stay editable, but a required
+ *  value can never be cleared). Relation/file/computed never carry a
+ *  requirement (FieldService rejects the config). `flagged` never blocks. */
+const checkRequired = (
+  defs: ReadonlyArray<Field>,
+  state: InstanceState,
+  keys: "all" | "present",
+): Effect.Effect<void, FieldValidationError> =>
+  Effect.gen(function* () {
+    for (const def of defs) {
+      if (def.config.requirement !== "required") continue
+      if (keys === "present" && !(def.id in state)) continue
+      if (isMissing(state[def.id])) {
+        return yield* Effect.fail(
+          new FieldValidationError({
+            message: `field "${def.name}" is required`,
+            field: def.name,
+          }),
+        )
+      }
+    }
+  })
+
 const validateFields = (defs: ReadonlyArray<Field>, input: Record<string, unknown>) =>
   Effect.gen(function* () {
     const byId = new Map(defs.map((d) => [d.id, d]))
@@ -251,6 +280,8 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
           const defs = yield* fields.listFields(concept.id)
           const { rest, rawLabels } = splitLabels(input.fields)
           const validated = yield* validateFields(defs, rest)
+          // An item cannot exist without its required values — drafts included.
+          yield* checkRequired(defs, validated, "all")
           // Per-item labels: use the caller's set if given, else snapshot the
           // concept's defaults (dropping any since soft-deleted). Static labels
           // are NOT written here — they're inherited at read time.
@@ -337,6 +368,9 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
           }
           const { rest, rawLabels } = splitLabels(input.patch)
           const validated = yield* validateFields(defs, rest)
+          // Clear-protection only: a patch may not blank a required field, but
+          // rows that predate the rule stay editable on their other fields.
+          yield* checkRequired(defs, validated, "present")
           yield* checkTransitions(defs, current.state, validated)
           let patch: InstanceState = validated
           if (rawLabels !== undefined) {
@@ -656,6 +690,10 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
           if (current.versionStatus === "published") {
             return yield* Effect.fail(new VersionFrozen({ instanceId: current.id }))
           }
+          // Publish gate: a draft may predate a field's `required` rule (the rule
+          // was added/flipped after creation) — it can't become "Latest" incomplete.
+          const defs = yield* fields.listFields(current.conceptId)
+          yield* checkRequired(defs, current.state, "all")
           const concept = yield* concepts.getById(current.conceptId)
           const event = yield* events.append({
             subjectKind: "instance",

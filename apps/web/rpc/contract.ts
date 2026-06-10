@@ -131,6 +131,10 @@ export const FieldConfig = Schema.Struct({
   multiple: Schema.optional(Schema.Boolean),
   /** text/number: an extra format constraint. */
   format: Schema.optional(Schema.String),
+  /** scalar kinds: how required a value is. `required` blocks create/clearing
+   *  (and publish on versioned concepts); `flagged` only surfaces missing values
+   *  in the UI. Absent = optional. */
+  requirement: Schema.optional(Schema.Literal("required", "flagged", "optional")),
 })
 export type FieldConfig = typeof FieldConfig.Type
 

@@ -69,13 +69,17 @@ const AuthMiddlewareLive = Layer.succeed(AuthMiddleware, (options) =>
   }),
 )
 
-/** Map any engine failure to the single serializable RpcError (mirrors HTTP codes). */
+/** Map any engine failure to the single serializable RpcError (mirrors HTTP codes).
+ *  Mapped (domain) errors pass their human message through (e.g. `field "title"
+ *  is required`) — they're user-facing by construction; anything unmapped stays
+ *  an opaque INTERNAL. */
 const toRpcError = (e: unknown): RpcError => {
   const tag = typeof e === "object" && e !== null ? (e as { _tag?: string })._tag : undefined
   const mapped = tag ? ERROR_MAP[tag] : undefined
-  return mapped
-    ? new RpcError({ code: mapped.code, message: tag ?? "error", status: mapped.status })
-    : new RpcError({ code: "INTERNAL", message: "Internal error", status: 500 })
+  if (!mapped) return new RpcError({ code: "INTERNAL", message: "Internal error", status: 500 })
+  const detail = (e as { message?: unknown }).message
+  const message = typeof detail === "string" && detail.length > 0 ? detail : (tag ?? "error")
+  return new RpcError({ code: mapped.code, message, status: mapped.status })
 }
 
 const mapErr = <A, E>(eff: Effect.Effect<A, E, OrgContext | EngineServices>) =>

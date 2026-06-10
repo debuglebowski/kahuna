@@ -101,6 +101,12 @@ export function FieldValueCell({ field, value }: { field?: Field; value: unknown
     value === "" ||
     (Array.isArray(value) && value.length === 0)
   ) {
+    // Surface a missing value on fields that declare a requirement: red for
+    // `required` (only reachable on rows that predate the rule), amber for
+    // `flagged`.
+    const req = field?.config.requirement
+    if (req === "required" || req === "flagged")
+      return <Badge tone={req === "required" ? "red" : "amber"}>missing</Badge>
     return empty
   }
 

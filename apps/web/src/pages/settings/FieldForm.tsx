@@ -34,6 +34,24 @@ const FORMATS: Partial<Record<FieldKind, ReadonlyArray<string>>> = {
   number: ["percent"],
 }
 
+/** Kinds that can carry `config.requirement` (everything a user sets directly). */
+const REQUIREMENT_KINDS = new Set<FieldKind>([
+  "text",
+  "number",
+  "date",
+  "bool",
+  "enum",
+  "user",
+  "json",
+  "money",
+])
+type Requirement = "required" | "flagged" | "optional"
+const REQUIREMENTS: ReadonlyArray<{ value: Requirement; label: string }> = [
+  { value: "optional", label: "Optional" },
+  { value: "flagged", label: "Flagged missing" },
+  { value: "required", label: "Required" },
+]
+
 export interface FieldFormValue {
   readonly name: string
   readonly kind: FieldKind
@@ -82,6 +100,9 @@ export function FieldForm({
   })
   const [multiple, setMultiple] = useState(initial?.config.multiple ?? false)
   const [format, setFormat] = useState(initial?.config.format ?? "")
+  const [requirement, setRequirement] = useState<Requirement>(
+    initial?.config.requirement ?? "optional",
+  )
 
   const options = useMemo(
     () =>
@@ -114,11 +135,12 @@ export function FieldForm({
     }
   }
 
-  // Merge the orthogonal modifiers (multiple/format) onto the per-kind base.
+  // Merge the orthogonal modifiers (multiple/format/requirement) onto the per-kind base.
   const buildConfig = (): FieldConfig => ({
     ...baseConfig(),
     ...(MULTIPLE_KINDS.has(kind) && multiple ? { multiple: true } : {}),
     ...((kind === "text" || kind === "number") && format ? { format } : {}),
+    ...(REQUIREMENT_KINDS.has(kind) && requirement !== "optional" ? { requirement } : {}),
   })
 
   const valid =
@@ -173,6 +195,22 @@ export function FieldForm({
                 {FORMATS[kind]?.map((fmt) => (
                   <SelectItem key={fmt} value={fmt}>
                     {fmt}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Field>
+        )}
+        {REQUIREMENT_KINDS.has(kind) && (
+          <Field label="Requirement">
+            <Select value={requirement} onValueChange={(v) => setRequirement(v as Requirement)}>
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {REQUIREMENTS.map((r) => (
+                  <SelectItem key={r.value} value={r.value}>
+                    {r.label}
                   </SelectItem>
                 ))}
               </SelectContent>
