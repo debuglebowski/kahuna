@@ -159,6 +159,26 @@
   color: var(--muted-foreground);
 }
 
+/* Tinted pills (labels, enum options): one base hue per pill (`--pill`, set
+   inline) renders as a soft same-hue tint with deep same-hue text. The mix
+   endpoints flip with the theme scope (`.force-light` subtrees stay light).
+   Contrast verified ≥ 6:1 for the whole PILL_COLORS palette in both modes. */
+:root,
+.force-light {
+  --pill-bg-base: #ffffff;
+  --pill-bg-pct: 16%;
+  --pill-fg-base: #000000;
+}
+.dark {
+  --pill-bg-base: #1b1b1b;
+  --pill-bg-pct: 25%;
+  --pill-fg-base: #ffffff;
+}
+.km-pill {
+  background-color: color-mix(in srgb, var(--pill) var(--pill-bg-pct), var(--pill-bg-base));
+  color: color-mix(in srgb, var(--pill) 45%, var(--pill-fg-base));
+}
+
 /* Sidebar view-switch cross-fade (keyed on the active view id). */
 @keyframes km-view-in {
   from {

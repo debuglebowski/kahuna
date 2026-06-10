@@ -3,19 +3,19 @@ import { Archive, ArchiveRestore, Check, Pencil, Plus, Trash2, X } from "lucide-
 import type { ReactNode } from "react"
 import { useState } from "react"
 import { useOutletContext } from "react-router-dom"
-import { Checkbox } from "@/components/ui/checkbox"
-import { Label as FieldLabel } from "@/components/ui/label"
 import {
   Badge,
   Button,
   Card,
   CardHeader,
+  ColorSwatchPicker,
   ConfirmDialog,
   Drawer,
   IconButton,
   Input,
   LabelChip,
   Modal,
+  randomPillColor,
   Spinner,
   ToggleChip,
   Toolbar,
@@ -31,39 +31,12 @@ function labelMsg(e: unknown): string {
   return err?.message ?? "Something went wrong."
 }
 
-const DEFAULT_COLOR = "#6b7280" // gray-500
-
-const HEX6 = /^#[0-9a-f]{6}$/i
-
-/** Native swatch + hex text input, kept in sync. */
-function ColorPicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  return (
-    <div className="flex items-center gap-2">
-      <input
-        type="color"
-        aria-label="Label color"
-        value={HEX6.test(value) ? value : DEFAULT_COLOR}
-        onChange={(e) => onChange(e.target.value)}
-        className="h-8 w-9 shrink-0 cursor-pointer rounded border border-input bg-background p-0.5"
-      />
-      <Input
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={DEFAULT_COLOR}
-        className="w-28"
-      />
-    </div>
-  )
-}
-
-/** Shared name / color / primary fields for the create modal and edit drawer. */
+/** Shared name / color fields for the create modal and edit drawer. */
 function LabelFields({
   name,
   setName,
   color,
   setColor,
-  primary,
-  setPrimary,
   onSubmit,
   disabled = false,
 }: {
@@ -71,8 +44,6 @@ function LabelFields({
   setName: (v: string) => void
   color: string
   setColor: (v: string) => void
-  primary: boolean
-  setPrimary: (v: boolean) => void
   onSubmit?: () => void
   disabled?: boolean
 }) {
@@ -91,18 +62,10 @@ function LabelFields({
           placeholder="e.g. Urgent"
         />
       </div>
-      <div className="space-y-1">
+      <div className="space-y-1.5">
         <span className="block text-sm leading-none font-medium text-foreground">Color</span>
-        <ColorPicker value={color} onChange={setColor} />
+        <ColorSwatchPicker label="Label color" value={color || null} onChange={setColor} />
       </div>
-      <FieldLabel className="flex items-center gap-1.5 text-sm font-normal text-foreground">
-        <Checkbox
-          checked={primary}
-          disabled={disabled}
-          onCheckedChange={(c) => setPrimary(c === true)}
-        />
-        Primary
-      </FieldLabel>
     </div>
   )
 }
@@ -110,11 +73,10 @@ function LabelFields({
 /** Create a new label in a modal (editing happens in the drawer). */
 function CreateLabelModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
   const [name, setName] = useState("")
-  const [color, setColor] = useState(DEFAULT_COLOR)
-  const [primary, setPrimary] = useState(false)
+  const [color, setColor] = useState(() => randomPillColor())
 
   const save = useMutation({
-    mutationFn: () => api.createLabel(name.trim(), color.trim() || null, primary),
+    mutationFn: () => api.createLabel(name.trim(), color.trim() || null),
     onSuccess: () => {
       onSaved()
       onClose()
@@ -132,8 +94,6 @@ function CreateLabelModal({ onClose, onSaved }: { onClose: () => void; onSaved: 
           setName={setName}
           color={color}
           setColor={setColor}
-          primary={primary}
-          setPrimary={setPrimary}
           onSubmit={submit}
         />
         <div className="flex gap-2">
@@ -175,12 +135,11 @@ function LabelDrawer({
   restoreError?: ReactNode
 }) {
   const [name, setName] = useState(label.name)
-  const [color, setColor] = useState(label.color ?? DEFAULT_COLOR)
-  const [primary, setPrimary] = useState(label.primary)
+  // No color stays empty → the picker shows no selection and save keeps null.
+  const [color, setColor] = useState(label.color ?? "")
 
   const save = useMutation({
-    mutationFn: () =>
-      api.renameLabel(label.id, { name: name.trim(), color: color.trim() || null, primary }),
+    mutationFn: () => api.renameLabel(label.id, { name: name.trim(), color: color.trim() || null }),
     onSuccess: onSaved,
   })
   const submit = () => {
@@ -217,8 +176,6 @@ function LabelDrawer({
               setName={setName}
               color={color}
               setColor={setColor}
-              primary={primary}
-              setPrimary={setPrimary}
               onSubmit={submit}
               disabled={!admin}
             />

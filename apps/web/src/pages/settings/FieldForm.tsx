@@ -10,8 +10,9 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { IconPicker } from "../../components/IconPicker"
-import { Button, Field, Input } from "../../components/ui"
+import { Button, ColorSwatchPicker, Field, Input, randomPillColor } from "../../components/ui"
 import type { Concept, FieldConfig, Field as FieldDef, FieldKind } from "../../lib/api"
+import { capitalize } from "../../lib/fieldDisplay"
 
 const KINDS: ReadonlyArray<FieldKind> = [
   "text",
@@ -51,28 +52,6 @@ const REQUIREMENTS: ReadonlyArray<{ value: Requirement; label: string }> = [
   { value: "flagged", label: "Flagged missing" },
   { value: "required", label: "Required" },
 ]
-
-/** Default enum-option colors (tailwind 500s). A new option draws a random one,
- *  preferring hues this field's other options don't use yet. */
-const ENUM_PALETTE = [
-  "#ef4444", // red
-  "#f97316", // orange
-  "#f59e0b", // amber
-  "#84cc16", // lime
-  "#22c55e", // green
-  "#14b8a6", // teal
-  "#06b6d4", // cyan
-  "#3b82f6", // blue
-  "#6366f1", // indigo
-  "#a855f7", // purple
-  "#ec4899", // pink
-  "#64748b", // slate
-]
-const randomColor = (used: ReadonlyArray<string>): string => {
-  const free = ENUM_PALETTE.filter((c) => !used.includes(c))
-  const pool = free.length > 0 ? free : ENUM_PALETTE
-  return pool[Math.floor(Math.random() * pool.length)]!
-}
 
 export interface FieldFormValue {
   readonly name: string
@@ -144,7 +123,7 @@ export function FieldForm({
       const missing = options.filter((o) => !prev[o])
       if (missing.length === 0) return prev
       const next = { ...prev }
-      for (const o of missing) next[o] = randomColor(Object.values(next))
+      for (const o of missing) next[o] = randomPillColor(Object.values(next))
       return next
     })
   }, [options])
@@ -282,23 +261,17 @@ export function FieldForm({
           {options.length > 0 && (
             <div>
               <span className="text-xs font-medium text-muted-foreground">Colors</span>
-              <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2">
+              <div className="mt-2 space-y-1.5">
                 {options.map((o) => (
-                  <Label
-                    key={o}
-                    className="flex items-center gap-1.5 text-xs font-normal text-foreground"
-                  >
-                    <input
-                      type="color"
-                      aria-label={`Color for ${o}`}
-                      value={optionColors[o] ?? "#6b7280"}
-                      onChange={(e) =>
-                        setOptionColors((prev) => ({ ...prev, [o]: e.target.value }))
-                      }
-                      className="h-6 w-7 shrink-0 cursor-pointer rounded border border-input bg-background p-0.5"
+                  <div key={o} className="flex flex-wrap items-center gap-2 text-xs">
+                    <span className="w-28 shrink-0 truncate font-medium text-foreground">{o}</span>
+                    <ColorSwatchPicker
+                      label={`Color for ${o}`}
+                      preview={capitalize(o)}
+                      value={optionColors[o] ?? null}
+                      onChange={(hex) => setOptionColors((prev) => ({ ...prev, [o]: hex }))}
                     />
-                    {o}
-                  </Label>
+                  </div>
                 ))}
               </div>
             </div>

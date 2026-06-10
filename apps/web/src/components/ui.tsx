@@ -1,5 +1,5 @@
 import { Crown, Search, ServerCrash, X } from "lucide-react"
-import type { ButtonHTMLAttributes, ReactNode } from "react"
+import type { ButtonHTMLAttributes, CSSProperties, ReactNode } from "react"
 import {
   AlertDialog,
   AlertDialogContent,
@@ -183,13 +183,117 @@ function parseHex(hex: string): [number, number, number] | null {
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255]
 }
 
-/** Pick black or white text for legibility on a solid hex background. */
-export function readableOn(hex: string): string {
-  const rgb = parseHex(hex)
-  if (!rgb) return "#111827"
-  const [r, g, b] = rgb
-  const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255
-  return lum > 0.6 ? "#111827" : "#ffffff"
+/**
+ * The curated pill palette — the colors offered for labels and enum options.
+ * A pill renders its hue as a soft tint + deep same-hue text (the `.km-pill`
+ * scheme in index.css), so foreground and background always match and clear
+ * WCAG AA (≥ 5:1) in both themes — for any hue, including legacy free hexes.
+ */
+export const PILL_COLORS: ReadonlyArray<{ name: string; hex: string }> = [
+  // 20 hue families × { regular (tailwind 500), deep (tailwind 800) } in
+  // spectral order, deep right after its regular — the picker renders each
+  // pair as a stacked column, so the top row reads as one rainbow run with
+  // its darker echo aligned beneath.
+  { name: "Red", hex: "#ef4444" },
+  { name: "Deep Red", hex: "#991b1b" },
+  { name: "Orange", hex: "#f97316" },
+  { name: "Deep Orange", hex: "#9a3412" },
+  { name: "Amber", hex: "#f59e0b" },
+  { name: "Deep Amber", hex: "#92400e" },
+  { name: "Yellow", hex: "#eab308" },
+  { name: "Deep Yellow", hex: "#854d0e" },
+  { name: "Lime", hex: "#84cc16" },
+  { name: "Deep Lime", hex: "#3f6212" },
+  { name: "Green", hex: "#22c55e" },
+  { name: "Deep Green", hex: "#166534" },
+  { name: "Emerald", hex: "#10b981" },
+  { name: "Deep Emerald", hex: "#065f46" },
+  { name: "Teal", hex: "#14b8a6" },
+  { name: "Deep Teal", hex: "#115e59" },
+  { name: "Cyan", hex: "#06b6d4" },
+  { name: "Deep Cyan", hex: "#155e75" },
+  { name: "Sky", hex: "#0ea5e9" },
+  { name: "Deep Sky", hex: "#075985" },
+  { name: "Blue", hex: "#3b82f6" },
+  { name: "Deep Blue", hex: "#1e40af" },
+  { name: "Indigo", hex: "#6366f1" },
+  { name: "Deep Indigo", hex: "#3730a3" },
+  { name: "Violet", hex: "#8b5cf6" },
+  { name: "Deep Violet", hex: "#5b21b6" },
+  { name: "Purple", hex: "#a855f7" },
+  { name: "Deep Purple", hex: "#6b21a8" },
+  { name: "Fuchsia", hex: "#d946ef" },
+  { name: "Deep Fuchsia", hex: "#86198f" },
+  { name: "Pink", hex: "#ec4899" },
+  { name: "Deep Pink", hex: "#9d174d" },
+  { name: "Rose", hex: "#f43f5e" },
+  { name: "Deep Rose", hex: "#9f1239" },
+  { name: "Slate", hex: "#64748b" },
+  { name: "Deep Slate", hex: "#1e293b" },
+  { name: "Gray", hex: "#6b7280" },
+  { name: "Deep Gray", hex: "#1f2937" },
+  { name: "Stone", hex: "#78716c" },
+  { name: "Deep Stone", hex: "#292524" },
+]
+
+/** Inline style carrying the pill's base hue for the `.km-pill` CSS scheme. */
+export const pillStyle = (hex: string): CSSProperties => ({ "--pill": hex }) as CSSProperties
+
+/** A random {@link PILL_COLORS} hex, preferring ones not in `used`. */
+export function randomPillColor(used: ReadonlyArray<string> = []): string {
+  const free = PILL_COLORS.filter((c) => !used.includes(c.hex))
+  const pool = free.length > 0 ? free : PILL_COLORS
+  return pool[Math.floor(Math.random() * pool.length)]!.hex
+}
+
+/** Picker over {@link PILL_COLORS} — each color rendered as the pill it will
+ *  actually produce (tinted `.km-pill` scheme), the chosen one ringed. The only
+ *  way to choose a pill color; a stored out-of-palette color shows no selection. */
+export function ColorSwatchPicker({
+  value,
+  onChange,
+  label = "Color",
+  preview = "Label",
+}: {
+  value: string | null
+  onChange: (hex: string) => void
+  label?: string
+  /** Text shown inside every pill (uniform, so only the colors differ). */
+  preview?: string
+}) {
+  // Regular/deep siblings render as one stacked column, so however the row
+  // wraps, every deep pill sits directly under its regular counterpart.
+  const pairs: Array<ReadonlyArray<(typeof PILL_COLORS)[number]>> = []
+  for (let i = 0; i < PILL_COLORS.length; i += 2) pairs.push(PILL_COLORS.slice(i, i + 2))
+  return (
+    // No group role needed: each pill button carries a full "<label>: <color>" aria-label.
+    <div className="flex flex-wrap items-start gap-1">
+      {pairs.map((pair) => (
+        <div key={pair[0]!.hex} className="flex min-w-0 flex-col items-stretch gap-1">
+          {pair.map((c) => {
+            const selected = value?.toLowerCase() === c.hex
+            return (
+              <button
+                key={c.hex}
+                type="button"
+                aria-pressed={selected}
+                aria-label={`${label}: ${c.name}`}
+                title={c.name}
+                onClick={() => onChange(c.hex)}
+                style={pillStyle(c.hex)}
+                className={cn(
+                  "km-pill inline-flex max-w-28 justify-center rounded-full px-2 py-0.5 text-xs font-medium transition-transform hover:scale-105",
+                  selected && "ring-2 ring-ring ring-offset-1 ring-offset-background",
+                )}
+              >
+                <span className="truncate">{preview}</span>
+              </button>
+            )
+          })}
+        </div>
+      ))}
+    </div>
+  )
 }
 
 /**
@@ -211,15 +315,14 @@ export function LabelChip({
   /** Primary labels render a leading crown (see `Label.primary`). */
   primary?: boolean
 }) {
-  const style =
-    color && parseHex(color) ? { backgroundColor: color, color: readableOn(color) } : undefined
+  const style = color && parseHex(color) ? pillStyle(color) : undefined
   return (
     <span
       title={title}
       style={style}
       className={cn(
         "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium",
-        style ? "" : "bg-muted text-muted-foreground",
+        style ? "km-pill" : "bg-muted text-muted-foreground",
       )}
     >
       {primary && <Crown className="h-3 w-3 shrink-0" aria-label="Primary" />}

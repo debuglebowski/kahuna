@@ -33,7 +33,7 @@ export const formatMoney = (v: unknown): string | null => {
 }
 
 /** Display-only: enum options are stored lowercase-ish; show them capitalized. */
-const capitalize = (s: string): string => (s ? s[0]!.toUpperCase() + s.slice(1) : s)
+export const capitalize = (s: string): string => (s ? s[0]!.toUpperCase() + s.slice(1) : s)
 
 const empty = <span className="text-muted-foreground">—</span>
 
