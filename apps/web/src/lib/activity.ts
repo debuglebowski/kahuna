@@ -6,6 +6,7 @@
 /** Human phrase for an event type. Falls back to a de-camel/snake-cased label. */
 const LABELS: Record<string, string> = {
   InstanceCreated: "created this item",
+  VersionCreated: "started a new version",
   InstanceUpdated: "edited fields",
   InstanceArchived: "archived this item",
   InstanceRestored: "restored this item",

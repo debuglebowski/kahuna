@@ -479,8 +479,21 @@ export class AnnotationService extends Effect.Service<AnnotationService>()(
         Effect.gen(function* () {
           const { orgId } = yield* OrgContext
           const limit = opts.limit ?? 100
+          // On a versioned concept, opening a new version emits its own
+          // `InstanceCreated`; relabel those (version_seq > 1) to a synthetic
+          // `VersionCreated` so the feed reads "started a new version" instead of a
+          // second "created this item". The first version (seq 1) stays the create.
           const rows = yield* sql<EventRow>`
-            SELECT * FROM events e
+            SELECT
+              e.id, e.org_id, e.occurred_at, e.actor, e.subject_kind, e.subject_id,
+              CASE
+                WHEN e.subject_kind = 'instance' AND e.event_type = 'InstanceCreated'
+                     AND i.version_seq > 1 THEN 'VersionCreated'
+                ELSE e.event_type
+              END AS event_type,
+              e.payload
+            FROM events e
+            LEFT JOIN instances i ON i.id = e.subject_id AND e.subject_kind = 'instance'
             WHERE e.org_id = ${orgId}
               AND (
                 (e.subject_kind IN ('instance', 'item') AND e.subject_id IN (
