@@ -315,7 +315,16 @@ export function Layout({ children }: { children: ReactNode }) {
       </aside>
 
       <main className="flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-6xl px-6 py-6">{children}</div>
+        {/* Concept instance lists are wide tables — give them the full viewport;
+            everything else stays centered at a readable width. */}
+        <div
+          className={cn(
+            "px-6 py-6",
+            !loc.pathname.startsWith("/concepts/") && "mx-auto max-w-6xl",
+          )}
+        >
+          {children}
+        </div>
       </main>
     </div>
   )
