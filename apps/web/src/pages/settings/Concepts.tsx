@@ -16,7 +16,7 @@ import { CSS } from "@dnd-kit/utilities"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Archive, ArchiveRestore, Check, GripVertical, Pencil, Plus, Trash2, X } from "lucide-react"
 import { useEffect, useState } from "react"
-import { Link, useOutletContext } from "react-router-dom"
+import { Link, useOutletContext, useSearchParams } from "react-router-dom"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Textarea } from "@/components/ui/textarea"
 import { IconPicker } from "../../components/IconPicker"
@@ -151,7 +151,9 @@ export function Concepts() {
   })
   const liveConcepts = concepts.data?.filter((c) => !c.archivedAt) ?? []
   const archivedConcepts = concepts.data?.filter((c) => c.archivedAt) ?? []
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  // Deep link (?concept=<id>) — e.g. the item view's "Edit concept" action.
+  const [searchParams] = useSearchParams()
+  const [selectedId, setSelectedId] = useState<string | null>(searchParams.get("concept"))
   const [name, setName] = useState("")
   const [pluralName, setPluralName] = useState("")
   const [icon, setIcon] = useState<string | null>(null)

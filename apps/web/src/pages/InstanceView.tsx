@@ -46,7 +46,6 @@ import { useSession } from "../lib/auth-client"
 import { instanceDetail, KEY, useRegisterCollection } from "../lib/collections"
 import { FieldValueCell } from "../lib/fieldDisplay"
 import { showValue } from "../lib/utils"
-import { InstanceForm } from "./InstanceForm"
 import { isAdminRole, useFullOrg } from "./settings/SettingsLayout"
 
 /** A human label for an instance — its first non-empty text field, else untitled.
@@ -583,7 +582,7 @@ export function InstanceView() {
   const org = useFullOrg()
   const myRole = org.data?.members?.find((m) => m.userId === session?.user.id)?.role
   const admin = isAdminRole(myRole)
-  const [dialog, setDialog] = useState<"edit" | "archive" | "delete" | null>(null)
+  const [dialog, setDialog] = useState<"archive" | "delete" | null>(null)
   const [addingConnection, setAddingConnection] = useState(false)
 
   // All concepts — to resolve relation targets' versioningEnabled in the picker.
@@ -621,15 +620,6 @@ export function InstanceView() {
       backToConcept()
     },
   })
-  const updateInst = useMutation({
-    mutationFn: (v: { id: string; version: number; patch: Record<string, unknown> }) =>
-      api.updateInstance(v.id, v.version, v.patch),
-    onSuccess: () => {
-      setDialog(null)
-      collection.utils.refetch()
-    },
-  })
-
   if (detailQ.isLoading || !detail) return <Spinner />
 
   const { instance, concept, fields, related, staticLabels, labels } = detail
@@ -668,9 +658,9 @@ export function InstanceView() {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
-            <DropdownMenuItem onSelect={() => setDialog("edit")}>
+            <DropdownMenuItem onSelect={() => navigate(`/settings/concepts?concept=${concept.id}`)}>
               <Pencil size={15} />
-              Edit
+              Edit concept
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => setDialog("archive")}>
               <Archive size={15} />
@@ -768,24 +758,6 @@ export function InstanceView() {
         />
       )}
 
-      {dialog === "edit" && (
-        <Modal title={`Edit ${labelOf(instance.state, fields)}`} onClose={() => setDialog(null)}>
-          <InstanceForm
-            fields={fields}
-            initial={instance.state}
-            onSubmit={(patch) =>
-              updateInst.mutate({ id: instance.id, version: instance.version, patch })
-            }
-            onCancel={() => setDialog(null)}
-            pending={updateInst.isPending}
-          />
-          {updateInst.error && (
-            <p className="mt-3 text-sm text-destructive">
-              {(updateInst.error as { message?: string }).message ?? "Could not save."}
-            </p>
-          )}
-        </Modal>
-      )}
       {dialog === "archive" && (
         <ConfirmDialog
           title="Archive item"
