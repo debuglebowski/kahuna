@@ -13,6 +13,7 @@ import {
   type Instance,
   type InstanceDetail,
   type InstancePick,
+  type InstanceViewPrefs,
   type Item,
   KingsmakerRpcs,
   type Label,
@@ -479,6 +480,9 @@ const HandlersLive = ServerRpcs.toLayer({
   // own page (the engine upserts on the actor — owner-only by construction).
   getMemberPage: ({ userId }) => as<MemberPage>(uc.getMemberPage(userId)),
   updateMemberPage: ({ body }) => as<MemberPage>(uc.updateMemberPage(body)),
+  // Instance-view layout prefs: both target the caller's own row.
+  getInstanceViewPrefs: () => as<InstanceViewPrefs>(uc.getInstanceViewPrefs),
+  updateInstanceViewPrefs: ({ body }) => as<InstanceViewPrefs>(uc.updateInstanceViewPrefs(body)),
   // Deactivation: the list is member-readable (drives picker filtering + the
   // directory toggle); the writes are admin-only with auth-tier guards. A purge
   // is the plain-HTTP DELETE /api/org/members/:userId (see router.ts).

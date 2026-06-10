@@ -21,6 +21,7 @@ import {
   getConceptGraph,
   getGraphLayout,
   getInstanceDetail,
+  getInstanceViewPrefs,
   linkRelation,
   listConcepts,
   listFields,
@@ -31,6 +32,7 @@ import {
   restoreInstance,
   restoreLabel,
   saveGraphLayout,
+  updateInstanceViewPrefs,
 } from "./use-cases"
 
 type WithId = { readonly id: string }
@@ -232,5 +234,45 @@ describe("concept graph layout (shared canvas positions)", () => {
 
     // Other orgs never see it.
     expect(await run(orgB, getGraphLayout)).toEqual({})
+  })
+})
+
+describe("instance view prefs", () => {
+  it("reads defaults for a fresh user, then upserts the caller's own row", async () => {
+    const orgA = randomUUID()
+    const orgB = randomUUID()
+    const empty = { defaultView: null, byConcept: {}, customByConcept: {} }
+
+    // Never saved: a well-formed empty body, no row created.
+    expect(await run(orgA, getInstanceViewPrefs)).toEqual({ userId: "system", body: empty })
+
+    // Preset override + a custom tile layout round-trip verbatim.
+    const conceptId = randomUUID()
+    const layout = {
+      tiles: [{ id: "a", contents: ["details", "notes"], x: 0, y: 0, w: 8, h: 4 }],
+    }
+    const saved = await run(
+      orgA,
+      updateInstanceViewPrefs({
+        defaultView: "document",
+        byConcept: { [conceptId]: "custom" },
+        customByConcept: { [conceptId]: layout },
+      }),
+    )
+    expect(saved).toEqual({
+      userId: "system",
+      body: {
+        defaultView: "document",
+        byConcept: { [conceptId]: "custom" },
+        customByConcept: { [conceptId]: layout },
+      },
+    })
+
+    // Second write hits the same (org, user) row — an upsert, not a new row.
+    await run(orgA, updateInstanceViewPrefs(empty))
+    expect(await run(orgA, getInstanceViewPrefs)).toEqual({ userId: "system", body: empty })
+
+    // Prefs are org-scoped: the other org still reads defaults.
+    expect(await run(orgB, getInstanceViewPrefs)).toEqual({ userId: "system", body: empty })
   })
 })

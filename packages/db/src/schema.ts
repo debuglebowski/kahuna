@@ -330,6 +330,27 @@ export const memberPages = pgTable(
 )
 
 /**
+ * A member's instance-detail layout choices — which preset view to render, as a
+ * global default plus per-concept overrides (`{ defaultView, byConcept }`,
+ * keyed by concept id). The body is opaque to the engine: view keys name
+ * client-defined presets. One row per (org, user); owner-only writes, like
+ * `member_pages`.
+ */
+export const instanceViewPrefs = pgTable(
+  "instance_view_prefs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: text("org_id").notNull(),
+    // Logical FK into bauth_user.id (see header comment).
+    userId: text("user_id").notNull(),
+    body: jsonb("body").notNull().default(sql`'{"defaultView":null,"byConcept":{}}'::jsonb`),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("instance_view_prefs_org_user_uq").on(t.orgId, t.userId)],
+)
+
+/**
  * Per-org member deactivation markers (the member analogue of `archived_at`):
  * a row means that user is deactivated in that org — blocked from org access,
  * hidden from user-field pickers, page frozen. Sidecar to BetterAuth's `member`

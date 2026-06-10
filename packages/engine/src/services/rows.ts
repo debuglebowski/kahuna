@@ -13,6 +13,10 @@ import type {
   FieldKind,
   Instance,
   InstanceState,
+  InstanceViewLayout,
+  InstanceViewPrefs,
+  InstanceViewPrefsBody,
+  InstanceViewTile,
   Item,
   Label,
   MemberDeactivation,
@@ -311,6 +315,74 @@ export interface MemberPageRow {
 export const toMemberPage = (r: MemberPageRow): MemberPage => ({
   userId: r.user_id,
   body: toDashboardBody(r.body),
+})
+
+export interface InstanceViewPrefsRow {
+  readonly id: string
+  readonly org_id: string
+  readonly user_id: string
+  readonly body: unknown
+  readonly created_at: Date
+  readonly updated_at: Date
+}
+
+const EMPTY_VIEW_PREFS: InstanceViewPrefsBody = {
+  defaultView: null,
+  byConcept: {},
+  customByConcept: {},
+}
+
+const toInstanceViewTile = (v: unknown): InstanceViewTile | null => {
+  if (!v || typeof v !== "object") return null
+  const t = v as Record<string, unknown>
+  const nums = [t.x, t.y, t.w, t.h]
+  if (
+    typeof t.id !== "string" ||
+    !Array.isArray(t.contents) ||
+    nums.some((n) => typeof n !== "number" || !Number.isFinite(n))
+  )
+    return null
+  return {
+    id: t.id,
+    contents: t.contents.filter((c): c is string => typeof c === "string"),
+    x: t.x as number,
+    y: t.y as number,
+    w: t.w as number,
+    h: t.h as number,
+  }
+}
+
+const toInstanceViewLayout = (v: unknown): InstanceViewLayout | null => {
+  if (!v || typeof v !== "object") return null
+  const tiles = (v as { tiles?: unknown }).tiles
+  if (!Array.isArray(tiles)) return null
+  return { tiles: tiles.map(toInstanceViewTile).filter((t): t is InstanceViewTile => t !== null) }
+}
+
+/** Coerce a jsonb body into well-formed view prefs (defensive against drift):
+ *  non-string override values and malformed tiles are dropped, missing
+ *  sections read as empty. */
+const toInstanceViewPrefsBody = (raw: unknown): InstanceViewPrefsBody => {
+  if (!raw || typeof raw !== "object") return EMPTY_VIEW_PREFS
+  const r = raw as { defaultView?: unknown; byConcept?: unknown; customByConcept?: unknown }
+  const by = r.byConcept && typeof r.byConcept === "object" ? r.byConcept : {}
+  const custom = r.customByConcept && typeof r.customByConcept === "object" ? r.customByConcept : {}
+  return {
+    defaultView: typeof r.defaultView === "string" ? r.defaultView : null,
+    byConcept: Object.fromEntries(
+      Object.entries(by).filter((e): e is [string, string] => typeof e[1] === "string"),
+    ),
+    customByConcept: Object.fromEntries(
+      Object.entries(custom)
+        .map(([k, v]) => [k, toInstanceViewLayout(v)] as const)
+        .filter((e): e is [string, InstanceViewLayout] => e[1] !== null),
+    ),
+  }
+}
+
+export const toInstanceViewPrefs = (r: InstanceViewPrefsRow): InstanceViewPrefs => ({
+  userId: r.user_id,
+  body: toInstanceViewPrefsBody(r.body),
 })
 
 export interface MemberDeactivationRow {

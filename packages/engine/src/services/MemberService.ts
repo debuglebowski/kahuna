@@ -1,10 +1,17 @@
 import { PgClient } from "@effect/sql-pg"
 import { Effect } from "effect"
-import type { DashboardBody, MemberPage } from "../domain/types"
+import type {
+  DashboardBody,
+  InstanceViewPrefs,
+  InstanceViewPrefsBody,
+  MemberPage,
+} from "../domain/types"
 import { OrgContext } from "./OrgContext"
 import {
+  type InstanceViewPrefsRow,
   type MemberDeactivationRow,
   type MemberPageRow,
+  toInstanceViewPrefs,
   toMemberDeactivation,
   toMemberPage,
 } from "./rows"
@@ -50,6 +57,34 @@ export class MemberService extends Effect.Service<MemberService>()("engine/Membe
         return toMemberPage(rows[0]!)
       })
 
+    /** The CALLER's instance-view layout prefs; defaults if never saved. */
+    const getViewPrefs = () =>
+      Effect.gen(function* () {
+        const { orgId, actor } = yield* OrgContext
+        const rows = yield* sql<InstanceViewPrefsRow>`
+          SELECT * FROM instance_view_prefs
+          WHERE org_id = ${orgId} AND user_id = ${actor} LIMIT 1`
+        return rows[0]
+          ? toInstanceViewPrefs(rows[0])
+          : ({
+              userId: actor,
+              body: { defaultView: null, byConcept: {}, customByConcept: {} },
+            } as InstanceViewPrefs)
+      })
+
+    /** Upsert the CALLER's own view prefs (owner-only by construction). */
+    const updateViewPrefs = (body: InstanceViewPrefsBody) =>
+      Effect.gen(function* () {
+        const { orgId, actor } = yield* OrgContext
+        const rows = yield* sql<InstanceViewPrefsRow>`
+          INSERT INTO instance_view_prefs (org_id, user_id, body)
+          VALUES (${orgId}, ${actor}, ${JSON.stringify(body)}::jsonb)
+          ON CONFLICT (org_id, user_id)
+          DO UPDATE SET body = EXCLUDED.body, updated_at = now()
+          RETURNING *`
+        return toInstanceViewPrefs(rows[0]!)
+      })
+
     /** All deactivation markers in the org (joined client-side with the member list). */
     const listDeactivations = () =>
       Effect.gen(function* () {
@@ -83,13 +118,15 @@ export class MemberService extends Effect.Service<MemberService>()("engine/Membe
           WHERE org_id = ${orgId} AND user_id = ${userId}`
       })
 
-    /** Drop everything this org holds about a member (page + marker) — the
-     *  engine half of a member purge; membership removal is the server's half. */
+    /** Drop everything this org holds about a member (page + prefs + marker) —
+     *  the engine half of a member purge; membership removal is the server's half. */
     const purgeMemberData = (userId: string) =>
       sql.withTransaction(
         Effect.gen(function* () {
           const { orgId } = yield* OrgContext
           yield* sql`DELETE FROM member_pages
+            WHERE org_id = ${orgId} AND user_id = ${userId}`
+          yield* sql`DELETE FROM instance_view_prefs
             WHERE org_id = ${orgId} AND user_id = ${userId}`
           yield* sql`DELETE FROM member_deactivations
             WHERE org_id = ${orgId} AND user_id = ${userId}`
@@ -99,6 +136,8 @@ export class MemberService extends Effect.Service<MemberService>()("engine/Membe
     return {
       getPage,
       updatePage,
+      getViewPrefs,
+      updateViewPrefs,
       listDeactivations,
       deactivate,
       reactivate,

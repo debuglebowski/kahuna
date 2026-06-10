@@ -18,6 +18,7 @@ import {
   GraphLayoutService,
   type Instance,
   InstanceService,
+  type InstanceViewPrefsBody,
   LABELS_KEY,
   type Label,
   LabelService,
@@ -326,6 +327,14 @@ export const getMemberPage = (userId: string): UC<unknown> =>
 /** Always the caller's own page (owner-only by construction). */
 export const updateMemberPage = (body: DashboardBody): UC<unknown> =>
   Effect.flatMap(MemberService, (m) => m.updatePage(body))
+
+/** The caller's instance-view layout prefs (own row only, like member pages). */
+export const getInstanceViewPrefs: UC<unknown> = Effect.flatMap(MemberService, (m) =>
+  m.getViewPrefs(),
+)
+
+export const updateInstanceViewPrefs = (body: InstanceViewPrefsBody): UC<unknown> =>
+  Effect.flatMap(MemberService, (m) => m.updateViewPrefs(body))
 
 export const listDeactivatedMembers: UC<unknown> = Effect.flatMap(MemberService, (m) =>
   m.listDeactivations(),

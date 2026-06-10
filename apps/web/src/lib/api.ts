@@ -6,6 +6,7 @@ import {
   type FieldConfig,
   type FieldKind,
   type GraphLayout,
+  type InstanceViewPrefsBody,
   KingsmakerRpcs,
   type SidebarViewBody,
 } from "../../rpc/contract"
@@ -30,6 +31,8 @@ export type {
   Instance,
   InstanceDetail,
   InstancePick,
+  InstanceViewPrefs,
+  InstanceViewPrefsBody,
   Item,
   Label,
   MemberPage,
@@ -320,6 +323,10 @@ export const api = {
   // page; member purge is a plain-HTTP DELETE (see Members directory page).
   getMemberPage: (userId: string) => call((c) => c.getMemberPage({ userId })),
   updateMemberPage: (body: DashboardBody) => call((c) => c.updateMemberPage({ body })),
+  // Instance-view layout prefs — always the caller's own row.
+  getInstanceViewPrefs: () => call((c) => c.getInstanceViewPrefs()),
+  updateInstanceViewPrefs: (body: InstanceViewPrefsBody) =>
+    call((c) => c.updateInstanceViewPrefs({ body })),
   listDeactivatedMembers: () => call((c) => c.listDeactivatedMembers()),
   deactivateMember: (userId: string) => call((c) => c.deactivateMember({ userId })),
   reactivateMember: (userId: string) => call((c) => c.reactivateMember({ userId })),
