@@ -224,7 +224,6 @@ export function Layout({ children }: { children: ReactNode }) {
             >
               <PanelLeftOpen size={18} />
             </IconButton>
-            <ThemeButton />
           </div>
           <nav
             key={activeView.id}
