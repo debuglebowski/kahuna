@@ -13,7 +13,6 @@ import { Placeholder } from "./pages/Placeholder"
 import { Concepts } from "./pages/settings/Concepts"
 import { Dashboards as DashboardsSettings } from "./pages/settings/Dashboards"
 import { Labels } from "./pages/settings/Labels"
-import { Members } from "./pages/settings/Members"
 import { Organization } from "./pages/settings/Organization"
 import { Profile } from "./pages/settings/Profile"
 import { SettingsLayout } from "./pages/settings/SettingsLayout"
@@ -41,7 +40,7 @@ export function App() {
           <Route path="profile" element={<Profile />} />
           <Route path="security" element={<Navigate to="/settings/profile" replace />} />
           <Route path="organization" element={<Organization />} />
-          <Route path="members" element={<Members />} />
+          <Route path="members" element={<Navigate to="/members" replace />} />
           <Route path="concepts" element={<Concepts />} />
           <Route path="concepts-graph" element={<Navigate to="/settings/concepts" replace />} />
           <Route path="labels" element={<Labels />} />

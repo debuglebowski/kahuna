@@ -13,7 +13,6 @@ interface Tab {
 const TABS: ReadonlyArray<Tab> = [
   { to: "profile", label: "Profile", admin: false },
   { to: "organization", label: "Organization", admin: true },
-  { to: "members", label: "Members", admin: true },
   { to: "concepts", label: "Concepts", admin: false },
   { to: "labels", label: "Labels", admin: false },
   { to: "sidebar", label: "Sidebar", admin: false },

@@ -1,21 +1,39 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query"
-import { Trash2, UserCheck, UserX } from "lucide-react"
+import { Pencil, Plus, Trash2, UserCheck, UserX } from "lucide-react"
 import { useState } from "react"
 import { Link } from "react-router-dom"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import {
   Badge,
+  Button,
   Card,
   ConfirmDialog,
+  Field,
   IconButton,
+  Input,
+  Modal,
   Spinner,
   ToggleChip,
   Toolbar,
 } from "../components/ui"
 import { api } from "../lib/api"
-import { useSession } from "../lib/auth-client"
-import { memberLabel, type OrgMember, purgeMember, useMembers } from "../lib/members"
+import { authClient, useSession } from "../lib/auth-client"
+import {
+  addMemberByEmail,
+  memberLabel,
+  type OrgMember,
+  purgeMember,
+  useMembers,
+} from "../lib/members"
 import { initialsOf } from "../lib/utils"
+import { Feedback } from "./settings/parts"
 import { isAdminRole } from "./settings/SettingsLayout"
 
 const roleTone = (role: string) => (role === "owner" ? "blue" : role === "admin" ? "amber" : "gray")
@@ -23,8 +41,8 @@ const roleTone = (role: string) => (role === "owner" ? "blue" : role === "admin"
 /**
  * The org directory (`/members`): every colleague, one row each, leading to
  * their profile page. Deactivated members hide behind a toggle (the archive
- * pattern); admins can deactivate / reactivate / delete from here. Adding
- * members and changing roles stays in Settings → Members.
+ * pattern). Admins manage the full member lifecycle here: add members,
+ * change roles, deactivate / reactivate / delete.
  */
 export function MembersDirectory() {
   const qc = useQueryClient()
@@ -37,12 +55,39 @@ export function MembersDirectory() {
     kind: "deactivate" | "purge"
     member: OrgMember
   } | null>(null)
+  // Adding happens in a modal; false = closed.
+  const [adding, setAdding] = useState(false)
+  const [email, setEmail] = useState("")
+  const [role, setRole] = useState("member")
+  // Role changes happen in a modal; null = closed.
+  const [editing, setEditing] = useState<{ id: string; label: string; role: string } | null>(null)
+  const [draftRole, setDraftRole] = useState("member")
 
   const invalidate = async () => {
     await qc.invalidateQueries({ queryKey: ["deactivatedMembers"] })
     await qc.invalidateQueries({ queryKey: ["fullOrg"] })
   }
 
+  const add = useMutation({
+    mutationFn: () => addMemberByEmail(email.trim(), role),
+    onSuccess: async () => {
+      setAdding(false)
+      await invalidate()
+    },
+  })
+  const changeRole = useMutation({
+    mutationFn: async (vars: { memberId: string; role: string }) => {
+      const { error: err } = await authClient.organization.updateMemberRole({
+        memberId: vars.memberId,
+        role: vars.role,
+      })
+      if (err) throw new Error(err.message ?? "Failed to update role")
+    },
+    onSuccess: async () => {
+      setEditing(null)
+      await invalidate()
+    },
+  })
   const deactivate = useMutation({
     mutationFn: (userId: string) => api.deactivateMember(userId),
     onSuccess: async () => {
@@ -66,6 +111,7 @@ export function MembersDirectory() {
   if (error) return <p className="text-sm text-destructive">{(error as Error).message}</p>
 
   const admin = isAdminRole(members.find((m) => m.userId === session?.user.id)?.role)
+  const ownerCount = members.filter((m) => m.role === "owner").length
   const q = filter.trim().toLowerCase()
   const shown = members.filter((m) => {
     if (!showDeactivated && deactivatedSet.has(m.userId)) return false
@@ -82,6 +128,20 @@ export function MembersDirectory() {
         <ToggleChip pressed={showDeactivated} onPressedChange={setShowDeactivated}>
           Deactivated
         </ToggleChip>
+        {admin && (
+          <Button
+            size="sm"
+            onClick={() => {
+              add.reset()
+              setEmail("")
+              setRole("member")
+              setAdding(true)
+            }}
+          >
+            <Plus size={15} />
+            Add member
+          </Button>
+        )}
       </Toolbar>
 
       <Card>
@@ -94,6 +154,7 @@ export function MembersDirectory() {
             {shown.map((m) => {
               const deactivated = deactivatedSet.has(m.userId)
               const isSelf = m.userId === session?.user.id
+              const lockOwner = m.role === "owner" && ownerCount <= 1
               const label = memberLabel(m, m.userId)
               return (
                 <li key={m.id} className="flex items-center gap-3 px-6 py-3 hover:bg-accent/50">
@@ -119,34 +180,46 @@ export function MembersDirectory() {
                   </Link>
                   {deactivated && <Badge tone="red">deactivated</Badge>}
                   <Badge tone={roleTone(m.role)}>{m.role}</Badge>
-                  {admin && !isSelf && m.role !== "owner" && (
+                  {admin && (
                     <div className="flex shrink-0 items-center gap-0.5">
-                      {deactivated ? (
-                        <>
-                          <IconButton
-                            aria-label={`Reactivate ${label}`}
-                            disabled={reactivate.isPending}
-                            onClick={() => reactivate.mutate(m.userId)}
-                          >
-                            <UserCheck size={15} />
-                          </IconButton>
+                      <IconButton
+                        aria-label={`Change role for ${label}`}
+                        disabled={lockOwner}
+                        onClick={() => {
+                          setEditing({ id: m.id, label, role: m.role })
+                          setDraftRole(m.role)
+                        }}
+                      >
+                        <Pencil size={15} />
+                      </IconButton>
+                      {!isSelf &&
+                        m.role !== "owner" &&
+                        (deactivated ? (
+                          <>
+                            <IconButton
+                              aria-label={`Reactivate ${label}`}
+                              disabled={reactivate.isPending}
+                              onClick={() => reactivate.mutate(m.userId)}
+                            >
+                              <UserCheck size={15} />
+                            </IconButton>
+                            <IconButton
+                              variant="danger"
+                              aria-label={`Delete ${label}`}
+                              onClick={() => setConfirming({ kind: "purge", member: m })}
+                            >
+                              <Trash2 size={15} />
+                            </IconButton>
+                          </>
+                        ) : (
                           <IconButton
                             variant="danger"
-                            aria-label={`Delete ${label}`}
-                            onClick={() => setConfirming({ kind: "purge", member: m })}
+                            aria-label={`Deactivate ${label}`}
+                            onClick={() => setConfirming({ kind: "deactivate", member: m })}
                           >
-                            <Trash2 size={15} />
+                            <UserX size={15} />
                           </IconButton>
-                        </>
-                      ) : (
-                        <IconButton
-                          variant="danger"
-                          aria-label={`Deactivate ${label}`}
-                          onClick={() => setConfirming({ kind: "deactivate", member: m })}
-                        >
-                          <UserX size={15} />
-                        </IconButton>
-                      )}
+                        ))}
                     </div>
                   )}
                 </li>
@@ -155,6 +228,83 @@ export function MembersDirectory() {
           </ul>
         )}
       </Card>
+
+      {adding && (
+        <Modal title="Add member" onClose={() => setAdding(false)}>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Add an existing user by email — they must already have an account.
+            </p>
+            <div className="flex gap-2">
+              <Input
+                autoFocus
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && email.includes("@")) add.mutate()
+                }}
+                placeholder="teammate@example.com"
+                className="flex-1"
+              />
+              <Select value={role} onValueChange={setRole}>
+                <SelectTrigger className="w-32">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="member">Member</SelectItem>
+                  <SelectItem value="admin">Admin</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex gap-2">
+              <Button onClick={() => add.mutate()} disabled={add.isPending || !email.includes("@")}>
+                <Plus size={15} />
+                {add.isPending ? "Adding…" : "Add"}
+              </Button>
+              <Button variant="outline" onClick={() => setAdding(false)}>
+                Cancel
+              </Button>
+            </div>
+            <Feedback error={add.error} />
+          </div>
+        </Modal>
+      )}
+
+      {editing && (
+        <Modal title="Change role" onClose={() => setEditing(null)}>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Update the role for{" "}
+              <span className="font-medium text-foreground">{editing.label}</span>.
+            </p>
+            <Field label="Role">
+              <Select value={draftRole} onValueChange={setDraftRole}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="member">member</SelectItem>
+                  <SelectItem value="admin">admin</SelectItem>
+                  <SelectItem value="owner">owner</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+            <div className="flex gap-2">
+              <Button
+                onClick={() => changeRole.mutate({ memberId: editing.id, role: draftRole })}
+                disabled={changeRole.isPending || draftRole === editing.role}
+              >
+                {changeRole.isPending ? "Saving…" : "Save"}
+              </Button>
+              <Button variant="outline" onClick={() => setEditing(null)}>
+                Cancel
+              </Button>
+            </div>
+            <Feedback error={changeRole.error} />
+          </div>
+        </Modal>
+      )}
 
       {confirming?.kind === "deactivate" && (
         <ConfirmDialog

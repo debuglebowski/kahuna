@@ -48,6 +48,26 @@ export function useMembers() {
   }
 }
 
+const ADD_MEMBER_ERRORS: Record<string, string> = {
+  NO_SUCH_USER: "No user with that email — they must sign up first.",
+  ALREADY_MEMBER: "That user is already a member.",
+  FORBIDDEN: "Admins only.",
+  EMAIL_REQUIRED: "Enter an email.",
+}
+
+/** Add an existing user to the org by email (admin-only; see router.ts). */
+export async function addMemberByEmail(email: string, role: string): Promise<void> {
+  const res = await fetch("/api/org/members", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email, role }),
+  })
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string }
+    throw new Error(ADD_MEMBER_ERRORS[body.error ?? ""] ?? body.error ?? "Failed to add member")
+  }
+}
+
 /** Permanently remove a DEACTIVATED member (admin-only; see router.ts). */
 export async function purgeMember(userId: string): Promise<void> {
   const res = await fetch(`/api/org/members/${userId}`, { method: "DELETE" })
