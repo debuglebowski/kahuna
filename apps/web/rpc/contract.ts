@@ -445,6 +445,73 @@ export const Dashboard = Schema.Struct({
 })
 export type Dashboard = typeof Dashboard.Type
 
+// ── annotation layer (notes / tasks / statuses / custom-field defs) ────────────
+// Notes/tasks hang off an item lineage (`subjectId` = items.id) or off nothing
+// (org-level task). `customFields` is the open bag keyed by AnnotationField id.
+
+export const AnnotationType = Schema.Literal("note", "task")
+export type AnnotationType = typeof AnnotationType.Type
+
+export const TaskStatusCategory = Schema.Literal("todo", "active", "done")
+export type TaskStatusCategory = typeof TaskStatusCategory.Type
+
+/** A per-org configurable task status. `category` carries completion semantics. */
+export const TaskStatus = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+  color: Schema.NullOr(Schema.String),
+  category: TaskStatusCategory,
+  isDefault: Schema.Boolean,
+  position: Schema.Number,
+  archivedAt: Schema.NullOr(Schema.Date),
+})
+export type TaskStatus = typeof TaskStatus.Type
+
+/** A custom-field definition for the annotation layer (scoped by annotationType). */
+export const AnnotationField = Schema.Struct({
+  id: Schema.String,
+  annotationType: AnnotationType,
+  name: Schema.String,
+  kind: FieldKind,
+  config: FieldConfig,
+  icon: Schema.NullOr(Schema.String),
+  position: Schema.Number,
+  archivedAt: Schema.NullOr(Schema.Date),
+})
+export type AnnotationField = typeof AnnotationField.Type
+
+export const Note = Schema.Struct({
+  id: Schema.String,
+  /** Annotated item lineage (items.id); null = org-level. */
+  subjectId: Schema.NullOr(Schema.String),
+  body: Schema.String,
+  createdBy: Schema.NullOr(Schema.String),
+  customFields: State,
+  version: Schema.Number,
+  createdAt: Schema.Date,
+  updatedAt: Schema.Date,
+  archivedAt: Schema.NullOr(Schema.Date),
+})
+export type Note = typeof Note.Type
+
+export const Task = Schema.Struct({
+  id: Schema.String,
+  /** Annotated item lineage (items.id); null = org-level / standalone. */
+  subjectId: Schema.NullOr(Schema.String),
+  title: Schema.String,
+  statusId: Schema.NullOr(Schema.String),
+  assignee: Schema.NullOr(Schema.String),
+  /** ISO date string or null. */
+  dueAt: Schema.NullOr(Schema.String),
+  createdBy: Schema.NullOr(Schema.String),
+  customFields: State,
+  version: Schema.Number,
+  createdAt: Schema.Date,
+  updatedAt: Schema.Date,
+  archivedAt: Schema.NullOr(Schema.Date),
+})
+export type Task = typeof Task.Type
+
 /** One serializable error for the whole API; `code` mirrors the old HTTP codes. */
 export class RpcError extends Schema.TaggedError<RpcError>()("RpcError", {
   code: Schema.String,
@@ -800,6 +867,211 @@ export class KingsmakerRpcs extends RpcGroup.make(
       orders: Schema.Array(Schema.Struct({ id: Schema.String, position: Schema.Number })),
     },
     success: Schema.Array(Dashboard),
+    error: RpcError,
+  }),
+  // ── annotation layer: notes ───────────────────────────────────────────────────
+  Rpc.make("listNotes", {
+    payload: { subjectId: Schema.String, includeArchived: Schema.optional(Schema.Boolean) },
+    success: Schema.Array(Note),
+    error: RpcError,
+  }),
+  Rpc.make("createNote", {
+    payload: {
+      subjectId: Schema.NullOr(Schema.String),
+      body: Schema.String,
+      customFields: Schema.optional(Fields),
+    },
+    success: Note,
+    error: RpcError,
+  }),
+  Rpc.make("updateNote", {
+    payload: {
+      id: Schema.String,
+      expectedVersion: Schema.Number,
+      body: Schema.optional(Schema.String),
+      customFields: Schema.optional(Fields),
+    },
+    success: Note,
+    error: RpcError,
+  }),
+  Rpc.make("archiveNote", {
+    payload: { id: Schema.String, expectedVersion: Schema.Number },
+    success: Note,
+    error: RpcError,
+  }),
+  Rpc.make("restoreNote", {
+    payload: { id: Schema.String, expectedVersion: Schema.Number },
+    success: Note,
+    error: RpcError,
+  }),
+  // Hard delete (purge) — author/assignee/admin gated at the boundary.
+  Rpc.make("deleteNote", {
+    payload: { id: Schema.String },
+    success: Note,
+    error: RpcError,
+  }),
+  // ── annotation layer: tasks ───────────────────────────────────────────────────
+  // Filter superset: per-item panel passes `subjectId`; global "My Tasks" passes
+  // assignee/status/due. Omit `subjectId` to query across all items.
+  Rpc.make("listTasks", {
+    payload: {
+      subjectId: Schema.optional(Schema.NullOr(Schema.String)),
+      assignee: Schema.optional(Schema.String),
+      statusId: Schema.optional(Schema.String),
+      dueBefore: Schema.optional(Schema.String),
+      dueAfter: Schema.optional(Schema.String),
+      includeArchived: Schema.optional(Schema.Boolean),
+      limit: Schema.optional(Schema.Number),
+    },
+    success: Schema.Array(Task),
+    error: RpcError,
+  }),
+  Rpc.make("createTask", {
+    payload: {
+      subjectId: Schema.NullOr(Schema.String),
+      title: Schema.String,
+      statusId: Schema.optional(Schema.NullOr(Schema.String)),
+      assignee: Schema.optional(Schema.NullOr(Schema.String)),
+      dueAt: Schema.optional(Schema.NullOr(Schema.String)),
+      customFields: Schema.optional(Fields),
+    },
+    success: Task,
+    error: RpcError,
+  }),
+  Rpc.make("updateTask", {
+    payload: {
+      id: Schema.String,
+      expectedVersion: Schema.Number,
+      title: Schema.optional(Schema.String),
+      dueAt: Schema.optional(Schema.NullOr(Schema.String)),
+      customFields: Schema.optional(Fields),
+    },
+    success: Task,
+    error: RpcError,
+  }),
+  Rpc.make("setTaskStatus", {
+    payload: { id: Schema.String, expectedVersion: Schema.Number, statusId: Schema.String },
+    success: Task,
+    error: RpcError,
+  }),
+  Rpc.make("assignTask", {
+    payload: {
+      id: Schema.String,
+      expectedVersion: Schema.Number,
+      assignee: Schema.NullOr(Schema.String),
+    },
+    success: Task,
+    error: RpcError,
+  }),
+  Rpc.make("archiveTask", {
+    payload: { id: Schema.String, expectedVersion: Schema.Number },
+    success: Task,
+    error: RpcError,
+  }),
+  Rpc.make("restoreTask", {
+    payload: { id: Schema.String, expectedVersion: Schema.Number },
+    success: Task,
+    error: RpcError,
+  }),
+  Rpc.make("deleteTask", {
+    payload: { id: Schema.String },
+    success: Task,
+    error: RpcError,
+  }),
+  // Per-item activity: union of the lineage's instance/item events + its
+  // annotations' note/task events. `subjectId` = the item lineage id.
+  Rpc.make("getActivity", {
+    payload: { subjectId: Schema.String, limit: Schema.optional(Schema.Number) },
+    success: Schema.Array(FeedItem),
+    error: RpcError,
+  }),
+  // ── annotation layer: task statuses (admin) ───────────────────────────────────
+  Rpc.make("listTaskStatuses", {
+    payload: { includeArchived: Schema.optional(Schema.Boolean) },
+    success: Schema.Array(TaskStatus),
+    error: RpcError,
+  }),
+  Rpc.make("createTaskStatus", {
+    payload: {
+      name: Schema.String,
+      category: TaskStatusCategory,
+      color: Schema.optional(Schema.NullOr(Schema.String)),
+      isDefault: Schema.optional(Schema.Boolean),
+    },
+    success: TaskStatus,
+    error: RpcError,
+  }),
+  Rpc.make("updateTaskStatus", {
+    payload: {
+      id: Schema.String,
+      name: Schema.optional(Schema.String),
+      color: Schema.optional(Schema.NullOr(Schema.String)),
+      category: Schema.optional(TaskStatusCategory),
+      isDefault: Schema.optional(Schema.Boolean),
+    },
+    success: TaskStatus,
+    error: RpcError,
+  }),
+  Rpc.make("archiveTaskStatus", {
+    payload: { id: Schema.String },
+    success: TaskStatus,
+    error: RpcError,
+  }),
+  Rpc.make("restoreTaskStatus", {
+    payload: { id: Schema.String },
+    success: TaskStatus,
+    error: RpcError,
+  }),
+  Rpc.make("reorderTaskStatuses", {
+    payload: {
+      orders: Schema.Array(Schema.Struct({ id: Schema.String, position: Schema.Number })),
+    },
+    success: Schema.Array(TaskStatus),
+    error: RpcError,
+  }),
+  // ── annotation layer: custom-field definitions (admin) ─────────────────────────
+  Rpc.make("listAnnotationFields", {
+    payload: { annotationType: AnnotationType, includeArchived: Schema.optional(Schema.Boolean) },
+    success: Schema.Array(AnnotationField),
+    error: RpcError,
+  }),
+  Rpc.make("addAnnotationField", {
+    payload: {
+      annotationType: AnnotationType,
+      name: Schema.String,
+      kind: FieldKind,
+      config: Schema.optional(FieldConfig),
+      icon: Schema.optional(Schema.NullOr(Schema.String)),
+    },
+    success: AnnotationField,
+    error: RpcError,
+  }),
+  Rpc.make("updateAnnotationField", {
+    payload: {
+      id: Schema.String,
+      name: Schema.optional(Schema.String),
+      config: Schema.optional(FieldConfig),
+      icon: Schema.optional(Schema.NullOr(Schema.String)),
+    },
+    success: AnnotationField,
+    error: RpcError,
+  }),
+  Rpc.make("archiveAnnotationField", {
+    payload: { id: Schema.String },
+    success: AnnotationField,
+    error: RpcError,
+  }),
+  Rpc.make("restoreAnnotationField", {
+    payload: { id: Schema.String },
+    success: AnnotationField,
+    error: RpcError,
+  }),
+  Rpc.make("reorderAnnotationFields", {
+    payload: {
+      annotationType: AnnotationType,
+      orders: Schema.Array(Schema.Struct({ id: Schema.String, position: Schema.Number })),
+    },
+    success: Schema.Array(AnnotationField),
     error: RpcError,
   }),
 ) {}

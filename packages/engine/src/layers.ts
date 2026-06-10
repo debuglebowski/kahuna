@@ -1,4 +1,6 @@
 import { Layer } from "effect"
+import { AnnotationFieldService } from "./services/AnnotationFieldService"
+import { AnnotationService } from "./services/AnnotationService"
 import { AttachmentService } from "./services/AttachmentService"
 import { ComputedFields } from "./services/ComputedFields"
 import { ConceptService } from "./services/ConceptService"
@@ -11,6 +13,7 @@ import { LabelService } from "./services/LabelService"
 import { QueryService } from "./services/QueryService"
 import { RelationService } from "./services/RelationService"
 import { SidebarViewService } from "./services/SidebarViewService"
+import { TaskStatusService } from "./services/TaskStatusService"
 
 /**
  * All engine services merged. Requires a `PgClient` layer (e.g. `PgLive`) and a
@@ -29,6 +32,9 @@ export const EngineLive = Layer.mergeAll(
   SidebarViewService.Default,
   DashboardService.Default,
   GraphLayoutService.Default,
+  TaskStatusService.Default,
+  AnnotationFieldService.Default,
+  AnnotationService.Default,
 )
 
 /** Union of all engine service tags — the requirements an engine effect may carry. */
@@ -45,3 +51,6 @@ export type EngineServices =
   | SidebarViewService
   | DashboardService
   | GraphLayoutService
+  | TaskStatusService
+  | AnnotationFieldService
+  | AnnotationService

@@ -27,6 +27,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { LABELS_KEY } from "../../rpc/contract"
+import { ItemTabs } from "../components/item/ItemTabs"
 import { LabelMultiSelect } from "../components/LabelMultiSelect"
 import {
   Badge,
@@ -473,7 +474,11 @@ function VersionsCard({
 
   const onDraft = current.versionStatus === "draft"
   const err =
-    newVersion.error || publish.error || discard.error || archiveVersion.error || restoreVersion.error
+    newVersion.error ||
+    publish.error ||
+    discard.error ||
+    archiveVersion.error ||
+    restoreVersion.error
 
   return (
     <Card>
@@ -744,6 +749,15 @@ export function InstanceView() {
             onChanged={() => collection.utils.refetch()}
           />
         )}
+
+        {/* Cross-cutting annotation layer — keyed by the item lineage so notes/
+            tasks/activity survive re-publishes on versioned concepts. */}
+        <ItemTabs
+          subjectId={instance.itemId}
+          myUserId={session?.user.id}
+          isAdmin={admin}
+          members={org.data?.members ?? []}
+        />
       </div>
 
       {addingConnection && (
@@ -785,8 +799,8 @@ export function InstanceView() {
               </>
             ) : (
               <>
-                Archive <strong>{labelOf(instance.state, fields)}</strong>? It's hidden from lists but
-                kept — you can restore it from the {concept.name} view's "Show archived".
+                Archive <strong>{labelOf(instance.state, fields)}</strong>? It's hidden from lists
+                but kept — you can restore it from the {concept.name} view's "Show archived".
               </>
             )
           }

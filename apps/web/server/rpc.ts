@@ -3,6 +3,7 @@ import { RpcMiddleware, RpcSerialization, RpcServer } from "@effect/rpc"
 import { type EngineServices, OrgContext, type OrgScope } from "@kingsmaker/engine"
 import { Effect, Layer } from "effect"
 import {
+  type AnnotationField,
   type Concept,
   type ConceptGraph,
   type Dashboard,
@@ -14,9 +15,12 @@ import {
   type Item,
   KingsmakerRpcs,
   type Label,
+  type Note,
   type Relation,
   RpcError,
   type SidebarView,
+  type Task,
+  type TaskStatus,
 } from "../rpc/contract"
 import { auth } from "./auth"
 import { pool } from "./db"
@@ -168,6 +172,65 @@ async function assertMembersForInstance(
   if (conceptId) await assertMembers(orgId, conceptId, patch)
 }
 
+/** A task's assignee must be a real org member (the engine treats it as an opaque
+ *  logical FK; membership is an auth-tier concern validated here). No-op when unset. */
+async function assertAssigneeMember(
+  orgId: string,
+  assignee: string | null | undefined,
+): Promise<void> {
+  if (!assignee) return
+  const members = await pool.query<{ user_id: string }>(
+    "SELECT user_id FROM bauth_member WHERE organization_id = $1 AND user_id = $2 LIMIT 1",
+    [orgId, assignee],
+  )
+  if (members.rows.length === 0) {
+    throw new RpcError({
+      code: "VALIDATION",
+      message: `not an org member: ${assignee}`,
+      status: 422,
+    })
+  }
+}
+
+/** Author/assignee/admin gate for mutating (or purging) an annotation. The engine
+ *  stays permission-agnostic (org scope only), so this lives at the boundary like
+ *  `requireAdmin`/`assertMembers`. A missing row is allowed through so the engine
+ *  surfaces the canonical AnnotationNotFound. */
+async function assertCanMutateAnnotation(orgId: string, actor: string, id: string): Promise<void> {
+  const r = await pool.query<{ created_by: string | null; assignee: string | null }>(
+    "SELECT created_by, assignee FROM annotations WHERE id = $1 AND org_id = $2 LIMIT 1",
+    [id, orgId],
+  )
+  const row = r.rows[0]
+  if (!row) return
+  if (row.created_by === actor || row.assignee === actor) return
+  const role = await roleOf(actor, orgId)
+  if (role && can(role, "admin")) return
+  throw new RpcError({
+    code: "FORBIDDEN",
+    message: "Only the author, assignee, or an admin may modify this",
+    status: 403,
+  })
+}
+
+/** Run an async (orgId, actor) precheck, then the use-case. Generalises `checkThen`
+ *  for annotation writes that gate on author/assignee/admin. */
+const guarded = <A>(
+  precheck: (orgId: string, actor: string) => Promise<void>,
+  run: Effect.Effect<A, unknown, OrgContext | EngineServices>,
+): Effect.Effect<A, RpcError, OrgContext | EngineServices> =>
+  Effect.gen(function* () {
+    const { orgId, actor } = yield* OrgContext
+    yield* Effect.tryPromise({
+      try: () => precheck(orgId, actor),
+      catch: (e) =>
+        e instanceof RpcError
+          ? e
+          : new RpcError({ code: "INTERNAL", message: "permission check failed", status: 500 }),
+    })
+    return yield* mapErr(run)
+  })
+
 /** Run a member pre-check (resolved against the request's org), then the use-case. */
 const checkThen = <A>(
   precheck: (orgId: string) => Promise<void>,
@@ -290,6 +353,94 @@ const HandlersLive = ServerRpcs.toLayer({
     as<Dashboard>(uc.updateDashboard({ id, name, icon, hidden, scope, body, expectedUpdatedAt })),
   deleteDashboard: ({ id }) => as<Dashboard>(uc.deleteDashboard(id)),
   reorderDashboards: ({ orders }) => as<ReadonlyArray<Dashboard>>(uc.reorderDashboards(orders)),
+  // ── annotation layer: notes ───────────────────────────────────────────────────
+  // Create + read are open to any member; edits/archive/purge are author/admin
+  // (the note has no assignee). The per-item activity feed is a plain read.
+  listNotes: ({ subjectId, includeArchived }) =>
+    as<ReadonlyArray<Note>>(uc.listNotes(subjectId, includeArchived)),
+  createNote: ({ subjectId, body, customFields }) =>
+    as<Note>(uc.createNote({ subjectId, body, customFields })),
+  updateNote: ({ id, expectedVersion, body, customFields }) =>
+    guarded<Note>(
+      (orgId, actor) => assertCanMutateAnnotation(orgId, actor, id),
+      uc.updateNote({ id, expectedVersion, body, customFields }),
+    ),
+  archiveNote: ({ id, expectedVersion }) =>
+    guarded<Note>(
+      (orgId, actor) => assertCanMutateAnnotation(orgId, actor, id),
+      uc.archiveNote(id, expectedVersion),
+    ),
+  restoreNote: ({ id, expectedVersion }) =>
+    guarded<Note>(
+      (orgId, actor) => assertCanMutateAnnotation(orgId, actor, id),
+      uc.restoreNote(id, expectedVersion),
+    ),
+  deleteNote: ({ id }) =>
+    guarded<Note>((orgId, actor) => assertCanMutateAnnotation(orgId, actor, id), uc.deleteNote(id)),
+  // ── annotation layer: tasks ───────────────────────────────────────────────────
+  // Create is open (assignee validated); edits/assign/status/archive/purge gate on
+  // author/assignee/admin. Assignment also validates the new assignee's membership.
+  listTasks: ({ subjectId, assignee, statusId, dueBefore, dueAfter, includeArchived, limit }) =>
+    as<ReadonlyArray<Task>>(
+      uc.listTasks({ subjectId, assignee, statusId, dueBefore, dueAfter, includeArchived, limit }),
+    ),
+  createTask: ({ subjectId, title, statusId, assignee, dueAt, customFields }) =>
+    checkThen(
+      (orgId) => assertAssigneeMember(orgId, assignee),
+      uc.createTask({ subjectId, title, statusId, assignee, dueAt, customFields }),
+    ),
+  updateTask: ({ id, expectedVersion, title, dueAt, customFields }) =>
+    guarded<Task>(
+      (orgId, actor) => assertCanMutateAnnotation(orgId, actor, id),
+      uc.updateTask({ id, expectedVersion, title, dueAt, customFields }),
+    ),
+  setTaskStatus: ({ id, expectedVersion, statusId }) =>
+    guarded<Task>(
+      (orgId, actor) => assertCanMutateAnnotation(orgId, actor, id),
+      uc.setTaskStatus(id, expectedVersion, statusId),
+    ),
+  assignTask: ({ id, expectedVersion, assignee }) =>
+    guarded<Task>(
+      async (orgId, actor) => {
+        await assertCanMutateAnnotation(orgId, actor, id)
+        await assertAssigneeMember(orgId, assignee)
+      },
+      uc.assignTask(id, expectedVersion, assignee),
+    ),
+  archiveTask: ({ id, expectedVersion }) =>
+    guarded<Task>(
+      (orgId, actor) => assertCanMutateAnnotation(orgId, actor, id),
+      uc.archiveTask(id, expectedVersion),
+    ),
+  restoreTask: ({ id, expectedVersion }) =>
+    guarded<Task>(
+      (orgId, actor) => assertCanMutateAnnotation(orgId, actor, id),
+      uc.restoreTask(id, expectedVersion),
+    ),
+  deleteTask: ({ id }) =>
+    guarded<Task>((orgId, actor) => assertCanMutateAnnotation(orgId, actor, id), uc.deleteTask(id)),
+  getActivity: ({ subjectId, limit }) => mapErr(uc.getActivity(subjectId, limit)),
+  // ── annotation layer: task statuses + custom-field defs (admin) ────────────────
+  listTaskStatuses: ({ includeArchived }) =>
+    as<ReadonlyArray<TaskStatus>>(uc.listTaskStatuses(includeArchived)),
+  createTaskStatus: ({ name, category, color, isDefault }) =>
+    admin<TaskStatus>(uc.createTaskStatus({ name, category, color, isDefault })),
+  updateTaskStatus: ({ id, name, color, category, isDefault }) =>
+    admin<TaskStatus>(uc.updateTaskStatus({ id, name, color, category, isDefault })),
+  archiveTaskStatus: ({ id }) => admin<TaskStatus>(uc.archiveTaskStatus(id)),
+  restoreTaskStatus: ({ id }) => admin<TaskStatus>(uc.restoreTaskStatus(id)),
+  reorderTaskStatuses: ({ orders }) =>
+    admin<ReadonlyArray<TaskStatus>>(uc.reorderTaskStatuses(orders)),
+  listAnnotationFields: ({ annotationType, includeArchived }) =>
+    as<ReadonlyArray<AnnotationField>>(uc.listAnnotationFields(annotationType, includeArchived)),
+  addAnnotationField: ({ annotationType, name, kind, config, icon }) =>
+    admin<AnnotationField>(uc.addAnnotationField({ annotationType, name, kind, config, icon })),
+  updateAnnotationField: ({ id, name, config, icon }) =>
+    admin<AnnotationField>(uc.updateAnnotationField({ id, name, config, icon })),
+  archiveAnnotationField: ({ id }) => admin<AnnotationField>(uc.archiveAnnotationField(id)),
+  restoreAnnotationField: ({ id }) => admin<AnnotationField>(uc.restoreAnnotationField(id)),
+  reorderAnnotationFields: ({ annotationType, orders }) =>
+    admin<ReadonlyArray<AnnotationField>>(uc.reorderAnnotationFields(annotationType, orders)),
 }).pipe(Layer.provide(EngineBase))
 
 // HttpRouter.DefaultServices (HttpPlatform | Etag | FileSystem | Path) — pure

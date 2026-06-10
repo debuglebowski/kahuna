@@ -1,7 +1,18 @@
 import { createCollection } from "@tanstack/db"
 import { queryCollectionOptions } from "@tanstack/query-db-collection"
 import { useEffect } from "react"
-import type { Concept, FeedItem, Instance, InstanceDetail, SidebarView } from "../../rpc/contract"
+import type {
+  AnnotationField,
+  AnnotationType,
+  Concept,
+  FeedItem,
+  Instance,
+  InstanceDetail,
+  Note,
+  SidebarView,
+  Task,
+  TaskStatus,
+} from "../../rpc/contract"
 import { api } from "./api"
 import { queryClient } from "./queryClient"
 
@@ -114,6 +125,108 @@ export const instanceDetail = (id: string) => {
   if (!c) {
     c = makeDetail(id)
     detailCollections.set(id, c)
+  }
+  return c
+}
+
+// ── annotation layer (per-item: subjectId = the item lineage id) ───────────────
+
+const notesCollections = new Map<string, ReturnType<typeof makeNotes>>()
+const makeNotes = (subjectId: string) =>
+  createCollection(
+    queryCollectionOptions({
+      queryKey: ["live", "notes", subjectId],
+      queryFn: async (): Promise<Note[]> => [...(await api.listNotes(subjectId))],
+      queryClient,
+      getKey: (n: Note) => n.id,
+    }),
+  )
+export const notesBySubject = (subjectId: string) => {
+  let c = notesCollections.get(subjectId)
+  if (!c) {
+    c = makeNotes(subjectId)
+    notesCollections.set(subjectId, c)
+  }
+  return c
+}
+
+const tasksCollections = new Map<string, ReturnType<typeof makeTasks>>()
+const makeTasks = (subjectId: string) =>
+  createCollection(
+    queryCollectionOptions({
+      queryKey: ["live", "tasks", subjectId],
+      queryFn: async (): Promise<Task[]> => [...(await api.listTasks({ subjectId }))],
+      queryClient,
+      getKey: (t: Task) => t.id,
+    }),
+  )
+export const tasksBySubject = (subjectId: string) => {
+  let c = tasksCollections.get(subjectId)
+  if (!c) {
+    c = makeTasks(subjectId)
+    tasksCollections.set(subjectId, c)
+  }
+  return c
+}
+
+const activityCollections = new Map<string, ReturnType<typeof makeActivity>>()
+const makeActivity = (subjectId: string) =>
+  createCollection(
+    queryCollectionOptions({
+      queryKey: ["live", "activity", subjectId],
+      queryFn: async (): Promise<FeedItem[]> => [...(await api.getActivity(subjectId))],
+      queryClient,
+      getKey: (f: FeedItem) => f.id,
+    }),
+  )
+export const activityBySubject = (subjectId: string) => {
+  let c = activityCollections.get(subjectId)
+  if (!c) {
+    c = makeActivity(subjectId)
+    activityCollections.set(subjectId, c)
+  }
+  return c
+}
+
+// ── annotation layer (org-level) ───────────────────────────────────────────────
+
+/** Org-wide task-status vocabulary (the picker + settings editor read this). */
+export const taskStatusesCollection = createCollection(
+  queryCollectionOptions({
+    queryKey: ["live", "taskStatuses"],
+    queryFn: async (): Promise<TaskStatus[]> => [...(await api.listTaskStatuses())],
+    queryClient,
+    getKey: (s: TaskStatus) => s.id,
+  }),
+)
+
+/** Global "My Tasks" view — cross-item tasks (filter applied at read time). */
+export const tasksGlobalCollection = createCollection(
+  queryCollectionOptions({
+    queryKey: ["live", "tasks", "global"],
+    queryFn: async (): Promise<Task[]> => [...(await api.listTasks())],
+    queryClient,
+    getKey: (t: Task) => t.id,
+  }),
+)
+
+const annotationFieldCollections = new Map<string, ReturnType<typeof makeAnnotationFields>>()
+const makeAnnotationFields = (type: AnnotationType) =>
+  createCollection(
+    queryCollectionOptions({
+      queryKey: ["live", "annotationFields", type],
+      queryFn: async (): Promise<AnnotationField[]> => [
+        ...(await api.listAnnotationFields(type, { includeArchived: true })),
+      ],
+      queryClient,
+      getKey: (f: AnnotationField) => f.id,
+    }),
+  )
+export const annotationFieldsByType = (type: AnnotationType) => {
+  let c = annotationFieldCollections.get(type)
+  if (!c) {
+    c = makeAnnotationFields(type)
+    annotationFieldCollections.set(type, c)
   }
   return c
 }

@@ -176,6 +176,46 @@ export class DashboardConflict extends Schema.TaggedError<DashboardConflict>()(
   { id: Schema.String },
 ) {}
 
+// ── annotation layer (notes/tasks) ──────────────────────────────────────────
+
+export class AnnotationNotFound extends Schema.TaggedError<AnnotationNotFound>()(
+  "AnnotationNotFound",
+  { annotationId: Schema.String },
+) {}
+
+export class TaskStatusNotFound extends Schema.TaggedError<TaskStatusNotFound>()(
+  "TaskStatusNotFound",
+  { statusId: Schema.String },
+) {}
+
+export class TaskStatusNameConflict extends Schema.TaggedError<TaskStatusNameConflict>()(
+  "TaskStatusNameConflict",
+  { name: Schema.String },
+) {}
+
+/** A task status can't be archived while live tasks still reference it, or if it
+ *  is the last status of its kind (default / the only `done`). */
+export class TaskStatusInUse extends Schema.TaggedError<TaskStatusInUse>()("TaskStatusInUse", {
+  statusId: Schema.String,
+  taskCount: Schema.Number,
+  reason: Schema.String,
+}) {}
+
+export class AnnotationFieldNotFound extends Schema.TaggedError<AnnotationFieldNotFound>()(
+  "AnnotationFieldNotFound",
+  { fieldId: Schema.String },
+) {}
+
+export class AnnotationFieldNameConflict extends Schema.TaggedError<AnnotationFieldNameConflict>()(
+  "AnnotationFieldNameConflict",
+  { annotationType: Schema.String, name: Schema.String },
+) {}
+
+export class AnnotationFieldConfigInvalid extends Schema.TaggedError<AnnotationFieldConfigInvalid>()(
+  "AnnotationFieldConfigInvalid",
+  { annotationType: Schema.String, name: Schema.String, reason: Schema.String },
+) {}
+
 export type EngineError =
   | VersionConflict
   | InstanceNotFound
@@ -207,3 +247,10 @@ export type EngineError =
   | DashboardNotFound
   | DashboardProtected
   | DashboardConflict
+  | AnnotationNotFound
+  | TaskStatusNotFound
+  | TaskStatusNameConflict
+  | TaskStatusInUse
+  | AnnotationFieldNotFound
+  | AnnotationFieldNameConflict
+  | AnnotationFieldConfigInvalid

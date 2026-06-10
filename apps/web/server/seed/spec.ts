@@ -1,4 +1,16 @@
-import type { FieldConfig, FieldKind } from "@kingsmaker/engine"
+import type { FieldConfig, FieldKind, TaskStatusSpec } from "@kingsmaker/engine"
+
+/**
+ * Default task statuses seeded for every new org (the annotation layer). Editable
+ * afterwards in settings. `category` carries completion/grouping semantics so
+ * nothing keys off the name; exactly one is `isDefault` (applied to new tasks).
+ */
+export const defaultTaskStatuses: ReadonlyArray<TaskStatusSpec> = [
+  { name: "Open", category: "todo", color: "#64748b", isDefault: true },
+  { name: "In progress", category: "active", color: "#2563eb" },
+  { name: "Blocked", category: "active", color: "#dc2626" },
+  { name: "Done", category: "done", color: "#16a34a" },
+]
 
 export interface FieldSpec {
   readonly name: string

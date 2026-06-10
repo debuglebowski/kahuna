@@ -12,8 +12,19 @@ export interface LiveEnvelope {
   readonly id: number
   readonly at: number
   // "item" = whole-item archive/restore (carries conceptId → refetches the concept
-  // list + open details, like an instance event).
-  readonly kind: "instance" | "relation" | "concept" | "field" | "item"
+  // list + open details, like an instance event). "note"/"task"/"taskStatus"/
+  // "annotationField" = the annotation layer (subjectId is the annotation/def id,
+  // NOT the host item — so we fan out to all mounted panels of that kind).
+  readonly kind:
+    | "instance"
+    | "relation"
+    | "concept"
+    | "field"
+    | "item"
+    | "note"
+    | "task"
+    | "taskStatus"
+    | "annotationField"
   readonly subjectId: string
   readonly type: string
   /** Concept id for instance events — routes to the id-keyed instance collection. */
@@ -31,6 +42,19 @@ export const KEY = {
   /** Sidebar Views — not driven by engine events (no envelope routes here);
    *  refreshed on the caller's own mutations and by the safety-refetch sweep. */
   views: "views",
+  // ── annotation layer (subjectId = the item lineage id) ───────────────────────
+  /** Notes panel for an item. */
+  notes: (subjectId: string) => `notes:${subjectId}`,
+  /** Tasks panel for an item. */
+  tasks: (subjectId: string) => `tasks:${subjectId}`,
+  /** Per-item activity feed. */
+  activity: (subjectId: string) => `activity:${subjectId}`,
+  /** Global "My Tasks" view (cross-item). */
+  tasksGlobal: "tasks:global",
+  /** Org-wide task-status vocabulary. */
+  taskStatuses: "taskStatuses",
+  /** Annotation custom-field defs for a type. */
+  annotationFields: (type: string) => `annotationFields:${type}`,
 } as const
 
 /**
@@ -45,15 +69,35 @@ export const routeEnvelope = (env: LiveEnvelope, mounted: ReadonlyArray<string>)
   // nudges every mounted detail page (the envelope can't say which one is affected).
   const details = mounted.filter((k) => k.startsWith("detail:"))
 
+  // The annotation envelope's subjectId is the annotation/def id, not the host
+  // item, so fan out to every mounted panel of the relevant kind (a user usually
+  // has just one open). Always also nudge the per-item activity feeds.
+  const byPrefix = (prefix: string) => mounted.filter((k) => k.startsWith(prefix))
+
   if (env.kind === "concept" || env.kind === "field") {
     candidates.add(KEY.concepts)
   } else if (env.kind === "relation") {
     // A relation change can affect any open detail page (connected instances).
     for (const k of details) candidates.add(k)
+  } else if (env.kind === "note") {
+    for (const k of byPrefix("notes:")) candidates.add(k)
+    for (const k of byPrefix("activity:")) candidates.add(k)
+  } else if (env.kind === "task") {
+    for (const k of byPrefix("tasks:")) candidates.add(k)
+    for (const k of byPrefix("activity:")) candidates.add(k)
+  } else if (env.kind === "taskStatus") {
+    candidates.add(KEY.taskStatuses)
+    for (const k of byPrefix("tasks:")) candidates.add(k)
+  } else if (env.kind === "annotationField") {
+    for (const k of byPrefix("annotationFields:")) candidates.add(k)
+    for (const k of byPrefix("notes:")) candidates.add(k)
+    for (const k of byPrefix("tasks:")) candidates.add(k)
   } else {
-    // instance — nudge its concept's list and any open detail pages.
+    // instance / item — nudge its concept's list and any open detail pages.
     if (env.conceptId) candidates.add(KEY.instances(env.conceptId))
     for (const k of details) candidates.add(k)
+    // An instance edit also surfaces in its item's activity feed.
+    for (const k of byPrefix("activity:")) candidates.add(k)
   }
 
   const mountedSet = new Set(mounted)

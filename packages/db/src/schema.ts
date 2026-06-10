@@ -332,3 +332,141 @@ export const attachments = pgTable("attachments", {
   sizeBytes: bigint("size_bytes", { mode: "number" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 })
+
+/**
+ * The cross-cutting **annotation layer** — notes and tasks that hang off any
+ * Concept Item (or, for tasks, off nothing). Deliberately NOT a concept: a
+ * single polymorphic table whose `type` discriminates the variant, with the
+ * fixed per-type core in plain columns and an open `custom_fields` bag for
+ * user-defined extensions (keyed by `annotation_fields.id`, exactly like
+ * `instances.state` keys by `fields.id`). Adding a future type (e.g. "comment")
+ * is one `type` literal + maybe a nullable column — no table fan-out.
+ *
+ * Unlike instances, annotations are NOT event-sourced projections: the row is
+ * the source of truth (CRUD), and each mutation still appends an `events` row
+ * purely for the activity feed / live-sync (the `LabelService`/`FieldService`
+ * pattern). Their own event stream uses subject_kind "note"/"task" with
+ * subject_id = this row's id, so they never enter the instance fold.
+ *
+ * `subject_id` targets the **item lineage** (`items.id`, "the thing"), NOT a
+ * specific version — so a note/task survives re-publishes, exactly like how
+ * `relations.to_item_id` references the lineage. NULL = an org-level annotation
+ * (a standalone task hung off no item). `status_id` (→ task_statuses) and
+ * `assignee` (→ bauth_user.id) are likewise LOGICAL fks (no Drizzle reference):
+ * they tolerate null and survive status archive (orphan-tolerant, matching the
+ * archive-vs-delete convention). Existence is checked at the service / RPC
+ * boundary, not by the DB.
+ */
+export const annotations = pgTable(
+  "annotations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: text("org_id").notNull(),
+    // Variant discriminator: "note" | "task" today; append-only.
+    type: text("type").notNull(),
+    // The annotated item lineage (items.id). NULL = org-level annotation.
+    subjectId: uuid("subject_id"),
+    // Forward-compat for hanging off other subject kinds later; "item" whenever
+    // subject_id is non-null, else null.
+    subjectKind: text("subject_kind"),
+
+    // ── note core ── (non-null when type='note')
+    body: text("body"),
+
+    // ── task core ── (non-null when type='task')
+    title: text("title"),
+    // Logical fk → task_statuses.id; defaulted to the org's `is_default` status
+    // at create time. Kept as an id (not a name) so statuses stay renameable.
+    statusId: uuid("status_id"),
+    // Logical fk → bauth_user.id, validated against org membership at the RPC
+    // boundary (like instance `user`-kind fields).
+    assignee: text("assignee"),
+    dueAt: timestamp("due_at", { withTimezone: true }),
+
+    // Author/creator (= event actor = bauth_user.id); drives edit/purge rights.
+    createdBy: text("created_by"),
+    // User-defined custom fields, keyed by annotation_fields.id.
+    customFields: jsonb("custom_fields").notNull().default(sql`'{}'::jsonb`),
+
+    // Optimistic-concurrency counter (a plain bump per write — NOT an event
+    // count, since annotations aren't folded). Mirrors instance update ergonomics.
+    version: bigint("version", { mode: "number" }).notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+  },
+  (t) => [
+    // Per-item panel: a subject's notes/tasks, newest first, filterable by type.
+    index("annotations_subject_idx").on(t.orgId, t.subjectId, t.type, t.id),
+    // Global task queries ("assigned to me", by status). Partial → task-only, small.
+    index("annotations_assignee_idx")
+      .on(t.orgId, t.assignee, t.statusId, t.dueAt)
+      .where(sql`${t.type} = 'task' AND ${t.archivedAt} IS NULL`),
+    // Global "due this week" / org task board, ordered by due date.
+    index("annotations_due_idx")
+      .on(t.orgId, t.dueAt)
+      .where(sql`${t.type} = 'task' AND ${t.archivedAt} IS NULL`),
+  ],
+)
+
+/**
+ * Per-org, configurable task statuses (Open / In progress / Done … — editable
+ * names, colors and order). `category` ("todo" | "active" | "done") carries the
+ * *semantics* — completion and grouping key off it, never off the renameable
+ * `name` (per the no-name-special-casing rule). `is_default` marks the status a
+ * new task gets. Seeded for every org by `seedKingsmaker`. Soft-deleted so an
+ * archived status's id stays resolvable for historical tasks.
+ */
+export const taskStatuses = pgTable(
+  "task_statuses",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: text("org_id").notNull(),
+    name: text("name").notNull(),
+    // Optional free hex color (e.g. "#16a34a"); null → neutral chip.
+    color: text("color"),
+    // Semantic bucket driving completion + grouping: "todo" | "active" | "done".
+    category: text("category").notNull(),
+    // The status applied to a newly created task (exactly one live per org).
+    isDefault: boolean("is_default").notNull().default(false),
+    // Display order within the picker / board (ascending).
+    position: integer("position").notNull().default(0),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+  },
+  // Partial unique so a name frees up after its status is archived.
+  (t) => [
+    uniqueIndex("task_statuses_org_name_uq")
+      .on(t.orgId, t.name)
+      .where(sql`${t.archivedAt} IS NULL`),
+  ],
+)
+
+/**
+ * Custom-field DEFINITIONS for the annotation layer — the same shape as `fields`
+ * but scoped by `annotation_type` ("note" | "task") instead of a concept, so
+ * notes/tasks gain user-defined fields WITHOUT being modeled as concepts. Values
+ * live in `annotations.custom_fields` keyed by this row's id (id-keyed, so a
+ * rename needs no backfill). Restricted to scalar `kind`s (no relation/computed/
+ * file). Soft-deleted like `fields`.
+ */
+export const annotationFields = pgTable(
+  "annotation_fields",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: text("org_id").notNull(),
+    // Which annotation variant these fields apply to: "note" | "task".
+    annotationType: text("annotation_type").notNull(),
+    name: text("name").notNull(),
+    kind: text("kind").notNull(),
+    config: jsonb("config").notNull().default(sql`'{}'::jsonb`),
+    icon: text("icon"),
+    position: integer("position").notNull().default(0),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+  },
+  // Partial unique so a name frees up after its def is archived.
+  (t) => [
+    uniqueIndex("annotation_fields_type_name_uq")
+      .on(t.orgId, t.annotationType, t.name)
+      .where(sql`${t.archivedAt} IS NULL`),
+  ],
+)

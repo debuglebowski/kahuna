@@ -11,6 +11,8 @@ import {
 } from "../../rpc/contract"
 
 export type {
+  AnnotationField,
+  AnnotationType,
   Attachment,
   Concept,
   ConceptGraph,
@@ -29,6 +31,7 @@ export type {
   InstancePick,
   Item,
   Label,
+  Note,
   RelatedInstance,
   Relation,
   SidebarCondition,
@@ -38,6 +41,9 @@ export type {
   SidebarSource,
   SidebarView,
   SidebarViewBody,
+  Task,
+  TaskStatus,
+  TaskStatusCategory,
   VersionStatus,
 } from "../../rpc/contract"
 
@@ -217,4 +223,95 @@ export const api = {
   deleteDashboard: (id: string) => call((c) => c.deleteDashboard({ id })),
   reorderDashboards: (orders: ReadonlyArray<{ id: string; position: number }>) =>
     call((c) => c.reorderDashboards({ orders })),
+  // ── annotation layer: notes ───────────────────────────────────────────────────
+  listNotes: (subjectId: string, opts?: { includeArchived?: boolean }) =>
+    call((c) => c.listNotes({ subjectId, includeArchived: opts?.includeArchived })),
+  createNote: (subjectId: string | null, body: string, customFields?: Fields) =>
+    call((c) => c.createNote({ subjectId, body, customFields })),
+  updateNote: (
+    id: string,
+    expectedVersion: number,
+    patch: { body?: string; customFields?: Fields },
+  ) => call((c) => c.updateNote({ id, expectedVersion, ...patch })),
+  archiveNote: (id: string, expectedVersion: number) =>
+    call((c) => c.archiveNote({ id, expectedVersion })),
+  restoreNote: (id: string, expectedVersion: number) =>
+    call((c) => c.restoreNote({ id, expectedVersion })),
+  deleteNote: (id: string) => call((c) => c.deleteNote({ id })),
+  // ── annotation layer: tasks ───────────────────────────────────────────────────
+  listTasks: (filter?: {
+    subjectId?: string | null
+    assignee?: string
+    statusId?: string
+    dueBefore?: string
+    dueAfter?: string
+    includeArchived?: boolean
+    limit?: number
+  }) => call((c) => c.listTasks(filter ?? {})),
+  createTask: (input: {
+    subjectId: string | null
+    title: string
+    statusId?: string | null
+    assignee?: string | null
+    dueAt?: string | null
+    customFields?: Fields
+  }) => call((c) => c.createTask(input)),
+  updateTask: (
+    id: string,
+    expectedVersion: number,
+    patch: { title?: string; dueAt?: string | null; customFields?: Fields },
+  ) => call((c) => c.updateTask({ id, expectedVersion, ...patch })),
+  setTaskStatus: (id: string, expectedVersion: number, statusId: string) =>
+    call((c) => c.setTaskStatus({ id, expectedVersion, statusId })),
+  assignTask: (id: string, expectedVersion: number, assignee: string | null) =>
+    call((c) => c.assignTask({ id, expectedVersion, assignee })),
+  archiveTask: (id: string, expectedVersion: number) =>
+    call((c) => c.archiveTask({ id, expectedVersion })),
+  restoreTask: (id: string, expectedVersion: number) =>
+    call((c) => c.restoreTask({ id, expectedVersion })),
+  deleteTask: (id: string) => call((c) => c.deleteTask({ id })),
+  getActivity: (subjectId: string, limit?: number) =>
+    call((c) => c.getActivity({ subjectId, limit })),
+  // ── annotation layer: task statuses (admin) ───────────────────────────────────
+  listTaskStatuses: (opts?: { includeArchived?: boolean }) =>
+    call((c) => c.listTaskStatuses({ includeArchived: opts?.includeArchived })),
+  createTaskStatus: (input: {
+    name: string
+    category: "todo" | "active" | "done"
+    color?: string | null
+    isDefault?: boolean
+  }) => call((c) => c.createTaskStatus(input)),
+  updateTaskStatus: (input: {
+    id: string
+    name?: string
+    color?: string | null
+    category?: "todo" | "active" | "done"
+    isDefault?: boolean
+  }) => call((c) => c.updateTaskStatus(input)),
+  archiveTaskStatus: (id: string) => call((c) => c.archiveTaskStatus({ id })),
+  restoreTaskStatus: (id: string) => call((c) => c.restoreTaskStatus({ id })),
+  reorderTaskStatuses: (orders: ReadonlyArray<{ id: string; position: number }>) =>
+    call((c) => c.reorderTaskStatuses({ orders })),
+  // ── annotation layer: custom-field definitions (admin) ─────────────────────────
+  listAnnotationFields: (annotationType: "note" | "task", opts?: { includeArchived?: boolean }) =>
+    call((c) => c.listAnnotationFields({ annotationType, includeArchived: opts?.includeArchived })),
+  addAnnotationField: (input: {
+    annotationType: "note" | "task"
+    name: string
+    kind: FieldKind
+    config?: FieldConfig
+    icon?: string | null
+  }) => call((c) => c.addAnnotationField(input)),
+  updateAnnotationField: (input: {
+    id: string
+    name?: string
+    config?: FieldConfig
+    icon?: string | null
+  }) => call((c) => c.updateAnnotationField(input)),
+  archiveAnnotationField: (id: string) => call((c) => c.archiveAnnotationField({ id })),
+  restoreAnnotationField: (id: string) => call((c) => c.restoreAnnotationField({ id })),
+  reorderAnnotationFields: (
+    annotationType: "note" | "task",
+    orders: ReadonlyArray<{ id: string; position: number }>,
+  ) => call((c) => c.reorderAnnotationFields({ annotationType, orders })),
 }

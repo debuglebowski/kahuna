@@ -70,6 +70,13 @@ export const ERROR_MAP: Record<string, { status: number; code: string }> = {
   DashboardNotFound: { status: 404, code: "NOT_FOUND" },
   DashboardProtected: { status: 409, code: "DASHBOARD_PROTECTED" },
   DashboardConflict: { status: 409, code: "DASHBOARD_CONFLICT" },
+  AnnotationNotFound: { status: 404, code: "NOT_FOUND" },
+  TaskStatusNotFound: { status: 404, code: "NOT_FOUND" },
+  TaskStatusNameConflict: { status: 409, code: "CONFLICT" },
+  TaskStatusInUse: { status: 409, code: "TASK_STATUS_IN_USE" },
+  AnnotationFieldNotFound: { status: 404, code: "NOT_FOUND" },
+  AnnotationFieldNameConflict: { status: 409, code: "CONFLICT" },
+  AnnotationFieldConfigInvalid: { status: 422, code: "FIELD_CONFIG_INVALID" },
   OrgScopeViolation: { status: 403, code: "FORBIDDEN" },
   EventCorruption: { status: 500, code: "INTERNAL" },
 }

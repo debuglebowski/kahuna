@@ -21,6 +21,11 @@ export * from "./errors"
 export { EngineLive, type EngineServices } from "./layers"
 export { foldEvents, foldUntil } from "./projection/fold"
 export { applyEvent, type FoldState } from "./projection/reducer"
+export {
+  type AddAnnotationFieldInput,
+  AnnotationFieldService,
+} from "./services/AnnotationFieldService"
+export { AnnotationService, type ListTasksFilter } from "./services/AnnotationService"
 export { AttachmentService, type UploadInput } from "./services/AttachmentService"
 export { ComputedFields } from "./services/ComputedFields"
 export { ConceptService } from "./services/ConceptService"
@@ -43,6 +48,6 @@ export { OrgContext, type OrgScope } from "./services/OrgContext"
 export { type FindInstancesInput, QueryService } from "./services/QueryService"
 export { type CreateRelationInput, RelationService } from "./services/RelationService"
 export { SidebarViewService } from "./services/SidebarViewService"
-
 // Infrastructure
 export { healthCheck, PgLive } from "./services/Sql"
+export { TaskStatusService, type TaskStatusSpec } from "./services/TaskStatusService"

@@ -1,4 +1,8 @@
 import {
+  type AnnotationField,
+  AnnotationFieldService,
+  AnnotationService,
+  type AnnotationType,
   type Attachment,
   AttachmentService,
   ComputedFields,
@@ -17,11 +21,17 @@ import {
   LABELS_KEY,
   type Label,
   LabelService,
+  type ListTasksFilter,
+  type Note,
   type OrgContext,
   QueryService,
   RelationService,
   type SidebarViewBody,
   SidebarViewService,
+  type Task,
+  type TaskStatus,
+  type TaskStatusCategory,
+  TaskStatusService,
 } from "@kingsmaker/engine"
 import { Effect } from "effect"
 
@@ -529,3 +539,151 @@ export const downloadAttachment = (
   attachmentId: string,
 ): UC<{ attachment: Attachment; data: Uint8Array }> =>
   Effect.flatMap(AttachmentService, (a) => a.download(attachmentId))
+
+// ── annotation layer: notes ────────────────────────────────────────────────────
+
+export const listNotes = (subjectId: string, includeArchived = false): UC<ReadonlyArray<Note>> =>
+  Effect.flatMap(AnnotationService, (a) => a.listNotes(subjectId, { includeArchived }))
+
+export const createNote = (input: {
+  readonly subjectId: string | null
+  readonly body: string
+  readonly customFields?: Record<string, unknown>
+}): UC<Note> => Effect.flatMap(AnnotationService, (a) => a.createNote(input))
+
+export const updateNote = (input: {
+  readonly id: string
+  readonly expectedVersion: number
+  readonly body?: string
+  readonly customFields?: Record<string, unknown>
+}): UC<Note> => Effect.flatMap(AnnotationService, (a) => a.updateNote(input))
+
+export const archiveNote = (id: string, expectedVersion: number): UC<Note> =>
+  Effect.flatMap(AnnotationService, (a) => a.archiveNote(id, expectedVersion))
+
+export const restoreNote = (id: string, expectedVersion: number): UC<Note> =>
+  Effect.flatMap(AnnotationService, (a) => a.restoreNote(id, expectedVersion))
+
+export const deleteNote = (id: string): UC<Note> =>
+  Effect.flatMap(AnnotationService, (a) => a.purgeNote(id))
+
+// ── annotation layer: tasks ────────────────────────────────────────────────────
+
+export const listTasks = (filter: ListTasksFilter = {}): UC<ReadonlyArray<Task>> =>
+  Effect.flatMap(AnnotationService, (a) => a.listTasks(filter))
+
+export const createTask = (input: {
+  readonly subjectId: string | null
+  readonly title: string
+  readonly statusId?: string | null
+  readonly assignee?: string | null
+  readonly dueAt?: string | null
+  readonly customFields?: Record<string, unknown>
+}): UC<Task> => Effect.flatMap(AnnotationService, (a) => a.createTask(input))
+
+export const updateTask = (input: {
+  readonly id: string
+  readonly expectedVersion: number
+  readonly title?: string
+  readonly dueAt?: string | null
+  readonly customFields?: Record<string, unknown>
+}): UC<Task> => Effect.flatMap(AnnotationService, (a) => a.updateTask(input))
+
+export const setTaskStatus = (id: string, expectedVersion: number, statusId: string): UC<Task> =>
+  Effect.flatMap(AnnotationService, (a) => a.setTaskStatus({ id, expectedVersion, statusId }))
+
+export const assignTask = (
+  id: string,
+  expectedVersion: number,
+  assignee: string | null,
+): UC<Task> =>
+  Effect.flatMap(AnnotationService, (a) => a.assignTask({ id, expectedVersion, assignee }))
+
+export const archiveTask = (id: string, expectedVersion: number): UC<Task> =>
+  Effect.flatMap(AnnotationService, (a) => a.archiveTask(id, expectedVersion))
+
+export const restoreTask = (id: string, expectedVersion: number): UC<Task> =>
+  Effect.flatMap(AnnotationService, (a) => a.restoreTask(id, expectedVersion))
+
+export const deleteTask = (id: string): UC<Task> =>
+  Effect.flatMap(AnnotationService, (a) => a.purgeTask(id))
+
+/** Per-item activity (union of the lineage's events + its annotations' events). */
+export const getActivity = (subjectId: string, limit = 100): UC<ReadonlyArray<FeedItem>> =>
+  Effect.flatMap(AnnotationService, (a) => a.readActivityForSubject(subjectId, { limit })).pipe(
+    Effect.map((events) =>
+      events.map((ev) => ({
+        id: ev.id,
+        occurredAt: ev.occurredAt,
+        actor: ev.actor,
+        eventType: ev.eventType,
+        subjectKind: ev.subjectKind,
+        subjectId: ev.subjectId,
+      })),
+    ),
+  )
+
+// ── annotation layer: task statuses (admin) ─────────────────────────────────────
+
+export const listTaskStatuses = (includeArchived = false): UC<ReadonlyArray<TaskStatus>> =>
+  Effect.flatMap(TaskStatusService, (s) => s.list({ includeArchived }))
+
+export const createTaskStatus = (input: {
+  readonly name: string
+  readonly category: TaskStatusCategory
+  readonly color?: string | null
+  readonly isDefault?: boolean
+}): UC<TaskStatus> => Effect.flatMap(TaskStatusService, (s) => s.create(input))
+
+export const updateTaskStatus = (input: {
+  readonly id: string
+  readonly name?: string
+  readonly color?: string | null
+  readonly category?: TaskStatusCategory
+  readonly isDefault?: boolean
+}): UC<TaskStatus> => Effect.flatMap(TaskStatusService, (s) => s.update(input))
+
+export const archiveTaskStatus = (id: string): UC<TaskStatus> =>
+  Effect.flatMap(TaskStatusService, (s) => s.archive(id))
+
+export const restoreTaskStatus = (id: string): UC<TaskStatus> =>
+  Effect.flatMap(TaskStatusService, (s) => s.restore(id))
+
+export const reorderTaskStatuses = (
+  orders: ReadonlyArray<{ readonly id: string; readonly position: number }>,
+): UC<ReadonlyArray<TaskStatus>> => Effect.flatMap(TaskStatusService, (s) => s.reorder(orders))
+
+// ── annotation layer: custom-field definitions (admin) ──────────────────────────
+
+export const listAnnotationFields = (
+  annotationType: AnnotationType,
+  includeArchived = false,
+): UC<ReadonlyArray<AnnotationField>> =>
+  Effect.flatMap(AnnotationFieldService, (s) => s.list(annotationType, { includeArchived }))
+
+export const addAnnotationField = (input: {
+  readonly annotationType: AnnotationType
+  readonly name: string
+  readonly kind: FieldKind
+  readonly config?: FieldConfig
+  readonly icon?: string | null
+}): UC<AnnotationField> => Effect.flatMap(AnnotationFieldService, (s) => s.add(input))
+
+export const updateAnnotationField = (input: {
+  readonly id: string
+  readonly name?: string
+  readonly config?: FieldConfig
+  readonly icon?: string | null
+}): UC<AnnotationField> => Effect.flatMap(AnnotationFieldService, (s) => s.update(input))
+
+export const archiveAnnotationField = (id: string): UC<AnnotationField> =>
+  Effect.flatMap(AnnotationFieldService, (s) => s.archive(id))
+
+export const restoreAnnotationField = (id: string): UC<AnnotationField> =>
+  Effect.flatMap(AnnotationFieldService, (s) => s.restore(id))
+
+export const reorderAnnotationFields = (
+  annotationType: AnnotationType,
+  orders: ReadonlyArray<{ readonly id: string; readonly position: number }>,
+): UC<ReadonlyArray<AnnotationField>> =>
+  Effect.flatMap(AnnotationFieldService, (s) => s.reorder(annotationType, orders))
