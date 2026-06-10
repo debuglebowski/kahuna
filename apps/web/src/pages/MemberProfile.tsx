@@ -1,7 +1,7 @@
 import { useLiveQuery } from "@tanstack/react-db"
 import { useQueries, useQuery } from "@tanstack/react-query"
 import { LayoutDashboard, Mail, Plus } from "lucide-react"
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react"
 import type { Layout } from "react-grid-layout"
 import { useParams } from "react-router-dom"
 import { WidgetCanvas } from "@/components/dashboard/WidgetCanvas"
@@ -90,21 +90,27 @@ export function MemberProfile() {
 
   // Field defs of every concept — the seed needs to know which have user fields.
   // `combine` keeps the result structurally shared, so the seed memo below only
-  // recomputes when a field list actually changes.
+  // recomputes when a field list actually changes. `pending` gates the canvas:
+  // seeding from a half-resolved set would reposition tiles as each query lands
+  // (the grid animates every move).
   const fieldsByConcept = useQueries({
     queries: concepts.map((c) => ({
       queryKey: ["fields", c.id],
       queryFn: () => api.listFields(c.id),
     })),
-    combine: (results) =>
-      concepts.map((c, i) => [c.id, (results[i]?.data ?? []) as Field[]] as const),
+    combine: (results) => ({
+      lists: concepts.map((c, i) => [c.id, (results[i]?.data ?? []) as Field[]] as const),
+      pending: results.some((r) => r.isPending),
+    }),
   })
 
   // Local working copy (the dashboards pattern): (re)loaded when the subject
-  // changes, so live refetches never clobber in-flight edits.
+  // changes, so live refetches never clobber in-flight edits. Layout effect so
+  // a customised page never paints a frame of seed tiles before the saved body
+  // replaces them.
   const [body, setBody] = useState<DashboardBody | null>(null)
   const loadedFor = useRef<string | null>(null)
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (page.data && loadedFor.current !== userId) {
       loadedFor.current = userId
       setBody(page.data.body)
@@ -113,10 +119,11 @@ export function MemberProfile() {
 
   // An un-customised page renders the computed seed; the first edit persists it.
   const seed = useMemo(
-    () => seedWidgets(fieldsByConcept, cIndex, userId),
-    [fieldsByConcept, cIndex, userId],
+    () => seedWidgets(fieldsByConcept.lists, cIndex, userId),
+    [fieldsByConcept.lists, cIndex, userId],
   )
   const effective = body && body.widgets.length > 0 ? body : seed
+  const usingSeed = effective === seed
 
   const ids = useMemo(() => referencedConceptIds(effective), [effective])
   const { instData, loaders } = useConceptData(ids)
@@ -139,7 +146,14 @@ export function MemberProfile() {
     setEditingId(w.id)
   }
 
-  if (membersPending || (page.isPending && !!userId)) return <Spinner />
+  // The seed gate (concepts + every field list resolved) only applies while the
+  // page is uncustomised — a saved body renders without waiting on field defs.
+  if (
+    membersPending ||
+    (page.isPending && !!userId) ||
+    (usingSeed && (!conceptsLoaded || fieldsByConcept.pending))
+  )
+    return <Spinner />
   if (!member) {
     return (
       <Card className="p-6">
