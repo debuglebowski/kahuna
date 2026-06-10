@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query"
-import { Plus, X } from "lucide-react"
+import { Check, Plus, X } from "lucide-react"
 import { useMemo, useState } from "react"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
@@ -30,6 +30,30 @@ const FORMAT_INPUT_TYPE: Record<string, string> = { email: "email", url: "url", 
 /** Mirrors the engine's `isMissing` (requirement checks). */
 const isMissing = (v: unknown): boolean =>
   v === undefined || v === null || v === "" || (Array.isArray(v) && v.length === 0)
+
+/** Convert a stored state value (wire shape) into the form's raw input shape. */
+const toRaw = (f: FieldDef, v: unknown): unknown => {
+  if (v === undefined || v === null) return undefined
+  switch (f.kind) {
+    case "bool":
+      return v === true
+    case "user":
+    case "enum":
+      return v
+    case "money": {
+      const m = v as { amount?: unknown; currency?: unknown }
+      return { amount: String(m.amount ?? ""), currency: String(m.currency ?? "") }
+    }
+    case "json":
+      return typeof v === "string" ? v : JSON.stringify(v, null, 2)
+    case "date":
+      // Stored as ISO — the native date input wants bare YYYY-MM-DD.
+      return Array.isArray(v) ? v.map((x) => String(x).slice(0, 10)) : String(v).slice(0, 10)
+    default:
+      // text / number
+      return Array.isArray(v) ? v.map(String) : String(v)
+  }
+}
 
 /** Picks org member(s) for a `user` field, fed by the BetterAuth org. */
 function MemberPicker({
@@ -90,10 +114,11 @@ function MemberPicker({
   )
 }
 
-/** A dynamic create form driven by a concept's field defs. */
+/** A dynamic create/edit form driven by a concept's field defs. */
 export function InstanceForm({
   fields,
   defaultLabelIds = [],
+  initial,
   onSubmit,
   onCancel,
   pending,
@@ -101,13 +126,26 @@ export function InstanceForm({
   fields: ReadonlyArray<FieldDef>
   /** The concept's default label ids — pre-selected for the new item. */
   defaultLabelIds?: ReadonlyArray<string>
+  /** Edit mode: the instance's current state (keyed by field id). Blank inputs
+   *  are omitted from the patch (the engine can't clear typed fields), and the
+   *  labels section is hidden — labels are edited on the item page itself. */
+  initial?: Record<string, unknown>
   onSubmit: (values: Record<string, unknown>) => void
   onCancel: () => void
   pending?: boolean
 }) {
+  const editing = initial !== undefined
   const editable = useMemo(() => fields.filter((f) => EDITABLE.has(f.kind)), [fields])
   const omitted = fields.length - editable.length
-  const [values, setValues] = useState<Record<string, unknown>>({})
+  const [values, setValues] = useState<Record<string, unknown>>(() => {
+    if (!initial) return {}
+    const seeded: Record<string, unknown> = {}
+    for (const f of editable) {
+      const raw = toRaw(f, initial[f.id])
+      if (raw !== undefined) seeded[f.name] = raw
+    }
+    return seeded
+  })
   const [missing, setMissing] = useState<string[]>([])
   const labelVocab = useQuery({ queryKey: ["labels"], queryFn: () => api.listLabels() })
   const [labelIds, setLabelIds] = useState<string[]>(() => [...defaultLabelIds])
@@ -175,7 +213,8 @@ export function InstanceForm({
     // Per-item labels: send the (live-filtered) selection so a since-deleted
     // default id never reaches the server. While the vocab is still loading we
     // omit __labels, letting the server snapshot the concept's defaults.
-    if (labelVocab.data) {
+    // Edits never touch labels — the item page's labels card owns them.
+    if (!editing && labelVocab.data) {
       const live = new Set(labelVocab.data.map((l) => l.id))
       out[LABELS_KEY] = labelIds.filter((id) => live.has(id))
     }
@@ -338,11 +377,12 @@ export function InstanceForm({
 
       {omitted > 0 && (
         <p className="text-xs text-muted-foreground">
-          {omitted} relation/file/computed field{omitted > 1 ? "s" : ""} are set after creating.
+          {omitted} relation/file/computed field{omitted > 1 ? "s" : ""}{" "}
+          {editing ? "are managed outside this form." : "are set after creating."}
         </p>
       )}
 
-      {(labelVocab.data?.length ?? 0) > 0 && (
+      {!editing && (labelVocab.data?.length ?? 0) > 0 && (
         <Field label="Labels">
           <LabelMultiSelect
             all={labelVocab.data ?? []}
@@ -370,8 +410,8 @@ export function InstanceForm({
             if (miss.length === 0) onSubmit(out)
           }}
         >
-          <Plus size={15} />
-          {pending ? "Creating…" : "Create"}
+          {editing ? <Check size={15} /> : <Plus size={15} />}
+          {pending ? (editing ? "Saving…" : "Creating…") : editing ? "Save" : "Create"}
         </Button>
         <Button variant="outline" onClick={onCancel}>
           <X size={15} />

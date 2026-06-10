@@ -1,8 +1,24 @@
 import { useLiveQuery } from "@tanstack/react-db"
 import { useMutation, useQuery } from "@tanstack/react-query"
-import { Archive, ArchiveRestore, Check, GitBranch, Plus, Trash2, X } from "lucide-react"
+import {
+  Archive,
+  ArchiveRestore,
+  Check,
+  EllipsisVertical,
+  GitBranch,
+  Pencil,
+  Plus,
+  Trash2,
+  X,
+} from "lucide-react"
 import { useEffect, useState } from "react"
 import { Link, useNavigate, useParams } from "react-router-dom"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import {
   Select,
   SelectContent,
@@ -29,6 +45,7 @@ import { useSession } from "../lib/auth-client"
 import { instanceDetail, KEY, useRegisterCollection } from "../lib/collections"
 import { FieldValueCell } from "../lib/fieldDisplay"
 import { showValue } from "../lib/utils"
+import { InstanceForm } from "./InstanceForm"
 import { isAdminRole, useFullOrg } from "./settings/SettingsLayout"
 
 /** A human label for an instance — its first non-empty text field, else untitled.
@@ -561,7 +578,7 @@ export function InstanceView() {
   const org = useFullOrg()
   const myRole = org.data?.members?.find((m) => m.userId === session?.user.id)?.role
   const admin = isAdminRole(myRole)
-  const [dialog, setDialog] = useState<"archive" | "delete" | null>(null)
+  const [dialog, setDialog] = useState<"edit" | "archive" | "delete" | null>(null)
   const [addingConnection, setAddingConnection] = useState(false)
 
   // All concepts — to resolve relation targets' versioningEnabled in the picker.
@@ -599,6 +616,14 @@ export function InstanceView() {
       backToConcept()
     },
   })
+  const updateInst = useMutation({
+    mutationFn: (v: { id: string; version: number; patch: Record<string, unknown> }) =>
+      api.updateInstance(v.id, v.version, v.patch),
+    onSuccess: () => {
+      setDialog(null)
+      collection.utils.refetch()
+    },
+  })
 
   if (detailQ.isLoading || !detail) return <Spinner />
 
@@ -607,45 +632,55 @@ export function InstanceView() {
   // field ids whose def was deleted (skip engine-internal markers like `__bands`).
   const declared = new Set(fields.map((f) => f.id))
   const extras = Object.keys(instance.state).filter((k) => !declared.has(k) && !k.startsWith("__"))
-  // Relations are editable on a draft (versioned) or any non-versioned instance —
-  // a published version is frozen, connections included.
+  // Fields and relations are editable on a draft (versioned) or any
+  // non-versioned instance — a published version is frozen, connections included.
   const relationFields = fields.filter((f) => f.kind === "relation")
-  const relationsEditable = concept.versioningEnabled
-    ? instance.versionStatus === "draft"
-    : true
+  const editable = concept.versioningEnabled ? instance.versionStatus === "draft" : true
 
   return (
     <div className="space-y-3">
-      <div className="flex items-start justify-between gap-3">
-        <div>
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="flex min-w-0 items-center gap-1.5 text-base font-medium text-foreground">
           <Link
             to={`/concepts/${concept.id}`}
-            className="text-xs text-muted-foreground hover:text-muted-foreground"
+            className="truncate text-muted-foreground transition-colors hover:text-foreground"
           >
-            ← {concept.name}
+            {concept.pluralName || concept.name}
           </Link>
-          <h2 className="flex items-center gap-2 text-2xl font-bold tracking-tight text-foreground">
-            {labelOf(instance.state, fields)}
-            {concept.versioningEnabled &&
-              (instance.versionStatus === "draft" ? (
-                <Badge tone="amber">Draft v{instance.versionSeq}</Badge>
-              ) : (
-                <Badge tone="gray">v{instance.versionSeq}</Badge>
-              ))}
-          </h2>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <Button variant="outline" onClick={() => setDialog("archive")}>
-            <Archive size={15} />
-            {concept.versioningEnabled ? "Archive item" : "Archive"}
-          </Button>
-          {admin && (
-            <Button variant="destructive" onClick={() => setDialog("delete")}>
-              <Trash2 size={15} />
-              Delete
+          <span className="text-muted-foreground/50">/</span>
+          <span className="truncate">{labelOf(instance.state, fields)}</span>
+          {concept.versioningEnabled &&
+            (instance.versionStatus === "draft" ? (
+              <Badge tone="amber">Draft v{instance.versionSeq}</Badge>
+            ) : (
+              <Badge tone="gray">v{instance.versionSeq}</Badge>
+            ))}
+        </h2>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="icon" className="shrink-0" aria-label="Item actions">
+              <EllipsisVertical size={15} />
             </Button>
-          )}
-        </div>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {editable && (
+              <DropdownMenuItem onSelect={() => setDialog("edit")}>
+                <Pencil size={15} />
+                Edit
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuItem onSelect={() => setDialog("archive")}>
+              <Archive size={15} />
+              Archive
+            </DropdownMenuItem>
+            {admin && (
+              <DropdownMenuItem variant="destructive" onSelect={() => setDialog("delete")}>
+                <Trash2 size={15} />
+                Delete
+              </DropdownMenuItem>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
 
       <div className="grid gap-3 lg:grid-cols-2">
@@ -673,7 +708,7 @@ export function InstanceView() {
           <CardHeader
             title="Connected"
             action={
-              relationsEditable &&
+              editable &&
               relationFields.length > 0 && (
                 <Button variant="outline" onClick={() => setAddingConnection(true)}>
                   <Plus size={15} />
@@ -684,7 +719,7 @@ export function InstanceView() {
           />
           <Connections
             related={related}
-            editable={relationsEditable}
+            editable={editable}
             onRemove={(relationId) => removeRel.mutate(relationId)}
           />
           {removeRel.error && (
@@ -721,6 +756,24 @@ export function InstanceView() {
         />
       )}
 
+      {dialog === "edit" && (
+        <Modal title={`Edit ${labelOf(instance.state, fields)}`} onClose={() => setDialog(null)}>
+          <InstanceForm
+            fields={fields}
+            initial={instance.state}
+            onSubmit={(patch) =>
+              updateInst.mutate({ id: instance.id, version: instance.version, patch })
+            }
+            onCancel={() => setDialog(null)}
+            pending={updateInst.isPending}
+          />
+          {updateInst.error && (
+            <p className="mt-3 text-sm text-destructive">
+              {(updateInst.error as { message?: string }).message ?? "Could not save."}
+            </p>
+          )}
+        </Modal>
+      )}
       {dialog === "archive" && (
         <ConfirmDialog
           title="Archive item"
