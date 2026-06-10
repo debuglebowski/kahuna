@@ -7,6 +7,7 @@ import {
   type Concept,
   type ConceptGraph,
   type Dashboard,
+  type DeactivatedMember,
   type Field,
   type GraphLayout,
   type Instance,
@@ -15,6 +16,7 @@ import {
   type Item,
   KingsmakerRpcs,
   type Label,
+  type MemberPage,
   type Note,
   type Relation,
   RpcError,
@@ -26,7 +28,7 @@ import { auth } from "./auth"
 import { pool } from "./db"
 import { can } from "./policy"
 import { EngineBase, ERROR_MAP } from "./runtime"
-import { roleOf } from "./session"
+import { isDeactivated, roleOf } from "./session"
 import * as uc from "./use-cases"
 
 /**
@@ -67,6 +69,16 @@ const AuthMiddlewareLive = Layer.succeed(AuthMiddleware, (options) =>
     if (!role) {
       return yield* Effect.fail(
         new RpcError({ code: "NOT_A_MEMBER", message: "Not a member", status: 403 }),
+      )
+    }
+    const deactivated = yield* Effect.tryPromise({
+      try: () => isDeactivated(session.user.id, orgId),
+      catch: () =>
+        new RpcError({ code: "INTERNAL", message: "deactivation lookup failed", status: 500 }),
+    })
+    if (deactivated) {
+      return yield* Effect.fail(
+        new RpcError({ code: "DEACTIVATED", message: "Member is deactivated", status: 403 }),
       )
     }
     return { orgId, actor: session.user.id } satisfies OrgScope
@@ -231,15 +243,15 @@ const guarded = <A>(
     return yield* mapErr(run)
   })
 
-/** Run a member pre-check (resolved against the request's org), then the use-case. */
+/** Run an auth-tier pre-check (resolved against the request's scope), then the use-case. */
 const checkThen = <A>(
-  precheck: (orgId: string) => Promise<void>,
+  precheck: (orgId: string, actor: string) => Promise<void>,
   run: Effect.Effect<A, unknown, OrgContext | EngineServices>,
 ): Effect.Effect<A, RpcError, OrgContext | EngineServices> =>
   Effect.gen(function* () {
-    const { orgId } = yield* OrgContext
+    const { orgId, actor } = yield* OrgContext
     yield* Effect.tryPromise({
-      try: () => precheck(orgId),
+      try: () => precheck(orgId, actor),
       catch: (e) =>
         e instanceof RpcError
           ? e
@@ -247,6 +259,28 @@ const checkThen = <A>(
     })
     return yield* mapErr(run)
   })
+
+/** Deactivation guards (auth-tier): no self-deactivation, the target must be a
+ *  member, and an owner can never be deactivated (mirrors the settings page's
+ *  last-owner lock). Admin gating happens separately via `requireAdmin`. */
+async function assertDeactivatable(orgId: string, actor: string, userId: string): Promise<void> {
+  if (userId === actor) {
+    throw new RpcError({
+      code: "VALIDATION",
+      message: "You can't deactivate yourself",
+      status: 422,
+    })
+  }
+  const role = await roleOf(userId, orgId)
+  if (!role) throw new RpcError({ code: "NOT_FOUND", message: "Not a member", status: 404 })
+  if (role === "owner") {
+    throw new RpcError({
+      code: "FORBIDDEN",
+      message: "An owner can't be deactivated",
+      status: 403,
+    })
+  }
+}
 
 const ServerRpcs = KingsmakerRpcs.middleware(AuthMiddleware)
 
@@ -441,6 +475,24 @@ const HandlersLive = ServerRpcs.toLayer({
   restoreAnnotationField: ({ id }) => admin<AnnotationField>(uc.restoreAnnotationField(id)),
   reorderAnnotationFields: ({ annotationType, orders }) =>
     admin<ReadonlyArray<AnnotationField>>(uc.reorderAnnotationFields(annotationType, orders)),
+  // Member pages: any member reads any page; a write always targets the caller's
+  // own page (the engine upserts on the actor — owner-only by construction).
+  getMemberPage: ({ userId }) => as<MemberPage>(uc.getMemberPage(userId)),
+  updateMemberPage: ({ body }) => as<MemberPage>(uc.updateMemberPage(body)),
+  // Deactivation: the list is member-readable (drives picker filtering + the
+  // directory toggle); the writes are admin-only with auth-tier guards. A purge
+  // is the plain-HTTP DELETE /api/org/members/:userId (see router.ts).
+  listDeactivatedMembers: () => as<ReadonlyArray<DeactivatedMember>>(uc.listDeactivatedMembers),
+  deactivateMember: ({ userId }) =>
+    requireAdmin.pipe(
+      Effect.zipRight(
+        checkThen(
+          (orgId, actor) => assertDeactivatable(orgId, actor, userId),
+          uc.deactivateMember(userId),
+        ),
+      ),
+    ) as Effect.Effect<DeactivatedMember, RpcError, OrgContext | EngineServices>,
+  reactivateMember: ({ userId }) => admin<{ userId: string }>(uc.reactivateMember(userId)),
 }).pipe(Layer.provide(EngineBase))
 
 // HttpRouter.DefaultServices (HttpPlatform | Etag | FileSystem | Path) — pure

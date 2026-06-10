@@ -309,6 +309,44 @@ export const dashboards = pgTable(
 )
 
 /**
+ * A member's profile page — a grid canvas of widgets (same opaque body document
+ * as `dashboards`, resolved client-side). Exactly one page per (org, user), so
+ * it is keyed by the member rather than carrying name/position/hidden. Scope is
+ * fixed by design: the owner edits, every org member reads — so unlike
+ * dashboards there is no `owner_id` switch.
+ */
+export const memberPages = pgTable(
+  "member_pages",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: text("org_id").notNull(),
+    // Logical FK into bauth_user.id (see header comment) — the page's subject+owner.
+    userId: text("user_id").notNull(),
+    body: jsonb("body").notNull().default(sql`'{"widgets":[]}'::jsonb`),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("member_pages_org_user_uq").on(t.orgId, t.userId)],
+)
+
+/**
+ * Per-org member deactivation markers (the member analogue of `archived_at`):
+ * a row means that user is deactivated in that org — blocked from org access,
+ * hidden from user-field pickers, page frozen. Sidecar to BetterAuth's `member`
+ * table (never altered) so the two schemas stay independently migratable.
+ * Deactivate = insert, reactivate = delete, purge (remove member) deletes too.
+ */
+export const memberDeactivations = pgTable(
+  "member_deactivations",
+  {
+    orgId: text("org_id").notNull(),
+    userId: text("user_id").notNull(),
+    deactivatedAt: timestamp("deactivated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("member_deactivations_org_user_uq").on(t.orgId, t.userId)],
+)
+
+/**
  * Saved node positions for the org's concept graph canvas — one row per org
  * holding a `{ [conceptId]: { x, y } }` document. Pure presentation state
  * (like `sidebar_views`): opaque to the engine, shared org-wide, last write

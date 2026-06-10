@@ -15,7 +15,7 @@ import { LABELS_KEY } from "../../rpc/contract"
 import { LabelMultiSelect } from "../components/LabelMultiSelect"
 import { Button, Field, Input } from "../components/ui"
 import { api, type Field as FieldDef } from "../lib/api"
-import { useFullOrg } from "./settings/SettingsLayout"
+import { memberLabel, useMembers } from "../lib/members"
 
 /**
  * Kinds a user can set when creating an instance. Mirrors the engine's
@@ -55,7 +55,9 @@ const toRaw = (f: FieldDef, v: unknown): unknown => {
   }
 }
 
-/** Picks org member(s) for a `user` field, fed by the BetterAuth org. */
+/** Picks org member(s) for a `user` field, fed by the BetterAuth org.
+ *  Deactivated members are not assignable (hidden here), but an already-stored
+ *  deactivated value stays visible so the field doesn't silently blank out. */
 function MemberPicker({
   value,
   multiple,
@@ -65,8 +67,8 @@ function MemberPicker({
   multiple: boolean
   onChange: (v: unknown) => void
 }) {
-  const org = useFullOrg()
-  const members = org.data?.members ?? []
+  const { members: allMembers, deactivatedSet } = useMembers()
+  const members = allMembers.filter((m) => !deactivatedSet.has(m.userId))
 
   if (multiple) {
     const selected = new Set(Array.isArray(value) ? (value as string[]) : [])
@@ -93,10 +95,14 @@ function MemberPicker({
       </div>
     )
   }
+  // A stored value pointing at a deactivated/former member still needs an item
+  // so the Radix trigger can render it (it's not in the assignable list).
+  const current = typeof value === "string" && value ? value : null
+  const stale = current && !members.some((m) => m.userId === current)
   return (
     // Radix Select reserves "" — use a sentinel for the "none" choice.
     <Select
-      value={typeof value === "string" && value ? value : "__none"}
+      value={current ?? "__none"}
       onValueChange={(v) => onChange(v === "__none" ? undefined : v)}
     >
       <SelectTrigger className="w-full">
@@ -104,6 +110,14 @@ function MemberPicker({
       </SelectTrigger>
       <SelectContent>
         <SelectItem value="__none">—</SelectItem>
+        {stale && (
+          <SelectItem value={current} disabled>
+            {memberLabel(
+              allMembers.find((m) => m.userId === current),
+              "former member",
+            )}
+          </SelectItem>
+        )}
         {members.map((m) => (
           <SelectItem key={m.userId} value={m.userId}>
             {m.user?.name?.trim() || m.user?.email || m.userId}

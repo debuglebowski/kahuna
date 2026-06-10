@@ -1,11 +1,11 @@
-import { ilike } from "drizzle-orm"
+import { and, eq, ilike } from "drizzle-orm"
 import { auth } from "./auth"
-import { user } from "./auth-schema"
-import { db } from "./db"
+import { member, user } from "./auth-schema"
+import { db, pool } from "./db"
 import { can } from "./policy"
 import type { UseCaseResult } from "./runtime"
 import { resolveOrg, roleOf, runScoped } from "./session"
-import { downloadAttachment, listAttachments, uploadAttachment } from "./use-cases"
+import { downloadAttachment, listAttachments, purgeMemberData, uploadAttachment } from "./use-cases"
 
 const json = (r: UseCaseResult<unknown>) =>
   Response.json(r.ok ? r.data : { error: r.code, detail: r.detail }, { status: r.status })
@@ -71,6 +71,45 @@ export const handleApi = async (req: Request): Promise<Response | null> => {
     } catch (e) {
       return Response.json({ error: "ADD_FAILED", detail: String(e) }, { status: 500 })
     }
+  }
+
+  // Member purge (admin-only): permanently remove a DEACTIVATED member from the
+  // org — BetterAuth membership first, then the engine's per-member data (page +
+  // deactivation marker). Mirrors the archive→purge convention: an active member
+  // must be deactivated before they can be deleted. The user account itself is
+  // never touched (it may belong to other orgs).
+  if (seg[1] === "org" && seg[2] === "members" && seg[3] && m === "DELETE") {
+    const org = await resolveOrg(req)
+    if (!org.ok) return Response.json({ error: org.code }, { status: org.status })
+    const role = await roleOf(org.actor, org.orgId)
+    if (!role || !can(role, "admin")) return Response.json({ error: "FORBIDDEN" }, { status: 403 })
+
+    const userId = seg[3]
+    const targetRole = await roleOf(userId, org.orgId)
+    if (!targetRole) return Response.json({ error: "NO_SUCH_MEMBER" }, { status: 404 })
+    const deactivated = await pool.query(
+      "SELECT 1 FROM member_deactivations WHERE org_id = $1 AND user_id = $2 LIMIT 1",
+      [org.orgId, userId],
+    )
+    if (deactivated.rows.length === 0)
+      return Response.json({ error: "NOT_DEACTIVATED" }, { status: 409 })
+
+    const [target] = await db
+      .select({ id: member.id })
+      .from(member)
+      .where(and(eq(member.userId, userId), eq(member.organizationId, org.orgId)))
+      .limit(1)
+    if (!target) return Response.json({ error: "NO_SUCH_MEMBER" }, { status: 404 })
+
+    try {
+      await auth.api.removeMember({
+        body: { memberIdOrEmail: target.id, organizationId: org.orgId },
+        headers: req.headers,
+      })
+    } catch (e) {
+      return Response.json({ error: "REMOVE_FAILED", detail: String(e) }, { status: 500 })
+    }
+    return json(await runScoped(req, purgeMemberData(userId)))
   }
 
   // Binary download.

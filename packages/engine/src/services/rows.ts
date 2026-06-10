@@ -15,6 +15,8 @@ import type {
   InstanceState,
   Item,
   Label,
+  MemberDeactivation,
+  MemberPage,
   Note,
   Relation,
   SidebarView,
@@ -291,6 +293,31 @@ export const toDashboard = (r: DashboardRow): Dashboard => ({
   body: toDashboardBody(r.body),
   createdAt: r.created_at,
   updatedAt: r.updated_at,
+})
+
+export interface MemberPageRow {
+  readonly id: string
+  readonly org_id: string
+  readonly user_id: string
+  readonly body: unknown
+  readonly created_at: Date
+  readonly updated_at: Date
+}
+
+export const toMemberPage = (r: MemberPageRow): MemberPage => ({
+  userId: r.user_id,
+  body: toDashboardBody(r.body),
+})
+
+export interface MemberDeactivationRow {
+  readonly org_id: string
+  readonly user_id: string
+  readonly deactivated_at: Date
+}
+
+export const toMemberDeactivation = (r: MemberDeactivationRow): MemberDeactivation => ({
+  userId: r.user_id,
+  deactivatedAt: r.deactivated_at,
 })
 
 export const toEvent = (r: EventRow): EngineEvent => ({

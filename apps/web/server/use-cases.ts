@@ -22,6 +22,7 @@ import {
   type Label,
   LabelService,
   type ListTasksFilter,
+  MemberService,
   type Note,
   type OrgContext,
   QueryService,
@@ -316,6 +317,30 @@ export const deleteDashboard = (id: string): UC<unknown> =>
 export const reorderDashboards = (
   orders: ReadonlyArray<{ readonly id: string; readonly position: number }>,
 ): UC<unknown> => Effect.flatMap(DashboardService, (s) => s.reorder(orders))
+
+// ── member pages + deactivation ─────────────────────────────────────────────────
+
+export const getMemberPage = (userId: string): UC<unknown> =>
+  Effect.flatMap(MemberService, (m) => m.getPage(userId))
+
+/** Always the caller's own page (owner-only by construction). */
+export const updateMemberPage = (body: DashboardBody): UC<unknown> =>
+  Effect.flatMap(MemberService, (m) => m.updatePage(body))
+
+export const listDeactivatedMembers: UC<unknown> = Effect.flatMap(MemberService, (m) =>
+  m.listDeactivations(),
+)
+
+export const deactivateMember = (userId: string): UC<unknown> =>
+  Effect.flatMap(MemberService, (m) => m.deactivate(userId))
+
+export const reactivateMember = (userId: string): UC<unknown> =>
+  Effect.flatMap(MemberService, (m) => Effect.map(m.reactivate(userId), () => ({ userId })))
+
+/** The engine half of a member purge (page + marker); the membership removal
+ *  itself happens in the router against BetterAuth. */
+export const purgeMemberData = (userId: string): UC<unknown> =>
+  Effect.flatMap(MemberService, (m) => Effect.map(m.purgeMemberData(userId), () => ({ userId })))
 
 // ── concept graph layout (shared canvas positions) ─────────────────────────────
 

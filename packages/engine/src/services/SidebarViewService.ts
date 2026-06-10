@@ -16,7 +16,10 @@ const DEFAULT_VIEW_BODY: SidebarViewBody = {
       id: "globals",
       title: null,
       icon: null,
-      source: { kind: "static", items: ["overview", "dashboards", "automations", "settings"] },
+      source: {
+        kind: "static",
+        items: ["overview", "dashboards", "members", "automations", "settings"],
+      },
     },
     {
       id: "concepts",

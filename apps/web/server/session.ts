@@ -3,7 +3,7 @@ import { and, eq } from "drizzle-orm"
 import type { Effect } from "effect"
 import { auth } from "./auth"
 import { member } from "./auth-schema"
-import { db } from "./db"
+import { db, pool } from "./db"
 import type { Role } from "./policy"
 import { runEngine, type UseCaseResult } from "./runtime"
 
@@ -15,6 +15,18 @@ export const roleOf = async (userId: string, orgId: string): Promise<Role | null
     .where(and(eq(member.userId, userId), eq(member.organizationId, orgId)))
     .limit(1)
   return (rows[0]?.role as Role | undefined) ?? null
+}
+
+/** A deactivated member keeps their account + membership but is blocked from
+ *  the org (every session-resolved entry point checks this). The marker is an
+ *  engine-schema sidecar table, so it's read via the shared pool (the same way
+ *  rpc.ts reaches engine tables), not the BetterAuth drizzle schema. */
+export const isDeactivated = async (userId: string, orgId: string): Promise<boolean> => {
+  const r = await pool.query(
+    "SELECT 1 FROM member_deactivations WHERE org_id = $1 AND user_id = $2 LIMIT 1",
+    [orgId, userId],
+  )
+  return r.rows.length > 0
 }
 
 export type OrgResolution =
@@ -35,6 +47,10 @@ export const resolveOrg = async (request: Request): Promise<OrgResolution> => {
 
   const role = await roleOf(session.user.id, orgId)
   if (!role) return { ok: false, status: 403, code: "NOT_A_MEMBER" }
+
+  if (await isDeactivated(session.user.id, orgId)) {
+    return { ok: false, status: 403, code: "DEACTIVATED" }
+  }
 
   return { ok: true, orgId, actor: session.user.id }
 }

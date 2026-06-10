@@ -21,6 +21,7 @@ export type {
   Dashboard,
   DashboardBody,
   DashboardWidget,
+  DeactivatedMember,
   FeedItem,
   Field,
   FieldConfig,
@@ -31,6 +32,7 @@ export type {
   InstancePick,
   Item,
   Label,
+  MemberPage,
   Note,
   RelatedInstance,
   Relation,
@@ -314,4 +316,11 @@ export const api = {
     annotationType: "note" | "task",
     orders: ReadonlyArray<{ id: string; position: number }>,
   ) => call((c) => c.reorderAnnotationFields({ annotationType, orders })),
+  // Member pages + deactivation. A page write always targets the caller's own
+  // page; member purge is a plain-HTTP DELETE (see Members directory page).
+  getMemberPage: (userId: string) => call((c) => c.getMemberPage({ userId })),
+  updateMemberPage: (body: DashboardBody) => call((c) => c.updateMemberPage({ body })),
+  listDeactivatedMembers: () => call((c) => c.listDeactivatedMembers()),
+  deactivateMember: (userId: string) => call((c) => c.deactivateMember({ userId })),
+  reactivateMember: (userId: string) => call((c) => c.reactivateMember({ userId })),
 }

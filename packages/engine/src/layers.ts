@@ -10,6 +10,7 @@ import { FieldService } from "./services/FieldService"
 import { GraphLayoutService } from "./services/GraphLayoutService"
 import { InstanceService } from "./services/InstanceService"
 import { LabelService } from "./services/LabelService"
+import { MemberService } from "./services/MemberService"
 import { QueryService } from "./services/QueryService"
 import { RelationService } from "./services/RelationService"
 import { SidebarViewService } from "./services/SidebarViewService"
@@ -29,6 +30,7 @@ export const EngineLive = Layer.mergeAll(
   ComputedFields.Default,
   AttachmentService.Default,
   LabelService.Default,
+  MemberService.Default,
   SidebarViewService.Default,
   DashboardService.Default,
   GraphLayoutService.Default,
@@ -48,6 +50,7 @@ export type EngineServices =
   | ComputedFields
   | AttachmentService
   | LabelService
+  | MemberService
   | SidebarViewService
   | DashboardService
   | GraphLayoutService

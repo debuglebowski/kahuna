@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query"
-import { Pencil, Plus, Trash2 } from "lucide-react"
+import { Pencil, Plus, Trash2, UserCheck, UserX } from "lucide-react"
 import { useState } from "react"
 import {
   Select,
@@ -19,7 +19,9 @@ import {
   Spinner,
   Toolbar,
 } from "../../components/ui"
+import { api } from "../../lib/api"
 import { authClient, useSession } from "../../lib/auth-client"
+import { purgeMember, useDeactivated } from "../../lib/members"
 import { Feedback } from "./parts"
 import { useFullOrg } from "./SettingsLayout"
 
@@ -82,13 +84,25 @@ export function Members() {
     },
   })
 
-  const remove = useMutation({
-    mutationFn: async (memberId: string) => {
-      const { error } = await authClient.organization.removeMember({ memberIdOrEmail: memberId })
-      if (error) throw new Error(error.message ?? "Failed to remove member")
-    },
-    onSuccess: invalidate,
+  // Members are never removed outright: deactivate first (restorable), then a
+  // deactivated member may be deleted (purge) — the archive→delete convention.
+  const invalidateAll = async () => {
+    await qc.invalidateQueries({ queryKey: ["deactivatedMembers"] })
+    await invalidate()
+  }
+  const deactivate = useMutation({
+    mutationFn: (userId: string) => api.deactivateMember(userId),
+    onSuccess: invalidateAll,
   })
+  const reactivate = useMutation({
+    mutationFn: (userId: string) => api.reactivateMember(userId),
+    onSuccess: invalidateAll,
+  })
+  const purge = useMutation({
+    mutationFn: (userId: string) => purgeMember(userId),
+    onSuccess: invalidateAll,
+  })
+  const deactivated = useDeactivated()
 
   if (org.isPending) return <Spinner />
   if (org.error) return <p className="text-sm text-destructive">{(org.error as Error).message}</p>
@@ -129,6 +143,7 @@ export function Members() {
             {shown.map((m) => {
               const isSelf = m.userId === session?.user.id
               const lockOwner = m.role === "owner" && ownerCount <= 1
+              const isDeactivated = deactivated.set.has(m.userId)
               return (
                 <li key={m.id} className="flex items-center gap-3 px-6 py-3">
                   <div className="min-w-0 flex-1">
@@ -138,6 +153,7 @@ export function Members() {
                     </div>
                     <div className="truncate text-xs text-muted-foreground">{m.user?.email}</div>
                   </div>
+                  {isDeactivated && <Badge tone="red">deactivated</Badge>}
                   <Badge tone={roleTone(m.role)}>{m.role}</Badge>
                   <IconButton
                     aria-label={`Change role for ${m.user?.email ?? "member"}`}
@@ -150,24 +166,55 @@ export function Members() {
                   >
                     <Pencil size={15} />
                   </IconButton>
-                  <IconButton
-                    variant="danger"
-                    aria-label={`Remove ${m.user?.email ?? "member"}`}
-                    disabled={lockOwner || remove.isPending}
-                    onClick={() => {
-                      if (confirm(`Remove ${m.user?.email ?? "this member"} from the org?`))
-                        remove.mutate(m.id)
-                    }}
-                  >
-                    <Trash2 size={15} />
-                  </IconButton>
+                  {isDeactivated ? (
+                    <>
+                      <IconButton
+                        aria-label={`Reactivate ${m.user?.email ?? "member"}`}
+                        disabled={reactivate.isPending}
+                        onClick={() => reactivate.mutate(m.userId)}
+                      >
+                        <UserCheck size={15} />
+                      </IconButton>
+                      <IconButton
+                        variant="danger"
+                        aria-label={`Delete ${m.user?.email ?? "member"}`}
+                        disabled={purge.isPending}
+                        onClick={() => {
+                          if (
+                            confirm(
+                              `Permanently remove ${m.user?.email ?? "this member"} from the org? This can't be undone.`,
+                            )
+                          )
+                            purge.mutate(m.userId)
+                        }}
+                      >
+                        <Trash2 size={15} />
+                      </IconButton>
+                    </>
+                  ) : (
+                    <IconButton
+                      variant="danger"
+                      aria-label={`Deactivate ${m.user?.email ?? "member"}`}
+                      disabled={lockOwner || isSelf || m.role === "owner" || deactivate.isPending}
+                      onClick={() => {
+                        if (
+                          confirm(
+                            `Deactivate ${m.user?.email ?? "this member"}? They'll be blocked from the org; you can reactivate them anytime.`,
+                          )
+                        )
+                          deactivate.mutate(m.userId)
+                      }}
+                    >
+                      <UserX size={15} />
+                    </IconButton>
+                  )}
                 </li>
               )
             })}
           </ul>
         )}
         <div className="px-6 pb-4">
-          <Feedback error={remove.error} />
+          <Feedback error={deactivate.error ?? reactivate.error ?? purge.error} />
         </div>
       </Card>
 

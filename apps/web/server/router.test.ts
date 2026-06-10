@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto"
 import { describe, expect, it } from "vitest"
 import { auth } from "./auth"
 import { handleApi } from "./router"
+import { runEngineOrThrow } from "./runtime"
+import { deactivateMember, getMemberPage } from "./use-cases"
 
 /** Convert a Set-Cookie response header into a request Cookie header. */
 const cookieHeader = (res: Response): string =>
@@ -91,5 +93,43 @@ describe("POST /api/org/members (add member by email)", () => {
     const res = await postMember(new Headers(), { email: "x@test.dev", role: "member" })
     expect(res?.ok).toBe(false)
     expect(res?.status).toBe(401)
+  })
+})
+
+describe("DELETE /api/org/members/:userId (purge a deactivated member)", () => {
+  it("requires deactivation first; deactivation blocks org access; purge removes the membership", async () => {
+    const owner = await signUpAndOrg()
+    const target = await signUp()
+    const added = await postMember(owner.headers, { email: target.email, role: "member" })
+    expect(added?.status).toBe(201)
+    const { userId } = (await added?.json()) as { userId: string }
+    await auth.api.setActiveOrganization({
+      body: { organizationId: owner.orgId },
+      headers: target.headers,
+    })
+
+    const del = (headers: Headers) =>
+      handleApi(
+        new Request(`http://localhost/api/org/members/${userId}`, { method: "DELETE", headers }),
+      )
+
+    // An ACTIVE member can't be purged (the archive→delete convention).
+    expect((await del(owner.headers))?.status).toBe(409)
+
+    await runEngineOrThrow({ orgId: owner.orgId, actor: owner.email }, deactivateMember(userId))
+
+    // The deactivated member is blocked at the session boundary (any /api route).
+    const blocked = await postMember(target.headers, { email: "x@test.dev", role: "member" })
+    expect(blocked?.status).toBe(403)
+    expect(((await blocked?.json()) as { error?: string }).error).toBe("DEACTIVATED")
+
+    // Purge: membership + per-member engine data go; a second delete 404s.
+    expect((await del(owner.headers))?.status).toBe(200)
+    expect((await del(owner.headers))?.status).toBe(404)
+    const page = await runEngineOrThrow(
+      { orgId: owner.orgId, actor: owner.email },
+      getMemberPage(userId),
+    )
+    expect((page as { body: { widgets: unknown[] } }).body.widgets).toEqual([])
   })
 })
