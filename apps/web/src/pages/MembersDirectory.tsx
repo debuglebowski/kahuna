@@ -1,8 +1,15 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query"
-import { Pencil, Plus, Trash2, UserCheck, UserX } from "lucide-react"
+import { MoreHorizontal, Pencil, Plus, Trash2, UserCheck, UserX } from "lucide-react"
 import { useState } from "react"
 import { Link } from "react-router-dom"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import {
   Select,
   SelectContent,
@@ -16,7 +23,6 @@ import {
   Card,
   ConfirmDialog,
   Field,
-  IconButton,
   Input,
   Modal,
   Spinner,
@@ -182,44 +188,59 @@ export function MembersDirectory() {
                   <Badge tone={roleTone(m.role)}>{m.role}</Badge>
                   {admin && (
                     <div className="flex shrink-0 items-center gap-0.5">
-                      <IconButton
-                        aria-label={`Change role for ${label}`}
-                        disabled={lockOwner}
-                        onClick={() => {
-                          setEditing({ id: m.id, label, role: m.role })
-                          setDraftRole(m.role)
-                        }}
-                      >
-                        <Pencil size={15} />
-                      </IconButton>
-                      {!isSelf &&
-                        m.role !== "owner" &&
-                        (deactivated ? (
-                          <>
-                            <IconButton
-                              aria-label={`Reactivate ${label}`}
-                              disabled={reactivate.isPending}
-                              onClick={() => reactivate.mutate(m.userId)}
-                            >
-                              <UserCheck size={15} />
-                            </IconButton>
-                            <IconButton
-                              variant="danger"
-                              aria-label={`Delete ${label}`}
-                              onClick={() => setConfirming({ kind: "purge", member: m })}
-                            >
-                              <Trash2 size={15} />
-                            </IconButton>
-                          </>
-                        ) : (
-                          <IconButton
-                            variant="danger"
-                            aria-label={`Deactivate ${label}`}
-                            onClick={() => setConfirming({ kind: "deactivate", member: m })}
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-sm"
+                            className="text-muted-foreground"
+                            aria-label={`Actions for ${label}`}
                           >
-                            <UserX size={15} />
-                          </IconButton>
-                        ))}
+                            <MoreHorizontal size={15} />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem
+                            disabled={lockOwner}
+                            onSelect={() => {
+                              setEditing({ id: m.id, label, role: m.role })
+                              setDraftRole(m.role)
+                            }}
+                          >
+                            <Pencil size={15} />
+                            Change role
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          {deactivated ? (
+                            <>
+                              <DropdownMenuItem
+                                disabled={reactivate.isPending}
+                                onSelect={() => reactivate.mutate(m.userId)}
+                              >
+                                <UserCheck size={15} />
+                                Reactivate
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                variant="destructive"
+                                onSelect={() => setConfirming({ kind: "purge", member: m })}
+                              >
+                                <Trash2 size={15} />
+                                Delete
+                              </DropdownMenuItem>
+                            </>
+                          ) : (
+                            <DropdownMenuItem
+                              variant="destructive"
+                              disabled={isSelf || m.role === "owner"}
+                              onSelect={() => setConfirming({ kind: "deactivate", member: m })}
+                            >
+                              <UserX size={15} />
+                              Deactivate
+                            </DropdownMenuItem>
+                          )}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </div>
                   )}
                 </li>
