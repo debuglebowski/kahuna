@@ -14,7 +14,7 @@ const run = <A, E>(orgId: string, eff: Effect.Effect<A, E, OrgContext | EngineSe
   runEngineOrThrow({ orgId, actor: "system" }, eff)
 
 describe("kingsmaker seed", () => {
-  it("creates the 7 model concepts and is idempotent", async () => {
+  it("creates the 8 model concepts and is idempotent", async () => {
     const org = randomUUID()
     await run(org, seedKingsmaker)
     await run(org, seedKingsmaker) // re-run must not error or duplicate
@@ -32,6 +32,7 @@ describe("kingsmaker seed", () => {
       "CompanyNote",
       "Policy",
       "Runbook",
+      "Task",
     ])
   })
 

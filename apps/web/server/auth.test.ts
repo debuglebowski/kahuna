@@ -46,7 +46,7 @@ describe("tier 0 (BetterAuth) + scoping", () => {
     const req = new Request("http://localhost/api/concepts", { headers })
     const result = await runScoped(req, listConcepts)
     expect(result.ok).toBe(true)
-    if (result.ok) expect(result.data.length).toBe(7)
+    if (result.ok) expect(result.data.length).toBe(8)
   })
 
   it("org A cannot see org B's instances (404 via session scope)", async () => {
@@ -74,7 +74,7 @@ describe("tier 0 (BetterAuth) + scoping", () => {
       Effect.flatMap(InstanceService, (i) => i.create({ conceptName: "Company", fields: {} })),
     )
     const before = await runEngineOrThrow({ orgId, actor: "system" }, listConcepts)
-    expect(before.length).toBe(7)
+    expect(before.length).toBe(8)
 
     await auth.api.deleteOrganization({ body: { organizationId: orgId }, headers })
 

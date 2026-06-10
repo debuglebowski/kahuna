@@ -6,6 +6,7 @@ import { AuthPage } from "./pages/AuthPage"
 import { ConceptView } from "./pages/ConceptView"
 import { Dashboards } from "./pages/Dashboards"
 import { InstanceView } from "./pages/InstanceView"
+import { Overview } from "./pages/Overview"
 import { Placeholder } from "./pages/Placeholder"
 import { Concepts } from "./pages/settings/Concepts"
 import { Dashboards as DashboardsSettings } from "./pages/settings/Dashboards"
@@ -28,7 +29,7 @@ export function App() {
   return (
     <Layout>
       <Routes>
-        <Route path="/" element={<Dashboards />} />
+        <Route path="/" element={<Overview />} />
         <Route path="/dashboards" element={<Dashboards />} />
         <Route path="/automations" element={<Placeholder title="Automations" />} />
         <Route path="/settings" element={<SettingsLayout />}>

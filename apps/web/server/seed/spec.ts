@@ -34,6 +34,7 @@ export interface ConceptSpec {
  *   Agreement      -based_on->  AgreementTemplate
  *   Agreement      -for->       Company
  *   Agreement      -signed_by-> CompanyContact
+ *   Task           -for->       Company
  */
 export const kingsmakerSpec: ReadonlyArray<ConceptSpec> = [
   {
@@ -175,6 +176,35 @@ export const kingsmakerSpec: ReadonlyArray<ConceptSpec> = [
       { name: "owner", kind: "user" },
       { name: "approved_by", kind: "user" },
       { name: "file", kind: "file" },
+    ],
+  },
+  {
+    name: "Task",
+    pluralName: "Tasks",
+    description: "A to-do assigned to a member, optionally tied to a company.",
+    icon: "✅",
+    fields: [
+      { name: "title", kind: "text" },
+      {
+        name: "status",
+        kind: "enum",
+        config: {
+          options: ["open", "in_progress", "done"],
+          transitions: {
+            open: ["in_progress", "done"],
+            in_progress: ["done", "open"],
+            done: ["open"],
+          },
+        },
+      },
+      { name: "due_date", kind: "date", icon: "📅" },
+      { name: "assignee", kind: "user", icon: "👤" },
+      {
+        name: "for",
+        kind: "relation",
+        targetName: "Company",
+        config: { cardinality: "one" },
+      },
     ],
   },
   {
