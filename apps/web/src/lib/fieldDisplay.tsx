@@ -5,6 +5,8 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge, decayTone, LabelChip, momentumTone } from "../components/ui"
 import { useFullOrg } from "../pages/settings/SettingsLayout"
 import type { DecayValue, Field, MomentumValue } from "./api"
+import { formatDateValue } from "./dates"
+import { isRichTextEmpty, richTextPlain, richTextPreview } from "./richtext"
 import { initialsOf, showValue } from "./utils"
 
 /** Matches the engine's `url` format validator. */
@@ -119,7 +121,8 @@ export function FieldValueCell({ field, value }: { field?: Field; value: unknown
     value === null ||
     value === undefined ||
     value === "" ||
-    (Array.isArray(value) && value.length === 0)
+    (Array.isArray(value) && value.length === 0) ||
+    (field?.kind === "richtext" && isRichTextEmpty(value))
   ) {
     // Surface a missing value on fields that declare a requirement: red for
     // `required` (only reachable on rows that predate the rule), amber for
@@ -174,6 +177,23 @@ export function FieldValueCell({ field, value }: { field?: Field; value: unknown
       const text = formatMoney(value)
       if (text) return <span>{text}</span>
       break
+    }
+    case "richtext":
+      return <span title={richTextPlain(value)}>{richTextPreview(value)}</span>
+    case "date": {
+      if (Array.isArray(value))
+        return (
+          <span>
+            {value.map((v, i) => (
+              // biome-ignore lint/suspicious/noArrayIndexKey: plain value list, order-stable
+              <Fragment key={i}>
+                {i > 0 && ", "}
+                {formatDateValue(v)}
+              </Fragment>
+            ))}
+          </span>
+        )
+      return <span>{formatDateValue(value)}</span>
     }
   }
 

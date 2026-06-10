@@ -59,8 +59,13 @@ const validateConfig = (
         return yield* invalid("config.format is only valid on text/number fields")
       }
     }
-    if (config.multiple && (kind === "relation" || kind === "file" || kind === "computed")) {
-      return yield* invalid("config.multiple is not valid on relation/file/computed fields")
+    if (
+      config.multiple &&
+      (kind === "relation" || kind === "file" || kind === "computed" || kind === "richtext")
+    ) {
+      return yield* invalid(
+        "config.multiple is not valid on relation/file/computed/richtext fields",
+      )
     }
     if (config.requirement && (kind === "relation" || kind === "file" || kind === "computed")) {
       return yield* invalid("config.requirement is not valid on relation/file/computed fields")

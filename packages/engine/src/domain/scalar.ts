@@ -86,6 +86,8 @@ const validateScalar = (
     case "relation":
     case "file":
     case "computed":
+    // richtext is instance-only — AnnotationFieldService's allowlist excludes it.
+    case "richtext":
       return fail(`field "${def.name}" kind "${def.kind}" is not allowed as a custom field`)
   }
 }

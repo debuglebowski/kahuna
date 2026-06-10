@@ -12,24 +12,41 @@ import {
 } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { LABELS_KEY } from "../../rpc/contract"
+import { DatePicker } from "../components/DatePicker"
+import { RichTextEditor } from "../components/editor/RichTextEditor"
 import { LabelMultiSelect } from "../components/LabelMultiSelect"
 import { Button, Field, Input } from "../components/ui"
 import { api, type Field as FieldDef } from "../lib/api"
 import { memberLabel, useMembers } from "../lib/members"
+import { isRichTextEmpty, isRichTextValue } from "../lib/richtext"
 
 /**
  * Kinds a user can set when creating an instance. Mirrors the engine's
  * `validateValue` — relation/file/computed are derived or set elsewhere
  * (RelationService / attachments / computed) and are excluded from the form.
  */
-const EDITABLE = new Set(["text", "number", "date", "bool", "enum", "user", "json", "money"])
+const EDITABLE = new Set([
+  "text",
+  "richtext",
+  "number",
+  "date",
+  "bool",
+  "enum",
+  "user",
+  "json",
+  "money",
+])
 
 /** Map a text `format` to a friendlier native input type. */
 const FORMAT_INPUT_TYPE: Record<string, string> = { email: "email", url: "url", phone: "tel" }
 
 /** Mirrors the engine's `isMissing` (requirement checks). */
 const isMissing = (v: unknown): boolean =>
-  v === undefined || v === null || v === "" || (Array.isArray(v) && v.length === 0)
+  v === undefined ||
+  v === null ||
+  v === "" ||
+  (Array.isArray(v) && v.length === 0) ||
+  (isRichTextValue(v) && isRichTextEmpty(v))
 
 /** Convert a stored state value (wire shape) into the form's raw input shape. */
 const toRaw = (f: FieldDef, v: unknown): unknown => {
@@ -46,6 +63,9 @@ const toRaw = (f: FieldDef, v: unknown): unknown => {
     }
     case "json":
       return typeof v === "string" ? v : JSON.stringify(v, null, 2)
+    case "richtext":
+      // The editor takes the { doc, text } envelope as-is.
+      return v
     case "date":
       // Stored as ISO — the native date input wants bare YYYY-MM-DD.
       return Array.isArray(v) ? v.map((x) => String(x).slice(0, 10)) : String(v).slice(0, 10)
@@ -206,6 +226,11 @@ export function InstanceForm({
         }
         continue
       }
+      if (f.kind === "richtext") {
+        // Omit empty docs — same "blank inputs are no value" rule as text.
+        if (isRichTextValue(raw) && !isRichTextEmpty(raw)) out[f.id] = raw
+        continue
+      }
       // text / number / date (+ optional multiple)
       if (multiple) {
         const parts = (typeof raw === "string" ? raw.split("\n") : Array.isArray(raw) ? raw : [])
@@ -332,8 +357,27 @@ export function InstanceForm({
             onChange={(e) => set(f.name, e.target.value)}
           />
         )
+      case "richtext":
+        return (
+          <RichTextEditor
+            value={values[f.name]}
+            editable
+            placeholder={`Write ${f.name.toLowerCase()}…`}
+            onChange={(v) => set(f.name, v)}
+          />
+        )
       default:
         // text / number / date
+        if (f.kind === "date" && !multiple) {
+          return (
+            <DatePicker
+              value={typeof values[f.name] === "string" ? (values[f.name] as string) : undefined}
+              onChange={(v) => set(f.name, v)}
+              placeholder="Pick a date"
+              triggerClassName="h-9 w-full justify-between rounded-md border border-input bg-transparent px-3 shadow-xs"
+            />
+          )
+        }
         if (multiple) {
           return (
             <Textarea
@@ -378,12 +422,12 @@ export function InstanceForm({
                 {renderInput(f)}
               </div>
             ) : (
-              <Field
-                key={f.id}
-                label={f.config.requirement === "required" ? `${f.name} *` : f.name}
-              >
-                {renderInput(f)}
-              </Field>
+              // Rich text wants the full row — a half-width editor is cramped.
+              <div key={f.id} className={f.kind === "richtext" ? "col-span-2" : undefined}>
+                <Field label={f.config.requirement === "required" ? `${f.name} *` : f.name}>
+                  {renderInput(f)}
+                </Field>
+              </div>
             ),
           )}
         </div>

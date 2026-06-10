@@ -39,7 +39,7 @@ import {
 import { api, type Field, type Label } from "../../lib/api"
 import { ConceptIcon, DEFAULT_CONCEPT_ICON, DEFAULT_FIELD_ICON } from "../../lib/icons"
 import { ConceptGraphCanvas } from "./ConceptGraphCanvas"
-import { FieldForm, type FieldFormValue } from "./FieldForm"
+import { FieldForm, type FieldFormValue, fieldKindLabel } from "./FieldForm"
 
 /** Resolve label ids → chips for the non-admin (read-only) concept view. */
 function ReadOnlyLabels({
@@ -361,7 +361,7 @@ export function Concepts() {
         <ConceptIcon value={f.icon || DEFAULT_FIELD_ICON} size={16} />
       </span>
       <span className="w-36 shrink-0 truncate text-sm font-medium text-foreground">{f.name}</span>
-      <Badge>{f.kind}</Badge>
+      <Badge>{fieldKindLabel(f.kind)}</Badge>
       <span className="flex-1 truncate text-xs text-muted-foreground">
         {summarize(f, conceptName)}
       </span>
@@ -670,7 +670,8 @@ export function Concepts() {
                     <span className="block text-xs text-muted-foreground">
                       Items hold multiple draft → published versions. New items start as a draft and
                       aren't shown or referenceable until published; lists show only the latest
-                      published version. Other items can reference "Latest" or pin a specific version.
+                      published version. Other items can reference "Latest" or pin a specific
+                      version.
                     </span>
                   </span>
                 </label>

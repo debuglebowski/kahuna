@@ -50,6 +50,36 @@ const isMoney = (v: unknown): v is { readonly amount: number; readonly currency:
   typeof (v as { currency?: unknown }).currency === "string" &&
   /^[A-Z]{3}$/.test((v as { currency: string }).currency)
 
+/** Serialized-doc ceiling — bounds the per-save event row, not a UX limit. */
+const MAX_RICHTEXT_CHARS = 1_000_000
+
+const isRichText = (
+  v: unknown,
+): v is { readonly doc: Record<string, unknown>; readonly text: string } => {
+  if (typeof v !== "object" || v === null) return false
+  const o = v as { doc?: unknown; text?: unknown }
+  return (
+    typeof o.text === "string" &&
+    typeof o.doc === "object" &&
+    o.doc !== null &&
+    (o.doc as { type?: unknown }).type === "doc"
+  )
+}
+
+/** Collect a ProseMirror doc's text nodes, blocks joined with spaces (mirrors
+ *  the web client's `richtext.ts` walk). The stored envelope `text` is ALWAYS
+ *  derived here — the client's copy is shape-checked but never persisted, so
+ *  filters/previews/labels can't be lied to. */
+const richTextWalk = (node: unknown, out: string[]): void => {
+  if (typeof node !== "object" || node === null) return
+  const o = node as { type?: unknown; text?: unknown; content?: unknown }
+  if (o.type === "text" && typeof o.text === "string") out.push(o.text)
+  else if (Array.isArray(o.content)) {
+    if (out.length > 0) out.push(" ")
+    for (const child of o.content) richTextWalk(child, out)
+  }
+}
+
 /** Validate a single (non-array) value against a field def. */
 const validateScalar = (
   def: Field,
@@ -101,6 +131,14 @@ const validateScalar = (
       return isMoney(value)
         ? Effect.succeed({ amount: value.amount, currency: value.currency })
         : fail(`field "${def.name}" expects { amount, currency }`)
+    case "richtext": {
+      if (!isRichText(value)) return fail(`field "${def.name}" expects { doc, text } rich text`)
+      if (JSON.stringify(value.doc).length > MAX_RICHTEXT_CHARS)
+        return fail(`field "${def.name}" is too large`)
+      const text: string[] = []
+      richTextWalk(value.doc, text)
+      return Effect.succeed({ doc: value.doc, text: text.join("") })
+    }
     case "relation":
       return fail(`field "${def.name}" is a relation — use RelationService`)
     case "file":
@@ -128,9 +166,14 @@ const validateValue = (
   return validateScalar(def, value)
 }
 
-/** "No value" for requirement checks: unset, null, empty string, empty list. */
+/** "No value" for requirement checks: unset, null, empty string, empty list,
+ *  or a rich text doc with no text (a doc of only e.g. a rule counts as missing). */
 const isMissing = (v: unknown): boolean =>
-  v === undefined || v === null || v === "" || (Array.isArray(v) && v.length === 0)
+  v === undefined ||
+  v === null ||
+  v === "" ||
+  (Array.isArray(v) && v.length === 0) ||
+  (isRichText(v) && v.text.trim() === "")
 
 /** Enforce `requirement: "required"` over a state/patch. `keys: "all"` checks
  *  every required def (create/publish); `"present"` only the ones the payload

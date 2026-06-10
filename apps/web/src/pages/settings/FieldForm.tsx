@@ -16,6 +16,7 @@ import { capitalize } from "../../lib/fieldDisplay"
 
 const KINDS: ReadonlyArray<FieldKind> = [
   "text",
+  "richtext",
   "number",
   "date",
   "bool",
@@ -28,6 +29,10 @@ const KINDS: ReadonlyArray<FieldKind> = [
   "money",
 ]
 
+/** Display names for kinds whose literal reads poorly (kind UI shows raw kinds). */
+const KIND_LABELS: Partial<Record<FieldKind, string>> = { richtext: "rich text" }
+export const fieldKindLabel = (k: FieldKind): string => KIND_LABELS[k] ?? k
+
 /** Scalar kinds that can carry `config.multiple`, and the formats per kind. */
 const MULTIPLE_KINDS = new Set<FieldKind>(["text", "number", "date", "enum", "user"])
 const FORMATS: Partial<Record<FieldKind, ReadonlyArray<string>>> = {
@@ -38,6 +43,7 @@ const FORMATS: Partial<Record<FieldKind, ReadonlyArray<string>>> = {
 /** Kinds that can carry `config.requirement` (everything a user sets directly). */
 const REQUIREMENT_KINDS = new Set<FieldKind>([
   "text",
+  "richtext",
   "number",
   "date",
   "bool",
@@ -198,7 +204,7 @@ export function FieldForm({
             <SelectContent>
               {KINDS.map((k) => (
                 <SelectItem key={k} value={k}>
-                  {k}
+                  {fieldKindLabel(k)}
                 </SelectItem>
               ))}
             </SelectContent>

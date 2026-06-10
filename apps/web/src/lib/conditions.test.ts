@@ -104,6 +104,20 @@ describe("matchCondition ops", () => {
     expect(matchCondition(i, c("decay", "neq", "cold"))).toBe(true)
     expect(matchCondition(i, c("mom", "eq", "heating"))).toBe(true)
   })
+
+  it("rich text ops see through the { doc, text } envelope to its plain text", () => {
+    const rich = (text: string) => ({
+      doc: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text }] }] },
+      text,
+    })
+    const i = inst({ body: rich("Quarterly Renewal notes"), blank: rich("") })
+    expect(matchCondition(i, c("body", "contains", "renewal"))).toBe(true)
+    expect(matchCondition(i, c("body", "contains", "paragraph"))).toBe(false) // not the doc JSON
+    expect(matchCondition(i, c("body", "eq", "Quarterly Renewal notes"))).toBe(true)
+    expect(matchCondition(i, c("body", "notEmpty"))).toBe(true)
+    expect(matchCondition(i, c("blank", "empty"))).toBe(true)
+    expect(matchCondition(i, c("blank", "notEmpty"))).toBe(false)
+  })
 })
 
 describe("matchInstance combine modes", () => {
