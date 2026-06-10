@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query"
-import { Check, ChevronsUpDown, LogOut, Plus, Settings } from "lucide-react"
+import { Building2, Check, ChevronRight, LogOut, Plus, Settings } from "lucide-react"
 import { useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
@@ -9,6 +9,9 @@ import {
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { authClient, signOut, useSession } from "../lib/auth-client"
@@ -75,14 +78,10 @@ export function IdentityMenu() {
               {current.data?.name ?? "Organization"}
             </div>
           </div>
-          <ChevronsUpDown size={15} className="shrink-0 text-sidebar-foreground/70" />
+          <ChevronRight size={15} className="shrink-0 text-sidebar-foreground/70" />
         </DropdownMenuTrigger>
 
-        <DropdownMenuContent
-          side="top"
-          align="start"
-          className="w-(--radix-dropdown-menu-trigger-width) min-w-56"
-        >
+        <DropdownMenuContent side="right" align="end" className="min-w-56">
           <DropdownMenuLabel className="flex items-center gap-2 p-2 font-normal">
             {avatar}
             <div className="min-w-0 leading-tight">
@@ -92,38 +91,46 @@ export function IdentityMenu() {
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
 
-          <DropdownMenuLabel className="text-xs font-medium text-muted-foreground">
-            Organization
-          </DropdownMenuLabel>
-          {orgs.isPending && <p className="px-2 py-1.5 text-xs text-muted-foreground">Loading…</p>}
-          {orgs.error && (
-            <p className="px-2 py-1.5 text-xs text-destructive">Couldn't load organizations.</p>
-          )}
-          {switchError && <p className="px-2 py-1.5 text-xs text-destructive">{switchError}</p>}
-          {orgs.data?.map((o) => {
-            const active = o.id === currentId
-            return (
-              <DropdownMenuItem
-                key={o.id}
-                disabled={switching}
-                onSelect={() => switchTo(o.id)}
-                className={cn(active && "font-medium")}
-              >
-                <span className="min-w-0 flex-1 truncate">{o.name}</span>
-                {active && <Check size={14} className="shrink-0 text-muted-foreground" />}
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger>
+              <Building2 size={14} />
+              Organizations
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent className="min-w-48">
+              {orgs.isPending && (
+                <p className="px-2 py-1.5 text-xs text-muted-foreground">Loading…</p>
+              )}
+              {orgs.error && (
+                <p className="px-2 py-1.5 text-xs text-destructive">Couldn't load organizations.</p>
+              )}
+              {switchError && <p className="px-2 py-1.5 text-xs text-destructive">{switchError}</p>}
+              {orgs.data?.map((o) => {
+                const active = o.id === currentId
+                return (
+                  <DropdownMenuItem
+                    key={o.id}
+                    disabled={switching}
+                    onSelect={() => switchTo(o.id)}
+                    className={cn(active && "font-medium")}
+                  >
+                    <span className="min-w-0 flex-1 truncate">{o.name}</span>
+                    {active && <Check size={14} className="shrink-0 text-muted-foreground" />}
+                  </DropdownMenuItem>
+                )
+              })}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={() => setShowCreate(true)}>
+                <Plus size={14} />
+                New organization
               </DropdownMenuItem>
-            )
-          })}
-          <DropdownMenuItem onSelect={() => setShowCreate(true)}>
-            <Plus size={14} />
-            New organization
-          </DropdownMenuItem>
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
 
-          <DropdownMenuSeparator />
           <DropdownMenuItem onSelect={() => navigate("/settings/profile")}>
             <Settings size={14} />
             Settings
           </DropdownMenuItem>
+          <DropdownMenuSeparator />
           <DropdownMenuItem
             variant="destructive"
             onSelect={() => signOut().then(() => location.reload())}
