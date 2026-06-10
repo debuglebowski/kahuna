@@ -55,9 +55,12 @@ export function ConceptView() {
   })
   const create = useMutation({
     mutationFn: (values: Record<string, unknown>) => api.createInstance(id, values),
-    onSuccess: () => {
+    onSuccess: (created) => {
       setAdding(false)
       collection.utils.refetch()
+      // On a versioned concept the new item is an unpublished draft — invisible
+      // in this head-only list — so go straight to its detail page to edit/publish.
+      if (concept?.versioningEnabled) navigate(`/instances/${created.id}`)
     },
   })
 
@@ -155,7 +158,7 @@ export function ConceptView() {
             />
             <Button onClick={() => setAdding(true)}>
               <Plus size={15} />
-              Add {name}
+              Create
             </Button>
           </div>
         </div>
