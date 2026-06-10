@@ -108,6 +108,37 @@ export class EventStore extends Effect.Service<EventStore>()("engine/EventStore"
         return rows.map(toEvent)
       }).pipe(Effect.orDie)
 
-    return { append, readStream, readAllForOrg } as const
+    /**
+     * A larger/filterable recent-events window (powers the dashboard Trend +
+     * Activity widgets). Optional `since` lower-bounds occurred_at; optional
+     * `conceptId` restricts to that concept's instance events (joined via
+     * `instances.concept_id`). Newest first, server-clamped to ≤2000.
+     */
+    const listEvents = (opts?: {
+      readonly since?: Date
+      readonly limit?: number
+      readonly conceptId?: string
+    }) =>
+      Effect.gen(function* () {
+        const { orgId } = yield* OrgContext
+        const limit = Math.min(opts?.limit ?? 500, 2000)
+        const since = opts?.since ?? null
+        const rows = opts?.conceptId
+          ? yield* sql<EventRow>`
+              SELECT e.* FROM events e
+              JOIN instances i ON i.id = e.subject_id
+              WHERE e.org_id = ${orgId} AND e.subject_kind = 'instance'
+                AND i.concept_id = ${opts.conceptId}
+                AND (${since}::timestamptz IS NULL OR e.occurred_at >= ${since})
+              ORDER BY e.id DESC LIMIT ${limit}`
+          : yield* sql<EventRow>`
+              SELECT * FROM events
+              WHERE org_id = ${orgId}
+                AND (${since}::timestamptz IS NULL OR occurred_at >= ${since})
+              ORDER BY id DESC LIMIT ${limit}`
+        return rows.map(toEvent)
+      }).pipe(Effect.orDie)
+
+    return { append, readStream, readAllForOrg, listEvents } as const
   }),
 }) {}

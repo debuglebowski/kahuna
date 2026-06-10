@@ -32,6 +32,16 @@ const validateConfig = (
     if (kind === "enum" && (!config.options || config.options.length === 0)) {
       return yield* invalid("enum field requires non-empty config.options")
     }
+    if (config.optionColors) {
+      if (kind !== "enum") {
+        return yield* invalid("config.optionColors is only valid on enum fields")
+      }
+      for (const [option, color] of Object.entries(config.optionColors)) {
+        if (!/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(color)) {
+          return yield* invalid(`optionColors["${option}"] is not a hex color`)
+        }
+      }
+    }
     if (kind === "computed" && !config.computedKind) {
       return yield* invalid("computed field requires config.computedKind")
     }

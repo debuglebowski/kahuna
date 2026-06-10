@@ -1,7 +1,7 @@
 import { Check, ExternalLink, X } from "lucide-react"
 import { Fragment, type ReactNode } from "react"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import { Badge, decayTone, momentumTone } from "../components/ui"
+import { Badge, decayTone, LabelChip, momentumTone } from "../components/ui"
 import { useFullOrg } from "../pages/settings/SettingsLayout"
 import type { DecayValue, Field, MomentumValue } from "./api"
 import { initialsOf, showValue } from "./utils"
@@ -30,6 +30,9 @@ export const formatMoney = (v: unknown): string | null => {
     return `${m.amount} ${currency}`
   }
 }
+
+/** Display-only: enum options are stored lowercase-ish; show them capitalized. */
+const capitalize = (s: string): string => (s ? s[0]!.toUpperCase() + s.slice(1) : s)
 
 const empty = <span className="text-muted-foreground">—</span>
 
@@ -143,7 +146,9 @@ export function FieldValueCell({ field, value }: { field?: Field; value: unknown
       return (
         <span className="inline-flex flex-wrap items-center gap-1">
           {opts.map((o) => (
-            <Badge key={String(o)}>{String(o)}</Badge>
+            <LabelChip key={String(o)} color={field.config.optionColors?.[String(o)] ?? null}>
+              {capitalize(String(o))}
+            </LabelChip>
           ))}
         </span>
       )

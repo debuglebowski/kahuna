@@ -93,4 +93,23 @@ describe("dashboards (DashboardService)", () => {
       expect(reordered.map((d) => d.id)).toEqual([a.id, home.id])
     }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
+
+  it.effect("optimistic concurrency: a stale expectedUpdatedAt conflicts", () =>
+    Effect.gen(function* () {
+      const dash = yield* DashboardService
+      const home = (yield* dash.list())[0]!
+      const stale = new Date(home.updatedAt.getTime() - 1000)
+      const conflict = yield* dash
+        .update({ id: home.id, name: "X", expectedUpdatedAt: stale })
+        .pipe(Effect.flip)
+      expect(conflict._tag).toBe("DashboardConflict")
+      // The current etag goes through; an absent etag also bypasses the check.
+      const ok = yield* dash.update({
+        id: home.id,
+        name: "Renamed",
+        expectedUpdatedAt: home.updatedAt,
+      })
+      expect(ok.name).toBe("Renamed")
+    }).pipe(Effect.provide(testLayer(newOrgId()))),
+  )
 })

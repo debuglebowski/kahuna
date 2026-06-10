@@ -1,6 +1,5 @@
 import { useQuery } from "@tanstack/react-query"
-import { X } from "lucide-react"
-import { useMemo, useState } from "react"
+import { useState } from "react"
 import {
   Select,
   SelectContent,
@@ -8,148 +7,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import {
-  api,
-  type Concept,
-  type DashboardWidget,
-  type Field,
-  type Label,
-  type SidebarCondition,
-} from "@/lib/api"
+import { api, type Concept, type DashboardWidget } from "@/lib/api"
+import { ConditionList, useFields } from "../ConditionList"
 import { MultiCombobox } from "../MultiCombobox"
-import { Button, Field as FieldRow, IconButton, Input, Modal } from "../ui"
+import { Button, Field as FieldRow, Input, Modal } from "../ui"
 
-/** Edit one dashboard widget (metric or list). Type is fixed at add-time. The
- *  filter/condition model + `coerce` mirror the sidebar `SectionEditor`. */
-
-const useFields = (conceptId: string) =>
-  useQuery({
-    queryKey: ["fields", conceptId],
-    queryFn: () => api.listFields(conceptId),
-    enabled: !!conceptId,
-  })
-
-/** Coerce a free-text equality value to match the field's stored JSON type. */
-const coerce = (raw: string, field: Field | undefined): unknown => {
-  if (field?.kind === "number" || field?.kind === "money") return Number(raw)
-  if (field?.kind === "bool") return raw === "true"
-  return raw
-}
-
-/** One condition: a label (has-label) or a field (equals). */
-function ConditionList({
-  conceptId,
-  conditions,
-  labels,
-  onChange,
-}: {
-  conceptId: string
-  conditions: readonly SidebarCondition[]
-  labels: readonly Label[]
-  onChange: (next: SidebarCondition[]) => void
-}) {
-  const fields = useFields(conceptId)
-  const liveFields = useMemo(
-    () => (fields.data ?? []).filter((f) => f.kind !== "relation" && f.kind !== "file"),
-    [fields.data],
-  )
-  const set = (i: number, c: SidebarCondition) =>
-    onChange(conditions.map((x, j) => (j === i ? c : x)))
-  const remove = (i: number) => onChange(conditions.filter((_, j) => j !== i))
-
-  return (
-    <div className="space-y-1.5">
-      {conditions.map((cond, i) => {
-        const field = liveFields.find((f) => f.id === cond.field)
-        return (
-          // biome-ignore lint/suspicious/noArrayIndexKey: conditions are positional
-          <div key={i} className="flex items-center gap-1.5">
-            <Select
-              value={cond.op === "hasLabel" ? "__label" : cond.field}
-              onValueChange={(v) =>
-                set(
-                  i,
-                  v === "__label"
-                    ? { field: "__labels", op: "hasLabel", value: labels[0]?.id ?? "" }
-                    : { field: v, op: "eq", value: "" },
-                )
-              }
-            >
-              <SelectTrigger className="w-40">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__label">Has label</SelectItem>
-                {liveFields.map((f) => (
-                  <SelectItem key={f.id} value={f.id}>
-                    {f.name} =
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {cond.op === "hasLabel" ? (
-              <Select
-                value={String(cond.value)}
-                onValueChange={(v) => set(i, { ...cond, value: v })}
-              >
-                <SelectTrigger className="flex-1">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {labels.map((l) => (
-                    <SelectItem key={l.id} value={l.id}>
-                      {l.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            ) : field?.kind === "enum" ? (
-              <Select
-                value={cond.value ? String(cond.value) : "__none"}
-                onValueChange={(v) => set(i, { ...cond, value: v === "__none" ? "" : v })}
-              >
-                <SelectTrigger className="flex-1">
-                  <SelectValue placeholder="—" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none">—</SelectItem>
-                  {(field.config.options ?? []).map((o) => (
-                    <SelectItem key={o} value={o}>
-                      {o}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            ) : (
-              <Input
-                value={String(cond.value ?? "")}
-                placeholder="value"
-                onChange={(e) => set(i, { ...cond, value: coerce(e.target.value, field) })}
-                className="flex-1"
-              />
-            )}
-            <IconButton aria-label="Remove condition" onClick={() => remove(i)}>
-              <X size={14} />
-            </IconButton>
-          </div>
-        )
-      })}
-      <button
-        type="button"
-        onClick={() =>
-          onChange([
-            ...conditions,
-            { field: "__labels", op: "hasLabel", value: labels[0]?.id ?? "" },
-          ])
-        }
-        className="text-xs font-medium text-muted-foreground hover:text-foreground"
-      >
-        + Condition
-      </button>
-    </div>
-  )
-}
-
+/** Edit one dashboard widget. Type is fixed at add-time. Filters reuse the shared
+ *  `ConditionList` (the same authoring UI the sidebar section editor uses). */
 export function WidgetEditor({
   widget,
   concepts,
@@ -355,6 +219,52 @@ export function WidgetEditor({
               />
             </FieldRow>
           </div>
+        )}
+
+        {draft.type === "trend" && (
+          <div className="grid grid-cols-2 gap-3">
+            <FieldRow label="Bucket">
+              <Select
+                value={draft.bucket}
+                onValueChange={(v) => patch({ bucket: v as "day" | "week" })}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="day">Per day</SelectItem>
+                  <SelectItem value="week">Per week</SelectItem>
+                </SelectContent>
+              </Select>
+            </FieldRow>
+            <FieldRow label="Window">
+              <Select
+                value={draft.since}
+                onValueChange={(v) => patch({ since: v as "7d" | "30d" | "90d" })}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="7d">Last 7 days</SelectItem>
+                  <SelectItem value="30d">Last 30 days</SelectItem>
+                  <SelectItem value="90d">Last 90 days</SelectItem>
+                </SelectContent>
+              </Select>
+            </FieldRow>
+          </div>
+        )}
+
+        {draft.type === "activity" && (
+          <FieldRow label="Max items">
+            <Input
+              type="number"
+              min={1}
+              value={draft.limit ?? ""}
+              onChange={(e) => patch({ limit: e.target.value ? Number(e.target.value) : null })}
+              className="w-28"
+            />
+          </FieldRow>
         )}
 
         {conceptId && "conditions" in draft && (

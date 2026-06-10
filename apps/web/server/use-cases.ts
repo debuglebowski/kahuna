@@ -297,6 +297,7 @@ export const updateDashboard = (input: {
   readonly hidden?: boolean
   readonly scope?: "personal" | "org"
   readonly body?: DashboardBody
+  readonly expectedUpdatedAt?: Date
 }): UC<unknown> => Effect.flatMap(DashboardService, (s) => s.update(input))
 
 export const deleteDashboard = (id: string): UC<unknown> =>
@@ -397,6 +398,30 @@ export const getChanged: UC<ReadonlyArray<FeedItem>> = Effect.flatMap(EventStore
   ),
 )
 
+export const listEvents = (input: {
+  readonly conceptId?: string | null
+  readonly since?: number
+  readonly limit?: number
+}): UC<ReadonlyArray<FeedItem>> =>
+  Effect.flatMap(EventStore, (e) =>
+    e.listEvents({
+      conceptId: input.conceptId ?? undefined,
+      since: input.since != null ? new Date(input.since) : undefined,
+      limit: input.limit,
+    }),
+  ).pipe(
+    Effect.map((events) =>
+      events.map((ev) => ({
+        id: ev.id,
+        occurredAt: ev.occurredAt,
+        actor: ev.actor,
+        eventType: ev.eventType,
+        subjectKind: ev.subjectKind,
+        subjectId: ev.subjectId,
+      })),
+    ),
+  )
+
 // ── commands ──────────────────────────────────────────────────────────────────
 
 export const createInstance = (conceptId: string, fields: Record<string, unknown>): UC<Instance> =>
@@ -458,11 +483,7 @@ export const restoreItem = (itemId: string): UC<unknown> =>
 
 /** Relation-picker candidates: the head (latest published) of each item of a
  *  concept whose display label matches `query`. */
-export const searchInstances = (
-  conceptId: string,
-  query?: string,
-  limit = 20,
-): UC<unknown> =>
+export const searchInstances = (conceptId: string, query?: string, limit = 20): UC<unknown> =>
   Effect.gen(function* () {
     const q = yield* QueryService
     const fieldsSvc = yield* FieldService
@@ -472,8 +493,7 @@ export const searchInstances = (
     const out = rows.map((r) => ({
       itemId: r.itemId,
       instanceId: r.id,
-      label:
-        textField && r.state[textField.id] ? String(r.state[textField.id]) : "(untitled)",
+      label: textField && r.state[textField.id] ? String(r.state[textField.id]) : "(untitled)",
       versionSeq: r.versionSeq,
       versionStatus: r.versionStatus,
     }))

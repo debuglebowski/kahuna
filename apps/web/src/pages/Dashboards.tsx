@@ -6,6 +6,7 @@ import GridLayout, { type Layout, WidthProvider } from "react-grid-layout"
 import "react-grid-layout/css/styles.css"
 import "react-resizable/css/styles.css"
 import { useNavigate } from "react-router-dom"
+import { ActivityWidget } from "@/components/dashboard/ActivityWidget"
 import { AttentionWidget } from "@/components/dashboard/AttentionWidget"
 import { ListWidget } from "@/components/dashboard/ListWidget"
 import { MetricWidget } from "@/components/dashboard/MetricWidget"
@@ -39,9 +40,20 @@ const Grid = WidthProvider(GridLayout)
 const BreakdownWidget = lazy(() =>
   import("@/components/dashboard/BreakdownWidget").then((m) => ({ default: m.BreakdownWidget })),
 )
+const TrendWidget = lazy(() =>
+  import("@/components/dashboard/TrendWidget").then((m) => ({ default: m.TrendWidget })),
+)
+
+/** True for the optimistic-concurrency RpcError (code DASHBOARD_CONFLICT). The
+ *  client surfaces RPC failures as a wrapped error, so match code/message/text. */
+const isConflictError = (e: unknown): boolean => {
+  const o = e as { code?: unknown; message?: unknown } | null
+  const s = `${o?.code ?? ""} ${o?.message ?? ""} ${String(e)}`
+  return s.includes("DASHBOARD_CONFLICT") || s.includes("DashboardConflict")
+}
 
 /**
- * The dashboard canvas (`/`). Renders the selected dashboard as a grid of
+ * The dashboard canvas (`/dashboards`). Renders the selected dashboard as a grid of
  * resizable widgets, with a switcher across the org's + your dashboards. The body
  * is the source of truth: drag/resize and add/edit/remove mutate it locally and
  * persist via `updateDashboard` (last-write-wins). Dashboard-level management
@@ -53,6 +65,7 @@ export function Dashboards() {
   const conceptsLive = useLiveQuery((q) => q.from({ c: conceptsCollection }))
   useRegisterCollection(KEY.concepts, conceptsCollection)
   const concepts = (conceptsLive.data ?? []) as Concept[]
+  const conceptsLoaded = !!conceptsLive.data
   const cIndex = useMemo(() => conceptIndex(concepts), [concepts])
 
   // Loading the list seeds the org's Home dashboard server-side (ensureDefault).
@@ -76,21 +89,65 @@ export function Dashboards() {
   // so live refetches never clobber in-flight edits.
   const [body, setBody] = useState<DashboardBody | null>(null)
   const loadedId = useRef<string | null>(null)
+  const etagRef = useRef<Date | null>(null) // optimistic-concurrency etag (updatedAt)
+  const selectedRef = useRef(selected)
+  selectedRef.current = selected
+  const savingRef = useRef(false)
+  const pendingRef = useRef<{ id: string; body: DashboardBody } | null>(null)
+  const [conflict, setConflict] = useState(false)
   useEffect(() => {
     if (selected && loadedId.current !== selected.id) {
       loadedId.current = selected.id
       setBody(selected.body)
+      etagRef.current = selected.updatedAt ?? null
+      setConflict(false)
     }
   }, [selected])
 
   const ids = useMemo(() => (body ? referencedConceptIds(body) : []), [body])
   const { instData, loaders } = useConceptData(ids)
 
+  // Persist serially (one write in flight, keep only the latest) so rapid drags
+  // never self-conflict; carry the etag so a genuine remote edit is detected and
+  // reloaded instead of silently clobbered.
+  const flush = useCallback(async () => {
+    if (savingRef.current || pendingRef.current === null) return
+    savingRef.current = true
+    const job = pendingRef.current
+    pendingRef.current = null
+    try {
+      const updated = await api.updateDashboard({
+        id: job.id,
+        body: job.body,
+        expectedUpdatedAt: etagRef.current ?? undefined,
+      })
+      if (selectedRef.current?.id === job.id) etagRef.current = updated.updatedAt ?? null
+    } catch (e) {
+      if (isConflictError(e) && selectedRef.current?.id === job.id) {
+        const fresh = await api.listDashboards().catch(() => null)
+        const row = fresh?.find((d) => d.id === job.id)
+        if (row && selectedRef.current?.id === job.id) {
+          setBody(row.body)
+          etagRef.current = row.updatedAt ?? null
+          if (fresh) qc.setQueryData(["dashboards"], fresh)
+          setConflict(true)
+        }
+        pendingRef.current = null // drop the conflicting edit
+      }
+    } finally {
+      savingRef.current = false
+      if (pendingRef.current !== null) void flush()
+    }
+  }, [qc])
+
   const save = useCallback(
     (next: DashboardBody) => {
-      if (selected) void api.updateDashboard({ id: selected.id, body: next })
+      const sel = selectedRef.current
+      if (!sel) return
+      pendingRef.current = { id: sel.id, body: next }
+      void flush()
     },
-    [selected],
+    [flush],
   )
   const mutate = useCallback(
     (next: DashboardBody) => {
@@ -133,30 +190,37 @@ export function Dashboards() {
 
   const render = (w: DashboardWidget) => {
     const data = w.conceptId ? instData[w.conceptId] : undefined
-    if (w.type === "metric")
+    const concept = w.conceptId ? cIndex.get(w.conceptId) : undefined
+    // Dangling ref: a concept was set but no longer exists (archived/deleted).
+    // Show an honest tile rather than the "pick a concept" unconfigured state.
+    if (w.conceptId && conceptsLoaded && !concept)
       return (
-        <MetricWidget
-          widget={w}
-          data={data}
-          concept={w.conceptId ? cIndex.get(w.conceptId) : undefined}
-        />
+        <p className="text-sm text-muted-foreground">
+          Concept unavailable — it may have been deleted.
+        </p>
       )
+    if (w.type === "metric") return <MetricWidget widget={w} data={data} concept={concept} />
     if (w.type === "list") return <ListWidget widget={w} data={data} />
-    if (w.type === "attention")
-      return (
-        <AttentionWidget
-          widget={w}
-          data={data}
-          concept={w.conceptId ? cIndex.get(w.conceptId) : undefined}
-        />
-      )
+    if (w.type === "attention") return <AttentionWidget widget={w} data={data} concept={concept} />
     if (w.type === "breakdown")
       return (
         <Suspense fallback={<Spinner />}>
           <BreakdownWidget widget={w} data={data} />
         </Suspense>
       )
-    return <p className="text-sm text-muted-foreground">{w.type} widget — coming soon</p>
+    if (w.type === "trend")
+      return (
+        <Suspense fallback={<Spinner />}>
+          <TrendWidget widget={w} />
+        </Suspense>
+      )
+    if (w.type === "activity") return <ActivityWidget widget={w} />
+    // All known types handled; a tile from a newer body falls through here.
+    return (
+      <p className="text-sm text-muted-foreground">
+        Unsupported widget ({(w as DashboardWidget).type}).
+      </p>
+    )
   }
 
   return (
@@ -188,6 +252,8 @@ export function Dashboards() {
               <SelectItem value="list">List / Table</SelectItem>
               <SelectItem value="breakdown">Breakdown</SelectItem>
               <SelectItem value="attention">Attention</SelectItem>
+              <SelectItem value="trend">Trend</SelectItem>
+              <SelectItem value="activity">Activity</SelectItem>
             </SelectContent>
           </Select>
           <Button
@@ -206,6 +272,22 @@ export function Dashboards() {
           </IconButton>
         </div>
       </header>
+
+      {conflict && (
+        <div className="flex items-center justify-between gap-2 rounded-md border bg-muted px-3 py-2 text-xs text-muted-foreground">
+          <span>
+            This dashboard was changed elsewhere — reloaded to the latest; your last edit wasn't
+            saved.
+          </span>
+          <button
+            type="button"
+            className="cancel-drag shrink-0 underline hover:text-foreground"
+            onClick={() => setConflict(false)}
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {body.widgets.length === 0 ? (
         <div className="flex min-h-[320px] flex-col items-center justify-center rounded-xl border border-dashed p-12 text-center">

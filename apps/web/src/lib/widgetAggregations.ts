@@ -165,3 +165,47 @@ export const metricValue = (
   if (!fieldId) return null
   return agg === "sum" ? sumField(instances, conds, fieldId) : avgField(instances, conds, fieldId)
 }
+
+export interface TrendPoint {
+  readonly bucket: string
+  readonly count: number
+}
+
+const DAY_MS = 86_400_000
+const floorDayUTC = (ms: number): number => {
+  const d = new Date(ms)
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())
+}
+const floorWeekUTC = (ms: number): number => {
+  const day = floorDayUTC(ms)
+  const dow = new Date(day).getUTCDay() // 0=Sun … 6=Sat
+  return day - ((dow + 6) % 7) * DAY_MS // back to the Monday
+}
+
+/** Bucket events by day/week across [fromMs, toMs], zero-filling empty buckets so
+ *  the trend line is continuous. Bucket keys are `YYYY-MM-DD` (the bucket start).
+ *  `from`/`to` are passed in (not read from the clock) so this stays pure/testable. */
+export const timeBucket = (
+  events: ReadonlyArray<{ readonly occurredAt: Date | string | number }>,
+  bucket: "day" | "week",
+  fromMs: number,
+  toMs: number,
+): TrendPoint[] => {
+  const step = bucket === "week" ? 7 * DAY_MS : DAY_MS
+  const floor = bucket === "week" ? floorWeekUTC : floorDayUTC
+  const counts = new Map<number, number>()
+  for (let t = floor(fromMs); t <= floor(toMs); t += step) counts.set(t, 0)
+  for (const e of events) {
+    const ms = new Date(e.occurredAt).getTime()
+    if (Number.isNaN(ms)) continue
+    const b = floor(ms)
+    if (counts.has(b)) counts.set(b, (counts.get(b) ?? 0) + 1)
+  }
+  return [...counts.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([t, count]) => ({ bucket: new Date(t).toISOString().slice(0, 10), count }))
+}
+
+/** Days for a `since` token (Trend window). */
+export const sinceDays = (since: "7d" | "30d" | "90d"): number =>
+  since === "7d" ? 7 : since === "30d" ? 30 : 90

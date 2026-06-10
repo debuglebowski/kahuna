@@ -32,6 +32,8 @@ export type FieldKind = typeof FieldKind.Type
 export interface FieldConfig {
   /** enum: allowed values */
   readonly options?: ReadonlyArray<string>
+  /** enum: display color per option (`value -> #rrggbb`); missing = neutral. */
+  readonly optionColors?: Record<string, string>
   /** enum: legal state-machine transitions `from -> [to, ...]` */
   readonly transitions?: Record<string, ReadonlyArray<string>>
   /** relation: the target concept's id (the relation's identity is its field id). */

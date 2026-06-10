@@ -1,5 +1,5 @@
 import { Check, Plus, X } from "lucide-react"
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
 import {
@@ -51,6 +51,28 @@ const REQUIREMENTS: ReadonlyArray<{ value: Requirement; label: string }> = [
   { value: "flagged", label: "Flagged missing" },
   { value: "required", label: "Required" },
 ]
+
+/** Default enum-option colors (tailwind 500s). A new option draws a random one,
+ *  preferring hues this field's other options don't use yet. */
+const ENUM_PALETTE = [
+  "#ef4444", // red
+  "#f97316", // orange
+  "#f59e0b", // amber
+  "#84cc16", // lime
+  "#22c55e", // green
+  "#14b8a6", // teal
+  "#06b6d4", // cyan
+  "#3b82f6", // blue
+  "#6366f1", // indigo
+  "#a855f7", // purple
+  "#ec4899", // pink
+  "#64748b", // slate
+]
+const randomColor = (used: ReadonlyArray<string>): string => {
+  const free = ENUM_PALETTE.filter((c) => !used.includes(c))
+  const pool = free.length > 0 ? free : ENUM_PALETTE
+  return pool[Math.floor(Math.random() * pool.length)]!
+}
 
 export interface FieldFormValue {
   readonly name: string
@@ -113,6 +135,20 @@ export function FieldForm({
     [optionsText],
   )
 
+  // Per-option display colors; any option without one gets a random default.
+  const [optionColors, setOptionColors] = useState<Record<string, string>>(() => ({
+    ...(initial?.config.optionColors ?? {}),
+  }))
+  useEffect(() => {
+    setOptionColors((prev) => {
+      const missing = options.filter((o) => !prev[o])
+      if (missing.length === 0) return prev
+      const next = { ...prev }
+      for (const o of missing) next[o] = randomColor(Object.values(next))
+      return next
+    })
+  }, [options])
+
   const baseConfig = (): FieldConfig => {
     switch (kind) {
       case "enum": {
@@ -121,7 +157,15 @@ export function FieldForm({
           const allowed = (transitions[from] ?? []).filter((to) => options.includes(to))
           if (allowed.length) t[from] = allowed
         }
-        return { options, ...(Object.keys(t).length ? { transitions: t } : {}) }
+        // Colors keyed by live options only (a renamed option drops its old key).
+        const colors = Object.fromEntries(
+          options.filter((o) => optionColors[o]).map((o) => [o, optionColors[o]!]),
+        )
+        return {
+          options,
+          ...(Object.keys(colors).length ? { optionColors: colors } : {}),
+          ...(Object.keys(t).length ? { transitions: t } : {}),
+        }
       }
       case "relation":
         return { target, cardinality }
@@ -235,6 +279,30 @@ export function FieldForm({
               placeholder="lead, qualified, won"
             />
           </Field>
+          {options.length > 0 && (
+            <div>
+              <span className="text-xs font-medium text-muted-foreground">Colors</span>
+              <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2">
+                {options.map((o) => (
+                  <Label
+                    key={o}
+                    className="flex items-center gap-1.5 text-xs font-normal text-foreground"
+                  >
+                    <input
+                      type="color"
+                      aria-label={`Color for ${o}`}
+                      value={optionColors[o] ?? "#6b7280"}
+                      onChange={(e) =>
+                        setOptionColors((prev) => ({ ...prev, [o]: e.target.value }))
+                      }
+                      className="h-6 w-7 shrink-0 cursor-pointer rounded border border-input bg-background p-0.5"
+                    />
+                    {o}
+                  </Label>
+                ))}
+              </div>
+            </div>
+          )}
           {options.length > 1 && (
             <div>
               <span className="text-xs font-medium text-muted-foreground">

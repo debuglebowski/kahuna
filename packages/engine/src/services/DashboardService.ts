@@ -1,7 +1,7 @@
 import { PgClient } from "@effect/sql-pg"
 import { Effect } from "effect"
 import type { DashboardBody } from "../domain/types"
-import { DashboardNotFound, DashboardProtected } from "../errors"
+import { DashboardConflict, DashboardNotFound, DashboardProtected } from "../errors"
 import { OrgContext } from "./OrgContext"
 import { type DashboardRow, toDashboard } from "./rows"
 
@@ -81,6 +81,9 @@ export class DashboardService extends Effect.Service<DashboardService>()(
         readonly hidden?: boolean
         readonly scope?: "personal" | "org"
         readonly body?: DashboardBody
+        /** Optimistic-concurrency etag: if set and the row's `updated_at` has since
+         *  moved, the write is rejected so a concurrent editor isn't clobbered. */
+        readonly expectedUpdatedAt?: Date
       }) =>
         Effect.gen(function* () {
           const { orgId, actor } = yield* OrgContext
@@ -90,6 +93,12 @@ export class DashboardService extends Effect.Service<DashboardService>()(
               AND (owner_id IS NULL OR owner_id = ${actor}) LIMIT 1`
           const cur = found[0]
           if (!cur) return yield* Effect.fail(new DashboardNotFound({ id: input.id }))
+          if (
+            input.expectedUpdatedAt !== undefined &&
+            new Date(cur.updated_at).getTime() !== input.expectedUpdatedAt.getTime()
+          ) {
+            return yield* Effect.fail(new DashboardConflict({ id: input.id }))
+          }
           const name = input.name === undefined ? cur.name : input.name.trim()
           const icon = input.icon === undefined ? cur.icon : input.icon
           const hidden = input.hidden === undefined ? cur.hidden : input.hidden

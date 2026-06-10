@@ -169,6 +169,13 @@ export class DashboardProtected extends Schema.TaggedError<DashboardProtected>()
   { id: Schema.String },
 ) {}
 
+/** Optimistic-concurrency conflict: the dashboard was edited elsewhere since the
+ *  caller loaded it (its `updatedAt` moved). The caller should reload + retry. */
+export class DashboardConflict extends Schema.TaggedError<DashboardConflict>()(
+  "DashboardConflict",
+  { id: Schema.String },
+) {}
+
 export type EngineError =
   | VersionConflict
   | InstanceNotFound
@@ -199,3 +206,4 @@ export type EngineError =
   | SidebarViewProtected
   | DashboardNotFound
   | DashboardProtected
+  | DashboardConflict

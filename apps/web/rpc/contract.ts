@@ -119,6 +119,8 @@ export type FieldKind = typeof FieldKind.Type
 /** Mirrors the engine's `FieldConfig` (kept here so the contract stays engine-free). */
 export const FieldConfig = Schema.Struct({
   options: Schema.optional(Schema.Array(Schema.String)),
+  /** enum: display color per option (`value -> #rrggbb`); missing = neutral. */
+  optionColors: Schema.optional(Schema.Record({ key: Schema.String, value: Schema.String })),
   transitions: Schema.optional(
     Schema.Record({ key: Schema.String, value: Schema.Array(Schema.String) }),
   ),
@@ -422,6 +424,9 @@ export const DashboardBody = Schema.Struct({
   widgets: Schema.Array(DashboardWidget),
   cols: Schema.optional(Schema.Number),
   rowHeight: Schema.optional(Schema.Number),
+  /** Set on a per-concept summary board (rendered as a tab on that ConceptView,
+   *  with the concept as implicit context). Absent on standalone dashboards. */
+  scopeConceptId: Schema.optional(Schema.NullOr(Schema.String)),
 })
 export type DashboardBody = typeof DashboardBody.Type
 
@@ -434,6 +439,9 @@ export const Dashboard = Schema.Struct({
   position: Schema.Number,
   hidden: Schema.Boolean,
   body: DashboardBody,
+  /** Last-write etag for optimistic concurrency (see `updateDashboard.expectedUpdatedAt`).
+   *  Optional for rollout: an older server omits it, leaving the guard inactive. */
+  updatedAt: Schema.optional(Schema.Date),
 })
 export type Dashboard = typeof Dashboard.Type
 
@@ -607,6 +615,18 @@ export class KingsmakerRpcs extends RpcGroup.make(
     error: RpcError,
   }),
   Rpc.make("getChanged", { success: Schema.Array(FeedItem), error: RpcError }),
+  // A larger/filterable recent-events window for the dashboard Trend + Activity
+  // widgets. `since` = epoch ms lower bound; `conceptId` restricts to that
+  // concept's instance events.
+  Rpc.make("listEvents", {
+    payload: {
+      conceptId: Schema.optional(Schema.NullOr(Schema.String)),
+      since: Schema.optional(Schema.Number),
+      limit: Schema.optional(Schema.Number),
+    },
+    success: Schema.Array(FeedItem),
+    error: RpcError,
+  }),
   Rpc.make("createInstance", {
     payload: { conceptId: Schema.String, fields: Fields },
     success: Instance,
@@ -763,6 +783,9 @@ export class KingsmakerRpcs extends RpcGroup.make(
       hidden: Schema.optional(Schema.Boolean),
       scope: Schema.optional(Schema.Literal("personal", "org")),
       body: Schema.optional(DashboardBody),
+      /** Optimistic-concurrency guard: if set and it no longer matches the row's
+       *  current `updatedAt`, the update is rejected (someone else edited it). */
+      expectedUpdatedAt: Schema.optional(Schema.Date),
     },
     success: Dashboard,
     error: RpcError,

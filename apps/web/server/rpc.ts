@@ -240,6 +240,7 @@ const HandlersLive = ServerRpcs.toLayer({
     mapErr(uc.listInstances(conceptId, { decorate: true, includeArchived })),
   getInstance: ({ id }) => as<InstanceDetail>(uc.getInstanceDetail(id)),
   getChanged: () => mapErr(uc.getChanged),
+  listEvents: ({ conceptId, since, limit }) => mapErr(uc.listEvents({ conceptId, since, limit })),
   createInstance: ({ conceptId, fields }) =>
     checkThen(
       (orgId) => assertMembers(orgId, conceptId, fields),
@@ -285,8 +286,8 @@ const HandlersLive = ServerRpcs.toLayer({
   listDashboards: () => as<ReadonlyArray<Dashboard>>(uc.listDashboards),
   createDashboard: ({ name, icon, scope, body }) =>
     as<Dashboard>(uc.createDashboard({ name, icon, scope, body })),
-  updateDashboard: ({ id, name, icon, hidden, scope, body }) =>
-    as<Dashboard>(uc.updateDashboard({ id, name, icon, hidden, scope, body })),
+  updateDashboard: ({ id, name, icon, hidden, scope, body, expectedUpdatedAt }) =>
+    as<Dashboard>(uc.updateDashboard({ id, name, icon, hidden, scope, body, expectedUpdatedAt })),
   deleteDashboard: ({ id }) => as<Dashboard>(uc.deleteDashboard(id)),
   reorderDashboards: ({ orders }) => as<ReadonlyArray<Dashboard>>(uc.reorderDashboards(orders)),
 }).pipe(Layer.provide(EngineBase))

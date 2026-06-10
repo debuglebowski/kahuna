@@ -12,6 +12,7 @@ import {
   metricValue,
   staleInstances,
   sumField,
+  timeBucket,
 } from "./widgetAggregations"
 
 const inst = (state: Record<string, unknown>): Instance => {
@@ -149,5 +150,31 @@ describe("computed bands (attention)", () => {
     const c = inst({ [F]: { days: 3, band: "fresh" } })
     const out = staleInstances([a, b, c], F, ["cooling", "cold"])
     expect(out.map((i) => i.id)).toEqual([b.id, a.id]) // fresh excluded; cold(50) before cooling(18)
+  })
+})
+
+describe("timeBucket", () => {
+  it("buckets events by day, zero-filling gaps and dropping out-of-range", () => {
+    const from = Date.UTC(2024, 0, 1)
+    const to = Date.UTC(2024, 0, 3)
+    const events = [
+      { occurredAt: new Date("2024-01-01T05:00:00Z") },
+      { occurredAt: new Date("2024-01-01T20:00:00Z") },
+      { occurredAt: new Date("2024-01-03T01:00:00Z") },
+      { occurredAt: new Date("2023-12-31T23:00:00Z") }, // before window → dropped
+    ]
+    expect(timeBucket(events, "day", from, to)).toEqual([
+      { bucket: "2024-01-01", count: 2 },
+      { bucket: "2024-01-02", count: 0 },
+      { bucket: "2024-01-03", count: 1 },
+    ])
+  })
+
+  it("buckets by week to the containing Monday", () => {
+    // 2024-01-03 is a Wednesday → its week bucket starts Mon 2024-01-01.
+    const from = Date.UTC(2024, 0, 1)
+    const to = Date.UTC(2024, 0, 5)
+    const out = timeBucket([{ occurredAt: new Date("2024-01-03T12:00:00Z") }], "week", from, to)
+    expect(out).toEqual([{ bucket: "2024-01-01", count: 1 }])
   })
 })

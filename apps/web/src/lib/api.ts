@@ -146,6 +146,10 @@ export const api = {
     call((c) => c.listInstances({ conceptId, includeArchived: opts?.includeArchived })),
   getInstance: (id: string) => call((c) => c.getInstance({ id })),
   getChanged: () => call((c) => c.getChanged()),
+  listEvents: (input?: { conceptId?: string | null; since?: number; limit?: number }) =>
+    call((c) =>
+      c.listEvents({ conceptId: input?.conceptId, since: input?.since, limit: input?.limit }),
+    ),
   createInstance: (conceptId: string, fields: Fields) =>
     call((c) => c.createInstance({ conceptId, fields })),
   updateInstance: (id: string, expectedVersion: number, patch: Fields) =>
@@ -208,6 +212,7 @@ export const api = {
     hidden?: boolean
     scope?: "personal" | "org"
     body?: DashboardBody
+    expectedUpdatedAt?: Date
   }) => call((c) => c.updateDashboard(input)),
   deleteDashboard: (id: string) => call((c) => c.deleteDashboard({ id })),
   reorderDashboards: (orders: ReadonlyArray<{ id: string; position: number }>) =>
