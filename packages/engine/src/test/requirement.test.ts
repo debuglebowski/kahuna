@@ -24,6 +24,54 @@ describe("field requirement (required / flagged / optional)", () => {
     }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
 
+  it.effect("an explicit null clears an optional field on update (key dropped)", () =>
+    Effect.gen(function* () {
+      const concepts = yield* ConceptService
+      const fields = yield* FieldService
+      const instances = yield* InstanceService
+      const c = yield* concepts.create({ name: "Deal" })
+      const title = yield* fields.addField({
+        conceptId: c.id,
+        name: "title",
+        kind: "text",
+        config: {},
+      })
+      const inst = yield* instances.create({ conceptId: c.id, fields: { [title.id]: "Acme" } })
+      const cleared = yield* instances.update({
+        instanceId: inst.id,
+        expectedVersion: inst.version,
+        patch: { [title.id]: null },
+      })
+      expect(title.id in cleared.state).toBe(false)
+      expect(cleared.version).toBe(inst.version + 1)
+    }).pipe(Effect.provide(testLayer(newOrgId()))),
+  )
+
+  it.effect("an explicit null on a required field is rejected (clear-protection)", () =>
+    Effect.gen(function* () {
+      const concepts = yield* ConceptService
+      const fields = yield* FieldService
+      const instances = yield* InstanceService
+      const c = yield* concepts.create({ name: "Deal" })
+      const title = yield* fields.addField({
+        conceptId: c.id,
+        name: "title",
+        kind: "text",
+        config: { requirement: "required" },
+      })
+      const inst = yield* instances.create({ conceptId: c.id, fields: { [title.id]: "Acme" } })
+      const err = yield* instances
+        .update({
+          instanceId: inst.id,
+          expectedVersion: inst.version,
+          patch: { [title.id]: null },
+        })
+        .pipe(Effect.flip)
+      expect(err._tag).toBe("FieldValidationError")
+      expect((err as { message: string }).message).toContain('"title" is required')
+    }).pipe(Effect.provide(testLayer(newOrgId()))),
+  )
+
   it.effect("empty string / empty list count as missing on create", () =>
     Effect.gen(function* () {
       const concepts = yield* ConceptService

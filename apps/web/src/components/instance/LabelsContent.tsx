@@ -15,7 +15,7 @@ import type { InstanceCtx } from "./types"
  * the content works the same as a tile or a tab.
  */
 export function LabelsBody({ ctx }: { ctx: InstanceCtx }) {
-  const { instance, staticLabels, ownLabels, refetch } = ctx
+  const { instance, staticLabels, ownLabels, editable, refetch } = ctx
   const vocab = useQuery({ queryKey: ["labels"], queryFn: () => api.listLabels() })
   const serverKey = ownLabels.map((l) => l.id).join(",")
   const serverIds = serverKey ? serverKey.split(",") : []
@@ -55,7 +55,8 @@ export function LabelsBody({ ctx }: { ctx: InstanceCtx }) {
       )}
       <div className="space-y-1.5">
         <span className="text-xs font-medium text-muted-foreground">This item</span>
-        {hasVocab ? (
+        {/* A frozen (published) version can't take label writes — read-only chips. */}
+        {hasVocab && editable ? (
           <LabelMultiSelect
             all={vocab.data ?? []}
             selectedIds={draft}

@@ -148,11 +148,15 @@ const validateScalar = (
   }
 }
 
-/** Validate a field value, fanning out over the array when `config.multiple`. */
+/** Validate a field value, fanning out over the array when `config.multiple`.
+ *  An explicit `null` means "clear" (the reducer drops the key) — legal for any
+ *  settable kind; relation/file/computed fall through to the per-kind rejection. */
 const validateValue = (
   def: Field,
   value: unknown,
 ): Effect.Effect<unknown, FieldValidationError> => {
+  if (value === null && def.kind !== "relation" && def.kind !== "file" && def.kind !== "computed")
+    return Effect.succeed(null)
   if (def.config.multiple) {
     if (!Array.isArray(value))
       return Effect.fail(

@@ -94,6 +94,18 @@ describe("reducer / fold", () => {
     expect(Either.isRight(result) && result.right === null).toBe(true)
   })
 
+  it("an explicit null in a patch clears the field; create strips nulls", () => {
+    const result = foldEvents([
+      ev(1, { _tag: "InstanceCreated", conceptId: "c", fields: { a: 1, b: null } }),
+      ev(2, { _tag: "InstanceUpdated", patch: { a: null, c: "x" } }),
+    ])
+    expect(Either.isRight(result)).toBe(true)
+    if (Either.isRight(result) && result.right) {
+      expect(result.right.state).toEqual({ c: "x" })
+      expect(result.right.version).toBe(1)
+    }
+  })
+
   it("folds the synthetic __labels key through create + patch (per-item labels)", () => {
     const result = foldEvents([
       ev(1, { _tag: "InstanceCreated", conceptId: "c", fields: { __labels: ["a"] } }),

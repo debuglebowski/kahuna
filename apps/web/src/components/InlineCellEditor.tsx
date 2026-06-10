@@ -1,4 +1,4 @@
-import { type ReactNode, useState } from "react"
+import { type ReactNode, useRef, useState } from "react"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import {
   Select,
@@ -11,7 +11,7 @@ import { LabelChip } from "../components/ui"
 import type { Field, Instance } from "../lib/api"
 import { capitalize, FieldValueCell } from "../lib/fieldDisplay"
 import { type OrgMember, useMembers } from "../lib/members"
-import { cn, initialsOf, showValue } from "../lib/utils"
+import { cn, initialsOf } from "../lib/utils"
 import { DatePicker } from "./DatePicker"
 
 /**
@@ -27,9 +27,12 @@ export const isInlineEditable = (f: Field): boolean =>
 const FORMAT_INPUT_TYPE: Record<string, string> = { email: "email", url: "url", phone: "tel" }
 
 // Borderless editors sized to sit in a cell without shifting its box: same
-// padding as the read display, transparent until focused, inset focus ring.
+// box metrics as the read display, fully transparent at rest, on hover AND
+// focused — no ring, no tint; the caret is the only sign of focus.
+// (focus-visible is no escape hatch here: browsers match it on click for
+// text-entry elements.)
 const INPUT_CLS =
-  "-mx-1 block w-full rounded border-0 bg-transparent px-1 py-0 text-sm leading-5 text-foreground outline-none focus:bg-accent/40 focus:ring-1 focus:ring-inset focus:ring-ring"
+  "-mx-1 block w-full rounded border-0 bg-transparent px-1 py-0 text-sm leading-5 text-foreground outline-none placeholder:text-muted-foreground"
 // Invisible dropdown trigger: no border/bg/padding/margin — just the value + a
 // chevron; options appear on click. Subtle inset ring on keyboard focus only.
 const TRIGGER_CLS =
@@ -56,15 +59,18 @@ function MemberTag({ member }: { member: OrgMember }) {
 }
 
 /** `user` editor: a select of avatar + name rows; the trigger mirrors the picked
- *  member (via SelectValue, like enum). Picking commits (no clearing). */
+ *  member (via SelectValue, like enum). Picking commits; with `allowClear` a
+ *  "—" row commits `null` (the engine drops the value). */
 function UserCellEditor({
   value,
   saving,
+  allowClear,
   onPick,
 }: {
   value: unknown
   saving: boolean
-  onPick: (userId: string) => void
+  allowClear?: boolean
+  onPick: (userId: string | null) => void
 }) {
   const { members, deactivatedSet, isPending } = useMembers()
   const current = typeof value === "string" && value ? value : undefined
@@ -79,13 +85,16 @@ function UserCellEditor({
       value={current}
       disabled={saving}
       onValueChange={(v) => {
-        if (v && v !== current) onPick(v)
+        if (v === "__none") {
+          if (current) onPick(null)
+        } else if (v && v !== current) onPick(v)
       }}
     >
       <SelectTrigger className={TRIGGER_CLS} onClick={(e) => e.stopPropagation()}>
         <SelectValue placeholder="—" />
       </SelectTrigger>
       <SelectContent>
+        {allowClear && current && <SelectItem value="__none">—</SelectItem>}
         {options.length === 0 ? (
           <div className="px-2 py-1.5 text-xs text-muted-foreground">
             {isPending ? "Loading…" : "No members"}
@@ -103,34 +112,39 @@ function UserCellEditor({
 }
 
 /**
- * One editable list cell, rendered to look like the read cell: `enum` shows the
+ * One editable cell, rendered to look like the read cell: `enum` shows the
  * colored chip, `bool` the ✓/✕ icon, `user` the avatar pill, `date` a calendar
  * popover — each interactive. `text`/`number` are click-to-edit (Enter or blur
- * commits, Esc cancels). A blank/invalid input is treated as "no change" — the
- * engine can't clear a typed field, so quick-edit can change but not empty a
- * value (clear it on the detail page instead).
+ * commits, Esc cancels). Without `allowClear` a blank input is "no change"
+ * (list quick-edit); with it, blanking commits an explicit `null` — the
+ * engine's clear — and enum/user/date grow a "—"/Clear affordance. `align`
+ * matches the host: left in list cells, right on the detail page.
  */
 export function EditableCell({
   field,
   instance,
   onSave,
+  align = "left",
+  allowClear = false,
 }: {
   field: Field
   instance: Instance
   onSave: SaveCell
+  align?: "left" | "right"
+  allowClear?: boolean
 }) {
   const stored = instance.state[field.id]
-  const [editing, setEditing] = useState(false)
+  const [focused, setFocused] = useState(false)
   const [draft, setDraft] = useState("")
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState<string | null>(null)
+  const cancelled = useRef(false)
 
   const commit = async (value: unknown) => {
     setSaving(true)
     setErr(null)
     try {
       await onSave(instance, field.id, value)
-      setEditing(false)
     } catch (e) {
       setErr((e as { message?: string })?.message ?? "Couldn't save")
     } finally {
@@ -143,6 +157,7 @@ export function EditableCell({
       title={err ?? undefined}
       className={cn(
         "inline-flex w-full items-center",
+        align === "right" && "justify-end",
         saving && "opacity-50",
         err && "rounded ring-1 ring-destructive",
       )}
@@ -158,7 +173,7 @@ export function EditableCell({
         type="button"
         disabled={saving}
         aria-label={`Toggle ${field.name}`}
-        className="-mx-1 flex items-center rounded px-1 hover:bg-accent/40"
+        className="-mx-1 flex items-center rounded px-1"
         onClick={(e) => {
           e.stopPropagation()
           commit(stored !== true)
@@ -171,11 +186,13 @@ export function EditableCell({
 
   // user — avatar pill in the trigger, avatar rows in the dropdown.
   if (field.kind === "user") {
-    return shell(<UserCellEditor value={stored} saving={saving} onPick={commit} />)
+    return shell(
+      <UserCellEditor value={stored} saving={saving} allowClear={allowClear} onPick={commit} />,
+    )
   }
 
   // enum — the colored chip in the trigger and the dropdown options (value stays
-  // the raw stored option). No "clear" (change-only).
+  // the raw stored option). Clearing (when allowed) commits `null`.
   if (field.kind === "enum") {
     const cur = stored != null && stored !== "" ? String(stored) : undefined
     return shell(
@@ -183,13 +200,16 @@ export function EditableCell({
         value={cur}
         disabled={saving}
         onValueChange={(v) => {
-          if (v !== cur) commit(v)
+          if (v === "__none") {
+            if (cur != null) commit(null)
+          } else if (v !== cur) commit(v)
         }}
       >
         <SelectTrigger className={TRIGGER_CLS} onClick={(e) => e.stopPropagation()}>
           <SelectValue placeholder="—" />
         </SelectTrigger>
         <SelectContent>
+          {allowClear && cur && <SelectItem value="__none">—</SelectItem>}
           {(field.config.options ?? []).map((o) => (
             <SelectItem key={o} value={o}>
               <LabelChip color={field.config.optionColors?.[o] ?? null}>{capitalize(o)}</LabelChip>
@@ -206,69 +226,69 @@ export function EditableCell({
       <DatePicker
         value={typeof stored === "string" ? stored : undefined}
         onChange={(v) => commit(v)}
-        triggerClassName="-mx-1 rounded px-1 leading-5 hover:bg-accent/40 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+        onClear={allowClear && stored != null ? () => commit(null) : undefined}
+        triggerClassName="-mx-1 rounded px-1 leading-5 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
       />,
     )
   }
 
-  // text / number — click to edit; Enter/blur commit, Esc cancels.
-  if (!editing) {
-    const blank = stored === null || stored === undefined || stored === ""
-    return (
-      <button
-        type="button"
-        className="-mx-1 block w-full truncate rounded px-1 text-left leading-5 hover:bg-accent/40"
-        onClick={(e) => {
-          e.stopPropagation()
-          setErr(null)
-          setDraft(stored == null ? "" : String(stored))
-          setEditing(true)
-        }}
-      >
-        {blank ? <span className="text-muted-foreground">—</span> : showValue(stored)}
-      </button>
-    )
-  }
-
-  const finish = () => {
-    const s = draft.trim()
-    // Blank or non-numeric → no change (quick-edit can't clear a typed field).
-    if (s === "" || (field.kind === "number" && !Number.isFinite(Number(s)))) {
-      setEditing(false)
+  // text / number — an always-rendered transparent input, indistinguishable
+  // from the read cell: no element swap on focus, so clicking puts the caret
+  // exactly where you aimed and nothing shifts. While unfocused it mirrors the
+  // stored value (placeholder "—" when blank); focus seeds a draft, blur or
+  // Enter commits it, Esc reverts. `number` is a text input with a decimal
+  // inputMode — native spinners would be a UI change on hover/focus.
+  const display = stored == null ? "" : String(stored)
+  const finish = (raw: string) => {
+    const s = raw.trim()
+    if (s === display.trim()) return
+    if (s === "") {
+      // Blank: with allowClear an explicit null clears the value; otherwise
+      // (list quick-edit) a blank is "no change".
+      if (allowClear && !(stored === null || stored === undefined || stored === "")) commit(null)
       return
     }
-    const wire: unknown = field.kind === "number" ? Number(s) : s
-    if (wire === stored) {
-      setEditing(false)
+    if (field.kind === "number") {
+      const n = Number(s)
+      if (Number.isFinite(n) && n !== stored) commit(n)
       return
     }
-    commit(wire)
+    commit(s)
   }
 
   return shell(
     <input
-      // biome-ignore lint/a11y/noAutofocus: cell enters edit mode on click — focus is expected
-      autoFocus
+      aria-label={field.name}
       type={
-        field.kind === "number"
-          ? "number"
-          : (FORMAT_INPUT_TYPE[field.config.format ?? ""] ?? "text")
+        field.kind === "number" ? "text" : (FORMAT_INPUT_TYPE[field.config.format ?? ""] ?? "text")
       }
-      value={draft}
+      inputMode={field.kind === "number" ? "decimal" : undefined}
+      value={focused ? draft : display}
+      placeholder="—"
       disabled={saving}
       onClick={(e) => e.stopPropagation()}
+      onFocus={() => {
+        setErr(null)
+        setDraft(display)
+        setFocused(true)
+      }}
       onChange={(e) => setDraft(e.target.value)}
-      onBlur={finish}
+      onBlur={() => {
+        setFocused(false)
+        if (!cancelled.current) finish(draft)
+        cancelled.current = false
+      }}
       onKeyDown={(e) => {
         if (e.key === "Enter") {
           e.preventDefault()
-          finish()
+          e.currentTarget.blur()
         } else if (e.key === "Escape") {
           e.preventDefault()
-          setEditing(false)
+          cancelled.current = true
+          e.currentTarget.blur()
         }
       }}
-      className={INPUT_CLS}
+      className={cn(INPUT_CLS, align === "right" && "text-right")}
     />,
   )
 }

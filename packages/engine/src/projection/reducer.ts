@@ -21,6 +21,14 @@ export interface FoldState {
   readonly publishedAt: Date | null
 }
 
+/** An explicit `null` field value means "clear" — the key is dropped from the
+ *  projected state rather than stored. Replay-safe: nulls only entered payloads
+ *  once validation started accepting them, and they fold to the same deletion. */
+const dropNulls = (state: Record<string, unknown>): InstanceState => {
+  for (const [k, v] of Object.entries(state)) if (v === null) delete state[k]
+  return state
+}
+
 /**
  * THE pure reducer — the single place instance state is computed. Both the
  * incremental write path (InstanceService) and the rebuild/time-travel path
@@ -46,7 +54,7 @@ export const applyEvent = (
     // pre-versioning instances replay unchanged.
     const versionStatus = p.versionStatus ?? "published"
     return Either.right({
-      state: { ...p.fields },
+      state: dropNulls({ ...p.fields }),
       version: 0,
       archivedAt: null,
       versionStatus,
@@ -91,7 +99,7 @@ export const applyEvent = (
       // (which knows `versioningEnabled`) — NOT here, because a non-versioned
       // instance is also 'published' yet must stay editable.
       return Either.right({
-        state: { ...acc.state, ...p.patch },
+        state: dropNulls({ ...acc.state, ...p.patch }),
         version: acc.version + 1,
         archivedAt: null,
         versionStatus: acc.versionStatus,

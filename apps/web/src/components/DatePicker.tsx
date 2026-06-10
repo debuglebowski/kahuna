@@ -12,12 +12,15 @@ import { cn } from "../lib/utils"
 export function DatePicker({
   value,
   onChange,
+  onClear,
   triggerClassName,
   placeholder = "—",
   align = "start",
 }: {
   value?: string
   onChange: (value: string) => void
+  /** When provided, the popover gets a "Clear" footer that calls it. */
+  onClear?: () => void
   triggerClassName?: string
   placeholder?: ReactNode
   align?: "start" | "center" | "end"
@@ -53,6 +56,20 @@ export function DatePicker({
           }}
           initialFocus
         />
+        {onClear && (
+          <div className="border-t border-border p-1">
+            <button
+              type="button"
+              className="w-full rounded px-2 py-1 text-sm text-muted-foreground hover:bg-accent"
+              onClick={() => {
+                onClear()
+                setOpen(false)
+              }}
+            >
+              Clear
+            </button>
+          </div>
+        )}
       </PopoverContent>
     </Popover>
   )
