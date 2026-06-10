@@ -33,6 +33,7 @@ export function WidgetCanvas({
   cIndex,
   conceptsLoaded = true,
   readOnly = false,
+  implicitConceptId,
   onStop,
   onEdit,
   onRemove,
@@ -44,16 +45,23 @@ export function WidgetCanvas({
    *  "concept unavailable" tile so it never flashes on first paint. */
   conceptsLoaded?: boolean
   readOnly?: boolean
+  /** Per-concept summary mode: widgets that omit `conceptId` resolve to this. */
+  implicitConceptId?: string
   onStop?: (layout: Layout[]) => void
   onEdit?: (id: string) => void
   onRemove?: (id: string) => void
 }) {
-  const render = (w: DashboardWidget) => {
-    const data = w.conceptId ? instData[w.conceptId] : undefined
-    const concept = w.conceptId ? cIndex.get(w.conceptId) : undefined
+  const conceptOf = (w: DashboardWidget): string | undefined => w.conceptId ?? implicitConceptId
+  const render = (w0: DashboardWidget) => {
+    const cid = conceptOf(w0)
+    // In per-concept mode, fill the implicit concept in so each widget's own
+    // `conceptId` checks (and trend/activity scoping) resolve to it.
+    const w = (cid && !w0.conceptId ? { ...w0, conceptId: cid } : w0) as DashboardWidget
+    const data = cid ? instData[cid] : undefined
+    const concept = cid ? cIndex.get(cid) : undefined
     // Dangling ref: a concept was set but no longer exists (archived/deleted).
     // Show an honest tile rather than the "pick a concept" unconfigured state.
-    if (w.conceptId && conceptsLoaded && !concept)
+    if (cid && conceptsLoaded && !concept)
       return (
         <p className="text-sm text-muted-foreground">
           Concept unavailable — it may have been deleted.

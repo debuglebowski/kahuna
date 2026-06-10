@@ -525,6 +525,8 @@ export interface DashboardBody {
   /** Grid columns (default 12) and row height in px. Forward-compat. */
   readonly cols?: number
   readonly rowHeight?: number
+  /** Set on a per-concept summary board (resolved against that concept). */
+  readonly scopeConceptId?: string | null
 }
 export interface Dashboard {
   readonly id: Id

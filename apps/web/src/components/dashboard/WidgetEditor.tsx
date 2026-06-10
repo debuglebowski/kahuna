@@ -17,18 +17,22 @@ import { Button, Field as FieldRow, Input, Modal } from "../ui"
 export function WidgetEditor({
   widget,
   concepts,
+  implicitConceptId,
   onSave,
   onClose,
 }: {
   widget: DashboardWidget
   concepts: readonly Concept[]
+  /** Per-concept summary mode: the concept is fixed, so hide the picker and load
+   *  this concept's fields for the per-type config. */
+  implicitConceptId?: string
   onSave: (widget: DashboardWidget) => void
   onClose: () => void
 }) {
   const [draft, setDraft] = useState<DashboardWidget>(widget)
   const labelsQ = useQuery({ queryKey: ["labels"], queryFn: () => api.listLabels() })
   const labels = labelsQ.data ?? []
-  const conceptId = "conceptId" in draft ? (draft.conceptId ?? "") : ""
+  const conceptId = implicitConceptId ?? ("conceptId" in draft ? (draft.conceptId ?? "") : "")
   const fields = useFields(conceptId)
   const scalarFields = (fields.data ?? []).filter((f) => f.kind !== "relation" && f.kind !== "file")
   const numberFields = (fields.data ?? []).filter((f) => f.kind === "number" || f.kind === "money")
@@ -48,24 +52,26 @@ export function WidgetEditor({
           />
         </FieldRow>
 
-        <FieldRow label="Concept">
-          <Select
-            value={conceptId || "__none"}
-            onValueChange={(v) => patch({ conceptId: v === "__none" ? null : v })}
-          >
-            <SelectTrigger className="w-full">
-              <SelectValue placeholder="Select a concept…" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__none">Select a concept…</SelectItem>
-              {concepts.map((c) => (
-                <SelectItem key={c.id} value={c.id}>
-                  {c.pluralName || c.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </FieldRow>
+        {!implicitConceptId && (
+          <FieldRow label="Concept">
+            <Select
+              value={conceptId || "__none"}
+              onValueChange={(v) => patch({ conceptId: v === "__none" ? null : v })}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Select a concept…" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none">Select a concept…</SelectItem>
+                {concepts.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>
+                    {c.pluralName || c.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </FieldRow>
+        )}
 
         {draft.type === "metric" && (
           <div className="grid grid-cols-2 gap-3">

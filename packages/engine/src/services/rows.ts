@@ -265,7 +265,12 @@ const KNOWN_WIDGETS = new Set(["metric", "list", "breakdown", "attention", "tren
  *  garbage / drift): keep only widgets with a known `type` and a `layout`. */
 const toDashboardBody = (raw: unknown): DashboardBody => {
   if (!raw || typeof raw !== "object") return { widgets: [] }
-  const r = raw as { widgets?: unknown; cols?: unknown; rowHeight?: unknown }
+  const r = raw as {
+    widgets?: unknown
+    cols?: unknown
+    rowHeight?: unknown
+    scopeConceptId?: unknown
+  }
   const widgets = Array.isArray(r.widgets)
     ? r.widgets.filter(
         (x): x is DashboardWidget =>
@@ -279,6 +284,7 @@ const toDashboardBody = (raw: unknown): DashboardBody => {
     widgets,
     ...(typeof r.cols === "number" ? { cols: r.cols } : {}),
     ...(typeof r.rowHeight === "number" ? { rowHeight: r.rowHeight } : {}),
+    ...(typeof r.scopeConceptId === "string" ? { scopeConceptId: r.scopeConceptId } : {}),
   }
 }
 

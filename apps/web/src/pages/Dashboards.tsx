@@ -57,7 +57,8 @@ export function Dashboards() {
   })
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const selected = useMemo(() => {
-    const all = dashboards ?? []
+    // Per-concept summary boards live on their ConceptView tab, not the switcher.
+    const all = (dashboards ?? []).filter((d) => !d.body.scopeConceptId)
     if (selectedId) return all.find((d) => d.id === selectedId) ?? all[0] ?? null
     // Default landing: the lowest-position org-shared dashboard, else the first.
     return (
@@ -179,12 +180,14 @@ export function Dashboards() {
             <SelectValue placeholder="Dashboard" />
           </SelectTrigger>
           <SelectContent>
-            {(dashboards ?? []).map((d) => (
-              <SelectItem key={d.id} value={d.id}>
-                {d.name}
-                {d.ownerId ? " · personal" : ""}
-              </SelectItem>
-            ))}
+            {(dashboards ?? [])
+              .filter((d) => !d.body.scopeConceptId)
+              .map((d) => (
+                <SelectItem key={d.id} value={d.id}>
+                  {d.name}
+                  {d.ownerId ? " · personal" : ""}
+                </SelectItem>
+              ))}
           </SelectContent>
         </Select>
 

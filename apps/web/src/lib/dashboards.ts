@@ -51,9 +51,27 @@ export const applyLayouts = (body: DashboardBody, layout: readonly GridItem[]): 
   }
 }
 
-/** Bottom-most row occupied by existing widgets — where a new one is appended. */
-const nextRow = (body: DashboardBody): number =>
-  body.widgets.reduce((max, w) => Math.max(max, w.layout.y + w.layout.h), 0)
+const overlaps = (
+  a: { x: number; y: number; w: number; h: number },
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+): boolean => x < a.x + a.w && x + w > a.x && y < a.y + a.h && y + h > a.y
+
+/** First free slot for a `w`×`h` tile, scanning left-to-right then top-to-bottom
+ *  — so new widgets flow across the row and wrap, instead of piling at x:0. */
+const nextSlot = (body: DashboardBody, w: number, h: number): { x: number; y: number } => {
+  const cols = body.cols ?? GRID_COLS
+  const ws = body.widgets.map((wi) => wi.layout)
+  const maxY = ws.reduce((m, l) => Math.max(m, l.y + l.h), 0)
+  for (let y = 0; y <= maxY; y++) {
+    for (let x = 0; x + w <= cols; x++) {
+      if (!ws.some((l) => overlaps(l, x, y, w, h))) return { x, y }
+    }
+  }
+  return { x: 0, y: maxY }
+}
 
 export const addWidget = (body: DashboardBody, widget: DashboardWidget): DashboardBody => ({
   ...body,
@@ -88,10 +106,11 @@ const DEFAULT_SIZE: Record<DashboardWidget["type"], { w: number; h: number }> = 
 /** A blank widget of the given type, appended at the bottom of the grid with no
  *  concept set (the editor fills in the concept + config). */
 export const newWidget = (body: DashboardBody, type: DashboardWidget["type"]): DashboardWidget => {
+  const size = DEFAULT_SIZE[type]
   const base = {
     id: crypto.randomUUID(),
     title: null,
-    layout: { x: 0, y: nextRow(body), ...DEFAULT_SIZE[type] },
+    layout: { ...nextSlot(body, size.w, size.h), ...size },
     conceptId: null,
   } as const
   switch (type) {
