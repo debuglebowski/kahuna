@@ -1,8 +1,10 @@
 import { useLiveQuery } from "@tanstack/react-db"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { ArchiveRestore, Plus, Trash2 } from "lucide-react"
-import { useMemo, useState } from "react"
-import { useNavigate, useParams } from "react-router-dom"
+import { ArchiveRestore, Plus, Search, SlidersHorizontal, Trash2 } from "lucide-react"
+import { useEffect, useMemo, useState } from "react"
+import { useNavigate, useParams, useSearchParams } from "react-router-dom"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import {
   Table,
   TableBody,
@@ -11,8 +13,10 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { FilterChips, FilterTrigger } from "../components/FilterBar"
+import { EditableCell, isInlineEditable } from "../components/InlineCellEditor"
 import { Button, Card, ConfirmDialog, IconButton, Input, Modal, Spinner } from "../components/ui"
-import { api, type Instance } from "../lib/api"
+import { api, type Instance, type SidebarCondition } from "../lib/api"
 import { useSession } from "../lib/auth-client"
 import {
   conceptsCollection,
@@ -20,8 +24,9 @@ import {
   KEY,
   useRegisterCollection,
 } from "../lib/collections"
+import { type ConditionMatch, matchInstance } from "../lib/conditions"
 import { FieldValueCell } from "../lib/fieldDisplay"
-import { showValue } from "../lib/utils"
+import { cn, showValue } from "../lib/utils"
 import { InstanceForm } from "./InstanceForm"
 import { isAdminRole, useFullOrg } from "./settings/SettingsLayout"
 
@@ -30,8 +35,40 @@ export function ConceptView() {
   const { id = "" } = useParams()
   const navigate = useNavigate()
   const [filter, setFilter] = useState("")
+  const [searchOpen, setSearchOpen] = useState(false)
   const [sortKey, setSortKey] = useState<string | null>(null)
   const [asc, setAsc] = useState(true)
+
+  // Advanced filters live in the URL (`f` = conditions JSON, `fm` = any) so a
+  // filtered list is shareable/back-button friendly and survives a reload.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const conditions = useMemo<SidebarCondition[]>(() => {
+    const raw = searchParams.get("f")
+    if (!raw) return []
+    try {
+      const parsed: unknown = JSON.parse(raw)
+      if (!Array.isArray(parsed)) return []
+      return parsed.filter(
+        (c): c is SidebarCondition =>
+          !!c && typeof c === "object" && typeof c.field === "string" && typeof c.op === "string",
+      )
+    } catch {
+      return []
+    }
+  }, [searchParams])
+  const match: ConditionMatch = searchParams.get("fm") === "any" ? "any" : "all"
+  const setFilters = (conds: SidebarCondition[], m: ConditionMatch) =>
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        if (conds.length > 0) next.set("f", JSON.stringify(conds))
+        else next.delete("f")
+        if (m === "any" && conds.length > 0) next.set("fm", "any")
+        else next.delete("fm")
+        return next
+      },
+      { replace: true },
+    )
 
   // Resolve the display name from the (live) concepts collection so a rename
   // reflects immediately while the id-based route stays stable.
@@ -53,6 +90,7 @@ export function ConceptView() {
     queryFn: () => api.listFields(id),
     enabled: !!id,
   })
+  const labelsQ = useQuery({ queryKey: ["labels"], queryFn: () => api.listLabels() })
   const create = useMutation({
     mutationFn: (values: Record<string, unknown>) => api.createInstance(id, values),
     onSuccess: (created) => {
@@ -74,6 +112,30 @@ export function ConceptView() {
   const [showArchived, setShowArchived] = useState(false)
   // Delete pops a confirm dialog; restore is immediate.
   const [dialog, setDialog] = useState<{ kind: "delete"; inst: Instance } | null>(null)
+
+  // Quick edit: inline-edit cells in the list, sticky per concept. It's a mode
+  // (not a one-off pref) so it gets an active cue in the toolbar and suppresses
+  // row-click→detail — the # cell opens detail instead.
+  const [quickEdit, setQuickEdit] = useState(false)
+  useEffect(() => {
+    setQuickEdit(localStorage.getItem(`kqe:${id}`) === "1")
+  }, [id])
+  const toggleQuickEdit = (v: boolean) => {
+    setQuickEdit(v)
+    try {
+      localStorage.setItem(`kqe:${id}`, v ? "1" : "0")
+    } catch {
+      // ignore (private mode / storage disabled)
+    }
+  }
+  // One field saved per edit; refetch (success or fail) reconciles value + version.
+  const onSaveCell = async (inst: Instance, fieldId: string, value: unknown) => {
+    try {
+      await api.updateInstance(inst.id, inst.version, { [fieldId]: value })
+    } finally {
+      collection.utils.refetch()
+    }
+  }
 
   // Archived items load on demand, separate from the live collection.
   const archivedQ = useQuery({
@@ -121,8 +183,10 @@ export function ConceptView() {
     return "this item"
   }
 
+  const me = session?.user.id ?? null
   const rows = useMemo(() => {
     let r = [...(instances.data ?? [])]
+    if (conditions.length > 0) r = r.filter((i) => matchInstance(i, conditions, { match, me }))
     if (filter) {
       const f = filter.toLowerCase()
       r = r.filter((i) => JSON.stringify(i.state).toLowerCase().includes(f))
@@ -135,33 +199,102 @@ export function ConceptView() {
       })
     }
     return r
-  }, [instances.data, filter, sortKey, asc])
+  }, [instances.data, conditions, match, me, filter, sortKey, asc])
 
   return (
     <>
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="text-2xl font-bold tracking-tight text-foreground">{name}</h2>
-          <div className="flex items-center gap-3">
-            <Button
-              variant="link"
-              onClick={() => setShowArchived((v) => !v)}
-              className="h-auto whitespace-nowrap p-0 text-xs font-normal text-muted-foreground hover:text-foreground"
-            >
-              {showArchived ? "Hide" : "Show"} archived
-            </Button>
-            <Input
-              placeholder="filter…"
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
-              className="w-48"
+          <div className="flex items-center gap-1.5">
+            {searchOpen ? (
+              <Input
+                autoFocus
+                placeholder="Search…"
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+                onBlur={() => {
+                  if (!filter) setSearchOpen(false)
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") {
+                    setFilter("")
+                    setSearchOpen(false)
+                  }
+                }}
+                className="h-8 w-44"
+              />
+            ) : (
+              <IconButton aria-label="Search" onClick={() => setSearchOpen(true)}>
+                <Search size={15} />
+              </IconButton>
+            )}
+            <FilterTrigger
+              conceptId={id}
+              fields={columns}
+              labels={labelsQ.data ?? []}
+              instances={instances.data ?? []}
+              conditions={conditions}
+              match={match}
+              onChange={setFilters}
             />
-            <Button onClick={() => setAdding(true)}>
+            <Popover>
+              <PopoverTrigger asChild>
+                <IconButton
+                  aria-label="Display options"
+                  className={cn(quickEdit && "text-primary ring-1 ring-primary/40")}
+                >
+                  <SlidersHorizontal size={15} />
+                </IconButton>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-56 p-3">
+                <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  Display
+                </div>
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="display-show-archived"
+                    checked={showArchived}
+                    onCheckedChange={(v) => setShowArchived(v === true)}
+                  />
+                  <label
+                    htmlFor="display-show-archived"
+                    className="cursor-pointer text-sm text-foreground"
+                  >
+                    Show archived
+                  </label>
+                </div>
+                <div className="mt-2 flex items-center gap-2">
+                  <Checkbox
+                    id="display-quick-edit"
+                    checked={quickEdit}
+                    onCheckedChange={(v) => toggleQuickEdit(v === true)}
+                  />
+                  <label
+                    htmlFor="display-quick-edit"
+                    className="cursor-pointer text-sm text-foreground"
+                  >
+                    Quick edit
+                  </label>
+                </div>
+              </PopoverContent>
+            </Popover>
+            <Button onClick={() => setAdding(true)} className="ml-1.5">
               <Plus size={15} />
               Create
             </Button>
           </div>
         </div>
+
+        <FilterChips
+          conceptId={id}
+          fields={columns}
+          labels={labelsQ.data ?? []}
+          instances={instances.data ?? []}
+          conditions={conditions}
+          match={match}
+          onChange={setFilters}
+        />
 
         <Card>
           {instances.isLoading ? (
@@ -195,15 +328,33 @@ export function ConceptView() {
                 {rows.map((r, i) => (
                   <TableRow
                     key={r.id}
-                    className="cursor-pointer"
-                    onClick={() => navigate(`/instances/${r.id}`)}
+                    className={cn(!quickEdit && "cursor-pointer")}
+                    onClick={quickEdit ? undefined : () => navigate(`/instances/${r.id}`)}
                   >
                     <TableCell className="px-6 tabular-nums text-muted-foreground">
-                      {i + 1}
+                      {quickEdit ? (
+                        <button
+                          type="button"
+                          title="Open"
+                          className="tabular-nums hover:text-foreground hover:underline"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            navigate(`/instances/${r.id}`)
+                          }}
+                        >
+                          {i + 1}
+                        </button>
+                      ) : (
+                        i + 1
+                      )}
                     </TableCell>
                     {columns.map((c) => (
                       <TableCell key={c.id} className="px-6 text-foreground">
-                        <FieldValueCell field={c} value={r.state[c.id]} />
+                        {quickEdit && isInlineEditable(c) ? (
+                          <EditableCell field={c} instance={r} onSave={onSaveCell} />
+                        ) : (
+                          <FieldValueCell field={c} value={r.state[c.id]} />
+                        )}
                       </TableCell>
                     ))}
                   </TableRow>
