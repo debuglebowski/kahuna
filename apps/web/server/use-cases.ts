@@ -3,6 +3,8 @@ import {
   AttachmentService,
   ComputedFields,
   ConceptService,
+  type DashboardBody,
+  DashboardService,
   type EngineServices,
   EventStore,
   type FieldConfig,
@@ -235,6 +237,33 @@ export const deleteView = (id: string): UC<unknown> =>
 export const reorderViews = (
   orders: ReadonlyArray<{ readonly id: string; readonly position: number }>,
 ): UC<unknown> => Effect.flatMap(SidebarViewService, (s) => s.reorder(orders))
+
+// ── dashboards (configurable widget canvases) ──────────────────────────────────
+
+export const listDashboards: UC<unknown> = Effect.flatMap(DashboardService, (s) => s.list())
+
+export const createDashboard = (input: {
+  readonly name: string
+  readonly icon?: string | null
+  readonly scope: "personal" | "org"
+  readonly body: DashboardBody
+}): UC<unknown> => Effect.flatMap(DashboardService, (s) => s.create(input))
+
+export const updateDashboard = (input: {
+  readonly id: string
+  readonly name?: string
+  readonly icon?: string | null
+  readonly hidden?: boolean
+  readonly scope?: "personal" | "org"
+  readonly body?: DashboardBody
+}): UC<unknown> => Effect.flatMap(DashboardService, (s) => s.update(input))
+
+export const deleteDashboard = (id: string): UC<unknown> =>
+  Effect.flatMap(DashboardService, (s) => s.remove(id))
+
+export const reorderDashboards = (
+  orders: ReadonlyArray<{ readonly id: string; readonly position: number }>,
+): UC<unknown> => Effect.flatMap(DashboardService, (s) => s.reorder(orders))
 
 // ── concept graph layout (shared canvas positions) ─────────────────────────────
 

@@ -1,6 +1,9 @@
 import type {
   Attachment,
   Concept,
+  Dashboard,
+  DashboardBody,
+  DashboardWidget,
   EngineEvent,
   EventPayload,
   Field,
@@ -198,6 +201,57 @@ export const toSidebarView = (r: SidebarViewRow): SidebarView => ({
   position: Number(r.position),
   hidden: r.hidden,
   body: toViewBody(r.body),
+  createdAt: r.created_at,
+  updatedAt: r.updated_at,
+})
+
+export interface DashboardRow {
+  readonly id: string
+  readonly org_id: string
+  readonly owner_id: string | null
+  readonly name: string
+  readonly icon: string | null
+  readonly position: number | string
+  readonly hidden: boolean
+  readonly body: unknown
+  readonly created_at: Date
+  readonly updated_at: Date
+}
+
+/** Widget types this server build knows about. Unknown types are dropped on read
+ *  so a newer client's widget can't corrupt an older server's view of the body. */
+const KNOWN_WIDGETS = new Set(["metric", "list", "breakdown", "attention", "trend", "activity"])
+
+/** Coerce a jsonb body into a well-formed dashboard body (defensive against
+ *  garbage / drift): keep only widgets with a known `type` and a `layout`. */
+const toDashboardBody = (raw: unknown): DashboardBody => {
+  if (!raw || typeof raw !== "object") return { widgets: [] }
+  const r = raw as { widgets?: unknown; cols?: unknown; rowHeight?: unknown }
+  const widgets = Array.isArray(r.widgets)
+    ? r.widgets.filter(
+        (x): x is DashboardWidget =>
+          !!x &&
+          typeof x === "object" &&
+          KNOWN_WIDGETS.has((x as { type?: string }).type ?? "") &&
+          !!(x as { layout?: unknown }).layout,
+      )
+    : []
+  return {
+    widgets,
+    ...(typeof r.cols === "number" ? { cols: r.cols } : {}),
+    ...(typeof r.rowHeight === "number" ? { rowHeight: r.rowHeight } : {}),
+  }
+}
+
+export const toDashboard = (r: DashboardRow): Dashboard => ({
+  id: r.id,
+  orgId: r.org_id,
+  ownerId: r.owner_id,
+  name: r.name,
+  icon: r.icon,
+  position: Number(r.position),
+  hidden: r.hidden,
+  body: toDashboardBody(r.body),
   createdAt: r.created_at,
   updatedAt: r.updated_at,
 })

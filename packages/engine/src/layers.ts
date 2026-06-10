@@ -2,6 +2,7 @@ import { Layer } from "effect"
 import { AttachmentService } from "./services/AttachmentService"
 import { ComputedFields } from "./services/ComputedFields"
 import { ConceptService } from "./services/ConceptService"
+import { DashboardService } from "./services/DashboardService"
 import { EventStore } from "./services/EventStore"
 import { FieldService } from "./services/FieldService"
 import { GraphLayoutService } from "./services/GraphLayoutService"
@@ -26,6 +27,7 @@ export const EngineLive = Layer.mergeAll(
   AttachmentService.Default,
   LabelService.Default,
   SidebarViewService.Default,
+  DashboardService.Default,
   GraphLayoutService.Default,
 )
 
@@ -41,4 +43,5 @@ export type EngineServices =
   | AttachmentService
   | LabelService
   | SidebarViewService
+  | DashboardService
   | GraphLayoutService

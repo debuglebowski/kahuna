@@ -24,6 +24,7 @@ export { applyEvent, type FoldState } from "./projection/reducer"
 export { AttachmentService, type UploadInput } from "./services/AttachmentService"
 export { ComputedFields } from "./services/ComputedFields"
 export { ConceptService } from "./services/ConceptService"
+export { DashboardService } from "./services/DashboardService"
 export {
   type AppendInput,
   EVENT_CHANNEL,

@@ -284,6 +284,108 @@ export const SidebarView = Schema.Struct({
 })
 export type SidebarView = typeof SidebarView.Type
 
+// ── dashboards (configurable widget canvases) ──────────────────────────────────
+// A Dashboard is a grid canvas of widgets. The whole layout is `DashboardBody`
+// and is resolved CLIENT-SIDE against the live concept/instance/event collections
+// — the server only persists/serves the document. The widget union is APPEND-ONLY
+// (a closed union breaks old clients on reshape); add new widget types at the end.
+
+/** A widget's placement on the grid canvas (react-grid-layout coords). */
+const WidgetLayout = Schema.Struct({
+  x: Schema.Number,
+  y: Schema.Number,
+  w: Schema.Number,
+  h: Schema.Number,
+})
+
+/** Fields shared by every widget. */
+const widgetBase = {
+  id: Schema.String,
+  title: Schema.NullOr(Schema.String),
+  icon: Schema.optional(Schema.NullOr(Schema.String)),
+  layout: WidgetLayout,
+}
+/** `conceptId` is optional on every concept-scoped widget so the same body can
+ *  render in per-concept context (implicit conceptId) later. */
+const ConceptScoped = { conceptId: Schema.optional(Schema.NullOr(Schema.String)) }
+
+const MetricWidget = Schema.Struct({
+  ...widgetBase,
+  ...ConceptScoped,
+  type: Schema.Literal("metric"),
+  conditions: Schema.Array(SidebarCondition),
+  agg: Schema.Literal("count", "sum", "avg"),
+  field: Schema.optional(Schema.NullOr(Schema.String)),
+})
+const ListWidget = Schema.Struct({
+  ...widgetBase,
+  ...ConceptScoped,
+  type: Schema.Literal("list"),
+  conditions: Schema.Array(SidebarCondition),
+  orderBy: Schema.optional(Schema.NullOr(Schema.String)),
+  limit: Schema.optional(Schema.NullOr(Schema.Number)),
+  columns: Schema.optional(Schema.Array(Schema.String)),
+})
+const BreakdownWidget = Schema.Struct({
+  ...widgetBase,
+  ...ConceptScoped,
+  type: Schema.Literal("breakdown"),
+  conditions: Schema.Array(SidebarCondition),
+  groupBy: Schema.String,
+  chart: Schema.Literal("bar", "pie"),
+})
+const AttentionWidget = Schema.Struct({
+  ...widgetBase,
+  ...ConceptScoped,
+  type: Schema.Literal("attention"),
+  computedField: Schema.optional(Schema.NullOr(Schema.String)),
+  bands: Schema.optional(Schema.Array(Schema.Literal("cooling", "cold", "heating", "steady"))),
+  limit: Schema.optional(Schema.NullOr(Schema.Number)),
+})
+const TrendWidget = Schema.Struct({
+  ...widgetBase,
+  ...ConceptScoped,
+  type: Schema.Literal("trend"),
+  eventTypes: Schema.optional(Schema.Array(Schema.String)),
+  bucket: Schema.Literal("day", "week"),
+  since: Schema.Literal("7d", "30d", "90d"),
+})
+const ActivityWidget = Schema.Struct({
+  ...widgetBase,
+  ...ConceptScoped,
+  type: Schema.Literal("activity"),
+  limit: Schema.optional(Schema.NullOr(Schema.Number)),
+})
+
+export const DashboardWidget = Schema.Union(
+  MetricWidget,
+  ListWidget,
+  BreakdownWidget,
+  AttentionWidget,
+  TrendWidget,
+  ActivityWidget,
+)
+export type DashboardWidget = typeof DashboardWidget.Type
+
+export const DashboardBody = Schema.Struct({
+  widgets: Schema.Array(DashboardWidget),
+  cols: Schema.optional(Schema.Number),
+  rowHeight: Schema.optional(Schema.Number),
+})
+export type DashboardBody = typeof DashboardBody.Type
+
+export const Dashboard = Schema.Struct({
+  id: Schema.String,
+  /** null = org-shared (any member); non-null = personal to that user. */
+  ownerId: Schema.NullOr(Schema.String),
+  name: Schema.String,
+  icon: Schema.NullOr(Schema.String),
+  position: Schema.Number,
+  hidden: Schema.Boolean,
+  body: DashboardBody,
+})
+export type Dashboard = typeof Dashboard.Type
+
 /** One serializable error for the whole API; `code` mirrors the old HTTP codes. */
 export class RpcError extends Schema.TaggedError<RpcError>()("RpcError", {
   code: Schema.String,
@@ -520,6 +622,41 @@ export class KingsmakerRpcs extends RpcGroup.make(
       orders: Schema.Array(Schema.Struct({ id: Schema.String, position: Schema.Number })),
     },
     success: Schema.Array(SidebarView),
+    error: RpcError,
+  }),
+  Rpc.make("listDashboards", { success: Schema.Array(Dashboard), error: RpcError }),
+  Rpc.make("createDashboard", {
+    payload: {
+      name: Schema.String,
+      icon: Schema.optional(Schema.NullOr(Schema.String)),
+      scope: Schema.Literal("personal", "org"),
+      body: DashboardBody,
+    },
+    success: Dashboard,
+    error: RpcError,
+  }),
+  Rpc.make("updateDashboard", {
+    payload: {
+      id: Schema.String,
+      name: Schema.optional(Schema.String),
+      icon: Schema.optional(Schema.NullOr(Schema.String)),
+      hidden: Schema.optional(Schema.Boolean),
+      scope: Schema.optional(Schema.Literal("personal", "org")),
+      body: Schema.optional(DashboardBody),
+    },
+    success: Dashboard,
+    error: RpcError,
+  }),
+  Rpc.make("deleteDashboard", {
+    payload: { id: Schema.String },
+    success: Dashboard,
+    error: RpcError,
+  }),
+  Rpc.make("reorderDashboards", {
+    payload: {
+      orders: Schema.Array(Schema.Struct({ id: Schema.String, position: Schema.Number })),
+    },
+    success: Schema.Array(Dashboard),
     error: RpcError,
   }),
 ) {}

@@ -5,6 +5,7 @@ import { Effect, Layer } from "effect"
 import {
   type Concept,
   type ConceptGraph,
+  type Dashboard,
   type Field,
   type GraphLayout,
   type Instance,
@@ -248,6 +249,15 @@ const HandlersLive = ServerRpcs.toLayer({
     as<SidebarView>(uc.updateView({ id, name, icon, hidden, scope, body })),
   deleteView: ({ id }) => as<SidebarView>(uc.deleteView(id)),
   reorderViews: ({ orders }) => as<ReadonlyArray<SidebarView>>(uc.reorderViews(orders)),
+  // Dashboards: same model as views — any member may create/edit/reorder/toggle
+  // (no admin gate); the engine service blocks touching another user's personal one.
+  listDashboards: () => as<ReadonlyArray<Dashboard>>(uc.listDashboards),
+  createDashboard: ({ name, icon, scope, body }) =>
+    as<Dashboard>(uc.createDashboard({ name, icon, scope, body })),
+  updateDashboard: ({ id, name, icon, hidden, scope, body }) =>
+    as<Dashboard>(uc.updateDashboard({ id, name, icon, hidden, scope, body })),
+  deleteDashboard: ({ id }) => as<Dashboard>(uc.deleteDashboard(id)),
+  reorderDashboards: ({ orders }) => as<ReadonlyArray<Dashboard>>(uc.reorderDashboards(orders)),
 }).pipe(Layer.provide(EngineBase))
 
 // HttpRouter.DefaultServices (HttpPlatform | Etag | FileSystem | Path) — pure

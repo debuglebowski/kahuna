@@ -307,6 +307,110 @@ export interface SidebarView {
   readonly updatedAt: Date
 }
 
+// ── dashboards (configurable widget canvases) ──────────────────────────────────
+// Same contract as SidebarView: the `DashboardBody` is OPAQUE to the engine
+// (never read or filtered server-side); the web client resolves each widget
+// against the live concept/instance/event collections. Reuses `SidebarCondition`
+// for filters. These mirror the contract's `Dashboard*` schemas (kept separate so
+// the contract stays engine-free). The widget union is APPEND-ONLY — never reshape
+// an existing widget; add new types at the end.
+
+/** A widget's placement on the grid canvas (react-grid-layout coords). */
+export interface WidgetLayout {
+  readonly x: number
+  readonly y: number
+  readonly w: number
+  readonly h: number
+}
+/** Fields shared by every widget. `conceptId` is OPTIONAL so the same body can
+ *  render in per-concept context (implicit conceptId) later. */
+interface WidgetBase {
+  readonly id: string
+  readonly title: string | null
+  readonly icon?: string | null
+  readonly layout: WidgetLayout
+}
+/** Metric — one number: count of matching instances, or sum/avg of a field. */
+export interface MetricWidget extends WidgetBase {
+  readonly type: "metric"
+  readonly conceptId?: string | null
+  readonly conditions: ReadonlyArray<SidebarCondition>
+  readonly agg: "count" | "sum" | "avg"
+  /** Field id to sum/avg (ignored for count). */
+  readonly field?: string | null
+}
+/** List/Table — instances of a concept matching a filter, rendered as a table. */
+export interface ListWidget extends WidgetBase {
+  readonly type: "list"
+  readonly conceptId?: string | null
+  readonly conditions: ReadonlyArray<SidebarCondition>
+  readonly orderBy?: string | null
+  readonly limit?: number | null
+  /** Field ids to show as columns; empty/absent = concept default columns. */
+  readonly columns?: ReadonlyArray<string>
+}
+/** Breakdown — group instances by an enum field or by label → bar/pie chart. */
+export interface BreakdownWidget extends WidgetBase {
+  readonly type: "breakdown"
+  readonly conceptId?: string | null
+  readonly conditions: ReadonlyArray<SidebarCondition>
+  /** A field id (enum) to group by, or `__labels` to group by label. */
+  readonly groupBy: string
+  readonly chart: "bar" | "pie"
+}
+/** Attention — decay/momentum band rollup + a stale-queue list. */
+export interface AttentionWidget extends WidgetBase {
+  readonly type: "attention"
+  readonly conceptId?: string | null
+  /** Computed field id (decay or momentum). Absent = first decay field found. */
+  readonly computedField?: string | null
+  /** Bands to surface in the stale queue, in order. */
+  readonly bands?: ReadonlyArray<"cooling" | "cold" | "heating" | "steady">
+  readonly limit?: number | null
+}
+/** Chart/Trend — time-series of events bucketed per day/week. */
+export interface TrendWidget extends WidgetBase {
+  readonly type: "trend"
+  /** Scope the event stream to one concept; absent = whole org. */
+  readonly conceptId?: string | null
+  /** Which event types to count; absent = created only. */
+  readonly eventTypes?: ReadonlyArray<string>
+  readonly bucket: "day" | "week"
+  readonly since: "7d" | "30d" | "90d"
+}
+/** Activity feed — recent events as a list. */
+export interface ActivityWidget extends WidgetBase {
+  readonly type: "activity"
+  readonly conceptId?: string | null
+  readonly limit?: number | null
+}
+export type DashboardWidget =
+  | MetricWidget
+  | ListWidget
+  | BreakdownWidget
+  | AttentionWidget
+  | TrendWidget
+  | ActivityWidget
+export interface DashboardBody {
+  readonly widgets: ReadonlyArray<DashboardWidget>
+  /** Grid columns (default 12) and row height in px. Forward-compat. */
+  readonly cols?: number
+  readonly rowHeight?: number
+}
+export interface Dashboard {
+  readonly id: Id
+  readonly orgId: OrgId
+  /** null = org-shared (any member); non-null = personal to that user. */
+  readonly ownerId: string | null
+  readonly name: string
+  readonly icon: string | null
+  readonly position: number
+  readonly hidden: boolean
+  readonly body: DashboardBody
+  readonly createdAt: Date
+  readonly updatedAt: Date
+}
+
 export type SubjectKind = "instance" | "relation" | "concept" | "field" | "label"
 
 export interface EngineEvent {

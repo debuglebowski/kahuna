@@ -2,6 +2,7 @@ import { FetchHttpClient } from "@effect/platform"
 import { RpcClient, RpcSerialization } from "@effect/rpc"
 import { Context, Effect, Layer, ManagedRuntime } from "effect"
 import {
+  type DashboardBody,
   type FieldConfig,
   type FieldKind,
   type GraphLayout,
@@ -15,6 +16,9 @@ export type {
   ConceptGraph,
   ConceptGraphEdge,
   ConceptGraphNode,
+  Dashboard,
+  DashboardBody,
+  DashboardWidget,
   FeedItem,
   Field,
   FieldConfig,
@@ -165,4 +169,22 @@ export const api = {
   deleteView: (id: string) => call((c) => c.deleteView({ id })),
   reorderViews: (orders: ReadonlyArray<{ id: string; position: number }>) =>
     call((c) => c.reorderViews({ orders })),
+  listDashboards: () => call((c) => c.listDashboards()),
+  createDashboard: (input: {
+    name: string
+    icon?: string | null
+    scope: "personal" | "org"
+    body: DashboardBody
+  }) => call((c) => c.createDashboard(input)),
+  updateDashboard: (input: {
+    id: string
+    name?: string
+    icon?: string | null
+    hidden?: boolean
+    scope?: "personal" | "org"
+    body?: DashboardBody
+  }) => call((c) => c.updateDashboard(input)),
+  deleteDashboard: (id: string) => call((c) => c.deleteDashboard({ id })),
+  reorderDashboards: (orders: ReadonlyArray<{ id: string; position: number }>) =>
+    call((c) => c.reorderDashboards({ orders })),
 }

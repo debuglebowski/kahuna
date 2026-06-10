@@ -4,10 +4,11 @@ import { ErrorScreen, Spinner } from "./components/ui"
 import { useSession } from "./lib/auth-client"
 import { AuthPage } from "./pages/AuthPage"
 import { ConceptView } from "./pages/ConceptView"
-import { Dashboard } from "./pages/Dashboard"
+import { Dashboards } from "./pages/Dashboards"
 import { InstanceView } from "./pages/InstanceView"
 import { Placeholder } from "./pages/Placeholder"
 import { Concepts } from "./pages/settings/Concepts"
+import { Dashboards as DashboardsSettings } from "./pages/settings/Dashboards"
 import { Labels } from "./pages/settings/Labels"
 import { Members } from "./pages/settings/Members"
 import { Organization } from "./pages/settings/Organization"
@@ -27,8 +28,8 @@ export function App() {
   return (
     <Layout>
       <Routes>
-        <Route path="/" element={<Dashboard />} />
-        <Route path="/dashboards" element={<Placeholder title="Dashboards" />} />
+        <Route path="/" element={<Dashboards />} />
+        <Route path="/dashboards" element={<Dashboards />} />
         <Route path="/automations" element={<Placeholder title="Automations" />} />
         <Route path="/settings" element={<SettingsLayout />}>
           <Route index element={<Navigate to="profile" replace />} />
@@ -40,6 +41,7 @@ export function App() {
           <Route path="concepts-graph" element={<Navigate to="/settings/concepts" replace />} />
           <Route path="labels" element={<Labels />} />
           <Route path="sidebar" element={<Views />} />
+          <Route path="dashboards" element={<DashboardsSettings />} />
         </Route>
         <Route path="/concepts/:id" element={<ConceptView />} />
         <Route path="/instances/:id" element={<InstanceView />} />

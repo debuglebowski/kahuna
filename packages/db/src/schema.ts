@@ -214,6 +214,35 @@ export const sidebarViews = pgTable(
 )
 
 /**
+ * A configurable dashboard — a grid canvas of widgets. Mirrors `sidebar_views`:
+ * `owner_id` null = org-shared (any member sees/edits), non-null = personal. The
+ * whole layout lives in `body` (a serializable document: widgets + their grid
+ * coords/config) and is **opaque to the engine** — never read or filtered
+ * server-side; the web client resolves it against the live concept/instance/event
+ * collections. This keeps dashboards off the event store.
+ */
+export const dashboards = pgTable(
+  "dashboards",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: text("org_id").notNull(),
+    // null = org-shared; non-null = personal (a logical FK into bauth_user.id).
+    ownerId: text("owner_id"),
+    name: text("name").notNull(),
+    // Optional display glyph (see `concepts.icon`): literal emoji or "lucide:Name".
+    icon: text("icon"),
+    // Order within the dashboard switcher (ascending); ties broken by created_at.
+    position: integer("position").notNull().default(0),
+    // Soft visibility toggle — hidden dashboards stay editable but drop out of the
+    // switcher. Shared on org dashboards (anyone may flip it).
+    hidden: boolean("hidden").notNull().default(false),
+    body: jsonb("body").notNull().default(sql`'{"widgets":[]}'::jsonb`),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("dashboards_org_owner_idx").on(t.orgId, t.ownerId)],
+)
+/**
  * Saved node positions for the org's concept graph canvas — one row per org
  * holding a `{ [conceptId]: { x, y } }` document. Pure presentation state
  * (like `sidebar_views`): opaque to the engine, shared org-wide, last write

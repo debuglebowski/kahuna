@@ -121,6 +121,17 @@ export class SidebarViewProtected extends Schema.TaggedError<SidebarViewProtecte
   { id: Schema.String },
 ) {}
 
+export class DashboardNotFound extends Schema.TaggedError<DashboardNotFound>()(
+  "DashboardNotFound",
+  { id: Schema.String },
+) {}
+
+/** The last shared dashboard can't be deleted — the home (`/`) must never empty. */
+export class DashboardProtected extends Schema.TaggedError<DashboardProtected>()(
+  "DashboardProtected",
+  { id: Schema.String },
+) {}
+
 export type EngineError =
   | VersionConflict
   | InstanceNotFound
@@ -143,3 +154,5 @@ export type EngineError =
   | EventCorruption
   | SidebarViewNotFound
   | SidebarViewProtected
+  | DashboardNotFound
+  | DashboardProtected

@@ -61,6 +61,8 @@ export const ERROR_MAP: Record<string, { status: number; code: string }> = {
   RelationNotFound: { status: 404, code: "NOT_FOUND" },
   SidebarViewNotFound: { status: 404, code: "NOT_FOUND" },
   SidebarViewProtected: { status: 409, code: "SIDEBAR_VIEW_PROTECTED" },
+  DashboardNotFound: { status: 404, code: "NOT_FOUND" },
+  DashboardProtected: { status: 409, code: "DASHBOARD_PROTECTED" },
   OrgScopeViolation: { status: 403, code: "FORBIDDEN" },
   EventCorruption: { status: 500, code: "INTERNAL" },
 }
