@@ -668,12 +668,10 @@ export function InstanceView() {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
-            {editable && (
-              <DropdownMenuItem onSelect={() => setDialog("edit")}>
-                <Pencil size={15} />
-                Edit
-              </DropdownMenuItem>
-            )}
+            <DropdownMenuItem onSelect={() => setDialog("edit")}>
+              <Pencil size={15} />
+              Edit
+            </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => setDialog("archive")}>
               <Archive size={15} />
               Archive
