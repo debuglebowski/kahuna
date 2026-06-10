@@ -30,12 +30,15 @@ export function RichTextEditor({
   placeholder,
   onChange,
   onBlur,
+  fill = false,
 }: {
   value: unknown
   editable: boolean
   placeholder?: string
   onChange?: (v: RichTextValue) => void
   onBlur?: () => void
+  /** Stretch over the parent's height (flex item) instead of sizing to content. */
+  fill?: boolean
 }) {
   // Latest callbacks behind refs — the editor instance captures its options once.
   const onChangeRef = useRef(onChange)
@@ -93,10 +96,20 @@ export function RichTextEditor({
       className={cn(
         editable &&
           "rounded-md border border-input bg-background transition-[color,box-shadow] focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50",
+        fill && "flex flex-1 flex-col",
       )}
     >
       {editable && editor && <RichTextToolbar editor={editor} />}
-      <EditorContent editor={editor} className={cn(PROSE, !editable && "[&_.ProseMirror]:px-0")} />
+      <EditorContent
+        editor={editor}
+        className={cn(
+          PROSE,
+          !editable && "[&_.ProseMirror]:px-0",
+          // Stretch the ProseMirror area over the remaining height so the whole
+          // box is clickable, not just the typed lines.
+          fill && "flex min-h-0 flex-1 flex-col [&_.ProseMirror]:flex-1",
+        )}
+      />
     </div>
   )
 }

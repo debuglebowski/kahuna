@@ -85,7 +85,7 @@ export function RichTextToolbar({ editor }: { editor: Editor }) {
 
   const chain = () => editor.chain().focus()
   return (
-    <div className="flex flex-wrap items-center gap-0.5 border-b border-border px-1.5 py-1">
+    <div className="flex shrink-0 flex-wrap items-center gap-0.5 border-b border-border px-1.5 py-1">
       <Action label="Bold" icon={Bold} active={s.bold} onClick={() => chain().toggleBold().run()} />
       <Action
         label="Italic"
