@@ -19,6 +19,9 @@ async function purgeOrgEngineData(orgId: string): Promise<void> {
   const client = await pool.connect()
   try {
     await client.query("BEGIN")
+    await client.query("DELETE FROM annotations WHERE org_id = $1", [orgId])
+    await client.query("DELETE FROM task_statuses WHERE org_id = $1", [orgId])
+    await client.query("DELETE FROM annotation_fields WHERE org_id = $1", [orgId])
     await client.query("DELETE FROM attachments WHERE org_id = $1", [orgId])
     await client.query("DELETE FROM relations WHERE org_id = $1", [orgId])
     await client.query("DELETE FROM instances WHERE org_id = $1", [orgId])

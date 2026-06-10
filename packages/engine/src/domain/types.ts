@@ -290,6 +290,67 @@ export type EventPayload =
   // events these never appear in an instance stream (the reducer ignores them).
   | { readonly _tag: "ItemArchived" }
   | { readonly _tag: "ItemRestored" }
+  // ── annotation layer (notes/tasks) ──────────────────────────────────────────
+  // subjectKind "note"/"task", subject_id = the annotation's id (its own stream,
+  // never folded). `subjectId` in the payload records the annotated ITEM lineage
+  // (items.id) or null (org-level) — distinct from the event's own subjectId — so
+  // the per-item activity union + purge tombstones survive the row's deletion.
+  | {
+      readonly _tag: "NoteCreated"
+      readonly subjectId: Id | null
+      readonly body: string
+      readonly customFields: Record<string, unknown>
+    }
+  | {
+      readonly _tag: "NoteUpdated"
+      readonly body?: string
+      readonly customFields?: Record<string, unknown>
+    }
+  | { readonly _tag: "NoteArchived"; readonly subjectId: Id | null }
+  | { readonly _tag: "NoteRestored"; readonly subjectId: Id | null }
+  | { readonly _tag: "NotePurged"; readonly subjectId: Id | null }
+  | {
+      readonly _tag: "TaskCreated"
+      readonly subjectId: Id | null
+      readonly title: string
+      readonly statusId: Id | null
+      readonly assignee: string | null
+      readonly dueAt: string | null
+      readonly customFields: Record<string, unknown>
+    }
+  | {
+      readonly _tag: "TaskUpdated"
+      readonly title?: string
+      readonly dueAt?: string | null
+      readonly customFields?: Record<string, unknown>
+    }
+  | { readonly _tag: "TaskStatusChanged"; readonly from: Id | null; readonly to: Id }
+  | { readonly _tag: "TaskAssigned"; readonly from: string | null; readonly to: string | null }
+  | { readonly _tag: "TaskArchived"; readonly subjectId: Id | null }
+  | { readonly _tag: "TaskRestored"; readonly subjectId: Id | null }
+  | { readonly _tag: "TaskPurged"; readonly subjectId: Id | null }
+  // Task-status vocabulary edits (settings). subjectKind "taskStatus".
+  | { readonly _tag: "TaskStatusCreated"; readonly name: string; readonly category: string }
+  | { readonly _tag: "TaskStatusUpdated"; readonly name: string; readonly category: string }
+  | { readonly _tag: "TaskStatusArchived" }
+  | { readonly _tag: "TaskStatusRestored" }
+  | { readonly _tag: "TaskStatusReordered" }
+  // Annotation custom-field definition edits (settings). subjectKind "annotationField".
+  | {
+      readonly _tag: "AnnotationFieldAdded"
+      readonly annotationType: string
+      readonly name: string
+      readonly kind: string
+    }
+  | {
+      readonly _tag: "AnnotationFieldUpdated"
+      readonly annotationType: string
+      readonly name: string
+      readonly kind: string
+    }
+  | { readonly _tag: "AnnotationFieldArchived"; readonly annotationType: string }
+  | { readonly _tag: "AnnotationFieldRestored"; readonly annotationType: string }
+  | { readonly _tag: "AnnotationFieldReordered"; readonly annotationType: string }
 
 export interface Attachment {
   readonly id: Id
@@ -477,7 +538,90 @@ export interface Dashboard {
   readonly updatedAt: Date
 }
 
-export type SubjectKind = "instance" | "relation" | "concept" | "field" | "label" | "item"
+export type SubjectKind =
+  | "instance"
+  | "relation"
+  | "concept"
+  | "field"
+  | "label"
+  | "item"
+  | "note"
+  | "task"
+  | "taskStatus"
+  | "annotationField"
+
+/** The annotation variant. Append-only; "comment" etc. may follow. */
+export type AnnotationType = "note" | "task"
+
+/** Semantic bucket for a task status — completion/grouping key off this, never
+ *  the renameable `name`. */
+export type TaskStatusCategory = "todo" | "active" | "done"
+
+/** A per-org configurable task status (Open / In progress / Done …). Keyed by
+ *  `id` (renameable `name`); `category` carries the semantics; soft-deleted. */
+export interface TaskStatus {
+  readonly id: Id
+  readonly orgId: OrgId
+  readonly name: string
+  readonly color: string | null
+  readonly category: TaskStatusCategory
+  /** The status applied to a newly created task (exactly one live per org). */
+  readonly isDefault: boolean
+  readonly position: number
+  readonly archivedAt: Date | null
+}
+
+/** A custom-field DEFINITION for the annotation layer — same shape as `Field`
+ *  but scoped by `annotationType` instead of a concept. Scalar kinds only. */
+export interface AnnotationField {
+  readonly id: Id
+  readonly orgId: OrgId
+  readonly annotationType: AnnotationType
+  readonly name: string
+  readonly kind: FieldKind
+  readonly config: FieldConfig
+  readonly icon: string | null
+  readonly position: number
+  readonly archivedAt: Date | null
+}
+
+/** A note — markdown body + author — hung off an item lineage (or org-level). */
+export interface Note {
+  readonly id: Id
+  readonly orgId: OrgId
+  /** The annotated item lineage (`items.id`); null = org-level. */
+  readonly subjectId: Id | null
+  readonly body: string
+  /** Author (bauth_user.id). */
+  readonly createdBy: string | null
+  readonly customFields: Record<string, unknown>
+  readonly version: number
+  readonly createdAt: Date
+  readonly updatedAt: Date
+  readonly archivedAt: Date | null
+}
+
+/** A task — first-class, org-scoped, assignable, globally queryable — hung off
+ *  an item lineage (or org-level when `subjectId` is null). */
+export interface Task {
+  readonly id: Id
+  readonly orgId: OrgId
+  /** The annotated item lineage (`items.id`); null = org-level / standalone. */
+  readonly subjectId: Id | null
+  readonly title: string
+  /** Current status (`task_statuses.id`); null only if the status was purged. */
+  readonly statusId: Id | null
+  /** Assignee (bauth_user.id); null = unassigned. */
+  readonly assignee: string | null
+  /** Due date (ISO string) or null. */
+  readonly dueAt: string | null
+  readonly createdBy: string | null
+  readonly customFields: Record<string, unknown>
+  readonly version: number
+  readonly createdAt: Date
+  readonly updatedAt: Date
+  readonly archivedAt: Date | null
+}
 
 export interface EngineEvent {
   readonly id: number

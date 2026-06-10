@@ -1,4 +1,6 @@
 import type {
+  AnnotationField,
+  AnnotationType,
   Attachment,
   Concept,
   Dashboard,
@@ -13,10 +15,14 @@ import type {
   InstanceState,
   Item,
   Label,
+  Note,
   Relation,
   SidebarView,
   SidebarViewBody,
   SubjectKind,
+  Task,
+  TaskStatus,
+  TaskStatusCategory,
   VersionStatus,
 } from "../domain/types"
 
@@ -296,4 +302,105 @@ export const toEvent = (r: EventRow): EngineEvent => ({
   subjectId: r.subject_id,
   eventType: r.event_type,
   payload: r.payload,
+})
+
+// ── annotation layer (notes / tasks / statuses / custom-field defs) ──────────
+
+/** Coerce a jsonb custom-fields column into a plain record (defensive vs null). */
+const toCustomFields = (raw: unknown): Record<string, unknown> =>
+  raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {}
+
+/** One `annotations` row — a polymorphic note|task before mapping to its variant. */
+export interface AnnotationRow {
+  readonly id: string
+  readonly org_id: string
+  readonly type: string
+  readonly subject_id: string | null
+  readonly subject_kind: string | null
+  readonly body: string | null
+  readonly title: string | null
+  readonly status_id: string | null
+  readonly assignee: string | null
+  readonly due_at: Date | null
+  readonly created_by: string | null
+  readonly custom_fields: unknown
+  readonly version: number | string
+  readonly created_at: Date
+  readonly updated_at: Date
+  readonly archived_at: Date | null
+}
+
+export const toNote = (r: AnnotationRow): Note => ({
+  id: r.id,
+  orgId: r.org_id,
+  subjectId: r.subject_id,
+  body: r.body ?? "",
+  createdBy: r.created_by,
+  customFields: toCustomFields(r.custom_fields),
+  version: Number(r.version),
+  createdAt: r.created_at,
+  updatedAt: r.updated_at,
+  archivedAt: r.archived_at,
+})
+
+export const toTask = (r: AnnotationRow): Task => ({
+  id: r.id,
+  orgId: r.org_id,
+  subjectId: r.subject_id,
+  title: r.title ?? "",
+  statusId: r.status_id,
+  assignee: r.assignee,
+  dueAt: r.due_at ? r.due_at.toISOString() : null,
+  createdBy: r.created_by,
+  customFields: toCustomFields(r.custom_fields),
+  version: Number(r.version),
+  createdAt: r.created_at,
+  updatedAt: r.updated_at,
+  archivedAt: r.archived_at,
+})
+
+export interface TaskStatusRow {
+  readonly id: string
+  readonly org_id: string
+  readonly name: string
+  readonly color: string | null
+  readonly category: string
+  readonly is_default: boolean
+  readonly position: number | string
+  readonly archived_at: Date | null
+}
+
+export const toTaskStatus = (r: TaskStatusRow): TaskStatus => ({
+  id: r.id,
+  orgId: r.org_id,
+  name: r.name,
+  color: r.color,
+  category: r.category as TaskStatusCategory,
+  isDefault: r.is_default,
+  position: Number(r.position),
+  archivedAt: r.archived_at,
+})
+
+export interface AnnotationFieldRow {
+  readonly id: string
+  readonly org_id: string
+  readonly annotation_type: string
+  readonly name: string
+  readonly kind: string
+  readonly config: unknown
+  readonly icon: string | null
+  readonly position: number | string
+  readonly archived_at: Date | null
+}
+
+export const toAnnotationField = (r: AnnotationFieldRow): AnnotationField => ({
+  id: r.id,
+  orgId: r.org_id,
+  annotationType: r.annotation_type as AnnotationType,
+  name: r.name,
+  kind: r.kind as FieldKind,
+  config: toFieldConfig(r.config),
+  icon: r.icon,
+  position: Number(r.position),
+  archivedAt: r.archived_at,
 })
