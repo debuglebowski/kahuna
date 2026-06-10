@@ -179,6 +179,17 @@
   color: color-mix(in srgb, var(--pill) 45%, var(--pill-fg-base));
 }
 
+/* TipTap placeholder: the extension stamps `data-placeholder` on the first
+   empty paragraph; render it as ghost text (no utility selector reaches a
+   pseudo-element on a library-generated node). */
+.ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  color: var(--muted-foreground);
+  pointer-events: none;
+}
+
 /* Sidebar view-switch cross-fade (keyed on the active view id). */
 @keyframes km-view-in {
   from {
