@@ -1,5 +1,6 @@
 import { Check, ExternalLink, X } from "lucide-react"
 import { Fragment, type ReactNode } from "react"
+import { Link } from "react-router-dom"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge, decayTone, momentumTone } from "../components/ui"
 import { useFullOrg } from "../pages/settings/SettingsLayout"
@@ -50,7 +51,9 @@ function UrlLink({ href }: { href: string }) {
   )
 }
 
-/** Org-member pills (avatar + name) for a `user` value; click mails the member. */
+/** Org-member pills (avatar + name) for a `user` value; click opens the
+ *  member's profile page. An id with no member behind it (purged) renders a
+ *  plain "former member" pill — there is no page to go to. */
 function UserPills({ ids }: { ids: ReadonlyArray<string> }) {
   const org = useFullOrg()
   const members = org.data?.members ?? []
@@ -60,22 +63,36 @@ function UserPills({ ids }: { ids: ReadonlyArray<string> }) {
         const m = members.find((x) => x.userId === id)
         const email = m?.user?.email
         const name = m?.user?.name?.trim() || email || id
+        if (!m) {
+          return (
+            <span
+              key={id}
+              title="No longer a member of this org"
+              className="inline-flex items-center gap-1.5 rounded-full bg-muted py-0.5 pr-2.5 pl-1 text-xs font-medium text-muted-foreground"
+            >
+              <Avatar className="size-4">
+                <AvatarFallback className="text-[9px]">?</AvatarFallback>
+              </Avatar>
+              <span className="max-w-40 truncate">former member</span>
+            </span>
+          )
+        }
         return (
-          <a
+          <Link
             key={id}
-            href={email ? `mailto:${email}` : undefined}
+            to={`/members/${id}`}
             title={email}
             onClick={(e) => e.stopPropagation()}
             className="inline-flex items-center gap-1.5 rounded-full bg-muted py-0.5 pr-2.5 pl-1 text-xs font-medium text-foreground hover:bg-accent"
           >
             <Avatar className="size-4">
-              <AvatarImage src={m?.user?.image ?? undefined} alt="" />
+              <AvatarImage src={m.user?.image ?? undefined} alt="" />
               <AvatarFallback className="text-[9px]">
-                {initialsOf(m?.user?.name, email ?? id)}
+                {initialsOf(m.user?.name, email ?? id)}
               </AvatarFallback>
             </Avatar>
             <span className="max-w-40 truncate">{name}</span>
-          </a>
+          </Link>
         )
       })}
     </span>

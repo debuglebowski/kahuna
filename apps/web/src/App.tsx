@@ -6,6 +6,8 @@ import { AuthPage } from "./pages/AuthPage"
 import { ConceptView } from "./pages/ConceptView"
 import { Dashboards } from "./pages/Dashboards"
 import { InstanceView } from "./pages/InstanceView"
+import { MemberProfile } from "./pages/MemberProfile"
+import { MembersDirectory } from "./pages/MembersDirectory"
 import { Placeholder } from "./pages/Placeholder"
 import { Concepts } from "./pages/settings/Concepts"
 import { Dashboards as DashboardsSettings } from "./pages/settings/Dashboards"
@@ -30,6 +32,8 @@ export function App() {
       <Routes>
         <Route path="/" element={<Dashboards />} />
         <Route path="/dashboards" element={<Dashboards />} />
+        <Route path="/members" element={<MembersDirectory />} />
+        <Route path="/members/:userId" element={<MemberProfile />} />
         <Route path="/automations" element={<Placeholder title="Automations" />} />
         <Route path="/settings" element={<SettingsLayout />}>
           <Route index element={<Navigate to="profile" replace />} />

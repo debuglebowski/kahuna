@@ -326,7 +326,7 @@ export type SidebarRule =
       readonly conceptId: Id
       readonly conditions: ReadonlyArray<SidebarCondition>
     }
-export type SidebarStaticItem = "overview" | "dashboards" | "automations" | "settings"
+export type SidebarStaticItem = "overview" | "dashboards" | "members" | "automations" | "settings"
 export interface SidebarLink {
   readonly id: string
   readonly label: string
@@ -475,6 +475,24 @@ export interface Dashboard {
   readonly body: DashboardBody
   readonly createdAt: Date
   readonly updatedAt: Date
+}
+
+// ── member pages + deactivation ─────────────────────────────────────────────────
+// A member's profile page is a widget canvas with the SAME opaque body document
+// as dashboards (`DashboardBody`), but a fixed scope by design: exactly one page
+// per (org, user), the owner edits, every org member reads. Deactivation is the
+// member analogue of archive: a marker row (org_id, user_id), restorable, that
+// blocks org access and hides the user from pickers. Both reference bauth users
+// logically (like `actor`) — the auth tables are never touched.
+
+export interface MemberPage {
+  readonly userId: string
+  readonly body: DashboardBody
+}
+
+export interface MemberDeactivation {
+  readonly userId: string
+  readonly deactivatedAt: Date
 }
 
 export type SubjectKind = "instance" | "relation" | "concept" | "field" | "label" | "item"

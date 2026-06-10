@@ -1,14 +1,10 @@
 import { useLiveQuery } from "@tanstack/react-db"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { LayoutDashboard, Pencil, Plus, Settings, X } from "lucide-react"
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react"
-import GridLayout, { type Layout, WidthProvider } from "react-grid-layout"
-import "react-grid-layout/css/styles.css"
-import "react-resizable/css/styles.css"
+import { LayoutDashboard, Plus, Settings } from "lucide-react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import type { Layout } from "react-grid-layout"
 import { useNavigate } from "react-router-dom"
-import { AttentionWidget } from "@/components/dashboard/AttentionWidget"
-import { ListWidget } from "@/components/dashboard/ListWidget"
-import { MetricWidget } from "@/components/dashboard/MetricWidget"
+import { WidgetCanvas } from "@/components/dashboard/WidgetCanvas"
 import { WidgetEditor } from "@/components/dashboard/WidgetEditor"
 import { Button, IconButton, Spinner } from "@/components/ui"
 import {
@@ -24,21 +20,11 @@ import { conceptIndex, useConceptData } from "@/lib/conceptData"
 import {
   addWidget,
   applyLayouts,
-  GRID_COLS,
-  GRID_ROW_HEIGHT,
   newWidget,
   referencedConceptIds,
   removeWidget,
   updateWidget,
-  widgetLayouts,
 } from "@/lib/dashboards"
-
-const Grid = WidthProvider(GridLayout)
-
-// Lazy so recharts' bundle is only fetched when a chart widget is on screen.
-const BreakdownWidget = lazy(() =>
-  import("@/components/dashboard/BreakdownWidget").then((m) => ({ default: m.BreakdownWidget })),
-)
 
 /**
  * The dashboard canvas (`/`). Renders the selected dashboard as a grid of
@@ -131,34 +117,6 @@ export function Dashboards() {
     setEditingId(w.id) // open the editor immediately to pick a concept + configure
   }
 
-  const render = (w: DashboardWidget) => {
-    const data = w.conceptId ? instData[w.conceptId] : undefined
-    if (w.type === "metric")
-      return (
-        <MetricWidget
-          widget={w}
-          data={data}
-          concept={w.conceptId ? cIndex.get(w.conceptId) : undefined}
-        />
-      )
-    if (w.type === "list") return <ListWidget widget={w} data={data} />
-    if (w.type === "attention")
-      return (
-        <AttentionWidget
-          widget={w}
-          data={data}
-          concept={w.conceptId ? cIndex.get(w.conceptId) : undefined}
-        />
-      )
-    if (w.type === "breakdown")
-      return (
-        <Suspense fallback={<Spinner />}>
-          <BreakdownWidget widget={w} data={data} />
-        </Suspense>
-      )
-    return <p className="text-sm text-muted-foreground">{w.type} widget — coming soon</p>
-  }
-
   return (
     <div className="flex flex-col gap-4">
       {loaders}
@@ -218,49 +176,14 @@ export function Dashboards() {
           </p>
         </div>
       ) : (
-        <Grid
-          className="-mx-1"
-          layout={widgetLayouts(body)}
-          cols={GRID_COLS}
-          rowHeight={GRID_ROW_HEIGHT}
-          margin={[12, 12]}
-          draggableCancel=".cancel-drag"
-          onDragStop={onStop}
-          onResizeStop={onStop}
-          isBounded
-        >
-          {body.widgets.map((w) => (
-            <div
-              key={w.id}
-              className="group flex flex-col overflow-hidden rounded-xl border bg-card p-3 shadow-sm"
-            >
-              <div className="mb-1 flex items-center justify-between gap-2">
-                <span className="truncate text-xs font-medium text-muted-foreground">
-                  {w.title || (w.conceptId ? cIndex.get(w.conceptId)?.name : "") || w.type}
-                </span>
-                <div className="flex shrink-0 items-center gap-0.5">
-                  <button
-                    type="button"
-                    aria-label="Edit widget"
-                    className="cancel-drag rounded p-0.5 text-muted-foreground opacity-0 transition hover:bg-muted hover:text-foreground group-hover:opacity-100"
-                    onClick={() => setEditingId(w.id)}
-                  >
-                    <Pencil size={13} />
-                  </button>
-                  <button
-                    type="button"
-                    aria-label="Remove widget"
-                    className="cancel-drag rounded p-0.5 text-muted-foreground opacity-0 transition hover:bg-muted hover:text-foreground group-hover:opacity-100"
-                    onClick={() => mutate(removeWidget(body, w.id))}
-                  >
-                    <X size={14} />
-                  </button>
-                </div>
-              </div>
-              <div className="min-h-0 flex-1">{render(w)}</div>
-            </div>
-          ))}
-        </Grid>
+        <WidgetCanvas
+          body={body}
+          instData={instData}
+          cIndex={cIndex}
+          onStop={onStop}
+          onEdit={setEditingId}
+          onRemove={(id) => mutate(removeWidget(body, id))}
+        />
       )}
 
       {editing && (

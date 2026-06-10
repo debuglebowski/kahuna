@@ -38,6 +38,7 @@ export {
 } from "./services/GraphLayoutService"
 export { InstanceService } from "./services/InstanceService"
 export { LabelService } from "./services/LabelService"
+export { MemberService } from "./services/MemberService"
 // Services
 export { OrgContext, type OrgScope } from "./services/OrgContext"
 export { type FindInstancesInput, QueryService } from "./services/QueryService"

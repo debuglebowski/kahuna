@@ -17,6 +17,7 @@ import {
   LABELS_KEY,
   type Label,
   LabelService,
+  MemberService,
   type OrgContext,
   QueryService,
   RelationService,
@@ -306,6 +307,30 @@ export const reorderDashboards = (
   orders: ReadonlyArray<{ readonly id: string; readonly position: number }>,
 ): UC<unknown> => Effect.flatMap(DashboardService, (s) => s.reorder(orders))
 
+// ── member pages + deactivation ─────────────────────────────────────────────────
+
+export const getMemberPage = (userId: string): UC<unknown> =>
+  Effect.flatMap(MemberService, (m) => m.getPage(userId))
+
+/** Always the caller's own page (owner-only by construction). */
+export const updateMemberPage = (body: DashboardBody): UC<unknown> =>
+  Effect.flatMap(MemberService, (m) => m.updatePage(body))
+
+export const listDeactivatedMembers: UC<unknown> = Effect.flatMap(MemberService, (m) =>
+  m.listDeactivations(),
+)
+
+export const deactivateMember = (userId: string): UC<unknown> =>
+  Effect.flatMap(MemberService, (m) => m.deactivate(userId))
+
+export const reactivateMember = (userId: string): UC<unknown> =>
+  Effect.flatMap(MemberService, (m) => Effect.map(m.reactivate(userId), () => ({ userId })))
+
+/** The engine half of a member purge (page + marker); the membership removal
+ *  itself happens in the router against BetterAuth. */
+export const purgeMemberData = (userId: string): UC<unknown> =>
+  Effect.flatMap(MemberService, (m) => Effect.map(m.purgeMemberData(userId), () => ({ userId })))
+
 // ── concept graph layout (shared canvas positions) ─────────────────────────────
 
 export const getGraphLayout: UC<GraphLayoutPositions> = Effect.flatMap(GraphLayoutService, (s) =>
@@ -458,11 +483,7 @@ export const restoreItem = (itemId: string): UC<unknown> =>
 
 /** Relation-picker candidates: the head (latest published) of each item of a
  *  concept whose display label matches `query`. */
-export const searchInstances = (
-  conceptId: string,
-  query?: string,
-  limit = 20,
-): UC<unknown> =>
+export const searchInstances = (conceptId: string, query?: string, limit = 20): UC<unknown> =>
   Effect.gen(function* () {
     const q = yield* QueryService
     const fieldsSvc = yield* FieldService
@@ -472,8 +493,7 @@ export const searchInstances = (
     const out = rows.map((r) => ({
       itemId: r.itemId,
       instanceId: r.id,
-      label:
-        textField && r.state[textField.id] ? String(r.state[textField.id]) : "(untitled)",
+      label: textField && r.state[textField.id] ? String(r.state[textField.id]) : "(untitled)",
       versionSeq: r.versionSeq,
       versionStatus: r.versionStatus,
     }))

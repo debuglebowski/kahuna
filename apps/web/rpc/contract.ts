@@ -279,7 +279,13 @@ export const SidebarRule = Schema.Union(
   }),
 )
 
-const SidebarStaticItem = Schema.Literal("overview", "dashboards", "automations", "settings")
+const SidebarStaticItem = Schema.Literal(
+  "overview",
+  "dashboards",
+  "members",
+  "automations",
+  "settings",
+)
 
 const SidebarLink = Schema.Struct({
   id: Schema.String,
@@ -436,6 +442,24 @@ export const Dashboard = Schema.Struct({
   body: DashboardBody,
 })
 export type Dashboard = typeof Dashboard.Type
+
+// ── member pages + deactivation ─────────────────────────────────────────────────
+// A member's profile page is a widget canvas with the SAME body document as
+// dashboards, but a fixed scope: one page per (org, user), the owner edits,
+// every org member reads. Deactivation is the member analogue of archive — a
+// restorable marker that blocks org access and hides the user from pickers.
+
+export const MemberPage = Schema.Struct({
+  userId: Schema.String,
+  body: DashboardBody,
+})
+export type MemberPage = typeof MemberPage.Type
+
+export const DeactivatedMember = Schema.Struct({
+  userId: Schema.String,
+  deactivatedAt: Schema.Date,
+})
+export type DeactivatedMember = typeof DeactivatedMember.Type
 
 /** One serializable error for the whole API; `code` mirrors the old HTTP codes. */
 export class RpcError extends Schema.TaggedError<RpcError>()("RpcError", {
@@ -777,6 +801,36 @@ export class KingsmakerRpcs extends RpcGroup.make(
       orders: Schema.Array(Schema.Struct({ id: Schema.String, position: Schema.Number })),
     },
     success: Schema.Array(Dashboard),
+    error: RpcError,
+  }),
+  // Member pages: any member reads any page; a write always targets the
+  // CALLER's own page (owner-only by construction — no userId in the payload).
+  Rpc.make("getMemberPage", {
+    payload: { userId: Schema.String },
+    success: MemberPage,
+    error: RpcError,
+  }),
+  Rpc.make("updateMemberPage", {
+    payload: { body: DashboardBody },
+    success: MemberPage,
+    error: RpcError,
+  }),
+  // Deactivation markers (admin-gated writes; the list is readable by any
+  // member — it drives picker filtering and the directory toggle). A member
+  // purge is NOT an RPC: it is DELETE /api/org/members/:userId (it must remove
+  // the BetterAuth membership, which needs the raw request headers).
+  Rpc.make("listDeactivatedMembers", {
+    success: Schema.Array(DeactivatedMember),
+    error: RpcError,
+  }),
+  Rpc.make("deactivateMember", {
+    payload: { userId: Schema.String },
+    success: DeactivatedMember,
+    error: RpcError,
+  }),
+  Rpc.make("reactivateMember", {
+    payload: { userId: Schema.String },
+    success: Schema.Struct({ userId: Schema.String }),
     error: RpcError,
   }),
 ) {}
