@@ -20,6 +20,7 @@ import {
   KEY,
   useRegisterCollection,
 } from "../lib/collections"
+import { FieldValueCell } from "../lib/fieldDisplay"
 import { showValue } from "../lib/utils"
 import { InstanceForm } from "./InstanceForm"
 import { isAdminRole, useFullOrg } from "./settings/SettingsLayout"
@@ -111,10 +112,7 @@ export function ConceptView() {
   // header = the renameable name, cell/sort key = the stable id. Relation/file
   // values don't live in state, so they're not columns.
   const columns = useMemo(
-    () =>
-      (fields.data ?? [])
-        .filter((f) => f.kind !== "relation" && f.kind !== "file")
-        .map((f) => ({ id: f.id, name: f.name })),
+    () => (fields.data ?? []).filter((f) => f.kind !== "relation" && f.kind !== "file"),
     [fields.data],
   )
 
@@ -205,7 +203,7 @@ export function ConceptView() {
                   >
                     {columns.map((c) => (
                       <TableCell key={c.id} className="px-6 text-foreground">
-                        {showValue(r.state[c.id])}
+                        <FieldValueCell field={c} value={r.state[c.id]} />
                       </TableCell>
                     ))}
                     <TableCell className="px-2 text-right whitespace-nowrap">
