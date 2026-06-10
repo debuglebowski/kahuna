@@ -6,24 +6,29 @@ import {
   type Field,
   type Instance,
   type InstanceState,
+  type Item,
   LABELS_KEY,
 } from "../domain/types"
 import {
+  DraftAlreadyExists,
   FieldValidationError,
   IllegalTransition,
   InstanceInUse,
   InstanceNotFound,
+  ItemNotFound,
+  ItemNotPublished,
   VersionConflict,
+  VersionFrozen,
 } from "../errors"
 import { foldEvents } from "../projection/fold"
-import { applyEvent } from "../projection/reducer"
+import { applyEvent, type FoldState } from "../projection/reducer"
 import { ComputedFields } from "./ComputedFields"
 import { ConceptService } from "./ConceptService"
 import { EventStore } from "./EventStore"
 import { FieldService } from "./FieldService"
 import { LabelService } from "./LabelService"
 import { OrgContext } from "./OrgContext"
-import { type InstanceRow, toInstance } from "./rows"
+import { type InstanceRow, type ItemRow, type RelationRow, toInstance, toItem } from "./rows"
 
 /** Built-in `config.format` validators for text / number scalars. */
 const TEXT_FORMATS: Record<string, (v: string) => boolean> = {
@@ -186,6 +191,16 @@ const checkTransitions = (
     }
   })
 
+/** Seed the reducer from an already-loaded instance, so an incremental fold
+ *  reproduces exactly what a full replay would (carrying the version lifecycle). */
+const seedFrom = (inst: Instance, archivedAt: Date | null): FoldState => ({
+  state: inst.state,
+  version: inst.version,
+  archivedAt,
+  versionStatus: inst.versionStatus,
+  publishedAt: inst.publishedAt,
+})
+
 /**
  * The heart of the engine: instance writes. Every write runs inside one
  * `sql.withTransaction` — validate → (lock + version check) → append event →
@@ -249,23 +264,39 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
           }
           const fieldsWithLabels: InstanceState =
             labelIds.length > 0 ? { ...validated, [LABELS_KEY]: [...labelIds] } : validated
+          // Every instance belongs to an `items` lineage. A new item starts at
+          // seq 1; on a versioned concept it's a `draft` (not referenceable until
+          // published), otherwise a `published` row (the plain 1:1 model).
+          const versionStatus = concept.versioningEnabled ? "draft" : "published"
+          const itemRows = yield* sql<ItemRow>`
+            INSERT INTO items (org_id, concept_id) VALUES (${orgId}, ${concept.id}) RETURNING *`
+          const item = toItem(itemRows[0]!)
           const inserted = yield* sql<InstanceRow>`
-            INSERT INTO instances (org_id, concept_id, state, version)
-            VALUES (${orgId}, ${concept.id}, ${sql.json({})}, 0)
+            INSERT INTO instances (org_id, concept_id, item_id, state, version, version_status, version_seq)
+            VALUES (${orgId}, ${concept.id}, ${item.id}, ${sql.json({})}, 0, ${versionStatus}, 1)
             RETURNING *`
           const created = toInstance(inserted[0]!)
           const event = yield* events.append({
             subjectKind: "instance",
             subjectId: created.id,
             eventType: "InstanceCreated",
-            payload: { _tag: "InstanceCreated", conceptId: concept.id, fields: fieldsWithLabels },
+            payload: {
+              _tag: "InstanceCreated",
+              conceptId: concept.id,
+              fields: fieldsWithLabels,
+              itemId: item.id,
+              versionSeq: 1,
+              versionStatus,
+            },
             conceptId: concept.id,
             conceptName: concept.name,
           })
           const folded = applyEvent(null, event)
           if (Either.isLeft(folded)) return yield* Effect.fail(folded.left)
           const updated = yield* sql<InstanceRow>`
-            UPDATE instances SET state = ${sql.json(folded.right.state)}, version = ${folded.right.version}
+            UPDATE instances
+            SET state = ${sql.json(folded.right.state)}, version = ${folded.right.version},
+                version_status = ${folded.right.versionStatus}, published_at = ${folded.right.publishedAt}
             WHERE id = ${created.id} AND org_id = ${orgId} RETURNING *`
           return toInstance(updated[0]!)
         }),
@@ -298,6 +329,12 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
           }
           const defs = yield* fields.listFields(current.conceptId)
           const concept = yield* concepts.getById(current.conceptId)
+          // A published version is frozen on a versioned concept — edits must go to
+          // a fresh draft (newVersion). Non-versioned instances are 'published' too
+          // but stay editable, so the guard is gated on `versioningEnabled`.
+          if (concept.versioningEnabled && current.versionStatus === "published") {
+            return yield* Effect.fail(new VersionFrozen({ instanceId: current.id }))
+          }
           const { rest, rawLabels } = splitLabels(input.patch)
           const validated = yield* validateFields(defs, rest)
           yield* checkTransitions(defs, current.state, validated)
@@ -314,10 +351,7 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
             payload: { _tag: "InstanceUpdated", patch },
             conceptName: concept.name,
           })
-          const folded = applyEvent(
-            { state: current.state, version: current.version, archivedAt: null },
-            event,
-          )
+          const folded = applyEvent(seedFrom(current, null), event)
           if (Either.isLeft(folded)) return yield* Effect.fail(folded.left)
           const updated = yield* sql<InstanceRow>`
             UPDATE instances SET state = ${sql.json(folded.right.state)}, version = ${folded.right.version}
@@ -369,10 +403,7 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
             payload: { _tag: "InstanceArchived" },
             conceptName: concept.name,
           })
-          const folded = applyEvent(
-            { state: current.state, version: current.version, archivedAt: null },
-            event,
-          )
+          const folded = applyEvent(seedFrom(current, null), event)
           if (Either.isLeft(folded)) return yield* Effect.fail(folded.left)
           const updated = yield* sql<InstanceRow>`
             UPDATE instances SET version = ${folded.right.version}, archived_at = ${folded.right.archivedAt}
@@ -412,10 +443,7 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
             payload: { _tag: "InstanceRestored" },
             conceptName: concept.name,
           })
-          const folded = applyEvent(
-            { state: current.state, version: current.version, archivedAt: current.archivedAt },
-            event,
-          )
+          const folded = applyEvent(seedFrom(current, current.archivedAt), event)
           if (Either.isLeft(folded)) return yield* Effect.fail(folded.left)
           const updated = yield* sql<InstanceRow>`
             UPDATE instances SET version = ${folded.right.version}, archived_at = ${folded.right.archivedAt}
@@ -444,7 +472,8 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
           const instance = yield* loadAny(input.instanceId)
           const counts = yield* sql<{ readonly count: number | string }>`
             SELECT COUNT(*)::int AS count FROM relations
-            WHERE org_id = ${orgId} AND (from_id = ${instance.id} OR to_id = ${instance.id})`
+            WHERE org_id = ${orgId} AND archived_at IS NULL
+              AND (from_id = ${instance.id} OR to_id = ${instance.id} OR to_version_id = ${instance.id})`
           const relationCount = Number(counts[0]?.count ?? 0)
           if (relationCount > 0) {
             return yield* Effect.fail(new InstanceInUse({ instanceId: instance.id, relationCount }))
@@ -452,6 +481,14 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
           const concept = yield* concepts.getById(instance.conceptId)
           yield* sql`DELETE FROM attachments WHERE org_id = ${orgId} AND instance_id = ${instance.id}`
           yield* sql`DELETE FROM instances WHERE org_id = ${orgId} AND id = ${instance.id}`
+          // Remove the lineage row when this was its last version — otherwise an
+          // empty `items` row would linger and block the concept's purge via FK.
+          const remaining = yield* sql<{ readonly count: number | string }>`
+            SELECT COUNT(*)::int AS count FROM instances
+            WHERE org_id = ${orgId} AND item_id = ${instance.itemId}`
+          if (Number(remaining[0]?.count ?? 0) === 0) {
+            yield* sql`DELETE FROM items WHERE org_id = ${orgId} AND id = ${instance.itemId}`
+          }
           // Tombstone — recorded AFTER the row is gone so the feed shows the delete.
           yield* events.append({
             subjectKind: "instance",
@@ -487,8 +524,13 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
           id: meta.id,
           orgId: meta.orgId,
           conceptId: meta.conceptId,
+          // Immutable lineage facts come from the row; the rest is folded.
+          itemId: meta.itemId,
           state: fs.state,
           version: fs.version,
+          versionStatus: fs.versionStatus,
+          versionSeq: meta.versionSeq,
+          publishedAt: fs.publishedAt,
           createdAt: meta.createdAt,
           archivedAt: fs.archivedAt,
         } satisfies Instance
@@ -506,7 +548,8 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
           if (!fs) return yield* Effect.fail(new InstanceNotFound({ instanceId }))
           const updated = yield* sql<InstanceRow>`
             UPDATE instances
-            SET state = ${sql.json(fs.state)}, version = ${fs.version}, archived_at = ${fs.archivedAt}
+            SET state = ${sql.json(fs.state)}, version = ${fs.version}, archived_at = ${fs.archivedAt},
+                version_status = ${fs.versionStatus}, published_at = ${fs.publishedAt}
             WHERE id = ${meta.id} AND org_id = ${orgId} RETURNING *`
           return toInstance(updated[0]!)
         }),
@@ -527,6 +570,17 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
           (d) => d.kind === "computed" && d.config.computedKind === "decay",
         )
         if (!decayField) return [] as EngineEvent[] // concept has no decay computed field
+        // On a versioned concept, a superseded published version is a frozen
+        // snapshot — never recompute (it would mutate a "frozen" row's `__bands`).
+        // The head published version and the open draft still decay normally.
+        const gateConcept = yield* concepts.getById(inst.conceptId)
+        if (gateConcept.versioningEnabled && inst.versionStatus === "published") {
+          const newer = yield* sql<{ readonly count: number | string }>`
+            SELECT COUNT(*)::int AS count FROM instances
+            WHERE org_id = ${orgId} AND item_id = ${inst.itemId}
+              AND version_status = 'published' AND archived_at IS NULL AND version_seq > ${inst.versionSeq}`
+          if (Number(newer[0]?.count ?? 0) > 0) return [] as EngineEvent[]
+        }
         const bandKey = decayField.id
         const decorated = yield* computed.decorate(inst)
         const band = (decorated.state[bandKey] as { band?: string } | undefined)?.band
@@ -563,10 +617,7 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
               },
               conceptName: concept.name,
             })
-            const folded = applyEvent(
-              { state: current.state, version: current.version, archivedAt: null },
-              event,
-            )
+            const folded = applyEvent(seedFrom(current, null), event)
             if (Either.isLeft(folded)) return yield* Effect.fail(folded.left)
             yield* sql<InstanceRow>`
               UPDATE instances SET state = ${sql.json(folded.right.state)}, version = ${folded.right.version}
@@ -574,6 +625,263 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
             return [event]
           }),
         )
+      })
+
+    /** Publish a draft version: draft → published (one-shot, permanent). After
+     *  this the version is frozen and becomes the item's "Latest". */
+    const publishVersion = (input: {
+      readonly instanceId: string
+      readonly expectedVersion: number
+    }) =>
+      sql.withTransaction(
+        Effect.gen(function* () {
+          const { orgId } = yield* OrgContext
+          const rows = yield* sql<InstanceRow>`
+            SELECT * FROM instances
+            WHERE id = ${input.instanceId} AND org_id = ${orgId} AND archived_at IS NULL
+            FOR UPDATE`
+          const row = rows[0]
+          if (!row)
+            return yield* Effect.fail(new InstanceNotFound({ instanceId: input.instanceId }))
+          const current = toInstance(row)
+          if (current.version !== input.expectedVersion) {
+            return yield* Effect.fail(
+              new VersionConflict({
+                instanceId: current.id,
+                expected: input.expectedVersion,
+                actual: current.version,
+              }),
+            )
+          }
+          if (current.versionStatus === "published") {
+            return yield* Effect.fail(new VersionFrozen({ instanceId: current.id }))
+          }
+          const concept = yield* concepts.getById(current.conceptId)
+          const event = yield* events.append({
+            subjectKind: "instance",
+            subjectId: current.id,
+            eventType: "VersionPublished",
+            payload: { _tag: "VersionPublished" },
+            conceptId: concept.id,
+            conceptName: concept.name,
+          })
+          const folded = applyEvent(seedFrom(current, null), event)
+          if (Either.isLeft(folded)) return yield* Effect.fail(folded.left)
+          const updated = yield* sql<InstanceRow>`
+            UPDATE instances
+            SET version = ${folded.right.version}, version_status = ${folded.right.versionStatus},
+                published_at = ${folded.right.publishedAt}
+            WHERE id = ${current.id} AND org_id = ${orgId} RETURNING *`
+          return toInstance(updated[0]!)
+        }),
+      )
+
+    /** Open a new draft for an item by cloning its latest published version's
+     *  state AND outbound relations. Fails if a draft is already open
+     *  (one-draft-at-a-time) or the item has no published version to branch from. */
+    const newVersion = (input: { readonly itemId: string }) =>
+      sql.withTransaction(
+        Effect.gen(function* () {
+          const { orgId } = yield* OrgContext
+          const itemRows = yield* sql<ItemRow>`
+            SELECT * FROM items WHERE id = ${input.itemId} AND org_id = ${orgId} FOR UPDATE`
+          const itemRow = itemRows[0]
+          if (!itemRow) return yield* Effect.fail(new ItemNotFound({ itemId: input.itemId }))
+          const item = toItem(itemRow)
+          const drafts = yield* sql<InstanceRow>`
+            SELECT * FROM instances
+            WHERE org_id = ${orgId} AND item_id = ${item.id}
+              AND version_status = 'draft' AND archived_at IS NULL LIMIT 1`
+          if (drafts[0]) {
+            return yield* Effect.fail(
+              new DraftAlreadyExists({ itemId: item.id, draftInstanceId: drafts[0].id }),
+            )
+          }
+          const heads = yield* sql<InstanceRow>`
+            SELECT * FROM instances
+            WHERE org_id = ${orgId} AND item_id = ${item.id}
+              AND version_status = 'published' AND archived_at IS NULL
+            ORDER BY version_seq DESC LIMIT 1`
+          const head = heads[0]
+          if (!head) return yield* Effect.fail(new ItemNotPublished({ itemId: item.id }))
+          const source = toInstance(head)
+          const concept = yield* concepts.getById(source.conceptId)
+          // Allocate over ALL lineage rows (archived included), not the head's seq:
+          // archiving the head must never free its number, or an archive→new→
+          // publish→restore sequence yields two live versions with the same seq
+          // (and an ambiguous "Latest"). Backstopped by instances_item_seq_uq.
+          const maxRows = yield* sql<{ readonly max: number | string | null }>`
+            SELECT MAX(version_seq) AS max FROM instances
+            WHERE org_id = ${orgId} AND item_id = ${item.id}`
+          const nextSeq = Number(maxRows[0]?.max ?? 0) + 1
+          const inserted = yield* sql<InstanceRow>`
+            INSERT INTO instances (org_id, concept_id, item_id, state, version, version_status, version_seq)
+            VALUES (${orgId}, ${source.conceptId}, ${item.id}, ${sql.json({})}, 0, 'draft', ${nextSeq})
+            RETURNING *`
+          const draft = toInstance(inserted[0]!)
+          const event = yield* events.append({
+            subjectKind: "instance",
+            subjectId: draft.id,
+            eventType: "InstanceCreated",
+            payload: {
+              _tag: "InstanceCreated",
+              conceptId: source.conceptId,
+              fields: source.state,
+              itemId: item.id,
+              versionSeq: nextSeq,
+              versionStatus: "draft",
+            },
+            conceptId: source.conceptId,
+            conceptName: concept.name,
+          })
+          const folded = applyEvent(null, event)
+          if (Either.isLeft(folded)) return yield* Effect.fail(folded.left)
+          const updated = yield* sql<InstanceRow>`
+            UPDATE instances
+            SET state = ${sql.json(folded.right.state)}, version = ${folded.right.version},
+                version_status = ${folded.right.versionStatus}, published_at = ${folded.right.publishedAt}
+            WHERE id = ${draft.id} AND org_id = ${orgId} RETURNING *`
+          // Clone the head's outbound relations onto the draft (targets verbatim,
+          // so general/pinned refs carry over), each as its own RelationCreated.
+          const headRels = yield* sql<RelationRow>`
+            SELECT * FROM relations
+            WHERE org_id = ${orgId} AND from_id = ${source.id} AND archived_at IS NULL`
+          for (const r of headRels) {
+            const ins = yield* sql<RelationRow>`
+              INSERT INTO relations (org_id, field_id, from_id, to_item_id, to_version_id, to_id, properties)
+              VALUES (${orgId}, ${r.field_id}, ${draft.id}, ${r.to_item_id}, ${r.to_version_id}, ${r.to_id}, ${sql.json(r.properties ?? {})})
+              RETURNING *`
+            const rel = ins[0]!
+            yield* events.append({
+              subjectKind: "relation",
+              subjectId: rel.id,
+              eventType: "RelationCreated",
+              payload: {
+                _tag: "RelationCreated",
+                fieldId: rel.field_id,
+                fromId: rel.from_id,
+                toId: rel.to_id,
+                toItemId: rel.to_item_id,
+                toVersionId: rel.to_version_id,
+                properties: rel.properties ?? {},
+              },
+            })
+          }
+          return toInstance(updated[0]!)
+        }),
+      )
+
+    /** Discard an open draft: hard-delete the draft row + its (cloned/added)
+     *  outbound edges + attachments. A draft is never referenceable, so nothing
+     *  inbound can dangle. If this was the item's only version (never published),
+     *  the now-empty lineage row is removed too. */
+    const discardDraft = (input: { readonly instanceId: string }) =>
+      sql.withTransaction(
+        Effect.gen(function* () {
+          const { orgId } = yield* OrgContext
+          const instance = yield* loadAny(input.instanceId)
+          if (instance.versionStatus !== "draft") {
+            return yield* Effect.fail(new VersionFrozen({ instanceId: instance.id }))
+          }
+          const concept = yield* concepts.getById(instance.conceptId)
+          yield* sql`DELETE FROM relations WHERE org_id = ${orgId} AND from_id = ${instance.id}`
+          yield* sql`DELETE FROM attachments WHERE org_id = ${orgId} AND instance_id = ${instance.id}`
+          yield* sql`DELETE FROM instances WHERE org_id = ${orgId} AND id = ${instance.id}`
+          const remaining = yield* sql<{ readonly count: number | string }>`
+            SELECT COUNT(*)::int AS count FROM instances
+            WHERE org_id = ${orgId} AND item_id = ${instance.itemId}`
+          if (Number(remaining[0]?.count ?? 0) === 0) {
+            yield* sql`DELETE FROM items WHERE org_id = ${orgId} AND id = ${instance.itemId}`
+          }
+          yield* events.append({
+            subjectKind: "instance",
+            subjectId: instance.id,
+            eventType: "InstancePurged",
+            payload: { _tag: "InstancePurged" },
+            conceptId: concept.id,
+            conceptName: concept.name,
+          })
+          return instance
+        }),
+      )
+
+    /** Whole-item (lineage) archive: hides every version from head lists. Distinct
+     *  from per-version `archive` (which hides one version). */
+    const archiveItem = (input: { readonly itemId: string }) =>
+      sql.withTransaction(
+        Effect.gen(function* () {
+          const { orgId } = yield* OrgContext
+          const rows = yield* sql<ItemRow>`
+            UPDATE items SET archived_at = COALESCE(archived_at, now())
+            WHERE org_id = ${orgId} AND id = ${input.itemId} RETURNING *`
+          const row = rows[0]
+          if (!row) return yield* Effect.fail(new ItemNotFound({ itemId: input.itemId }))
+          const item = toItem(row)
+          yield* events.append({
+            subjectKind: "item",
+            subjectId: item.id,
+            eventType: "ItemArchived",
+            payload: { _tag: "ItemArchived" },
+            conceptId: item.conceptId,
+          })
+          return item
+        }),
+      )
+
+    const restoreItem = (input: { readonly itemId: string }) =>
+      sql.withTransaction(
+        Effect.gen(function* () {
+          const { orgId } = yield* OrgContext
+          const rows = yield* sql<ItemRow>`
+            UPDATE items SET archived_at = NULL
+            WHERE org_id = ${orgId} AND id = ${input.itemId} RETURNING *`
+          const row = rows[0]
+          if (!row) return yield* Effect.fail(new ItemNotFound({ itemId: input.itemId }))
+          const item = toItem(row)
+          yield* events.append({
+            subjectKind: "item",
+            subjectId: item.id,
+            eventType: "ItemRestored",
+            payload: { _tag: "ItemRestored" },
+            conceptId: item.conceptId,
+          })
+          return item
+        }),
+      )
+
+    const getItem = (itemId: string) =>
+      Effect.gen(function* () {
+        const { orgId } = yield* OrgContext
+        const rows = yield* sql<ItemRow>`
+          SELECT * FROM items WHERE id = ${itemId} AND org_id = ${orgId} LIMIT 1`
+        const row = rows[0]
+        if (!row) return yield* Effect.fail(new ItemNotFound({ itemId }))
+        return toItem(row)
+      })
+
+    /** The item's current latest published, non-archived version — or null. Used to
+     *  resolve a general ("Latest") reference at read time. */
+    const headOf = (itemId: string) =>
+      Effect.gen(function* () {
+        const { orgId } = yield* OrgContext
+        const rows = yield* sql<InstanceRow>`
+          SELECT * FROM instances
+          WHERE org_id = ${orgId} AND item_id = ${itemId}
+            AND version_status = 'published' AND archived_at IS NULL
+          ORDER BY version_seq DESC LIMIT 1`
+        return rows[0] ? toInstance(rows[0]) : null
+      })
+
+    /** All versions of an item (draft + published, including per-version archived),
+     *  oldest first — for the item-detail version history panel. */
+    const listVersions = (itemId: string) =>
+      Effect.gen(function* () {
+        const { orgId } = yield* OrgContext
+        const rows = yield* sql<InstanceRow>`
+          SELECT * FROM instances
+          WHERE org_id = ${orgId} AND item_id = ${itemId}
+          ORDER BY version_seq ASC`
+        return rows.map(toInstance)
       })
 
     return {
@@ -587,6 +895,14 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
       getAsOf,
       rebuild,
       recomputeBands,
+      publishVersion,
+      newVersion,
+      discardDraft,
+      archiveItem,
+      restoreItem,
+      getItem,
+      headOf,
+      listVersions,
     } as const
   }),
   dependencies: [

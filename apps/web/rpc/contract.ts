@@ -15,16 +15,57 @@ export const LABELS_KEY = "__labels"
 
 const State = Schema.Record({ key: Schema.String, value: Schema.Unknown })
 
+/** Product version lifecycle (mirrors the engine's `VersionStatus`). */
+export const VersionStatus = Schema.Literal("draft", "published")
+export type VersionStatus = typeof VersionStatus.Type
+
 const InstanceFields = {
   id: Schema.String,
   conceptId: Schema.String,
+  /** The lineage this version belongs to. For a non-versioned concept, 1:1 with id. */
+  itemId: Schema.String,
   state: State,
+  /** Optimistic-concurrency event counter (not the product version). */
   version: Schema.Number,
+  /** Product version status: 'draft' (editable) | 'published' (frozen). */
+  versionStatus: VersionStatus,
+  /** Sequence within the lineage (1,2,3…). */
+  versionSeq: Schema.Number,
+  publishedAt: Schema.NullOr(Schema.Date),
   createdAt: Schema.Date,
   archivedAt: Schema.NullOr(Schema.Date),
 }
 export const Instance = Schema.Struct(InstanceFields)
 export type Instance = typeof Instance.Type
+
+/** A logical item (lineage) — referenced as "Latest"; whole-item archive lives here. */
+export const Item = Schema.Struct({
+  id: Schema.String,
+  conceptId: Schema.String,
+  archivedAt: Schema.NullOr(Schema.Date),
+})
+export type Item = typeof Item.Type
+
+/** A relation edge in its new reference shape. `toVersionId` null = general ("Latest"). */
+export const Relation = Schema.Struct({
+  id: Schema.String,
+  fieldId: Schema.String,
+  fromId: Schema.String,
+  toItemId: Schema.String,
+  toVersionId: Schema.NullOr(Schema.String),
+  toId: Schema.String,
+})
+export type Relation = typeof Relation.Type
+
+/** A relation-picker candidate: the head (latest published) of a target item. */
+export const InstancePick = Schema.Struct({
+  itemId: Schema.String,
+  instanceId: Schema.String,
+  label: Schema.String,
+  versionSeq: Schema.Number,
+  versionStatus: VersionStatus,
+})
+export type InstancePick = typeof InstancePick.Type
 
 export const Concept = Schema.Struct({
   id: Schema.String,
@@ -40,9 +81,11 @@ export const Concept = Schema.Struct({
    *  instances (default). Both drawn from the org-wide label vocabulary. */
   staticLabelIds: Schema.Array(Schema.String),
   defaultLabelIds: Schema.Array(Schema.String),
+  /** Opt-in per-concept versioning (draft→published versions + pinned references). */
+  versioningEnabled: Schema.Boolean,
   /** Archive marker: non-null = archived (hidden from the live list, restorable). */
   archivedAt: Schema.NullOr(Schema.Date),
-  /** Total instances (live + archived) — present only on a `withCounts` list. */
+  /** Total items (live + archived) — present only on a `withCounts` list. */
   itemCount: Schema.optional(Schema.Number),
 })
 export type Concept = typeof Concept.Type
@@ -140,7 +183,11 @@ export const RelatedInstance = Schema.Struct({
   direction: Schema.Literal("out", "in"),
   conceptId: Schema.String,
   conceptName: Schema.String,
-  instance: Instance,
+  /** True if this edge pins a specific published version; false = "Latest" (general). */
+  pinned: Schema.Boolean,
+  /** The resolved target version (the pinned version, or the current Latest). May be
+   *  null when a general ref currently has no published version (dangling). */
+  instance: Schema.NullOr(Instance),
 })
 export type RelatedInstance = typeof RelatedInstance.Type
 
@@ -420,6 +467,9 @@ export class KingsmakerRpcs extends RpcGroup.make(
       pluralName: Schema.optional(Schema.NullOr(Schema.String)),
       // Omitted → left unchanged (so the name/description save never wipes them).
       icon: Schema.optional(Schema.NullOr(Schema.String)),
+      // Toggle per-concept versioning (admin). Disabling is rejected if any item
+      // already has multiple versions or an open draft (VERSIONING_IN_USE).
+      versioningEnabled: Schema.optional(Schema.Boolean),
       staticLabelIds: Schema.optional(Schema.Array(Schema.String)),
       defaultLabelIds: Schema.optional(Schema.Array(Schema.String)),
     },
@@ -587,6 +637,72 @@ export class KingsmakerRpcs extends RpcGroup.make(
   Rpc.make("deleteInstance", {
     payload: { id: Schema.String },
     success: Instance,
+    error: RpcError,
+  }),
+  // ── versioning ──────────────────────────────────────────────────────────────
+  // All versions of an item (draft + published), oldest first — the detail panel.
+  Rpc.make("listVersions", {
+    payload: { itemId: Schema.String },
+    success: Schema.Array(Instance),
+    error: RpcError,
+  }),
+  // Open a new editable draft cloned from the item's latest published version.
+  Rpc.make("newVersion", {
+    payload: { itemId: Schema.String },
+    success: Instance,
+    error: RpcError,
+  }),
+  // Freeze a draft: draft → published (permanent). Bumps the event counter.
+  Rpc.make("publishVersion", {
+    payload: { id: Schema.String, expectedVersion: Schema.Number },
+    success: Instance,
+    error: RpcError,
+  }),
+  // Discard an open draft (hard delete of the draft row + its cloned edges).
+  Rpc.make("discardDraft", {
+    payload: { id: Schema.String },
+    success: Instance,
+    error: RpcError,
+  }),
+  // Whole-item (lineage) archive / restore — hides or restores every version.
+  Rpc.make("archiveItem", {
+    payload: { itemId: Schema.String },
+    success: Item,
+    error: RpcError,
+  }),
+  Rpc.make("restoreItem", {
+    payload: { itemId: Schema.String },
+    success: Item,
+    error: RpcError,
+  }),
+  // Search target instances of a concept (head/latest per item) for the relation
+  // picker. Returns one candidate per item.
+  Rpc.make("searchInstances", {
+    payload: {
+      conceptId: Schema.String,
+      query: Schema.optional(Schema.String),
+      limit: Schema.optional(Schema.Number),
+    },
+    success: Schema.Array(InstancePick),
+    error: RpcError,
+  }),
+  // Create a relation edge. Target is `toVersionId` (pinned) or `toItemId`
+  // (general / "Latest"); `toId` legacy instance id also accepted.
+  Rpc.make("createRelation", {
+    payload: {
+      fieldId: Schema.String,
+      fromId: Schema.String,
+      toItemId: Schema.optional(Schema.String),
+      toVersionId: Schema.optional(Schema.String),
+      toId: Schema.optional(Schema.String),
+      properties: Schema.optional(Fields),
+    },
+    success: Relation,
+    error: RpcError,
+  }),
+  Rpc.make("removeRelation", {
+    payload: { relationId: Schema.String },
+    success: Relation,
     error: RpcError,
   }),
   Rpc.make("listViews", { success: Schema.Array(SidebarView), error: RpcError }),

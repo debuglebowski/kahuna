@@ -1,6 +1,12 @@
 import { PgClient } from "@effect/sql-pg"
 import { Effect } from "effect"
-import { ConceptInUse, ConceptNameConflict, ConceptNotFound, LabelNotFound } from "../errors"
+import {
+  ConceptInUse,
+  ConceptNameConflict,
+  ConceptNotFound,
+  LabelNotFound,
+  VersioningInUse,
+} from "../errors"
 import { EventStore } from "./EventStore"
 import { LabelService } from "./LabelService"
 import { OrgContext } from "./OrgContext"
@@ -62,8 +68,15 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
       Effect.gen(function* () {
         const { orgId } = yield* OrgContext
         const liveOnly = opts.includeArchived ? sql`` : sql` AND archived_at IS NULL`
+        // Count ITEMS, not version rows: a versioned concept counts distinct
+        // lineages (each item has ≥1 version); a non-versioned concept counts
+        // instances exactly as before (1:1, so the two coincide). Both still count
+        // live + archived, so the count keeps blocking a concept purge correctly.
         const countCol = opts.withCounts
-          ? sql`, (SELECT COUNT(*)::int FROM instances i WHERE i.org_id = c.org_id AND i.concept_id = c.id) AS item_count`
+          ? sql`, (CASE WHEN c.versioning_enabled
+                    THEN (SELECT COUNT(DISTINCT i.item_id)::int FROM instances i WHERE i.org_id = c.org_id AND i.concept_id = c.id)
+                    ELSE (SELECT COUNT(*)::int FROM instances i WHERE i.org_id = c.org_id AND i.concept_id = c.id)
+                  END) AS item_count`
           : sql``
         const rows = yield* sql<ConceptRow>`
           SELECT c.*${countCol} FROM concepts c WHERE c.org_id = ${orgId}${liveOnly} ORDER BY c.name ASC`
@@ -126,12 +139,37 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
       readonly icon?: string | null
       readonly staticLabelIds?: ReadonlyArray<string>
       readonly defaultLabelIds?: ReadonlyArray<string>
+      // Toggle per-concept versioning. Enabling is always allowed (existing
+      // instances are already 1-version published items). Disabling is blocked
+      // while any item holds >1 version or an open draft.
+      readonly versioningEnabled?: boolean
     }) =>
       sql.withTransaction(
         Effect.gen(function* () {
           const { orgId } = yield* OrgContext
           const current = yield* getById(input.id)
           const name = input.name?.trim()
+          const versioningEnabled =
+            input.versioningEnabled === undefined
+              ? current.versioningEnabled
+              : input.versioningEnabled
+          // Guard a disable: refuse if any item has multiple versions or a draft,
+          // which would otherwise orphan versions with no defined "latest".
+          if (current.versioningEnabled && versioningEnabled === false) {
+            const multi = yield* sql<{ readonly count: number | string }>`
+              SELECT COUNT(*)::int AS count FROM (
+                SELECT item_id FROM instances
+                WHERE org_id = ${orgId} AND concept_id = ${input.id}
+                GROUP BY item_id
+                HAVING COUNT(*) > 1 OR bool_or(version_status = 'draft')
+              ) x`
+            const multiVersionItemCount = Number(multi[0]?.count ?? 0)
+            if (multiVersionItemCount > 0) {
+              return yield* Effect.fail(
+                new VersioningInUse({ conceptId: input.id, multiVersionItemCount }),
+              )
+            }
+          }
           if (name && name !== current.name) {
             const clash = yield* sql<{ readonly id: string }>`
               SELECT id FROM concepts
@@ -159,6 +197,7 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
             UPDATE concepts
             SET description = ${input.description}, name = ${finalName},
                 plural_name = ${pluralName}, icon = ${icon},
+                versioning_enabled = ${versioningEnabled},
                 static_label_ids = ${JSON.stringify(staticIds)}::jsonb,
                 default_label_ids = ${JSON.stringify(defaultIds)}::jsonb
             WHERE org_id = ${orgId} AND id = ${input.id}
@@ -176,6 +215,9 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
               ...(name ? { name: concept.name } : {}),
               ...(input.pluralName !== undefined ? { pluralName: concept.pluralName } : {}),
               ...(input.icon !== undefined ? { icon: concept.icon } : {}),
+              ...(input.versioningEnabled !== undefined
+                ? { versioningEnabled: concept.versioningEnabled }
+                : {}),
               ...(input.staticLabelIds ? { staticLabelIds: concept.staticLabelIds } : {}),
               ...(input.defaultLabelIds ? { defaultLabelIds: concept.defaultLabelIds } : {}),
             },
@@ -244,6 +286,9 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
             return yield* Effect.fail(new ConceptInUse({ concept: concept.name, instanceCount }))
           }
           yield* sql`DELETE FROM fields WHERE org_id = ${orgId} AND concept_id = ${id}`
+          // Zero instances ⇒ any remaining items rows are empty lineages; clear
+          // them so the concept row's FK doesn't block the delete.
+          yield* sql`DELETE FROM items WHERE org_id = ${orgId} AND concept_id = ${id}`
           yield* sql`DELETE FROM concepts WHERE org_id = ${orgId} AND id = ${id}`
           yield* events.append({
             subjectKind: "concept",

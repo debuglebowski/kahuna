@@ -110,6 +110,43 @@ export class EventCorruption extends Schema.TaggedError<EventCorruption>()("Even
   eventId: Schema.Number,
 }) {}
 
+// ── versioning ──────────────────────────────────────────────────────────────
+
+export class ItemNotFound extends Schema.TaggedError<ItemNotFound>()("ItemNotFound", {
+  itemId: Schema.String,
+}) {}
+
+/** A published version is frozen: it can't be edited or re-published. The
+ *  operation needs an editable draft (create a new version first). */
+export class VersionFrozen extends Schema.TaggedError<VersionFrozen>()("VersionFrozen", {
+  instanceId: Schema.String,
+}) {}
+
+/** Only one draft may be open per item at a time — publish or discard it first. */
+export class DraftAlreadyExists extends Schema.TaggedError<DraftAlreadyExists>()(
+  "DraftAlreadyExists",
+  { itemId: Schema.String, draftInstanceId: Schema.String },
+) {}
+
+/** A reference can't pin to a draft (or otherwise non-published) version. */
+export class RelationPinToDraft extends Schema.TaggedError<RelationPinToDraft>()(
+  "RelationPinToDraft",
+  { versionId: Schema.String },
+) {}
+
+/** A general reference can't resolve an item that has no published version yet
+ *  (a brand-new item is not referenceable until its first publish). */
+export class ItemNotPublished extends Schema.TaggedError<ItemNotPublished>()("ItemNotPublished", {
+  itemId: Schema.String,
+}) {}
+
+/** Versioning can't be disabled on a concept while items hold >1 version or an
+ *  open draft — that would orphan versions with no defined "latest". */
+export class VersioningInUse extends Schema.TaggedError<VersioningInUse>()("VersioningInUse", {
+  conceptId: Schema.String,
+  multiVersionItemCount: Schema.Number,
+}) {}
+
 export class SidebarViewNotFound extends Schema.TaggedError<SidebarViewNotFound>()(
   "SidebarViewNotFound",
   { id: Schema.String },
@@ -152,6 +189,12 @@ export type EngineError =
   | OrgScopeViolation
   | AttachmentNotFound
   | EventCorruption
+  | ItemNotFound
+  | VersionFrozen
+  | DraftAlreadyExists
+  | RelationPinToDraft
+  | ItemNotPublished
+  | VersioningInUse
   | SidebarViewNotFound
   | SidebarViewProtected
   | DashboardNotFound

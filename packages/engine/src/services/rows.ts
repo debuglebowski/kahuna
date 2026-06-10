@@ -11,11 +11,13 @@ import type {
   FieldKind,
   Instance,
   InstanceState,
+  Item,
   Label,
   Relation,
   SidebarView,
   SidebarViewBody,
   SubjectKind,
+  VersionStatus,
 } from "../domain/types"
 
 /** Raw DB row shapes (snake_case, as returned by `SELECT *`). */
@@ -29,10 +31,18 @@ export interface ConceptRow {
   readonly icon: string | null
   readonly static_label_ids: unknown
   readonly default_label_ids: unknown
+  readonly versioning_enabled: boolean
   readonly created_at: Date
   readonly archived_at: Date | null
   /** Present only when ConceptService.list is called withCounts. */
   readonly item_count?: number | string
+}
+export interface ItemRow {
+  readonly id: string
+  readonly org_id: string
+  readonly concept_id: string
+  readonly archived_at: Date | null
+  readonly created_at: Date
 }
 export interface LabelRow {
   readonly id: string
@@ -59,8 +69,12 @@ export interface InstanceRow {
   readonly id: string
   readonly org_id: string
   readonly concept_id: string
+  readonly item_id: string
   readonly state: InstanceState
   readonly version: number | string
+  readonly version_status: string
+  readonly version_seq: number | string
+  readonly published_at: Date | null
   readonly created_at: Date
   readonly archived_at: Date | null
 }
@@ -69,6 +83,8 @@ export interface RelationRow {
   readonly org_id: string
   readonly field_id: string
   readonly from_id: string
+  readonly to_item_id: string
+  readonly to_version_id: string | null
   readonly to_id: string
   readonly properties: Record<string, unknown>
   readonly created_at: Date
@@ -102,9 +118,18 @@ export const toConcept = (r: ConceptRow): Concept => ({
   icon: r.icon,
   staticLabelIds: toIdArray(r.static_label_ids),
   defaultLabelIds: toIdArray(r.default_label_ids),
+  versioningEnabled: r.versioning_enabled ?? false,
   createdAt: r.created_at,
   archivedAt: r.archived_at,
   ...(r.item_count == null ? {} : { itemCount: Number(r.item_count) }),
+})
+
+export const toItem = (r: ItemRow): Item => ({
+  id: r.id,
+  orgId: r.org_id,
+  conceptId: r.concept_id,
+  archivedAt: r.archived_at,
+  createdAt: r.created_at,
 })
 
 export const toLabel = (r: LabelRow): Label => ({
@@ -134,8 +159,12 @@ export const toInstance = (r: InstanceRow): Instance => ({
   id: r.id,
   orgId: r.org_id,
   conceptId: r.concept_id,
+  itemId: r.item_id,
   state: r.state ?? {},
   version: Number(r.version),
+  versionStatus: (r.version_status ?? "published") as VersionStatus,
+  versionSeq: Number(r.version_seq ?? 1),
+  publishedAt: r.published_at,
   createdAt: r.created_at,
   archivedAt: r.archived_at,
 })
@@ -145,6 +174,8 @@ export const toRelation = (r: RelationRow): Relation => ({
   orgId: r.org_id,
   fieldId: r.field_id,
   fromId: r.from_id,
+  toItemId: r.to_item_id,
+  toVersionId: r.to_version_id,
   toId: r.to_id,
   properties: r.properties ?? {},
   createdAt: r.created_at,

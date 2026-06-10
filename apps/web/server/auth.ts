@@ -22,6 +22,7 @@ async function purgeOrgEngineData(orgId: string): Promise<void> {
     await client.query("DELETE FROM attachments WHERE org_id = $1", [orgId])
     await client.query("DELETE FROM relations WHERE org_id = $1", [orgId])
     await client.query("DELETE FROM instances WHERE org_id = $1", [orgId])
+    await client.query("DELETE FROM items WHERE org_id = $1", [orgId])
     await client.query("DELETE FROM fields WHERE org_id = $1", [orgId])
     await client.query("DELETE FROM events WHERE org_id = $1", [orgId])
     await client.query("DELETE FROM concepts WHERE org_id = $1", [orgId])

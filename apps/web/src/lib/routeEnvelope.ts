@@ -11,7 +11,9 @@ export interface LiveEnvelope {
   readonly org: string
   readonly id: number
   readonly at: number
-  readonly kind: "instance" | "relation" | "concept" | "field"
+  // "item" = whole-item archive/restore (carries conceptId → refetches the concept
+  // list + open details, like an instance event).
+  readonly kind: "instance" | "relation" | "concept" | "field" | "item"
   readonly subjectId: string
   readonly type: string
   /** Concept id for instance events — routes to the id-keyed instance collection. */

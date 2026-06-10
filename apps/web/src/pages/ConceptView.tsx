@@ -1,6 +1,6 @@
 import { useLiveQuery } from "@tanstack/react-db"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Archive, ArchiveRestore, Plus, Trash2 } from "lucide-react"
+import { ArchiveRestore, Plus, Trash2 } from "lucide-react"
 import { useMemo, useState } from "react"
 import { useNavigate, useParams } from "react-router-dom"
 import {
@@ -69,8 +69,8 @@ export function ConceptView() {
   const admin = isAdminRole(myRole)
 
   const [showArchived, setShowArchived] = useState(false)
-  // Archive/delete pop a confirm dialog; restore is immediate.
-  const [dialog, setDialog] = useState<{ kind: "archive" | "delete"; inst: Instance } | null>(null)
+  // Delete pops a confirm dialog; restore is immediate.
+  const [dialog, setDialog] = useState<{ kind: "delete"; inst: Instance } | null>(null)
 
   // Archived items load on demand, separate from the live collection.
   const archivedQ = useQuery({
@@ -84,13 +84,6 @@ export function ConceptView() {
     qc.invalidateQueries({ queryKey: ["instances", id, "archived"] })
   }
 
-  const archiveInst = useMutation({
-    mutationFn: (i: Instance) => api.archiveInstance(i.id, i.version),
-    onSuccess: () => {
-      setDialog(null)
-      refetchAll()
-    },
-  })
   const restoreInst = useMutation({
     mutationFn: (i: Instance) => api.restoreInstance(i.id, i.version),
     onSuccess: refetchAll,
@@ -175,6 +168,7 @@ export function ConceptView() {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-12 px-6 text-muted-foreground">#</TableHead>
                   {columns.map((c) => (
                     <TableHead
                       key={c.id}
@@ -191,44 +185,23 @@ export function ConceptView() {
                       {sortKey === c.id ? (asc ? " ▲" : " ▼") : ""}
                     </TableHead>
                   ))}
-                  <TableHead className="px-6" />
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {rows.map((r) => (
+                {rows.map((r, i) => (
                   <TableRow
                     key={r.id}
                     className="cursor-pointer"
                     onClick={() => navigate(`/instances/${r.id}`)}
                   >
+                    <TableCell className="px-6 tabular-nums text-muted-foreground">
+                      {i + 1}
+                    </TableCell>
                     {columns.map((c) => (
                       <TableCell key={c.id} className="px-6 text-foreground">
                         <FieldValueCell field={c} value={r.state[c.id]} />
                       </TableCell>
                     ))}
-                    <TableCell className="px-2 text-right whitespace-nowrap">
-                      <IconButton
-                        aria-label={`Archive ${rowLabel(r.state)}`}
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          setDialog({ kind: "archive", inst: r })
-                        }}
-                      >
-                        <Archive size={15} />
-                      </IconButton>
-                      {admin && (
-                        <IconButton
-                          variant="danger"
-                          aria-label={`Delete ${rowLabel(r.state)}`}
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            setDialog({ kind: "delete", inst: r })
-                          }}
-                        >
-                          <Trash2 size={15} />
-                        </IconButton>
-                      )}
-                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -279,26 +252,6 @@ export function ConceptView() {
         )}
       </div>
 
-      {dialog?.kind === "archive" && (
-        <ConfirmDialog
-          title={`Archive ${name}`}
-          message={
-            <>
-              Archive <strong>{rowLabel(dialog.inst.state)}</strong>? It's hidden from this list but
-              kept — you can restore it from "Show archived".
-            </>
-          }
-          confirmLabel="Archive"
-          pending={archiveInst.isPending}
-          error={
-            archiveInst.error
-              ? ((archiveInst.error as { message?: string }).message ?? "Could not archive.")
-              : undefined
-          }
-          onConfirm={() => archiveInst.mutate(dialog.inst)}
-          onCancel={() => setDialog(null)}
-        />
-      )}
       {dialog?.kind === "delete" && (
         <ConfirmDialog
           title={`Delete ${name}`}
@@ -310,9 +263,7 @@ export function ConceptView() {
           }
           confirmLabel="Delete"
           confirmVariant="danger"
-          secondaryLabel={dialog.inst.archivedAt ? undefined : "Archive instead"}
-          onSecondary={dialog.inst.archivedAt ? undefined : () => archiveInst.mutate(dialog.inst)}
-          pending={delInst.isPending || archiveInst.isPending}
+          pending={delInst.isPending}
           error={
             delInst.error
               ? ((delInst.error as { message?: string }).message ?? "Could not delete.")

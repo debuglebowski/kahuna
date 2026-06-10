@@ -26,8 +26,11 @@ export type {
   GraphLayout,
   Instance,
   InstanceDetail,
+  InstancePick,
+  Item,
   Label,
   RelatedInstance,
+  Relation,
   SidebarCondition,
   SidebarMember,
   SidebarRule,
@@ -35,6 +38,7 @@ export type {
   SidebarSource,
   SidebarView,
   SidebarViewBody,
+  VersionStatus,
 } from "../../rpc/contract"
 
 /** Computed-field shapes (carried inside an instance's `state`). */
@@ -82,6 +86,7 @@ export const api = {
       pluralName?: string | null
       description: string | null
       icon?: string | null
+      versioningEnabled?: boolean
       staticLabelIds?: ReadonlyArray<string>
       defaultLabelIds?: ReadonlyArray<string>
     },
@@ -93,6 +98,7 @@ export const api = {
         pluralName: patch.pluralName,
         description: patch.description,
         icon: patch.icon,
+        versioningEnabled: patch.versioningEnabled,
         staticLabelIds: patch.staticLabelIds,
         defaultLabelIds: patch.defaultLabelIds,
       }),
@@ -151,6 +157,25 @@ export const api = {
   restoreInstance: (id: string, expectedVersion: number) =>
     call((c) => c.restoreInstance({ id, expectedVersion })),
   deleteInstance: (id: string) => call((c) => c.deleteInstance({ id })),
+  // ── versioning ──────────────────────────────────────────────────────────────
+  listVersions: (itemId: string) => call((c) => c.listVersions({ itemId })),
+  newVersion: (itemId: string) => call((c) => c.newVersion({ itemId })),
+  publishVersion: (id: string, expectedVersion: number) =>
+    call((c) => c.publishVersion({ id, expectedVersion })),
+  discardDraft: (id: string) => call((c) => c.discardDraft({ id })),
+  archiveItem: (itemId: string) => call((c) => c.archiveItem({ itemId })),
+  restoreItem: (itemId: string) => call((c) => c.restoreItem({ itemId })),
+  searchInstances: (conceptId: string, query?: string, limit?: number) =>
+    call((c) => c.searchInstances({ conceptId, query, limit })),
+  createRelation: (input: {
+    fieldId: string
+    fromId: string
+    toItemId?: string
+    toVersionId?: string
+    toId?: string
+    properties?: Fields
+  }) => call((c) => c.createRelation(input)),
+  removeRelation: (relationId: string) => call((c) => c.removeRelation({ relationId })),
   listViews: () => call((c) => c.listViews()),
   createView: (input: {
     name: string

@@ -1,15 +1,24 @@
 import { Either } from "effect"
-import type { EngineEvent, InstanceState } from "../domain/types"
+import type { EngineEvent, InstanceState, VersionStatus } from "../domain/types"
 import { EventCorruption } from "../errors"
 
 /**
- * The folded state of an instance: its current field values, version, and
- * deletion marker. Reconstructable purely from the event stream.
+ * The folded state of an instance: its current field values, version, deletion
+ * marker, and product-version status. Reconstructable purely from the event
+ * stream.
+ *
+ * Note: `versionStatus`/`publishedAt` are folded here because they change over an
+ * instance's life (a draft is published). The immutable lineage facts
+ * (`itemId`/`versionSeq`) are NOT folded — they are set once at insert and
+ * preserved verbatim by the rebuild write-back, so legacy events (which lack the
+ * payload metadata) still reconstruct correctly.
  */
 export interface FoldState {
   readonly state: InstanceState
   readonly version: number
   readonly archivedAt: Date | null
+  readonly versionStatus: VersionStatus
+  readonly publishedAt: Date | null
 }
 
 /**
@@ -33,7 +42,16 @@ export const applyEvent = (
         new EventCorruption({ reason: "create event after instance exists", eventId: event.id }),
       )
     }
-    return Either.right({ state: { ...p.fields }, version: 0, archivedAt: null })
+    // Legacy events lack version metadata ⇒ default to a published seq-1 row, so
+    // pre-versioning instances replay unchanged.
+    const versionStatus = p.versionStatus ?? "published"
+    return Either.right({
+      state: { ...p.fields },
+      version: 0,
+      archivedAt: null,
+      versionStatus,
+      publishedAt: versionStatus === "published" ? event.occurredAt : null,
+    })
   }
 
   if (acc === null) {
@@ -50,7 +68,13 @@ export const applyEvent = (
         new EventCorruption({ reason: "restore on a live instance", eventId: event.id }),
       )
     }
-    return Either.right({ state: acc.state, version: acc.version + 1, archivedAt: null })
+    return Either.right({
+      state: acc.state,
+      version: acc.version + 1,
+      archivedAt: null,
+      versionStatus: acc.versionStatus,
+      publishedAt: acc.publishedAt,
+    })
   }
   if (acc.archivedAt !== null) {
     return Either.left(
@@ -63,10 +87,33 @@ export const applyEvent = (
 
   switch (p._tag) {
     case "InstanceUpdated":
+      // NB: "no edits to a published version" is enforced in InstanceService
+      // (which knows `versioningEnabled`) — NOT here, because a non-versioned
+      // instance is also 'published' yet must stay editable.
       return Either.right({
         state: { ...acc.state, ...p.patch },
         version: acc.version + 1,
         archivedAt: null,
+        versionStatus: acc.versionStatus,
+        publishedAt: acc.publishedAt,
+      })
+    // Draft → published. One-shot: a second publish is corruption. Only ever
+    // emitted for versioned concepts, so it can't misfire on a non-versioned row.
+    case "VersionPublished":
+      if (acc.versionStatus === "published") {
+        return Either.left(
+          new EventCorruption({
+            reason: "publish on an already-published version",
+            eventId: event.id,
+          }),
+        )
+      }
+      return Either.right({
+        state: acc.state,
+        version: acc.version + 1,
+        archivedAt: acc.archivedAt,
+        versionStatus: "published",
+        publishedAt: event.occurredAt,
       })
     // `InstanceDeleted` is the legacy archive tag (kept for replay); new archives
     // emit `InstanceArchived`. Both mark the instance archived identically.
@@ -76,6 +123,8 @@ export const applyEvent = (
         state: acc.state,
         version: acc.version + 1,
         archivedAt: event.occurredAt,
+        versionStatus: acc.versionStatus,
+        publishedAt: acc.publishedAt,
       })
     case "AttachmentAdded":
       // Attachments are recorded against the instance but do not change its
@@ -89,6 +138,8 @@ export const applyEvent = (
         state: { ...acc.state, __bands: { ...bands, [p.field]: p.to } },
         version: acc.version,
         archivedAt: acc.archivedAt,
+        versionStatus: acc.versionStatus,
+        publishedAt: acc.publishedAt,
       })
     }
     default:

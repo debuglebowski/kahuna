@@ -17,6 +17,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Archive, ArchiveRestore, Check, GripVertical, Pencil, Plus, Trash2, X } from "lucide-react"
 import { useEffect, useState } from "react"
 import { Link, useOutletContext } from "react-router-dom"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Textarea } from "@/components/ui/textarea"
 import { IconPicker } from "../../components/IconPicker"
 import { LabelMultiSelect } from "../../components/LabelMultiSelect"
@@ -263,6 +264,14 @@ export function Concepts() {
         description: selected?.description ?? null,
         staticLabelIds,
         defaultLabelIds: defaultLabelIds.filter((id) => !staticLabelIds.includes(id)),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["concepts"] }),
+  })
+  const toggleVersioning = useMutation({
+    mutationFn: (enabled: boolean) =>
+      api.updateConcept(selectedId!, {
+        description: selected?.description ?? null,
+        versioningEnabled: enabled,
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["concepts"] }),
   })
@@ -638,6 +647,39 @@ export function Concepts() {
                 )}
                 {saveLabels.error && (
                   <p className="text-sm text-destructive">{msgOf(saveLabels.error)}</p>
+                )}
+              </div>
+            </Card>
+
+            <Card>
+              <CardHeader title="Versioning" />
+              <div className="space-y-3 p-6">
+                <label className="flex items-start gap-3">
+                  <Checkbox
+                    checked={selected.versioningEnabled}
+                    disabled={!admin || toggleVersioning.isPending}
+                    onCheckedChange={(v) => toggleVersioning.mutate(v === true)}
+                    className="mt-0.5"
+                  />
+                  <span className="space-y-1">
+                    <span className="block text-sm font-medium text-foreground">
+                      Enable versioning
+                    </span>
+                    <span className="block text-xs text-muted-foreground">
+                      Items hold multiple draft → published versions. New items start as a draft and
+                      aren't shown or referenceable until published; lists show only the latest
+                      published version. Other items can reference "Latest" or pin a specific version.
+                    </span>
+                  </span>
+                </label>
+                {toggleVersioning.error && (
+                  <p className="text-sm text-destructive">
+                    {msgOf(toggleVersioning.error)}
+                    {String(toggleVersioning.error).includes("VERSIONING_IN_USE") ||
+                    msgOf(toggleVersioning.error).includes("VersioningInUse")
+                      ? " — disable is blocked while items have multiple versions or an open draft."
+                      : ""}
+                  </p>
                 )}
               </div>
             </Card>

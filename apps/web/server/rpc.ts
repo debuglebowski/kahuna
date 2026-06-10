@@ -10,8 +10,11 @@ import {
   type GraphLayout,
   type Instance,
   type InstanceDetail,
+  type InstancePick,
+  type Item,
   KingsmakerRpcs,
   type Label,
+  type Relation,
   RpcError,
   type SidebarView,
 } from "../rpc/contract"
@@ -184,13 +187,23 @@ const HandlersLive = ServerRpcs.toLayer({
   listConcepts: ({ includeArchived, withCounts }) =>
     as<ReadonlyArray<Concept>>(uc.listConcepts(includeArchived, withCounts)),
   createConcept: ({ name }) => as<Concept>(uc.createConcept(name)),
-  updateConcept: ({ id, name, pluralName, description, icon, staticLabelIds, defaultLabelIds }) =>
+  updateConcept: ({
+    id,
+    name,
+    pluralName,
+    description,
+    icon,
+    versioningEnabled,
+    staticLabelIds,
+    defaultLabelIds,
+  }) =>
     admin<Concept>(
       uc.updateConcept(id, {
         name,
         pluralName,
         description,
         icon,
+        versioningEnabled,
         staticLabelIds,
         defaultLabelIds,
       }),
@@ -240,6 +253,20 @@ const HandlersLive = ServerRpcs.toLayer({
   archiveInstance: ({ id, expectedVersion }) => mapErr(uc.archiveInstance(id, expectedVersion)),
   restoreInstance: ({ id, expectedVersion }) => mapErr(uc.restoreInstance(id, expectedVersion)),
   deleteInstance: ({ id }) => admin<Instance>(uc.deleteInstance(id)),
+  // Versioning: lifecycle + relation editing are ordinary member writes (the
+  // versioning *toggle* is admin, via updateConcept). Discarding a draft is a
+  // member write (it only removes never-published work).
+  listVersions: ({ itemId }) => mapErr(uc.listVersions(itemId)),
+  newVersion: ({ itemId }) => mapErr(uc.newVersion(itemId)),
+  publishVersion: ({ id, expectedVersion }) => mapErr(uc.publishVersion(id, expectedVersion)),
+  discardDraft: ({ id }) => mapErr(uc.discardDraft(id)),
+  archiveItem: ({ itemId }) => as<Item>(uc.archiveItem(itemId)),
+  restoreItem: ({ itemId }) => as<Item>(uc.restoreItem(itemId)),
+  searchInstances: ({ conceptId, query, limit }) =>
+    as<ReadonlyArray<InstancePick>>(uc.searchInstances(conceptId, query, limit)),
+  createRelation: ({ fieldId, fromId, toItemId, toVersionId, toId, properties }) =>
+    as<Relation>(uc.createRelation({ fieldId, fromId, toItemId, toVersionId, toId, properties })),
+  removeRelation: ({ relationId }) => as<Relation>(uc.removeRelation(relationId)),
   // Views: any member may create/edit/reorder/toggle (no admin gate). The engine
   // service blocks touching another user's personal view via its owner scoping.
   listViews: () => as<ReadonlyArray<SidebarView>>(uc.listViews),

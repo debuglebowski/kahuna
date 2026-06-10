@@ -102,15 +102,53 @@ export const getInstanceDetail = (id: string): UC<unknown> =>
       labelsSvc.resolve(ownLabelIds.filter((lid) => !staticIdSet.has(lid))),
     ])
 
-    const resolve = (
-      rel: { id: string; fieldId: string },
+    // Resolve one edge to its display target. Outbound: a pinned ref resolves to
+    // its specific version, a general ref to the item's CURRENT latest published
+    // (re-resolved here — the shadow `toId` may be stale after a republish).
+    // Inbound: the source version (already filtered to published by `listTo`).
+    const resolveEntry = (
+      rel: {
+        id: string
+        fieldId: string
+        fromId: string
+        toItemId: string
+        toVersionId: string | null
+      },
       direction: "out" | "in",
-      otherId: string,
     ) =>
       Effect.gen(function* () {
-        const other = yield* instances.get(otherId)
-        const [field, otherFields, d] = yield* Effect.all([
-          fieldsSvc.getById(rel.fieldId),
+        const pinned = rel.toVersionId !== null
+        const otherId =
+          direction === "in"
+            ? rel.fromId
+            : pinned
+              ? (rel.toVersionId as string)
+              : ((yield* instances.headOf(rel.toItemId))?.id ?? null)
+        const field = yield* fieldsSvc.getById(rel.fieldId)
+        // Dangling: a general ref whose item has no live published version, OR a
+        // pinned target that is archived/gone (instances.get is live-only).
+        // Surface both as unavailable rather than silently dropping the edge.
+        const other = otherId
+          ? yield* instances.get(otherId).pipe(Effect.catchAll(() => Effect.succeed(null)))
+          : null
+        if (!other) {
+          const item = yield* instances
+            .getItem(rel.toItemId)
+            .pipe(Effect.catchAll(() => Effect.succeed(null)))
+          const cId = item?.conceptId ?? ""
+          return {
+            relationId: rel.id,
+            fieldId: rel.fieldId,
+            relationName: field.name,
+            label: "(unavailable)",
+            direction,
+            conceptId: cId,
+            conceptName: cId ? (nameById.get(cId) ?? cId) : "(unavailable)",
+            pinned,
+            instance: null,
+          }
+        }
+        const [otherFields, d] = yield* Effect.all([
           fieldsSvc.listFields(other.conceptId),
           computed.decorate(other),
         ])
@@ -126,13 +164,14 @@ export const getInstanceDetail = (id: string): UC<unknown> =>
           direction,
           conceptId: other.conceptId,
           conceptName: nameById.get(other.conceptId) ?? other.conceptId,
+          pinned,
           instance: d,
         }
       }).pipe(Effect.catchAll(() => Effect.succeed(null)))
 
     const related = yield* Effect.all([
-      Effect.forEach(outRels, (r) => resolve(r, "out", r.toId)),
-      Effect.forEach(inRels, (r) => resolve(r, "in", r.fromId)),
+      Effect.forEach(outRels, (r) => resolveEntry(r, "out")),
+      Effect.forEach(inRels, (r) => resolveEntry(r, "in")),
     ]).pipe(Effect.map(([a, b]) => [...a, ...b].filter((x) => x !== null)))
 
     return {
@@ -158,6 +197,7 @@ export const updateConcept = (
     readonly pluralName?: string | null
     readonly description: string | null
     readonly icon?: string | null
+    readonly versioningEnabled?: boolean
     readonly staticLabelIds?: ReadonlyArray<string>
     readonly defaultLabelIds?: ReadonlyArray<string>
   },
@@ -169,6 +209,7 @@ export const updateConcept = (
       pluralName: patch.pluralName,
       description: patch.description,
       icon: patch.icon,
+      versioningEnabled: patch.versioningEnabled,
       staticLabelIds: patch.staticLabelIds,
       defaultLabelIds: patch.defaultLabelIds,
     }),
@@ -394,6 +435,64 @@ export const linkRelation = (
   properties?: Record<string, unknown>,
 ): UC<unknown> =>
   Effect.flatMap(RelationService, (r) => r.create({ fieldId, fromId, toId, properties }))
+
+// ── versioning ──────────────────────────────────────────────────────────────
+
+export const listVersions = (itemId: string): UC<ReadonlyArray<Instance>> =>
+  Effect.flatMap(InstanceService, (i) => i.listVersions(itemId))
+
+export const newVersion = (itemId: string): UC<Instance> =>
+  Effect.flatMap(InstanceService, (i) => i.newVersion({ itemId }))
+
+export const publishVersion = (id: string, expectedVersion: number): UC<Instance> =>
+  Effect.flatMap(InstanceService, (i) => i.publishVersion({ instanceId: id, expectedVersion }))
+
+export const discardDraft = (id: string): UC<Instance> =>
+  Effect.flatMap(InstanceService, (i) => i.discardDraft({ instanceId: id }))
+
+export const archiveItem = (itemId: string): UC<unknown> =>
+  Effect.flatMap(InstanceService, (i) => i.archiveItem({ itemId }))
+
+export const restoreItem = (itemId: string): UC<unknown> =>
+  Effect.flatMap(InstanceService, (i) => i.restoreItem({ itemId }))
+
+/** Relation-picker candidates: the head (latest published) of each item of a
+ *  concept whose display label matches `query`. */
+export const searchInstances = (
+  conceptId: string,
+  query?: string,
+  limit = 20,
+): UC<unknown> =>
+  Effect.gen(function* () {
+    const q = yield* QueryService
+    const fieldsSvc = yield* FieldService
+    const rows = yield* q.findInstances({ conceptId, limit: 200 })
+    const defs = yield* fieldsSvc.listFields(conceptId)
+    const textField = defs.find((f) => f.kind === "text")
+    const out = rows.map((r) => ({
+      itemId: r.itemId,
+      instanceId: r.id,
+      label:
+        textField && r.state[textField.id] ? String(r.state[textField.id]) : "(untitled)",
+      versionSeq: r.versionSeq,
+      versionStatus: r.versionStatus,
+    }))
+    const ql = query?.trim().toLowerCase()
+    const filtered = ql ? out.filter((o) => o.label.toLowerCase().includes(ql)) : out
+    return filtered.slice(0, limit)
+  })
+
+export const createRelation = (input: {
+  readonly fieldId: string
+  readonly fromId: string
+  readonly toItemId?: string
+  readonly toVersionId?: string
+  readonly toId?: string
+  readonly properties?: Record<string, unknown>
+}): UC<unknown> => Effect.flatMap(RelationService, (r) => r.create(input))
+
+export const removeRelation = (relationId: string): UC<unknown> =>
+  Effect.flatMap(RelationService, (r) => r.remove({ relationId }))
 
 export const uploadAttachment = (
   instanceId: string,

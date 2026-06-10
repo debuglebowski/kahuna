@@ -77,6 +77,10 @@ export interface Concept {
   /** Label ids snapshotted onto each new instance's `__labels` at creation time;
    *  editable per item afterward. */
   readonly defaultLabelIds: ReadonlyArray<Id>
+  /** Opt-in versioning: when true, this concept's items hold multiple draft→
+   *  published versions and references may pin a specific version. Default false
+   *  ⇒ the plain 1-instance-per-item model (every item is a published seq-1 row). */
+  readonly versioningEnabled: boolean
   readonly createdAt: Date
   /** Archive marker (mirrors `Field`/`Label`/`Instance`): non-null = archived
    *  (hidden from the live list but restorable). A true delete removes the row. */
@@ -121,12 +125,39 @@ export interface Field {
   readonly archivedAt: Date | null
 }
 
+/** The lineage row for a logical "item" — the stable identity across a concept's
+ *  versions. References point at an `Item` ("Latest"); whole-item archive lives
+ *  here. For a non-versioned concept the mapping to instances is 1:1. */
+export interface Item {
+  readonly id: Id
+  readonly orgId: OrgId
+  readonly conceptId: Id
+  /** Whole-item (lineage-level) archive marker; hides every version from lists. */
+  readonly archivedAt: Date | null
+  readonly createdAt: Date
+}
+
+/** Product version lifecycle: a version is an editable `draft`, then a frozen,
+ *  immutable, referenceable `published`. One-shot (`published` is permanent). */
+export type VersionStatus = "draft" | "published"
+
 export interface Instance {
   readonly id: Id
   readonly orgId: OrgId
   readonly conceptId: Id
+  /** The lineage (`items.id`) this version belongs to. Immutable. For a
+   *  non-versioned concept or any legacy row, `itemId === id` (1:1). */
+  readonly itemId: Id
   readonly state: InstanceState
+  /** Optimistic-concurrency EVENT counter — NOT the product version (see
+   *  `versionSeq`). Bumps on every mutating event including publish. */
   readonly version: number
+  /** Product version status: 'draft' (editable) | 'published' (frozen). */
+  readonly versionStatus: VersionStatus
+  /** Sequence within the lineage (1,2,3…). Immutable. */
+  readonly versionSeq: number
+  /** When this version was published; null while a draft. */
+  readonly publishedAt: Date | null
   readonly createdAt: Date
   readonly archivedAt: Date | null
 }
@@ -137,6 +168,12 @@ export interface Relation {
   /** The relation field def (kind=relation) this edge realises. */
   readonly fieldId: Id
   readonly fromId: Id
+  /** The referenced lineage ("Latest" target) — always set. */
+  readonly toItemId: Id
+  /** Pinned published version, or null = resolve to the item's latest published. */
+  readonly toVersionId: Id | null
+  /** Legacy resolved-target column (shadow during migration; superseded by
+   *  `toItemId`/`toVersionId`). Still populated on new edges. */
   readonly toId: Id
   readonly properties: Record<string, unknown>
   readonly createdAt: Date
@@ -144,7 +181,17 @@ export interface Relation {
 }
 
 export type EventPayload =
-  | { readonly _tag: "InstanceCreated"; readonly conceptId: Id; readonly fields: InstanceState }
+  | {
+      readonly _tag: "InstanceCreated"
+      readonly conceptId: Id
+      readonly fields: InstanceState
+      // Versioning lineage metadata, carried so a full replay reconstructs the
+      // version status/lineage. Absent on legacy events ⇒ the reducer defaults to
+      // a published, seq-1, 1:1 lineage (`itemId` falls back to the instance id).
+      readonly itemId?: Id
+      readonly versionSeq?: number
+      readonly versionStatus?: VersionStatus
+    }
   | { readonly _tag: "InstanceUpdated"; readonly patch: InstanceState }
   // Archive (soft, restorable). `InstanceDeleted` is the legacy archive tag kept
   // for replay; new archives emit `InstanceArchived`. Both fold to a set
@@ -152,6 +199,10 @@ export type EventPayload =
   | { readonly _tag: "InstanceDeleted" }
   | { readonly _tag: "InstanceArchived" }
   | { readonly _tag: "InstanceRestored" }
+  // Draft → published transition (one-shot, immutable). Folds `versionStatus` to
+  // 'published' + sets `publishedAt`, bumping the event counter. Only after this
+  // does the version become referenceable ("Latest").
+  | { readonly _tag: "VersionPublished" }
   // Audit tombstone for a hard delete: the row + attachments are gone, but the
   // prior events stay as history. Never folded (the subject no longer loads), so
   // the reducer doesn't handle it — it only surfaces in the activity feed.
@@ -161,6 +212,10 @@ export type EventPayload =
       readonly fieldId: Id
       readonly fromId: Id
       readonly toId: Id
+      // New reference shape (absent on legacy events). `toItemId` = referenced
+      // lineage; `toVersionId` null/absent = general ("Latest"), set = pinned.
+      readonly toItemId?: Id
+      readonly toVersionId?: Id | null
       readonly properties: Record<string, unknown>
     }
   | { readonly _tag: "RelationDeleted"; readonly relationId: Id }
@@ -192,6 +247,7 @@ export type EventPayload =
       readonly name?: string
       readonly pluralName?: string | null
       readonly icon?: string | null
+      readonly versioningEnabled?: boolean
       readonly staticLabelIds?: ReadonlyArray<Id>
       readonly defaultLabelIds?: ReadonlyArray<Id>
     }
@@ -224,6 +280,10 @@ export type EventPayload =
   | { readonly _tag: "FieldArchived"; readonly conceptId: Id; readonly name: string }
   | { readonly _tag: "FieldRestored"; readonly conceptId: Id; readonly name: string }
   | { readonly _tag: "FieldDeleted"; readonly conceptId: Id; readonly name: string }
+  // Whole-item (lineage) archive/restore. subjectKind "item"; like concept/field
+  // events these never appear in an instance stream (the reducer ignores them).
+  | { readonly _tag: "ItemArchived" }
+  | { readonly _tag: "ItemRestored" }
 
 export interface Attachment {
   readonly id: Id
@@ -411,7 +471,7 @@ export interface Dashboard {
   readonly updatedAt: Date
 }
 
-export type SubjectKind = "instance" | "relation" | "concept" | "field" | "label"
+export type SubjectKind = "instance" | "relation" | "concept" | "field" | "label" | "item"
 
 export interface EngineEvent {
   readonly id: number

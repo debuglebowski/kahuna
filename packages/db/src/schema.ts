@@ -46,6 +46,11 @@ export const concepts = pgTable(
     // Stored as ids (not names) so a label rename needs no backfill.
     staticLabelIds: jsonb("static_label_ids").notNull().default(sql`'[]'::jsonb`),
     defaultLabelIds: jsonb("default_label_ids").notNull().default(sql`'[]'::jsonb`),
+    // Opt-in "Versioning": when true, this concept's items hold multiple draft→
+    // published versions (each a first-class `instances` row sharing an `items`
+    // lineage), and references may pin a specific published version. When false
+    // (default) the concept behaves exactly as the plain 1-instance-per-item model.
+    versioningEnabled: boolean("versioning_enabled").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     // Archive marker (mirrors `fields`/`labels`): a non-null value hides the
     // concept from the live list but keeps the row (restorable). A true *delete*
@@ -118,6 +123,32 @@ export const fields = pgTable(
   ],
 )
 
+/**
+ * The lineage row for a logical "item" — the stable identity that survives across
+ * a concept's versions. Every `instances` row belongs to exactly one `items` row
+ * (`instances.item_id`). For a non-versioned concept (or any legacy row) the
+ * mapping is 1:1 (`items.id == instances.id`), so "latest published per item" is an
+ * identity no-op. For a versioned concept, all of an item's draft→published
+ * versions share one `items.id`. References point at `items.id` ("Latest") rather
+ * than a specific instance, and whole-item archive lives here (`archived_at`).
+ */
+export const items = pgTable(
+  "items",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: text("org_id").notNull(),
+    conceptId: uuid("concept_id")
+      .notNull()
+      .references(() => concepts.id),
+    // Whole-item (lineage-level) archive — hides every version from head lists.
+    // Distinct from per-version `instances.archived_at` (which hides one version,
+    // rolling the item's "Latest" back to the prior published version).
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("items_org_concept_idx").on(t.orgId, t.conceptId)],
+)
+
 export const instances = pgTable(
   "instances",
   {
@@ -126,8 +157,21 @@ export const instances = pgTable(
     conceptId: uuid("concept_id")
       .notNull()
       .references(() => concepts.id),
+    // Lineage this version belongs to. Immutable. For non-versioned/legacy rows
+    // it equals `id` (1:1). All versions of one item share this value.
+    itemId: uuid("item_id")
+      .notNull()
+      .references(() => items.id),
     state: jsonb("state").notNull().default(sql`'{}'::jsonb`),
+    // `version` (bigint) is the optimistic-concurrency EVENT counter — unrelated
+    // to product versioning below. Do not conflate.
     version: bigint("version", { mode: "number" }).notNull().default(0),
+    // Product version lifecycle. `version_status`: 'draft' (editable) → 'published'
+    // (frozen, immutable, referenceable). `version_seq`: 1,2,3… within the lineage
+    // (immutable). Non-versioned/legacy rows are always ('published', seq 1).
+    versionStatus: text("version_status").notNull().default("published"),
+    versionSeq: integer("version_seq").notNull().default(1),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     archivedAt: timestamp("archived_at", { withTimezone: true }),
   },
@@ -135,6 +179,15 @@ export const instances = pgTable(
     index("instances_org_concept_idx").on(t.orgId, t.conceptId),
     // Supports `state @> {...}` containment filters (QueryService.where).
     index("instances_state_gin").using("gin", sql`${t.state} jsonb_path_ops`),
+    // Head-only lists: the latest published, non-archived version per item.
+    index("instances_head_idx")
+      .on(t.orgId, t.conceptId, t.itemId, t.versionSeq.desc())
+      .where(sql`${t.versionStatus} = 'published' AND ${t.archivedAt} IS NULL`),
+    // Lineage operations: list-versions, one-draft check, whole-item archive.
+    index("instances_item_idx").on(t.itemId),
+    // A seq number is never reused within a lineage (allocation is MAX+1 over all
+    // rows incl. archived) — this backstops "Latest" from ever being ambiguous.
+    uniqueIndex("instances_item_seq_uq").on(t.itemId, t.versionSeq),
   ],
 )
 
@@ -151,6 +204,16 @@ export const relations = pgTable(
     fromId: uuid("from_id")
       .notNull()
       .references(() => instances.id),
+    // The referenced lineage ("Latest"): always set. A `to_version_id` of null
+    // means the edge resolves to the item's current latest published version;
+    // a non-null `to_version_id` pins it to that specific published version.
+    toItemId: uuid("to_item_id")
+      .notNull()
+      .references(() => items.id),
+    toVersionId: uuid("to_version_id").references(() => instances.id),
+    // Legacy target column — superseded by (to_item_id, to_version_id). Kept as a
+    // shadow for one release to de-risk the migration; dropped once all read paths
+    // resolve via the new columns. New edges still populate it (= resolved target).
     toId: uuid("to_id")
       .notNull()
       .references(() => instances.id),
@@ -161,6 +224,8 @@ export const relations = pgTable(
   (t) => [
     index("relations_from_idx").on(t.orgId, t.fromId, t.fieldId),
     index("relations_to_idx").on(t.orgId, t.toId, t.fieldId),
+    index("relations_to_item_idx").on(t.orgId, t.toItemId, t.fieldId),
+    index("relations_to_version_idx").on(t.orgId, t.toVersionId),
   ],
 )
 
@@ -242,6 +307,7 @@ export const dashboards = pgTable(
   },
   (t) => [index("dashboards_org_owner_idx").on(t.orgId, t.ownerId)],
 )
+
 /**
  * Saved node positions for the org's concept graph canvas — one row per org
  * holding a `{ [conceptId]: { x, y } }` document. Pure presentation state
