@@ -193,3 +193,13 @@
 .km-view-in {
   animation: km-view-in 0.18s ease;
 }
+
+/* react-grid-layout ships 200ms transitions on every tile AND on the container
+   height, so grids slide on mount, resize, and layout changes. Tiles must
+   reposition instantly; drag/resize still track the pointer (those states never
+   relied on transitions). !important because RGL's stylesheet loads after this
+   one. */
+.react-grid-layout,
+.react-grid-item {
+  transition: none !important;
+}

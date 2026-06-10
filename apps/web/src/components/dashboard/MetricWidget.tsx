@@ -1,4 +1,5 @@
 import type { Concept, DashboardWidget } from "@/lib/api"
+import { useSession } from "@/lib/auth-client"
 import type { ConceptInstanceData } from "@/lib/conceptData"
 import { metricValue } from "@/lib/widgetAggregations"
 
@@ -19,10 +20,14 @@ export function MetricWidget({
   data: ConceptInstanceData | undefined
   concept: Concept | undefined
 }) {
+  const { data: session } = useSession()
   if (!widget.conceptId || !concept) {
     return <p className="text-sm text-muted-foreground">Pick a concept to count.</p>
   }
-  const value = metricValue(data?.instances ?? [], widget.agg, widget.conditions, widget.field)
+  const value = metricValue(data?.instances ?? [], widget.agg, widget.conditions, widget.field, {
+    match: widget.match,
+    me: session?.user.id ?? null,
+  })
   const field = widget.field ? data?.fields.find((f) => f.id === widget.field) : undefined
   const sub =
     widget.agg === "count"

@@ -13,6 +13,7 @@ import {
   YAxis,
 } from "recharts"
 import { api, type DashboardWidget } from "@/lib/api"
+import { useSession } from "@/lib/auth-client"
 import type { ConceptInstanceData } from "@/lib/conceptData"
 import { groupBy, LABELS_KEY } from "@/lib/widgetAggregations"
 
@@ -52,13 +53,27 @@ export function BreakdownWidget({
     return (id: string) => m.get(id) ?? id
   }, [labelsQ.data])
 
+  const { data: session } = useSession()
+  const me = session?.user.id ?? null
   const rows = useMemo(() => {
     if (!widget.conceptId || !widget.groupBy) return []
-    return groupBy(data?.instances ?? [], widget.conditions, widget.groupBy).map((b) => ({
+    return groupBy(data?.instances ?? [], widget.conditions, widget.groupBy, {
+      match: widget.match,
+      me,
+    }).map((b) => ({
       name: byLabel ? labelName(b.key) : b.key,
       value: b.count,
     }))
-  }, [data?.instances, widget.conceptId, widget.groupBy, widget.conditions, byLabel, labelName])
+  }, [
+    data?.instances,
+    widget.conceptId,
+    widget.groupBy,
+    widget.conditions,
+    widget.match,
+    me,
+    byLabel,
+    labelName,
+  ])
 
   if (!widget.conceptId || !widget.groupBy)
     return <p className="text-sm text-muted-foreground">Pick a concept and a group-by.</p>

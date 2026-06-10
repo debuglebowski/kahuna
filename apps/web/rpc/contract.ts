@@ -113,6 +113,7 @@ export const FieldKind = Schema.Literal(
   "user",
   "json",
   "money",
+  "richtext",
 )
 export type FieldKind = typeof FieldKind.Type
 
@@ -253,13 +254,35 @@ export type GraphLayout = typeof GraphLayout.Type
 // whole layout is `SidebarViewBody` and is resolved CLIENT-SIDE against the live
 // concept/instance collections — the server only persists/serves the document.
 
-/** One filter condition. `field` = a field id, or `__labels` for `hasLabel`. */
+/** One filter condition. `field` = a field id, or `__labels` for the label ops.
+ *  Value shape varies by op: `between` = [min, max], `in`/`notIn` = an array,
+ *  `empty`/`notEmpty`/`isMe` ignore it. Op set is APPEND-ONLY (bodies holding
+ *  conditions are opaque persisted documents old clients must keep parsing). */
 export const SidebarCondition = Schema.Struct({
   field: Schema.String,
-  op: Schema.Literal("eq", "hasLabel"),
+  op: Schema.Literal(
+    "eq",
+    "hasLabel",
+    "neq",
+    "contains",
+    "empty",
+    "notEmpty",
+    "gt",
+    "gte",
+    "lt",
+    "lte",
+    "between",
+    "in",
+    "notIn",
+    "isMe",
+    "notHasLabel",
+  ),
   value: Schema.Unknown,
 })
 export type SidebarCondition = typeof SidebarCondition.Type
+
+/** How a condition set combines: every condition or at least one (absent = all). */
+const ConditionMatch = { match: Schema.optional(Schema.Literal("all", "any")) }
 
 /** A manually-pinned group member — a concept link or a single instance. */
 export const SidebarMember = Schema.Union(
@@ -273,11 +296,16 @@ export const SidebarMember = Schema.Union(
 
 /** An auto-membership rule: matching concepts, or matching instances of a concept. */
 export const SidebarRule = Schema.Union(
-  Schema.Struct({ target: Schema.Literal("concepts"), conditions: Schema.Array(SidebarCondition) }),
+  Schema.Struct({
+    target: Schema.Literal("concepts"),
+    conditions: Schema.Array(SidebarCondition),
+    ...ConditionMatch,
+  }),
   Schema.Struct({
     target: Schema.Literal("items"),
     conceptId: Schema.String,
     conditions: Schema.Array(SidebarCondition),
+    ...ConditionMatch,
   }),
 )
 
@@ -308,6 +336,7 @@ export const SidebarSource = Schema.Union(
     kind: Schema.Literal("list"),
     conceptId: Schema.String,
     conditions: Schema.Array(SidebarCondition),
+    ...ConditionMatch,
     orderBy: Schema.optional(Schema.NullOr(Schema.String)),
     limit: Schema.optional(Schema.NullOr(Schema.Number)),
   }),
@@ -373,6 +402,7 @@ const MetricWidget = Schema.Struct({
   ...ConceptScoped,
   type: Schema.Literal("metric"),
   conditions: Schema.Array(SidebarCondition),
+  ...ConditionMatch,
   agg: Schema.Literal("count", "sum", "avg"),
   field: Schema.optional(Schema.NullOr(Schema.String)),
 })
@@ -381,6 +411,7 @@ const ListWidget = Schema.Struct({
   ...ConceptScoped,
   type: Schema.Literal("list"),
   conditions: Schema.Array(SidebarCondition),
+  ...ConditionMatch,
   orderBy: Schema.optional(Schema.NullOr(Schema.String)),
   limit: Schema.optional(Schema.NullOr(Schema.Number)),
   columns: Schema.optional(Schema.Array(Schema.String)),
@@ -390,6 +421,7 @@ const BreakdownWidget = Schema.Struct({
   ...ConceptScoped,
   type: Schema.Literal("breakdown"),
   conditions: Schema.Array(SidebarCondition),
+  ...ConditionMatch,
   groupBy: Schema.String,
   chart: Schema.Literal("bar", "pie"),
 })
@@ -526,6 +558,40 @@ export const MemberPage = Schema.Struct({
   body: DashboardBody,
 })
 export type MemberPage = typeof MemberPage.Type
+
+// A member's instance-detail layout prefs: which preset view to render, as a
+// global default plus per-concept overrides keyed by concept id. View keys
+// name client-defined presets (resolved client-side; unknown keys fall back).
+// A concept override may also be "custom", backed by a user-edited tile
+// layout in `customByConcept` — same grid coords as presets; content keys are
+// opaque strings here (the client drops ones it doesn't know).
+export const InstanceViewTile = Schema.Struct({
+  id: Schema.String,
+  contents: Schema.Array(Schema.String),
+  x: Schema.Number,
+  y: Schema.Number,
+  w: Schema.Number,
+  h: Schema.Number,
+})
+export type InstanceViewTile = typeof InstanceViewTile.Type
+
+export const InstanceViewLayout = Schema.Struct({
+  tiles: Schema.Array(InstanceViewTile),
+})
+export type InstanceViewLayout = typeof InstanceViewLayout.Type
+
+export const InstanceViewPrefsBody = Schema.Struct({
+  defaultView: Schema.NullOr(Schema.String),
+  byConcept: Schema.Record({ key: Schema.String, value: Schema.String }),
+  customByConcept: Schema.Record({ key: Schema.String, value: InstanceViewLayout }),
+})
+export type InstanceViewPrefsBody = typeof InstanceViewPrefsBody.Type
+
+export const InstanceViewPrefs = Schema.Struct({
+  userId: Schema.String,
+  body: InstanceViewPrefsBody,
+})
+export type InstanceViewPrefs = typeof InstanceViewPrefs.Type
 
 export const DeactivatedMember = Schema.Struct({
   userId: Schema.String,
@@ -1105,6 +1171,17 @@ export class KingsmakerRpcs extends RpcGroup.make(
   Rpc.make("updateMemberPage", {
     payload: { body: DashboardBody },
     success: MemberPage,
+    error: RpcError,
+  }),
+  // Instance-view layout prefs: both calls target the CALLER's own row
+  // (owner-only by construction — no userId in the payload).
+  Rpc.make("getInstanceViewPrefs", {
+    success: InstanceViewPrefs,
+    error: RpcError,
+  }),
+  Rpc.make("updateInstanceViewPrefs", {
+    payload: { body: InstanceViewPrefsBody },
+    success: InstanceViewPrefs,
     error: RpcError,
   }),
   // Deactivation markers (admin-gated writes; the list is readable by any

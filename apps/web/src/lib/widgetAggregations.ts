@@ -1,25 +1,15 @@
 import { LABELS_KEY } from "../../rpc/contract"
 import type { Instance, SidebarCondition } from "./api"
+import { labelsOf, type MatchOpts, matchInstance } from "./conditions"
 
-export { LABELS_KEY }
+export { LABELS_KEY, labelsOf, matchInstance }
 
 /**
  * Pure aggregation helpers for dashboard widgets. No React / DOM — kept
  * unit-testable like `routeEnvelope`. Widget components feed already-loaded
- * instances in; these reduce them to numbers/series.
+ * instances in; these reduce them to numbers/series. Condition matching lives
+ * in `conditions.ts` (the evaluator shared with the concept list + sidebar).
  */
-
-export const labelsOf = (state: Record<string, unknown>): string[] =>
-  Array.isArray(state[LABELS_KEY]) ? (state[LABELS_KEY] as string[]) : []
-
-/** All conditions AND-combined. `eq` = field value equals (or array contains);
- *  `hasLabel` = instance carries the label id. Mirrors the sidebar's matcher. */
-export const matchInstance = (inst: Instance, conds: readonly SidebarCondition[]): boolean =>
-  conds.every((c) => {
-    if (c.op === "hasLabel") return labelsOf(inst.state).includes(String(c.value))
-    const v = inst.state[c.field]
-    return Array.isArray(v) ? v.includes(c.value) : v === c.value
-  })
 
 /** Coerce a stored field value to a finite number, else null (skips it). */
 const toNumber = (v: unknown): number | null => {
@@ -37,15 +27,17 @@ const toNumber = (v: unknown): number | null => {
 export const countInstances = (
   instances: readonly Instance[],
   conds: readonly SidebarCondition[],
-): number => instances.filter((i) => matchInstance(i, conds)).length
+  opts?: MatchOpts,
+): number => instances.filter((i) => matchInstance(i, conds, opts)).length
 
 export const sumField = (
   instances: readonly Instance[],
   conds: readonly SidebarCondition[],
   fieldId: string,
+  opts?: MatchOpts,
 ): number =>
   instances.reduce((acc, i) => {
-    if (!matchInstance(i, conds)) return acc
+    if (!matchInstance(i, conds, opts)) return acc
     const n = toNumber(i.state[fieldId])
     return n == null ? acc : acc + n
   }, 0)
@@ -54,9 +46,10 @@ export const avgField = (
   instances: readonly Instance[],
   conds: readonly SidebarCondition[],
   fieldId: string,
+  opts?: MatchOpts,
 ): number | null => {
   const nums = instances
-    .filter((i) => matchInstance(i, conds))
+    .filter((i) => matchInstance(i, conds, opts))
     .map((i) => toNumber(i.state[fieldId]))
     .filter((n): n is number => n != null)
   if (nums.length === 0) return null
@@ -76,11 +69,12 @@ export const groupBy = (
   instances: readonly Instance[],
   conds: readonly SidebarCondition[],
   key: string,
+  opts?: MatchOpts,
 ): GroupBucket[] => {
   const counts = new Map<string, number>()
   const bump = (k: string) => counts.set(k, (counts.get(k) ?? 0) + 1)
   for (const i of instances) {
-    if (!matchInstance(i, conds)) continue
+    if (!matchInstance(i, conds, opts)) continue
     if (key === LABELS_KEY) {
       for (const lid of labelsOf(i.state)) bump(lid)
     } else {
@@ -160,10 +154,13 @@ export const metricValue = (
   agg: "count" | "sum" | "avg",
   conds: readonly SidebarCondition[],
   fieldId?: string | null,
+  opts?: MatchOpts,
 ): number | null => {
-  if (agg === "count") return countInstances(instances, conds)
+  if (agg === "count") return countInstances(instances, conds, opts)
   if (!fieldId) return null
-  return agg === "sum" ? sumField(instances, conds, fieldId) : avgField(instances, conds, fieldId)
+  return agg === "sum"
+    ? sumField(instances, conds, fieldId, opts)
+    : avgField(instances, conds, fieldId, opts)
 }
 
 export interface TrendPoint {

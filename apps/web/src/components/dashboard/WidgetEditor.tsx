@@ -31,6 +31,9 @@ export function WidgetEditor({
   const conceptId = "conceptId" in draft ? (draft.conceptId ?? "") : ""
   const fields = useFields(conceptId)
   const scalarFields = (fields.data ?? []).filter((f) => f.kind !== "relation" && f.kind !== "file")
+  // Rich text shows fine as a list column (text preview) but grouping/sorting
+  // on a { doc, text } envelope is meaningless.
+  const groupableFields = scalarFields.filter((f) => f.kind !== "richtext")
   const numberFields = (fields.data ?? []).filter((f) => f.kind === "number" || f.kind === "money")
   const computedFields = (fields.data ?? []).filter((f) => f.kind === "computed")
 
@@ -130,7 +133,7 @@ export function WidgetEditor({
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__none">Default</SelectItem>
-                    {scalarFields.map((f) => (
+                    {groupableFields.map((f) => (
                       <SelectItem key={f.id} value={f.id}>
                         {f.name}
                       </SelectItem>
@@ -164,7 +167,7 @@ export function WidgetEditor({
                 <SelectContent>
                   <SelectItem value="__none">—</SelectItem>
                   <SelectItem value="__labels">Label</SelectItem>
-                  {scalarFields.map((f) => (
+                  {groupableFields.map((f) => (
                     <SelectItem key={f.id} value={f.id}>
                       {f.name}
                     </SelectItem>
@@ -274,6 +277,8 @@ export function WidgetEditor({
               conditions={draft.conditions}
               labels={labels}
               onChange={(conditions) => patch({ conditions })}
+              match={draft.match ?? "all"}
+              onMatchChange={(match) => patch({ match })}
             />
           </FieldRow>
         )}

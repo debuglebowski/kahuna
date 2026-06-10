@@ -2,7 +2,6 @@ import { useLiveQuery } from "@tanstack/react-db"
 import { useQuery } from "@tanstack/react-query"
 import { Home, LayoutDashboard, Link as LinkIcon, Settings, Users, Workflow } from "lucide-react"
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react"
-import { LABELS_KEY } from "../../rpc/contract"
 import {
   api,
   type Concept,
@@ -12,8 +11,11 @@ import {
   type SidebarView,
   type SidebarViewBody,
 } from "./api"
+import { useSession } from "./auth-client"
 import { instancesByConcept, KEY, useRegisterCollection } from "./collections"
+import { type ConditionMatch, matchInstance } from "./conditions"
 import { ConceptIcon, DEFAULT_CONCEPT_ICON } from "./icons"
+import { isRichTextEmpty, richTextPreview } from "./richtext"
 import { showValue } from "./utils"
 
 /**
@@ -63,34 +65,35 @@ interface ResolveCtx {
   readonly concepts: readonly Concept[]
   readonly instData: Record<string, ConceptInstanceData>
   readonly pathname: string
+  /** Current user id (resolves `isMe` conditions); null when no session yet. */
+  readonly me?: string | null
 }
 
 // ── matching helpers ─────────────────────────────────────────────────────────--
+// Instance matching is the shared evaluator in `conditions.ts`.
 
-const labelsOf = (state: Record<string, unknown>): string[] =>
-  Array.isArray(state[LABELS_KEY]) ? (state[LABELS_KEY] as string[]) : []
-
-/** All conditions AND-combined. `eq` = field value equals (or array contains). */
-const matchInstance = (inst: Instance, conds: readonly SidebarCondition[]): boolean =>
-  conds.every((c) => {
-    if (c.op === "hasLabel") return labelsOf(inst.state).includes(String(c.value))
-    const v = inst.state[c.field]
-    return Array.isArray(v) ? v.includes(c.value) : v === c.value
-  })
-
-/** Concepts only support `hasLabel` (against their static/default label sets). */
-const matchConcept = (concept: Concept, conds: readonly SidebarCondition[]): boolean =>
-  conds.every((c) => {
-    if (c.op !== "hasLabel") return false
+/** Concepts only support the label ops (against their static/default label sets). */
+const matchConcept = (
+  concept: Concept,
+  conds: readonly SidebarCondition[],
+  match?: ConditionMatch,
+): boolean => {
+  const has = (c: SidebarCondition) => {
     const id = String(c.value)
-    return concept.staticLabelIds.includes(id) || concept.defaultLabelIds.includes(id)
-  })
+    const carried = concept.staticLabelIds.includes(id) || concept.defaultLabelIds.includes(id)
+    return c.op === "hasLabel" ? carried : c.op === "notHasLabel" ? !carried : false
+  }
+  return match === "any" && conds.length > 0 ? conds.some(has) : conds.every(has)
+}
 
-/** A display name for an instance: its first non-empty text field, else any
- *  non-synthetic string value, else a placeholder (mirrors the detail view). */
+/** A display name for an instance: its first non-empty text field, else its
+ *  first non-empty rich text field, else any non-synthetic string value, else
+ *  a placeholder (mirrors the detail view). */
 export const instanceLabel = (inst: Instance, fields: readonly Field[]): string => {
   const text = fields.find((f) => f.kind === "text" && inst.state[f.id])
   if (text) return showValue(inst.state[text.id])
+  const rich = fields.find((f) => f.kind === "richtext" && !isRichTextEmpty(inst.state[f.id]))
+  if (rich) return richTextPreview(inst.state[rich.id], 80)
   for (const [k, v] of Object.entries(inst.state)) {
     if (!k.startsWith("__") && typeof v === "string" && v) return v
   }
@@ -169,7 +172,9 @@ export const resolveView = (body: SidebarViewBody, ctx: ResolveCtx): ResolvedSec
       const data = ctx.instData[src.conceptId]
       const concept = conceptById.get(src.conceptId)
       const fields = data?.fields ?? []
-      let rows = (data?.instances ?? []).filter((i) => matchInstance(i, src.conditions))
+      let rows = (data?.instances ?? []).filter((i) =>
+        matchInstance(i, src.conditions, { match: src.match, me: ctx.me }),
+      )
       const orderBy = src.orderBy
       rows = [...rows].sort((a, b) =>
         orderBy
@@ -195,12 +200,13 @@ export const resolveView = (body: SidebarViewBody, ctx: ResolveCtx): ResolvedSec
       const instMatches: { inst: Instance; fields: readonly Field[]; concept?: Concept }[] = []
       for (const rule of src.rules) {
         if (rule.target === "concepts") {
-          for (const c of ctx.concepts) if (matchConcept(c, rule.conditions)) conceptMatches.push(c)
+          for (const c of ctx.concepts)
+            if (matchConcept(c, rule.conditions, rule.match)) conceptMatches.push(c)
         } else {
           const data = ctx.instData[rule.conceptId]
           const concept = conceptById.get(rule.conceptId)
           for (const inst of data?.instances ?? [])
-            if (matchInstance(inst, rule.conditions))
+            if (matchInstance(inst, rule.conditions, { match: rule.match, me: ctx.me }))
               instMatches.push({ inst, fields: data?.fields ?? [], concept })
         }
       }
@@ -311,10 +317,12 @@ export function useResolvedView(
         : { ...prev, [id]: d },
     )
   }, [])
+  const { data: session } = useSession()
+  const me = session?.user.id ?? null
   const needed = useMemo(() => referencedConceptIds(view.body), [view.body])
   const sections = useMemo(
-    () => resolveView(view.body, { concepts, instData, pathname }),
-    [view.body, concepts, instData, pathname],
+    () => resolveView(view.body, { concepts, instData, pathname, me }),
+    [view.body, concepts, instData, pathname, me],
   )
   const loaders = (
     <>

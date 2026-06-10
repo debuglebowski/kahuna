@@ -157,6 +157,8 @@ function RuleList({
             labels={labels}
             labelOnly={rule.target === "concepts"}
             onChange={(conditions) => set(i, { ...rule, conditions })}
+            match={rule.match ?? "all"}
+            onMatchChange={(match) => set(i, { ...rule, match })}
           />
         </div>
       ))}
@@ -308,6 +310,8 @@ export function SectionEditor({
                   conditions={src.conditions}
                   labels={labels}
                   onChange={(conditions) => setSource({ ...src, conditions })}
+                  match={src.match ?? "all"}
+                  onMatchChange={(match) => setSource({ ...src, match })}
                 />
               </FieldRow>
             )}

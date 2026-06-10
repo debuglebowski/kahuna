@@ -9,6 +9,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import type { DashboardWidget } from "@/lib/api"
+import { useSession } from "@/lib/auth-client"
 import type { ConceptInstanceData } from "@/lib/conceptData"
 import { FieldValueCell } from "@/lib/fieldDisplay"
 import { showValue } from "@/lib/utils"
@@ -27,6 +28,8 @@ export function ListWidget({
   data: ConceptInstanceData | undefined
 }) {
   const navigate = useNavigate()
+  const { data: session } = useSession()
+  const me = session?.user.id ?? null
   const fields = data?.fields ?? []
 
   // Columns: explicit selection, else the concept's scalar fields (no relation/file).
@@ -38,14 +41,16 @@ export function ListWidget({
   }, [fields, widget.columns])
 
   const rows = useMemo(() => {
-    let r = (data?.instances ?? []).filter((i) => matchInstance(i, widget.conditions))
+    let r = (data?.instances ?? []).filter((i) =>
+      matchInstance(i, widget.conditions, { match: widget.match, me }),
+    )
     if (widget.orderBy) {
       const key = widget.orderBy
       r = [...r].sort((a, b) => showValue(a.state[key]).localeCompare(showValue(b.state[key])))
     }
     if (widget.limit && widget.limit > 0) r = r.slice(0, widget.limit)
     return r
-  }, [data?.instances, widget.conditions, widget.orderBy, widget.limit])
+  }, [data?.instances, widget.conditions, widget.match, me, widget.orderBy, widget.limit])
 
   if (!widget.conceptId) return <p className="text-sm text-muted-foreground">Pick a concept.</p>
   if (rows.length === 0) return <p className="text-sm text-muted-foreground">No matching items.</p>

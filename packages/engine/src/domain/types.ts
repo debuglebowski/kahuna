@@ -25,6 +25,8 @@ export const FieldKind = Schema.Literal(
   "json",
   // an { amount, currency } pair.
   "money",
+  // rich text: a { doc, text } envelope — ProseMirror JSON + extracted plain text.
+  "richtext",
 )
 export type FieldKind = typeof FieldKind.Type
 
@@ -371,23 +373,48 @@ export interface Attachment {
 // against the live concept/instance collections. These mirror the contract's
 // `SidebarView*` schemas (kept separate so the contract stays engine-free).
 
-/** One filter condition. `field` is a field id, or `__labels` for `hasLabel`. */
+/** One filter condition. `field` is a field id, or `__labels` for the label ops.
+ *  Value shape varies by op: `between` = [min, max], `in`/`notIn` = an array,
+ *  `empty`/`notEmpty`/`isMe` ignore it. Op set is APPEND-ONLY (bodies holding
+ *  conditions are opaque persisted documents old clients must keep parsing). */
 export interface SidebarCondition {
   readonly field: string
-  readonly op: "eq" | "hasLabel"
+  readonly op:
+    | "eq"
+    | "hasLabel"
+    | "neq"
+    | "contains"
+    | "empty"
+    | "notEmpty"
+    | "gt"
+    | "gte"
+    | "lt"
+    | "lte"
+    | "between"
+    | "in"
+    | "notIn"
+    | "isMe"
+    | "notHasLabel"
   readonly value: unknown
 }
+/** How a condition set combines: every condition or at least one (absent = all). */
+export type ConditionMatch = "all" | "any"
 /** A manually-pinned group member — a concept link or a single instance. */
 export type SidebarMember =
   | { readonly kind: "concept"; readonly conceptId: Id }
   | { readonly kind: "instance"; readonly conceptId: Id; readonly instanceId: Id }
 /** An auto-membership rule: matching concepts, or matching instances of a concept. */
 export type SidebarRule =
-  | { readonly target: "concepts"; readonly conditions: ReadonlyArray<SidebarCondition> }
+  | {
+      readonly target: "concepts"
+      readonly conditions: ReadonlyArray<SidebarCondition>
+      readonly match?: ConditionMatch
+    }
   | {
       readonly target: "items"
       readonly conceptId: Id
       readonly conditions: ReadonlyArray<SidebarCondition>
+      readonly match?: ConditionMatch
     }
 export type SidebarStaticItem = "overview" | "dashboards" | "members" | "automations" | "settings"
 export interface SidebarLink {
@@ -408,6 +435,7 @@ export type SidebarSource =
       readonly kind: "list"
       readonly conceptId: Id
       readonly conditions: ReadonlyArray<SidebarCondition>
+      readonly match?: ConditionMatch
       readonly orderBy?: string | null
       readonly limit?: number | null
     }
@@ -464,6 +492,7 @@ export interface MetricWidget extends WidgetBase {
   readonly type: "metric"
   readonly conceptId?: string | null
   readonly conditions: ReadonlyArray<SidebarCondition>
+  readonly match?: ConditionMatch
   readonly agg: "count" | "sum" | "avg"
   /** Field id to sum/avg (ignored for count). */
   readonly field?: string | null
@@ -473,6 +502,7 @@ export interface ListWidget extends WidgetBase {
   readonly type: "list"
   readonly conceptId?: string | null
   readonly conditions: ReadonlyArray<SidebarCondition>
+  readonly match?: ConditionMatch
   readonly orderBy?: string | null
   readonly limit?: number | null
   /** Field ids to show as columns; empty/absent = concept default columns. */
@@ -483,6 +513,7 @@ export interface BreakdownWidget extends WidgetBase {
   readonly type: "breakdown"
   readonly conceptId?: string | null
   readonly conditions: ReadonlyArray<SidebarCondition>
+  readonly match?: ConditionMatch
   /** A field id (enum) to group by, or `__labels` to group by label. */
   readonly groupBy: string
   readonly chart: "bar" | "pie"
@@ -551,6 +582,35 @@ export interface Dashboard {
 export interface MemberPage {
   readonly userId: string
   readonly body: DashboardBody
+}
+
+// A member's instance-detail layout prefs: which preset view to render, as a
+// global default plus per-concept overrides keyed by concept id. View keys
+// name client-defined presets — opaque to the engine, like a dashboard body.
+// An override may be "custom", backed by a user-edited tile layout in
+// `customByConcept` (12-col grid coords; content keys are client-defined).
+export interface InstanceViewTile {
+  readonly id: string
+  readonly contents: ReadonlyArray<string>
+  readonly x: number
+  readonly y: number
+  readonly w: number
+  readonly h: number
+}
+
+export interface InstanceViewLayout {
+  readonly tiles: ReadonlyArray<InstanceViewTile>
+}
+
+export interface InstanceViewPrefsBody {
+  readonly defaultView: string | null
+  readonly byConcept: Readonly<Record<string, string>>
+  readonly customByConcept: Readonly<Record<string, InstanceViewLayout>>
+}
+
+export interface InstanceViewPrefs {
+  readonly userId: string
+  readonly body: InstanceViewPrefsBody
 }
 
 export interface MemberDeactivation {
