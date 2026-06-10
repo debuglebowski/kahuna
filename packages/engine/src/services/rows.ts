@@ -269,7 +269,6 @@ const toDashboardBody = (raw: unknown): DashboardBody => {
     widgets?: unknown
     cols?: unknown
     rowHeight?: unknown
-    scopeConceptId?: unknown
   }
   const widgets = Array.isArray(r.widgets)
     ? r.widgets.filter(
@@ -284,7 +283,6 @@ const toDashboardBody = (raw: unknown): DashboardBody => {
     widgets,
     ...(typeof r.cols === "number" ? { cols: r.cols } : {}),
     ...(typeof r.rowHeight === "number" ? { rowHeight: r.rowHeight } : {}),
-    ...(typeof r.scopeConceptId === "string" ? { scopeConceptId: r.scopeConceptId } : {}),
   }
 }
 

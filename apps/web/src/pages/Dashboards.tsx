@@ -1,8 +1,7 @@
 import { useLiveQuery } from "@tanstack/react-db"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { LayoutDashboard, Plus, Settings } from "lucide-react"
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import type { Layout } from "react-grid-layout"
+import { useMemo, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { WidgetCanvas } from "@/components/dashboard/WidgetCanvas"
 import { WidgetEditor } from "@/components/dashboard/WidgetEditor"
@@ -14,25 +13,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { api, type Concept, type DashboardBody, type DashboardWidget } from "@/lib/api"
+import { api, type Concept, type DashboardWidget } from "@/lib/api"
 import { conceptsCollection, KEY, useRegisterCollection } from "@/lib/collections"
 import { conceptIndex, useConceptData } from "@/lib/conceptData"
 import {
   addWidget,
-  applyLayouts,
   newWidget,
   referencedConceptIds,
   removeWidget,
   updateWidget,
 } from "@/lib/dashboards"
-
-/** True for the optimistic-concurrency RpcError (code DASHBOARD_CONFLICT). The
- *  client surfaces RPC failures as a wrapped error, so match code/message/text. */
-const isConflictError = (e: unknown): boolean => {
-  const o = e as { code?: unknown; message?: unknown } | null
-  const s = `${o?.code ?? ""} ${o?.message ?? ""} ${String(e)}`
-  return s.includes("DASHBOARD_CONFLICT") || s.includes("DashboardConflict")
-}
+import { useDashboardBody } from "@/lib/useDashboardBody"
 
 /**
  * The dashboard canvas (`/dashboards`). Renders the selected dashboard as a grid of
@@ -57,8 +48,7 @@ export function Dashboards() {
   })
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const selected = useMemo(() => {
-    // Per-concept summary boards live on their ConceptView tab, not the switcher.
-    const all = (dashboards ?? []).filter((d) => !d.body.scopeConceptId)
+    const all = dashboards ?? []
     if (selectedId) return all.find((d) => d.id === selectedId) ?? all[0] ?? null
     // Default landing: the lowest-position org-shared dashboard, else the first.
     return (
@@ -68,88 +58,10 @@ export function Dashboards() {
     )
   }, [dashboards, selectedId])
 
-  // Local working copy of the body; (re)loaded only when the selected id changes,
-  // so live refetches never clobber in-flight edits.
-  const [body, setBody] = useState<DashboardBody | null>(null)
-  const loadedId = useRef<string | null>(null)
-  const etagRef = useRef<Date | null>(null) // optimistic-concurrency etag (updatedAt)
-  const selectedRef = useRef(selected)
-  selectedRef.current = selected
-  const savingRef = useRef(false)
-  const pendingRef = useRef<{ id: string; body: DashboardBody } | null>(null)
-  const [conflict, setConflict] = useState(false)
-  useEffect(() => {
-    if (selected && loadedId.current !== selected.id) {
-      loadedId.current = selected.id
-      setBody(selected.body)
-      etagRef.current = selected.updatedAt ?? null
-      setConflict(false)
-    }
-  }, [selected])
+  const { body, mutate, onStop, conflict, dismissConflict } = useDashboardBody(selected)
 
   const ids = useMemo(() => (body ? referencedConceptIds(body) : []), [body])
   const { instData, loaders } = useConceptData(ids)
-
-  // Persist serially (one write in flight, keep only the latest) so rapid drags
-  // never self-conflict; carry the etag so a genuine remote edit is detected and
-  // reloaded instead of silently clobbered.
-  const flush = useCallback(async () => {
-    if (savingRef.current || pendingRef.current === null) return
-    savingRef.current = true
-    const job = pendingRef.current
-    pendingRef.current = null
-    try {
-      const updated = await api.updateDashboard({
-        id: job.id,
-        body: job.body,
-        expectedUpdatedAt: etagRef.current ?? undefined,
-      })
-      if (selectedRef.current?.id === job.id) etagRef.current = updated.updatedAt ?? null
-    } catch (e) {
-      if (isConflictError(e) && selectedRef.current?.id === job.id) {
-        const fresh = await api.listDashboards().catch(() => null)
-        const row = fresh?.find((d) => d.id === job.id)
-        if (row && selectedRef.current?.id === job.id) {
-          setBody(row.body)
-          etagRef.current = row.updatedAt ?? null
-          if (fresh) qc.setQueryData(["dashboards"], fresh)
-          setConflict(true)
-        }
-        pendingRef.current = null // drop the conflicting edit
-      }
-    } finally {
-      savingRef.current = false
-      if (pendingRef.current !== null) void flush()
-    }
-  }, [qc])
-
-  const save = useCallback(
-    (next: DashboardBody) => {
-      const sel = selectedRef.current
-      if (!sel) return
-      pendingRef.current = { id: sel.id, body: next }
-      void flush()
-    },
-    [flush],
-  )
-  const mutate = useCallback(
-    (next: DashboardBody) => {
-      setBody(next)
-      save(next)
-    },
-    [save],
-  )
-  const onStop = useCallback(
-    (layout: Layout[]) => {
-      setBody((cur) => {
-        if (!cur) return cur
-        const next = applyLayouts(cur, layout)
-        save(next)
-        return next
-      })
-    },
-    [save],
-  )
 
   const createDash = useMutation({
     mutationFn: () =>
@@ -180,14 +92,12 @@ export function Dashboards() {
             <SelectValue placeholder="Dashboard" />
           </SelectTrigger>
           <SelectContent>
-            {(dashboards ?? [])
-              .filter((d) => !d.body.scopeConceptId)
-              .map((d) => (
-                <SelectItem key={d.id} value={d.id}>
-                  {d.name}
-                  {d.ownerId ? " · personal" : ""}
-                </SelectItem>
-              ))}
+            {(dashboards ?? []).map((d) => (
+              <SelectItem key={d.id} value={d.id}>
+                {d.name}
+                {d.ownerId ? " · personal" : ""}
+              </SelectItem>
+            ))}
           </SelectContent>
         </Select>
 
@@ -232,7 +142,7 @@ export function Dashboards() {
           <button
             type="button"
             className="cancel-drag shrink-0 underline hover:text-foreground"
-            onClick={() => setConflict(false)}
+            onClick={dismissConflict}
           >
             Dismiss
           </button>

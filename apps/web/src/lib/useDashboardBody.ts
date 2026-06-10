@@ -13,8 +13,8 @@ const isConflictError = (e: unknown): boolean => {
 }
 
 /**
- * Owns a dashboard's body + serialized, conflict-aware persistence — shared by
- * every widget-canvas surface (standalone dashboards, per-concept summaries).
+ * Owns a dashboard's body + serialized, conflict-aware persistence for the
+ * dashboard canvas.
  * The local body is the source of truth while editing; saves run one-at-a-time
  * (latest wins) so rapid drags can't self-conflict; a genuine remote edit (the
  * `updatedAt` etag moved) reloads + flags a conflict instead of clobbering.

@@ -22,15 +22,11 @@ export interface GridItem {
 
 /** Concept ids whose INSTANCES a dashboard needs loaded. Excludes trend/activity
  *  — those read the event log (via `listEvents`), not the instance collections. */
-export const referencedConceptIds = (
-  body: DashboardBody,
-  implicitConceptId?: string | null,
-): string[] => {
+export const referencedConceptIds = (body: DashboardBody): string[] => {
   const ids = new Set<string>()
   for (const w of body.widgets) {
     if (w.type === "trend" || w.type === "activity") continue
-    const cid = w.conceptId ?? implicitConceptId
-    if (cid) ids.add(cid)
+    if (w.conceptId) ids.add(w.conceptId)
   }
   return [...ids]
 }

@@ -430,9 +430,6 @@ export const DashboardBody = Schema.Struct({
   widgets: Schema.Array(DashboardWidget),
   cols: Schema.optional(Schema.Number),
   rowHeight: Schema.optional(Schema.Number),
-  /** Set on a per-concept summary board (rendered as a tab on that ConceptView,
-   *  with the concept as implicit context). Absent on standalone dashboards. */
-  scopeConceptId: Schema.optional(Schema.NullOr(Schema.String)),
 })
 export type DashboardBody = typeof DashboardBody.Type
 

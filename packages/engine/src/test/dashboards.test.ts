@@ -112,19 +112,4 @@ describe("dashboards (DashboardService)", () => {
       expect(ok.name).toBe("Renamed")
     }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
-
-  it.effect("scopeConceptId round-trips through the opaque body (per-concept summary)", () =>
-    Effect.gen(function* () {
-      const dash = yield* DashboardService
-      const created = yield* dash.create({
-        name: "Summary",
-        scope: "org",
-        body: { widgets: [], scopeConceptId: "concept-123" },
-      })
-      expect(created.body.scopeConceptId).toBe("concept-123")
-      // Survives a read-back through `toDashboardBody`.
-      const refound = (yield* dash.list()).find((d) => d.id === created.id)!
-      expect(refound.body.scopeConceptId).toBe("concept-123")
-    }).pipe(Effect.provide(testLayer(newOrgId()))),
-  )
 })
