@@ -77,6 +77,9 @@ export const Concept = Schema.Struct({
   /** Display glyph: a literal emoji or a curated lucide icon name prefixed
    *  `lucide:` (e.g. `lucide:Building2`); null renders none. */
   icon: Schema.NullOr(Schema.String),
+  /** Optional display color (hex, same pill palette as labels) used to tint the
+   *  concept wherever instances are visualised; null renders neutral. */
+  color: Schema.NullOr(Schema.String),
   /** Label ids inherited by every instance (static); and snapshotted onto new
    *  instances (default). Both drawn from the org-wide label vocabulary. */
   staticLabelIds: Schema.Array(Schema.String),
@@ -128,6 +131,11 @@ export const FieldConfig = Schema.Struct({
   /** relation: the target concept's id (the relation's identity is the field id). */
   target: Schema.optional(Schema.String),
   cardinality: Schema.optional(Schema.Literal("one", "many")),
+  /** relation: how the TARGET side names the connection (e.g. "Employees" on
+   *  Company reads "Employer" from the Person side); absent = field name. */
+  inverseName: Schema.optional(Schema.String),
+  /** relation: plural of `inverseName`; the UI picks singular/plural by count. */
+  inversePluralName: Schema.optional(Schema.String),
   computedKind: Schema.optional(Schema.Literal("decay", "momentum")),
   params: Schema.optional(Schema.Record({ key: Schema.String, value: Schema.Unknown })),
   /** any scalar kind: store/validate a list of values. */
@@ -138,6 +146,10 @@ export const FieldConfig = Schema.Struct({
    *  (and publish on versioned concepts); `flagged` only surfaces missing values
    *  in the UI. Absent = optional. */
   requirement: Schema.optional(Schema.Literal("required", "flagged", "optional")),
+  /** text/number/date/enum/user/money: no two items may hold the same value —
+   *  archived included (only purge releases), text case-insensitive (never
+   *  combined with `multiple`). */
+  unique: Schema.optional(Schema.Boolean),
 })
 export type FieldConfig = typeof FieldConfig.Type
 
@@ -189,6 +201,10 @@ export const RelatedInstance = Schema.Struct({
   /** The relation field def this edge realises (identity); name is decorative. */
   fieldId: Schema.String,
   relationName: Schema.String,
+  /** The field's inverse-side labels (config.inverseName/...PluralName), resolved
+   *  server-side so `in` entries can be headed without the foreign field def. */
+  relationInverseName: Schema.NullOr(Schema.String),
+  relationInversePluralName: Schema.NullOr(Schema.String),
   /** Server-resolved display label of the connected instance (its state is keyed
    *  by field id, which the client can't resolve without that concept's fields). */
   label: Schema.String,
@@ -210,6 +226,9 @@ export const InstanceDetail = Schema.Struct({
   concept: Concept,
   fields: Schema.Array(Field),
   related: Schema.Array(RelatedInstance),
+  /** Live relation fields on OTHER concepts targeting this one — the inbound
+   *  side of this instance's connections (drives inverse-side add/remove). */
+  inboundRelationFields: Schema.Array(Field),
   /** Inherited from the concept (static) — shown as locked chips. */
   staticLabels: Schema.Array(Label),
   /** This instance's own labels (from `state.__labels`), resolved and editable. */
@@ -233,6 +252,8 @@ export const ConceptGraphEdge = Schema.Struct({
   from: Schema.String,
   to: Schema.String,
   relationType: Schema.String,
+  /** Inverse-side label (config.inverseName); null = unnamed. */
+  inverseName: Schema.NullOr(Schema.String),
   cardinality: Schema.Literal("one", "many"),
   fieldName: Schema.String,
 })
@@ -586,10 +607,27 @@ export const InstanceViewLayout = Schema.Struct({
 })
 export type InstanceViewLayout = typeof InstanceViewLayout.Type
 
+// Traversal + render settings for the relationship-graph tile content. Stored
+// opaquely like the rest of the prefs body; the client clamps/falls back on
+// values it doesn't recognise (e.g. an unknown layout key from a newer build).
+export const InstanceGraphConfig = Schema.Struct({
+  /** Relation field ids the walk may follow; null = all. */
+  fieldIds: Schema.NullOr(Schema.Array(Schema.String)),
+  /** Max hops from the viewed instance. */
+  depth: Schema.Number,
+  /** Client-defined layout key (e.g. "dagre-tb"). */
+  layout: Schema.String,
+})
+export type InstanceGraphConfig = typeof InstanceGraphConfig.Type
+
 export const InstanceViewPrefsBody = Schema.Struct({
   defaultView: Schema.NullOr(Schema.String),
   byConcept: Schema.Record({ key: Schema.String, value: Schema.String }),
   customByConcept: Schema.Record({ key: Schema.String, value: InstanceViewLayout }),
+  /** Graph-tile settings keyed by concept id; optional — pre-existing rows lack it. */
+  graphByConcept: Schema.optional(
+    Schema.Record({ key: Schema.String, value: InstanceGraphConfig }),
+  ),
 })
 export type InstanceViewPrefsBody = typeof InstanceViewPrefsBody.Type
 
@@ -626,7 +664,9 @@ export class KingsmakerRpcs extends RpcGroup.make(
     error: RpcError,
   }),
   Rpc.make("createConcept", {
-    payload: { name: Schema.String },
+    // The client picks the default color (a free pill-palette hex, unique among
+    // the org's concepts) — the server stores it verbatim like an explicit pick.
+    payload: { name: Schema.String, color: Schema.optional(Schema.NullOr(Schema.String)) },
     success: Concept,
     error: RpcError,
   }),
@@ -639,6 +679,7 @@ export class KingsmakerRpcs extends RpcGroup.make(
       pluralName: Schema.optional(Schema.NullOr(Schema.String)),
       // Omitted → left unchanged (so the name/description save never wipes them).
       icon: Schema.optional(Schema.NullOr(Schema.String)),
+      color: Schema.optional(Schema.NullOr(Schema.String)),
       // Toggle per-concept versioning (admin). Disabling is rejected if any item
       // already has multiple versions or an open draft (VERSIONING_IN_USE).
       versioningEnabled: Schema.optional(Schema.Boolean),

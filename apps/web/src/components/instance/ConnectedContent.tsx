@@ -13,17 +13,39 @@ import { api, type Concept, type Field, type RelatedInstance } from "../../lib/a
 import { Badge, Button, IconButton, Input, Modal } from "../ui"
 import type { InstanceCtx } from "./types"
 
+/** A group's heading: outbound shows the field name; inbound prefers the
+ *  field's inverse-side labels (singular/plural by count), defaulting to the
+ *  SOURCE concept's name/pluralName — the field name describes the other end
+ *  of the edge, so it reads wrong from this side. */
+function groupHeading(
+  items: ReadonlyArray<RelatedInstance>,
+  conceptById: ReadonlyMap<string, Concept>,
+): string {
+  const first = items[0]!
+  if (first.direction === "out") return first.relationName
+  const concept = conceptById.get(first.conceptId)
+  const singular = first.relationInverseName ?? concept?.name ?? first.conceptName
+  if (items.length === 1) return singular
+  // A custom singular without a plural beats jumping back to the concept name.
+  return (
+    first.relationInversePluralName ?? first.relationInverseName ?? concept?.pluralName ?? singular
+  )
+}
+
 /** Connected instances grouped by direction + relation type, each click-through.
- *  Outbound edges get a remove (×) when this instance is editable — a draft on a
- *  versioned concept, or any non-versioned instance (published versions freeze
- *  their relations along with their fields). */
+ *  An edge gets a remove (×) when the instance that OWNS it (the relation's
+ *  `from`) is editable — outbound: this instance is a draft on a versioned
+ *  concept or any non-versioned instance; inbound: the source is non-versioned
+ *  (published versions freeze their relations along with their fields). */
 function Connections({
   related,
-  editable,
+  conceptById,
+  canRemove,
   onRemove,
 }: {
   related: ReadonlyArray<RelatedInstance>
-  editable: boolean
+  conceptById: ReadonlyMap<string, Concept>
+  canRemove: (r: RelatedInstance) => boolean
   onRemove: (relationId: string) => void
 }) {
   const groups = new Map<string, RelatedInstance[]>()
@@ -41,12 +63,10 @@ function Connections({
   return (
     <div className="divide-y divide-border">
       {[...groups.entries()].map(([key, items]) => {
-        const first = items[0]!
-        const arrow = first.direction === "out" ? "→" : "←"
         return (
           <div key={key} className="px-6 py-3">
             <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              {arrow} {first.relationName}
+              {groupHeading(items, conceptById)}
             </div>
             <div className="space-y-1">
               {items.map((r) => {
@@ -62,7 +82,7 @@ function Connections({
                     <Badge tone="blue">{r.conceptName}</Badge>
                   </span>
                 )
-                const removeBtn = editable && r.direction === "out" && (
+                const removeBtn = canRemove(r) && (
                   <IconButton aria-label="Remove connection" onClick={() => onRemove(r.relationId)}>
                     <X size={14} />
                   </IconButton>
@@ -105,55 +125,84 @@ function Connections({
   )
 }
 
+/** One pickable connection kind in the Add modal — a relation field plus the
+ *  side of it this instance sits on. `out`: this instance owns the edge and the
+ *  picker searches the field's target. `in`: the picked instance owns the edge
+ *  (so it must be editable — non-versioned source concepts only) and the picker
+ *  searches the field's OWNING concept. */
+export interface RelationOption {
+  readonly key: string
+  readonly field: Field
+  readonly dir: "out" | "in"
+  readonly label: string
+  /** Concept whose instances the picker searches (target for out, source for in). */
+  readonly searchConceptId: string
+}
+
 /**
- * Add a connection: pick a relation field, search the target concept's items
- * (head/latest per item), and — when the target concept is versioned — choose
- * between referencing "Latest" (follows republishes) or pinning a specific
- * published version.
+ * Add a connection: pick a relation (either direction), search the other side's
+ * items (head/latest per item), and — when the referenced side is versioned —
+ * choose between referencing "Latest" (follows republishes) or pinning a
+ * specific published version. Inbound: the reference always points at THIS
+ * item, so the pin choice is this very version (when published).
  */
 function AddConnectionModal({
-  fromId,
-  relationFields,
-  concepts,
+  ctx,
+  options,
   onDone,
   onClose,
 }: {
-  fromId: string
-  relationFields: ReadonlyArray<Field>
-  concepts: ReadonlyArray<Concept>
+  ctx: InstanceCtx
+  options: ReadonlyArray<RelationOption>
   onDone: () => void
   onClose: () => void
 }) {
-  const [fieldId, setFieldId] = useState(relationFields[0]?.id ?? "")
+  const [optionKey, setOptionKey] = useState(options[0]?.key ?? "")
   const [query, setQuery] = useState("")
-  const [pick, setPick] = useState<{ itemId: string; label: string } | null>(null)
+  const [pick, setPick] = useState<{ itemId: string; instanceId: string; label: string } | null>(
+    null,
+  )
   // "latest" = general ref (toItemId); otherwise a published version's instance id.
   const [versionChoice, setVersionChoice] = useState<string>("latest")
 
-  const field = relationFields.find((f) => f.id === fieldId)
-  const targetConcept = concepts.find((c) => c.id === field?.config.target)
-  const targetVersioned = targetConcept?.versioningEnabled ?? false
+  const option = options.find((o) => o.key === optionKey)
+  const searchConcept = ctx.concepts.find((c) => c.id === option?.searchConceptId)
+  // Whether the REFERENCED side is versioned (out: the picked target; in: this item).
+  const referencedVersioned =
+    option?.dir === "out"
+      ? (searchConcept?.versioningEnabled ?? false)
+      : ctx.concept.versioningEnabled
 
   const results = useQuery({
-    queryKey: ["search", field?.config.target, query],
-    queryFn: () => api.searchInstances(field!.config.target!, query),
-    enabled: !!field?.config.target && !pick,
+    queryKey: ["search", option?.searchConceptId, query],
+    queryFn: () => api.searchInstances(option!.searchConceptId, query),
+    enabled: !!option && !pick,
   })
   const versionsQ = useQuery({
     queryKey: ["versions", pick?.itemId],
     queryFn: () => api.listVersions(pick!.itemId),
-    enabled: !!pick && targetVersioned,
+    enabled: !!pick && option?.dir === "out" && referencedVersioned,
   })
   const pinnable =
     versionsQ.data?.filter((v) => v.versionStatus === "published" && !v.archivedAt) ?? []
 
   const create = useMutation({
-    mutationFn: () =>
-      api.createRelation(
+    mutationFn: () => {
+      const fieldId = option!.field.id
+      if (option!.dir === "out") {
+        return api.createRelation(
+          versionChoice === "latest"
+            ? { fieldId, fromId: ctx.instance.id, toItemId: pick!.itemId }
+            : { fieldId, fromId: ctx.instance.id, toVersionId: versionChoice },
+        )
+      }
+      // Inbound: the picked instance owns the edge; the reference is this item.
+      return api.createRelation(
         versionChoice === "latest"
-          ? { fieldId, fromId, toItemId: pick!.itemId }
-          : { fieldId, fromId, toVersionId: versionChoice },
-      ),
+          ? { fieldId, fromId: pick!.instanceId, toItemId: ctx.instance.itemId }
+          : { fieldId, fromId: pick!.instanceId, toVersionId: versionChoice },
+      )
+    },
     onSuccess: () => {
       onDone()
       onClose()
@@ -163,13 +212,13 @@ function AddConnectionModal({
   return (
     <Modal title="Add connection" onClose={onClose}>
       <div className="space-y-4">
-        {relationFields.length > 1 && (
+        {options.length > 1 && (
           <div className="space-y-1.5">
             <span className="text-sm font-medium text-foreground">Relation</span>
             <Select
-              value={fieldId}
+              value={optionKey}
               onValueChange={(v) => {
-                setFieldId(v)
+                setOptionKey(v)
                 setPick(null)
                 setVersionChoice("latest")
               }}
@@ -178,9 +227,9 @@ function AddConnectionModal({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {relationFields.map((f) => (
-                  <SelectItem key={f.id} value={f.id}>
-                    {f.name}
+                {options.map((o) => (
+                  <SelectItem key={o.key} value={o.key}>
+                    {o.label}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -190,7 +239,7 @@ function AddConnectionModal({
 
         <div className="space-y-1.5">
           <span className="text-sm font-medium text-foreground">
-            {targetConcept ? targetConcept.name : "Target"}
+            {searchConcept ? searchConcept.name : "Target"}
           </span>
           {pick ? (
             <div className="flex items-center justify-between rounded border border-border px-3 py-2">
@@ -218,11 +267,15 @@ function AddConnectionModal({
                   <button
                     key={r.itemId}
                     type="button"
-                    onClick={() => setPick({ itemId: r.itemId, label: r.label })}
+                    onClick={() =>
+                      setPick({ itemId: r.itemId, instanceId: r.instanceId, label: r.label })
+                    }
                     className="flex w-full items-center justify-between rounded px-2 py-1.5 text-left text-sm hover:bg-accent"
                   >
                     <span className="text-foreground">{r.label}</span>
-                    {targetVersioned && <Badge tone="gray">v{r.versionSeq}</Badge>}
+                    {(searchConcept?.versioningEnabled ?? false) && (
+                      <Badge tone="gray">v{r.versionSeq}</Badge>
+                    )}
                   </button>
                 ))}
                 {results.data?.length === 0 && (
@@ -235,7 +288,7 @@ function AddConnectionModal({
           )}
         </div>
 
-        {pick && targetVersioned && (
+        {pick && referencedVersioned && (
           <div className="space-y-1.5">
             <span className="text-sm font-medium text-foreground">Reference</span>
             <Select value={versionChoice} onValueChange={setVersionChoice}>
@@ -244,11 +297,19 @@ function AddConnectionModal({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="latest">Latest — follows new published versions</SelectItem>
-                {pinnable.map((v) => (
-                  <SelectItem key={v.id} value={v.id}>
-                    Pin v{v.versionSeq}
-                  </SelectItem>
-                ))}
+                {option?.dir === "out"
+                  ? pinnable.map((v) => (
+                      <SelectItem key={v.id} value={v.id}>
+                        Pin v{v.versionSeq}
+                      </SelectItem>
+                    ))
+                  : // Inbound references point at THIS item — the only offerable
+                    // pin is the version being viewed (drafts aren't referenceable).
+                    ctx.instance.versionStatus === "published" && (
+                      <SelectItem value={ctx.instance.id}>
+                        Pin v{ctx.instance.versionSeq} (this version)
+                      </SelectItem>
+                    )}
               </SelectContent>
             </Select>
           </div>
@@ -276,11 +337,21 @@ export function ConnectedBody({ ctx }: { ctx: InstanceCtx }) {
     mutationFn: (relationId: string) => api.removeRelation(relationId),
     onSuccess: () => ctx.refetch(),
   })
+  // An edge is removable when its OWNING instance (the relation's `from`) is
+  // editable. Outbound: this instance (ctx.editable). Inbound: the source — it
+  // is always a published version (drafts never surface as inbound), so it's
+  // editable exactly when its concept is non-versioned.
+  const conceptById = new Map(ctx.concepts.map((c) => [c.id, c]))
+  const canRemove = (r: RelatedInstance) =>
+    r.direction === "out"
+      ? ctx.editable
+      : !!r.instance && !(conceptById.get(r.conceptId)?.versioningEnabled ?? false)
   return (
     <>
       <Connections
         related={ctx.related}
-        editable={ctx.editable}
+        conceptById={conceptById}
+        canRemove={canRemove}
         onRemove={(relationId) => removeRel.mutate(relationId)}
       />
       {removeRel.error && (
@@ -290,9 +361,42 @@ export function ConnectedBody({ ctx }: { ctx: InstanceCtx }) {
   )
 }
 
+/** Both sides' addable connection kinds. Outbound needs this instance editable;
+ *  inbound needs an editable SOURCE, i.e. a non-versioned source concept (the
+ *  picker only surfaces published heads, which are frozen when versioned). */
+function relationOptions(ctx: InstanceCtx): RelationOption[] {
+  const conceptById = new Map(ctx.concepts.map((c) => [c.id, c]))
+  const out: RelationOption[] = ctx.editable
+    ? ctx.relationFields
+        .filter((f) => !!f.config.target)
+        .map((f) => ({
+          key: `out:${f.id}`,
+          field: f,
+          dir: "out",
+          label: f.name,
+          searchConceptId: f.config.target!,
+        }))
+    : []
+  const inbound: RelationOption[] = ctx.inboundRelationFields
+    .filter((f) => !(conceptById.get(f.conceptId)?.versioningEnabled ?? false))
+    .map((f) => ({
+      key: `in:${f.id}`,
+      field: f,
+      dir: "in",
+      // Default to the source concept (what gets picked); the field name alone
+      // would describe THIS side. Keep it parenthesised to disambiguate two
+      // unnamed inbound relations from the same concept.
+      label:
+        f.config.inverseName ?? `${conceptById.get(f.conceptId)?.name ?? f.conceptId} (${f.name})`,
+      searchConceptId: f.conceptId,
+    }))
+  return [...out, ...inbound]
+}
+
 export function ConnectedActions({ ctx }: { ctx: InstanceCtx }) {
   const [adding, setAdding] = useState(false)
-  if (!ctx.editable || ctx.relationFields.length === 0) return null
+  const options = relationOptions(ctx)
+  if (options.length === 0) return null
   return (
     <>
       <Button variant="outline" onClick={() => setAdding(true)}>
@@ -301,9 +405,8 @@ export function ConnectedActions({ ctx }: { ctx: InstanceCtx }) {
       </Button>
       {adding && (
         <AddConnectionModal
-          fromId={ctx.instance.id}
-          relationFields={ctx.relationFields}
-          concepts={ctx.concepts}
+          ctx={ctx}
+          options={options}
           onDone={() => ctx.refetch()}
           onClose={() => setAdding(false)}
         />

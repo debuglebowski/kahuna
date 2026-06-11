@@ -180,6 +180,44 @@ describe("concept configuration (settings)", () => {
     }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
 
+  it.effect("inverse names: relation-only config, surfaced by listRelationFieldsTargeting", () =>
+    Effect.gen(function* () {
+      const concepts = yield* ConceptService
+      const fields = yield* FieldService
+      const company = yield* concepts.create({ name: "Company" })
+      const person = yield* concepts.create({ name: "Person" })
+
+      // Inverse names are relation-only config.
+      const err = yield* fields
+        .addField({
+          conceptId: person.id,
+          name: "nick",
+          kind: "text",
+          config: { inverseName: "nope" },
+        })
+        .pipe(Effect.flip)
+      expect(err._tag).toBe("FieldConfigInvalid")
+
+      const employees = yield* fields.addField({
+        conceptId: company.id,
+        name: "Employees",
+        kind: "relation",
+        config: { target: person.id, inverseName: "Employer", inversePluralName: "Employers" },
+      })
+      expect(employees.config.inverseName).toBe("Employer")
+      expect(employees.config.inversePluralName).toBe("Employers")
+
+      // The inbound side of Person = live relation fields targeting it.
+      const inbound = yield* fields.listRelationFieldsTargeting(person.id)
+      expect(inbound.map((f) => f.id)).toEqual([employees.id])
+      expect(yield* fields.listRelationFieldsTargeting(company.id)).toEqual([])
+
+      // Archived fields drop out of the inbound side.
+      yield* fields.archive(employees.id)
+      expect(yield* fields.listRelationFieldsTargeting(person.id)).toEqual([])
+    }).pipe(Effect.provide(testLayer(newOrgId()))),
+  )
+
   it.effect("deleteField removes the field def", () =>
     Effect.gen(function* () {
       const concepts = yield* ConceptService

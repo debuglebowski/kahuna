@@ -13,6 +13,8 @@ export interface InstanceCtx {
   readonly staticLabels: ReadonlyArray<Label>
   readonly ownLabels: ReadonlyArray<Label>
   readonly relationFields: ReadonlyArray<Field>
+  /** Relation fields on OTHER concepts targeting this one (the inverse side). */
+  readonly inboundRelationFields: ReadonlyArray<Field>
   readonly editable: boolean
   readonly admin: boolean
   readonly myUserId: string | undefined

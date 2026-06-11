@@ -32,6 +32,7 @@ import {
   restoreInstance,
   restoreLabel,
   saveGraphLayout,
+  updateField,
   updateInstanceViewPrefs,
 } from "./use-cases"
 
@@ -115,6 +116,34 @@ describe("use-cases (UI backbone)", () => {
     // "What changed": events recorded across the workflow.
     const changed = (await run(org, getChanged)) as ReadonlyArray<unknown>
     expect(changed.length).toBeGreaterThan(2)
+
+    // Inverse naming: the company side of the same edge heads with the field's
+    // inverse labels, and the company's detail lists works_at as inbound-addable.
+    await run(
+      org,
+      updateField({
+        id: worksAt,
+        config: {
+          target: idOf("Company"),
+          inverseName: "Employee",
+          inversePluralName: "Employees",
+        },
+      }),
+    )
+    const companyDetail = (await run(org, getInstanceDetail(company.id))) as {
+      related: ReadonlyArray<{
+        direction: "out" | "in"
+        relationInverseName: string | null
+        relationInversePluralName: string | null
+      }>
+      inboundRelationFields: ReadonlyArray<{ id: string }>
+    }
+    expect(companyDetail.related.length).toBe(1)
+    const inEdge = companyDetail.related[0]!
+    expect(inEdge.direction).toBe("in")
+    expect(inEdge.relationInverseName).toBe("Employee")
+    expect(inEdge.relationInversePluralName).toBe("Employees")
+    expect(companyDetail.inboundRelationFields.map((f) => f.id)).toContain(worksAt)
   })
 })
 
@@ -246,17 +275,19 @@ describe("instance view prefs", () => {
     // Never saved: a well-formed empty body, no row created.
     expect(await run(orgA, getInstanceViewPrefs)).toEqual({ userId: "system", body: empty })
 
-    // Preset override + a custom tile layout round-trip verbatim.
+    // Preset override + a custom tile layout + a graph config round-trip verbatim.
     const conceptId = randomUUID()
     const layout = {
       tiles: [{ id: "a", contents: ["details", "notes"], x: 0, y: 0, w: 8, h: 4 }],
     }
+    const graphConfig = { fieldIds: null, depth: 3, layout: "dagre-tb" }
     const saved = await run(
       orgA,
       updateInstanceViewPrefs({
         defaultView: "document",
         byConcept: { [conceptId]: "custom" },
         customByConcept: { [conceptId]: layout },
+        graphByConcept: { [conceptId]: graphConfig },
       }),
     )
     expect(saved).toEqual({
@@ -265,12 +296,17 @@ describe("instance view prefs", () => {
         defaultView: "document",
         byConcept: { [conceptId]: "custom" },
         customByConcept: { [conceptId]: layout },
+        graphByConcept: { [conceptId]: graphConfig },
       },
     })
 
     // Second write hits the same (org, user) row — an upsert, not a new row.
+    // Stored rows read back with every section present (graphByConcept fills in).
     await run(orgA, updateInstanceViewPrefs(empty))
-    expect(await run(orgA, getInstanceViewPrefs)).toEqual({ userId: "system", body: empty })
+    expect(await run(orgA, getInstanceViewPrefs)).toEqual({
+      userId: "system",
+      body: { ...empty, graphByConcept: {} },
+    })
 
     // Prefs are org-scoped: the other org still reads defaults.
     expect(await run(orgB, getInstanceViewPrefs)).toEqual({ userId: "system", body: empty })

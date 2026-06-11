@@ -20,6 +20,11 @@ export interface AddFieldInput {
 const TEXT_FORMATS = new Set(["email", "url", "phone", "slug", "color"])
 const NUMBER_FORMATS = new Set(["percent"])
 
+/** Kinds whose values have a meaningful equality for `config.unique`. Excludes
+ *  bool (two items max), json/richtext (deep-equality on blobs), and the
+ *  non-settable kinds (relation/file/computed). */
+const UNIQUE_KINDS = new Set<FieldKind>(["text", "number", "date", "enum", "user", "money"])
+
 /** Validate a field's config shape against its kind (make invalid defs unrepresentable). */
 const validateConfig = (
   ctx: { readonly conceptId: string; readonly name: string },
@@ -48,6 +53,9 @@ const validateConfig = (
     if (kind === "relation" && !config.target) {
       return yield* invalid("relation field requires config.target")
     }
+    if ((config.inverseName || config.inversePluralName) && kind !== "relation") {
+      return yield* invalid("config.inverseName is only valid on relation fields")
+    }
     if (config.format) {
       if (kind === "text" && !TEXT_FORMATS.has(config.format)) {
         return yield* invalid(`unknown text format "${config.format}"`)
@@ -69,6 +77,16 @@ const validateConfig = (
     }
     if (config.requirement && (kind === "relation" || kind === "file" || kind === "computed")) {
       return yield* invalid("config.requirement is not valid on relation/file/computed fields")
+    }
+    if (config.unique) {
+      if (!UNIQUE_KINDS.has(kind)) {
+        return yield* invalid(
+          "config.unique is only valid on text/number/date/enum/user/money fields",
+        )
+      }
+      if (config.multiple) {
+        return yield* invalid("config.unique cannot be combined with config.multiple")
+      }
     }
   })
 
@@ -93,6 +111,23 @@ export class FieldService extends Effect.Service<FieldService>()("engine/FieldSe
           SELECT * FROM fields
           WHERE org_id = ${orgId} AND concept_id = ${conceptId}${liveOnly}
           ORDER BY position ASC, name ASC`
+        return rows.map(toField)
+      }).pipe(Effect.orDie)
+
+    /** Live relation fields (across all concepts) whose declared target is the
+     *  given concept — the inbound side of its connections. Fields on archived
+     *  concepts are excluded (their edges are dormant alongside the concept). */
+    const listRelationFieldsTargeting = (
+      conceptId: string,
+    ): Effect.Effect<ReadonlyArray<Field>, never, OrgContext> =>
+      Effect.gen(function* () {
+        const { orgId } = yield* OrgContext
+        const rows = yield* sql<FieldRow>`
+          SELECT f.* FROM fields f
+          JOIN concepts c ON c.id = f.concept_id AND c.archived_at IS NULL
+          WHERE f.org_id = ${orgId} AND f.kind = 'relation' AND f.archived_at IS NULL
+            AND f.config->>'target' = ${conceptId}
+          ORDER BY f.position ASC, f.name ASC`
         return rows.map(toField)
       }).pipe(Effect.orDie)
 
@@ -173,6 +208,34 @@ export class FieldService extends Effect.Service<FieldService>()("engine/FieldSe
           const name = input.name ?? current.name
           const config = input.config ?? current.config
           yield* validateConfig({ conceptId: current.conceptId, name }, current.kind, config)
+          // Flipping `unique` ON must not grandfather existing duplicates — the
+          // write-time check would silently never fire for them. Versions of one
+          // item share values, so only cross-ITEM duplicates block the flip.
+          // Archived rows count too: a value is only released by a purge.
+          if (config.unique && !current.config.unique) {
+            // Text dedupes case-insensitively (mirrors InstanceService.checkUnique).
+            const valueExpr =
+              current.kind === "text" ? sql`lower(state->>${input.id})` : sql`state->${input.id}`
+            const dupes = yield* sql<{ readonly count: number | string }>`
+              SELECT COUNT(*)::int AS count FROM (
+                SELECT 1 FROM instances
+                WHERE org_id = ${orgId} AND concept_id = ${current.conceptId}
+                  AND state->${input.id} IS NOT NULL
+                  AND state->${input.id} NOT IN ('null'::jsonb, '""'::jsonb)
+                GROUP BY ${valueExpr}
+                HAVING COUNT(DISTINCT item_id) > 1
+              ) AS dupes`
+            const count = Number(dupes[0]?.count ?? 0)
+            if (count > 0) {
+              return yield* Effect.fail(
+                new FieldConfigInvalid({
+                  conceptId: current.conceptId,
+                  name,
+                  reason: `cannot enable unique: ${count} value(s) are duplicated across items`,
+                }),
+              )
+            }
+          }
           if (name !== current.name) {
             const clash = yield* sql<{ readonly id: string }>`
               SELECT id FROM fields
@@ -306,7 +369,17 @@ export class FieldService extends Effect.Service<FieldService>()("engine/FieldSe
         }),
       )
 
-    return { addField, listFields, getById, update, archive, restore, purge, reorder } as const
+    return {
+      addField,
+      listFields,
+      listRelationFieldsTargeting,
+      getById,
+      update,
+      archive,
+      restore,
+      purge,
+      reorder,
+    } as const
   }),
   dependencies: [EventStore.Default],
 }) {}

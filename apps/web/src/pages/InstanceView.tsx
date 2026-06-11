@@ -14,6 +14,7 @@ import { InstanceViewEditor } from "../components/instance/InstanceViewEditor"
 import { capsOf } from "../components/instance/registry"
 import type { InstanceCtx } from "../components/instance/types"
 import { ViewSwitcher } from "../components/instance/ViewSwitcher"
+import { usePageChrome } from "../components/Layout"
 import { Badge, Button, ConfirmDialog, Spinner } from "../components/ui"
 import { api, type Field } from "../lib/api"
 import { useSession } from "../lib/auth-client"
@@ -41,6 +42,7 @@ const labelOf = (state: Record<string, unknown>, fields: ReadonlyArray<Field>): 
 /** Single-instance detail: all of its own data plus everything connected to it,
  *  rendered through the user's chosen view (preset tile layouts). */
 export function InstanceView() {
+  usePageChrome({ fullWidth: true, fillHeight: true }) // tile grid fills the viewport
   const { id = "" } = useParams()
 
   const collection = instanceDetail(id)
@@ -99,7 +101,7 @@ export function InstanceView() {
   // one a beat later reads as a layout glitch.
   if (detailQ.isLoading || !detail || !prefs.loaded) return <Spinner />
 
-  const { instance, concept, fields, related, staticLabels, labels } = detail
+  const { instance, concept, fields, inboundRelationFields, related, staticLabels, labels } = detail
   // Fields and relations are editable on a draft (versioned) or any
   // non-versioned instance — a published version is frozen, connections included.
   const relationFields = fields.filter((f) => f.kind === "relation")
@@ -125,6 +127,7 @@ export function InstanceView() {
     staticLabels,
     ownLabels: labels,
     relationFields,
+    inboundRelationFields,
     editable,
     admin,
     myUserId: session?.user.id,
@@ -134,8 +137,8 @@ export function InstanceView() {
   }
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between gap-3">
+    <div className="flex h-full min-h-0 flex-col gap-3">
+      <div className="flex shrink-0 items-center justify-between gap-3">
         <h2 className="flex min-w-0 items-center gap-1.5 text-base font-medium text-foreground">
           <Link
             to={`/concepts/${concept.id}`}

@@ -2,11 +2,8 @@ import "@xyflow/react/dist/style.css"
 import { useQuery } from "@tanstack/react-query"
 import {
   Background,
-  BaseEdge,
   Controls,
   type Edge,
-  EdgeLabelRenderer,
-  type EdgeProps,
   Handle,
   MarkerType,
   type Node,
@@ -20,15 +17,7 @@ import {
   useReactFlow,
 } from "@xyflow/react"
 import { ChevronDown, Redo2, Undo2, Workflow } from "lucide-react"
-import {
-  type CSSProperties,
-  useCallback,
-  useEffect,
-  useMemo,
-  useReducer,
-  useRef,
-  useState,
-} from "react"
+import { type CSSProperties, useCallback, useEffect, useMemo } from "react"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -38,6 +27,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { SelfLoopEdge } from "../../components/graph/SelfLoopEdge"
 import { Card, Spinner } from "../../components/ui"
 import { api, type ConceptGraph, type GraphLayout } from "../../lib/api"
 import {
@@ -48,8 +38,6 @@ import {
   type LayoutInput,
   type LayoutKind,
   layoutDagre,
-  NODE_H,
-  NODE_W,
 } from "../../lib/graphLayouts"
 import { ConceptIcon, DEFAULT_CONCEPT_ICON } from "../../lib/icons"
 import { useGraphPositions } from "./useGraphPositions"
@@ -103,37 +91,6 @@ function ConceptNode({ data }: NodeProps) {
   )
 }
 
-/** A relation pointing back at its own concept — drawn as a loop above the node. */
-function SelfLoopEdge({
-  id,
-  sourceX,
-  sourceY,
-  targetX,
-  targetY,
-  label,
-  markerEnd,
-  style,
-}: EdgeProps) {
-  const path = `M ${sourceX} ${sourceY} C ${sourceX + 70} ${sourceY - 80}, ${targetX - 70} ${targetY - 80}, ${targetX} ${targetY}`
-  return (
-    <>
-      <BaseEdge id={id} path={path} markerEnd={markerEnd} style={style} />
-      {label ? (
-        <EdgeLabelRenderer>
-          <div
-            style={{
-              transform: `translate(-50%, -50%) translate(${(sourceX + targetX) / 2}px, ${Math.min(sourceY, targetY) - 64}px)`,
-            }}
-            className="pointer-events-none absolute rounded bg-card px-1.5 py-0.5 text-[11px] font-medium text-foreground"
-          >
-            {label}
-          </div>
-        </EdgeLabelRenderer>
-      ) : null}
-    </>
-  )
-}
-
 const nodeTypes = { concept: ConceptNode }
 const edgeTypes = { selfloop: SelfLoopEdge }
 
@@ -159,7 +116,8 @@ function buildFlow(graph: ConceptGraph, saved: GraphLayout): { nodes: Node[]; ed
   for (const e of graph.edges) {
     const key = `${e.from}->${e.to}`
     const m = merged.get(key) ?? { from: e.from, to: e.to, labels: new Set<string>() }
-    m.labels.add(e.relationType)
+    // Named-inverse edges read both ways on the schema canvas.
+    m.labels.add(e.inverseName ? `${e.relationType} ⇄ ${e.inverseName}` : e.relationType)
     merged.set(key, m)
   }
 

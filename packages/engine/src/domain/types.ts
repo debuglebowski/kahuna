@@ -41,6 +41,12 @@ export interface FieldConfig {
   /** relation: the target concept's id (the relation's identity is its field id). */
   readonly target?: string
   readonly cardinality?: "one" | "many"
+  /** relation: how the TARGET side names the connection (field "Employees" on
+   *  Company targeting Person reads "Employer" from the Person side). Decorative
+   *  like the field name; absent = the target side falls back to the field name. */
+  readonly inverseName?: string
+  /** relation: plural of `inverseName`; the UI picks singular/plural by count. */
+  readonly inversePluralName?: string
   /** computed: which built-in + its params */
   readonly computedKind?: "decay" | "momentum"
   readonly params?: Record<string, unknown>
@@ -54,6 +60,13 @@ export interface FieldConfig {
    *  `flagged` never blocks — missing values are surfaced in the UI.
    *  Absent = `optional`. */
   readonly requirement?: "required" | "flagged" | "optional"
+  /** No two items of the concept may hold the same value (text/number/date/
+   *  enum/user/money only; never with `multiple`). Archived items keep their
+   *  claim — only a purge releases a value, so a restore can never resurface a
+   *  duplicate. Text compares case-insensitively. Versions of one item share
+   *  values freely; missing values never conflict. Enforced write-time —
+   *  enabling it on a field with existing cross-item duplicates is rejected. */
+  readonly unique?: boolean
 }
 
 /** Instance field values, keyed by field **id** (`fields.id`). Synthetic keys
@@ -81,6 +94,9 @@ export interface Concept {
   /** Optional display glyph: a literal emoji or a curated lucide icon name
    *  prefixed `lucide:` (e.g. `lucide:Building2`); null renders none. */
   readonly icon: string | null
+  /** Optional display color (hex, same pill palette as labels) used to tint the
+   *  concept wherever instances are visualised; null renders neutral. */
+  readonly color: string | null
   /** Label ids inherited by every instance of this concept (read-time, never
    *  written per item — so they can't be removed on an individual item). */
   readonly staticLabelIds: ReadonlyArray<Id>
@@ -257,6 +273,7 @@ export type EventPayload =
       readonly name?: string
       readonly pluralName?: string | null
       readonly icon?: string | null
+      readonly color?: string | null
       readonly versioningEnabled?: boolean
       readonly staticLabelIds?: ReadonlyArray<Id>
       readonly defaultLabelIds?: ReadonlyArray<Id>
@@ -602,10 +619,21 @@ export interface InstanceViewLayout {
   readonly tiles: ReadonlyArray<InstanceViewTile>
 }
 
+/** Relationship-graph tile settings — traversal + render knobs, keyed by
+ *  concept id. Layout keys are client-defined (opaque here, like view keys). */
+export interface InstanceGraphConfig {
+  /** Relation field ids the walk may follow; null = all. */
+  readonly fieldIds: ReadonlyArray<string> | null
+  readonly depth: number
+  readonly layout: string
+}
+
 export interface InstanceViewPrefsBody {
   readonly defaultView: string | null
   readonly byConcept: Readonly<Record<string, string>>
   readonly customByConcept: Readonly<Record<string, InstanceViewLayout>>
+  /** Optional — rows written before the graph tile existed lack it. */
+  readonly graphByConcept?: Readonly<Record<string, InstanceGraphConfig>>
 }
 
 export interface InstanceViewPrefs {

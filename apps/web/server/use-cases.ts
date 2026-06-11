@@ -92,14 +92,16 @@ export const getInstanceDetail = (id: string): UC<unknown> =>
     const labelsSvc = yield* LabelService
 
     const inst = yield* instances.get(id)
-    const [decorated, concept, fieldDefs, outRels, inRels, allConcepts] = yield* Effect.all([
-      computed.decorate(inst),
-      conceptsSvc.getById(inst.conceptId),
-      fieldsSvc.listFields(inst.conceptId),
-      relations.listFrom(id),
-      relations.listTo(id),
-      conceptsSvc.list(),
-    ])
+    const [decorated, concept, fieldDefs, inboundFields, outRels, inRels, allConcepts] =
+      yield* Effect.all([
+        computed.decorate(inst),
+        conceptsSvc.getById(inst.conceptId),
+        fieldsSvc.listFields(inst.conceptId),
+        fieldsSvc.listRelationFieldsTargeting(inst.conceptId),
+        relations.listFrom(id),
+        relations.listTo(id),
+        conceptsSvc.list(),
+      ])
     const nameById = new Map(allConcepts.map((c) => [c.id, c.name] as const))
 
     // Inherited (static) labels come from the concept; the instance's own labels
@@ -152,6 +154,8 @@ export const getInstanceDetail = (id: string): UC<unknown> =>
             relationId: rel.id,
             fieldId: rel.fieldId,
             relationName: field.name,
+            relationInverseName: field.config.inverseName ?? null,
+            relationInversePluralName: field.config.inversePluralName ?? null,
             label: "(unavailable)",
             direction,
             conceptId: cId,
@@ -170,8 +174,10 @@ export const getInstanceDetail = (id: string): UC<unknown> =>
         return {
           relationId: rel.id,
           fieldId: rel.fieldId,
-          // Decorative label, resolved from the field def (renameable).
+          // Decorative labels, resolved from the field def (renameable).
           relationName: field.name,
+          relationInverseName: field.config.inverseName ?? null,
+          relationInversePluralName: field.config.inversePluralName ?? null,
           label: textField ? String(d.state[textField.id]) : "(untitled)",
           direction,
           conceptId: other.conceptId,
@@ -190,6 +196,7 @@ export const getInstanceDetail = (id: string): UC<unknown> =>
       instance: decorated,
       concept,
       fields: fieldDefs,
+      inboundRelationFields: inboundFields,
       related,
       staticLabels,
       labels: ownLabels,
@@ -199,8 +206,8 @@ export const getInstanceDetail = (id: string): UC<unknown> =>
 export const listConcepts = (includeArchived = false, withCounts = false): UC<unknown> =>
   Effect.flatMap(ConceptService, (c) => c.list({ includeArchived, withCounts }))
 
-export const createConcept = (name: string, description?: string): UC<unknown> =>
-  Effect.flatMap(ConceptService, (c) => c.create({ name, description }))
+export const createConcept = (name: string, color?: string | null): UC<unknown> =>
+  Effect.flatMap(ConceptService, (c) => c.create({ name, color }))
 
 export const updateConcept = (
   id: string,
@@ -209,6 +216,7 @@ export const updateConcept = (
     readonly pluralName?: string | null
     readonly description: string | null
     readonly icon?: string | null
+    readonly color?: string | null
     readonly versioningEnabled?: boolean
     readonly staticLabelIds?: ReadonlyArray<string>
     readonly defaultLabelIds?: ReadonlyArray<string>
@@ -221,6 +229,7 @@ export const updateConcept = (
       pluralName: patch.pluralName,
       description: patch.description,
       icon: patch.icon,
+      color: patch.color,
       versioningEnabled: patch.versioningEnabled,
       staticLabelIds: patch.staticLabelIds,
       defaultLabelIds: patch.defaultLabelIds,
@@ -381,6 +390,7 @@ export const getConceptGraph: UC<unknown> = Effect.gen(function* () {
         to: f.config.target as string,
         // Identity is the field id (`id`); these are decorative labels.
         relationType: f.name,
+        inverseName: f.config.inverseName ?? null,
         cardinality: f.config.cardinality ?? ("many" as const),
         fieldName: f.name,
       })),

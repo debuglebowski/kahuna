@@ -35,6 +35,8 @@ export const fieldKindLabel = (k: FieldKind): string => KIND_LABELS[k] ?? k
 
 /** Scalar kinds that can carry `config.multiple`, and the formats per kind. */
 const MULTIPLE_KINDS = new Set<FieldKind>(["text", "number", "date", "enum", "user"])
+/** Kinds that can carry `config.unique` (mirrors the engine's UNIQUE_KINDS). */
+const UNIQUE_KINDS = new Set<FieldKind>(["text", "number", "date", "enum", "user", "money"])
 const FORMATS: Partial<Record<FieldKind, ReadonlyArray<string>>> = {
   text: ["email", "url", "phone", "slug", "color"],
   number: ["percent"],
@@ -94,6 +96,10 @@ export function FieldForm({
   const [cardinality, setCardinality] = useState<"one" | "many">(
     initial?.config.cardinality ?? "many",
   )
+  const [inverseName, setInverseName] = useState(initial?.config.inverseName ?? "")
+  const [inversePluralName, setInversePluralName] = useState(
+    initial?.config.inversePluralName ?? "",
+  )
   const [computedKind, setComputedKind] = useState<"decay" | "momentum">(
     initial?.config.computedKind ?? "decay",
   )
@@ -106,6 +112,7 @@ export function FieldForm({
     }
   })
   const [multiple, setMultiple] = useState(initial?.config.multiple ?? false)
+  const [unique, setUnique] = useState(initial?.config.unique ?? false)
   const [format, setFormat] = useState(initial?.config.format ?? "")
   const [requirement, setRequirement] = useState<Requirement>(
     initial?.config.requirement ?? "optional",
@@ -153,7 +160,12 @@ export function FieldForm({
         }
       }
       case "relation":
-        return { target, cardinality }
+        return {
+          target,
+          cardinality,
+          ...(inverseName.trim() ? { inverseName: inverseName.trim() } : {}),
+          ...(inversePluralName.trim() ? { inversePluralName: inversePluralName.trim() } : {}),
+        }
       case "computed":
         return {
           computedKind,
@@ -164,10 +176,11 @@ export function FieldForm({
     }
   }
 
-  // Merge the orthogonal modifiers (multiple/format/requirement) onto the per-kind base.
+  // Merge the orthogonal modifiers (multiple/unique/format/requirement) onto the per-kind base.
   const buildConfig = (): FieldConfig => ({
     ...baseConfig(),
     ...(MULTIPLE_KINDS.has(kind) && multiple ? { multiple: true } : {}),
+    ...(UNIQUE_KINDS.has(kind) && unique && !multiple ? { unique: true } : {}),
     ...((kind === "text" || kind === "number") && format ? { format } : {}),
     ...(REQUIREMENT_KINDS.has(kind) && requirement !== "optional" ? { requirement } : {}),
   })
@@ -248,11 +261,29 @@ export function FieldForm({
         )}
       </div>
 
-      {MULTIPLE_KINDS.has(kind) && (
-        <Label className="flex items-center gap-2 text-sm font-normal text-foreground">
-          <Checkbox checked={multiple} onCheckedChange={(c) => setMultiple(c === true)} />
-          Allow multiple values
-        </Label>
+      {(MULTIPLE_KINDS.has(kind) || UNIQUE_KINDS.has(kind)) && (
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+          {MULTIPLE_KINDS.has(kind) && (
+            <Label className="flex items-center gap-2 text-sm font-normal text-foreground">
+              <Checkbox checked={multiple} onCheckedChange={(c) => setMultiple(c === true)} />
+              Allow multiple values
+            </Label>
+          )}
+          {UNIQUE_KINDS.has(kind) && (
+            <Label
+              className={`flex items-center gap-2 text-sm font-normal ${
+                multiple ? "text-muted-foreground" : "text-foreground"
+              }`}
+            >
+              <Checkbox
+                checked={unique && !multiple}
+                disabled={multiple}
+                onCheckedChange={(c) => setUnique(c === true)}
+              />
+              Unique values
+            </Label>
+          )}
+        </div>
       )}
 
       {kind === "enum" && (
@@ -344,6 +375,20 @@ export function FieldForm({
                 <SelectItem value="one">one</SelectItem>
               </SelectContent>
             </Select>
+          </Field>
+          <Field label="Inverse name (optional)">
+            <Input
+              value={inverseName}
+              onChange={(e) => setInverseName(e.target.value)}
+              placeholder="how the target names this, e.g. Employer"
+            />
+          </Field>
+          <Field label="Inverse plural (optional)">
+            <Input
+              value={inversePluralName}
+              onChange={(e) => setInversePluralName(e.target.value)}
+              placeholder="e.g. Employers"
+            />
           </Field>
         </div>
       )}
