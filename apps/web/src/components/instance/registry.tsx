@@ -103,7 +103,7 @@ export const TILE_CONTENTS: Record<TileContentKey, TileContent> = {
   activity: {
     title: "Activity",
     Icon: History,
-    Body: ({ ctx }) => <ActivityFeed subjectId={ctx.instance.itemId} />,
+    Body: ({ ctx }) => <ActivityFeed subjectId={ctx.instance.itemId} fields={ctx.fields} />,
   },
 }
 

@@ -425,6 +425,12 @@ export interface FeedItem {
   readonly eventType: string
   readonly subjectKind: string
   readonly subjectId: string
+  /** Raw event payload — only the per-item activity feed sends it (the
+   *  org-wide feeds stay metadata-only). */
+  readonly payload?: unknown
+  /** For field-edit events: what each patched field held before, folded from
+   *  the instance's event stream (events store only the new values). */
+  readonly previous?: Record<string, unknown>
 }
 
 export const getChanged: UC<ReadonlyArray<FeedItem>> = Effect.flatMap(EventStore, (e) =>
@@ -642,20 +648,43 @@ export const restoreTask = (id: string, expectedVersion: number): UC<Task> =>
 export const deleteTask = (id: string): UC<Task> =>
   Effect.flatMap(AnnotationService, (a) => a.purgeTask(id))
 
-/** Per-item activity (union of the lineage's events + its annotations' events). */
+/** Per-item activity (union of the lineage's events + its annotations' events).
+ *  Field-edit events also get `previous` — the values the patch overwrote,
+ *  reconstructed by folding the instance's own stream oldest-first. */
 export const getActivity = (subjectId: string, limit = 100): UC<ReadonlyArray<FeedItem>> =>
-  Effect.flatMap(AnnotationService, (a) => a.readActivityForSubject(subjectId, { limit })).pipe(
-    Effect.map((events) =>
-      events.map((ev) => ({
-        id: ev.id,
-        occurredAt: ev.occurredAt,
-        actor: ev.actor,
-        eventType: ev.eventType,
-        subjectKind: ev.subjectKind,
-        subjectId: ev.subjectId,
-      })),
-    ),
-  )
+  Effect.gen(function* () {
+    const annotations = yield* AnnotationService
+    const store = yield* EventStore
+    const events = yield* annotations.readActivityForSubject(subjectId, { limit })
+    const edited = events.filter(
+      (ev) => ev.subjectKind === "instance" && ev.payload._tag === "InstanceUpdated",
+    )
+    const previousByEvent = new Map<number, Record<string, unknown>>()
+    for (const instanceId of new Set(edited.map((ev) => ev.subjectId))) {
+      const state: Record<string, unknown> = {}
+      for (const ev of yield* store.readStream(instanceId)) {
+        const p = ev.payload
+        if (p._tag === "InstanceCreated") Object.assign(state, p.fields)
+        else if (p._tag === "InstanceUpdated") {
+          previousByEvent.set(
+            ev.id,
+            Object.fromEntries(Object.keys(p.patch).map((k) => [k, state[k] ?? null])),
+          )
+          Object.assign(state, p.patch)
+        }
+      }
+    }
+    return events.map((ev) => ({
+      id: ev.id,
+      occurredAt: ev.occurredAt,
+      actor: ev.actor,
+      eventType: ev.eventType,
+      subjectKind: ev.subjectKind,
+      subjectId: ev.subjectId,
+      payload: ev.payload,
+      previous: previousByEvent.get(ev.id),
+    }))
+  })
 
 // ── annotation layer: task statuses (admin) ─────────────────────────────────────
 

@@ -174,6 +174,12 @@ export const FeedItem = Schema.Struct({
   eventType: Schema.String,
   subjectKind: Schema.String,
   subjectId: Schema.String,
+  /** Raw engine event payload (field patch, note body, task transition, …) —
+   *  the feed derives inline snippets and the expanded detail view from it. */
+  payload: Schema.optional(Schema.Unknown),
+  /** Field-edit events only: the value each patched field held before, keyed
+   *  by field id — folded server-side (events store only the new values). */
+  previous: Schema.optional(Schema.Unknown),
 })
 export type FeedItem = typeof FeedItem.Type
 
