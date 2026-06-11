@@ -1,3 +1,4 @@
+import { lazy, Suspense } from "react"
 import { Navigate, Route, Routes } from "react-router-dom"
 import { Layout } from "./components/Layout"
 import { ErrorScreen, Spinner } from "./components/ui"
@@ -18,6 +19,10 @@ import { Profile } from "./pages/settings/Profile"
 import { SettingsLayout } from "./pages/settings/SettingsLayout"
 import { Views } from "./pages/settings/Views"
 
+// Dev playground — code-split so the lab page and its intro animations cost
+// the main bundle nothing; each intro is itself lazy-loaded on first play.
+const IntroLab = lazy(() => import("./pages/IntroLab").then((m) => ({ default: m.IntroLab })))
+
 export function App() {
   const { data: session, isPending, error, isRefetching, refetch } = useSession()
 
@@ -35,6 +40,14 @@ export function App() {
         <Route path="/members" element={<MembersDirectory />} />
         <Route path="/members/:userId" element={<MemberProfile />} />
         <Route path="/automations" element={<Placeholder title="Automations" />} />
+        <Route
+          path="/intro-lab"
+          element={
+            <Suspense fallback={null}>
+              <IntroLab />
+            </Suspense>
+          }
+        />
         <Route path="/settings" element={<SettingsLayout />}>
           <Route index element={<Navigate to="profile" replace />} />
           <Route path="profile" element={<Profile />} />
