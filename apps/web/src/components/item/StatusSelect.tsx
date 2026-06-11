@@ -15,7 +15,7 @@ const CATEGORY_DOT: Record<string, string> = {
   done: "#16a34a",
 }
 
-function Dot({ status }: { status: TaskStatus }) {
+export function Dot({ status }: { status: TaskStatus }) {
   return (
     <span
       className="inline-block size-2 shrink-0 rounded-full"

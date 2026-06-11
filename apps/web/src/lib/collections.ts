@@ -41,6 +41,7 @@ export const refetchKeys = async (keys: ReadonlyArray<string>): Promise<void> =>
 
 /** A collection exposing the query-collection refetch util. */
 interface Refetchable {
+  readonly status: string
   readonly utils: { readonly refetch: () => Promise<unknown> }
 }
 
@@ -48,6 +49,10 @@ interface Refetchable {
 export function useRegisterCollection(key: string, collection: Refetchable): void {
   useEffect(() => {
     registry.set(key, () => collection.utils.refetch())
+    // The stream only refetches mounted keys, so an already-synced collection
+    // may have missed events while no page showed it — catch up on (re)mount.
+    // A fresh collection ("loading") is already fetching current data.
+    if (collection.status === "ready") void collection.utils.refetch()
     return () => {
       registry.delete(key)
     }
