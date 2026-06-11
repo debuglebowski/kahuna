@@ -1,36 +1,39 @@
-import { useMemo } from "react"
+import { useMutation } from "@tanstack/react-query"
+import { Pencil, Plus } from "lucide-react"
+import { useMemo, useState } from "react"
 import { useNavigate } from "react-router-dom"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import type { DashboardWidget } from "@/lib/api"
+import { InstanceTable } from "@/components/InstanceTable"
+import { IconButton, Modal, Spinner } from "@/components/ui"
+import { api, type Concept, type DashboardWidget, type Instance } from "@/lib/api"
 import { useSession } from "@/lib/auth-client"
+import { instancesByConcept } from "@/lib/collections"
 import type { ConceptInstanceData } from "@/lib/conceptData"
-import { FieldValueCell } from "@/lib/fieldDisplay"
-import { showValue } from "@/lib/utils"
+import { useQuickEdit } from "@/lib/quickEdit"
+import { cn, showValue } from "@/lib/utils"
 import { matchInstance } from "@/lib/widgetAggregations"
+import { InstanceForm } from "@/pages/InstanceForm"
 
 type List = Extract<DashboardWidget, { type: "list" }>
 
-/** Instances of a concept matching the widget's filter, as a compact table.
- *  Mirrors ConceptView's column model: state is keyed by field id, so a column's
- *  header is the (renameable) field name and the cell/sort key is the stable id. */
+/** Instances of a concept matching the widget's filter, as the real instance
+ *  table — the canonical way to browse/edit a concept's data. Carries its own
+ *  create ("+") action and the per-user sticky quick-edit mode. */
 export function ListWidget({
   widget,
   data,
+  concept,
 }: {
   widget: List
   data: ConceptInstanceData | undefined
+  concept: Concept | undefined
 }) {
   const navigate = useNavigate()
   const { data: session } = useSession()
   const me = session?.user.id ?? null
   const fields = data?.fields ?? []
+  const conceptId = widget.conceptId ?? ""
+  const [quickEdit, toggleQuickEdit] = useQuickEdit(conceptId)
+  const [adding, setAdding] = useState(false)
 
   // Columns: explicit selection, else the concept's scalar fields (no relation/file).
   const columns = useMemo(() => {
@@ -52,37 +55,81 @@ export function ListWidget({
     return r
   }, [data?.instances, widget.conditions, widget.match, me, widget.orderBy, widget.limit])
 
+  // One field saved per edit; refetch (success or fail) reconciles value + version.
+  const onSaveCell = async (inst: Instance, fieldId: string, value: unknown) => {
+    try {
+      await api.updateInstance(inst.id, inst.version, { [fieldId]: value })
+    } finally {
+      instancesByConcept(conceptId).utils.refetch()
+    }
+  }
+
+  const create = useMutation({
+    mutationFn: (values: Record<string, unknown>) => api.createInstance(conceptId, values),
+    onSuccess: (created) => {
+      setAdding(false)
+      create.reset()
+      instancesByConcept(conceptId).utils.refetch()
+      // On a versioned concept the new item is an unpublished draft — invisible
+      // in this head-only list — so go straight to its detail page to edit/publish.
+      if (concept?.versioningEnabled) navigate(`/instances/${created.id}`)
+    },
+  })
+
   if (!widget.conceptId) return <p className="text-sm text-muted-foreground">Pick a concept.</p>
-  if (rows.length === 0) return <p className="text-sm text-muted-foreground">No matching items.</p>
 
   return (
-    <div className="-mx-1 h-full overflow-auto">
-      <Table>
-        <TableHeader>
-          <TableRow>
-            {columns.map((c) => (
-              <TableHead key={c.id} className="px-3 py-1.5">
-                {c.name}
-              </TableHead>
-            ))}
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {rows.map((r) => (
-            <TableRow
-              key={r.id}
-              className="cursor-pointer"
-              onClick={() => navigate(`/instances/${r.id}`)}
-            >
-              {columns.map((c) => (
-                <TableCell key={c.id} className="px-3 py-1.5 text-foreground">
-                  <FieldValueCell field={c} value={r.state[c.id]} />
-                </TableCell>
-              ))}
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+    // cancel-drag: clicks/edits inside the table must never start a tile drag.
+    <div className="cancel-drag flex h-full flex-col">
+      <div className="flex shrink-0 items-center justify-end gap-0.5 pb-1">
+        <IconButton
+          aria-label="Quick edit"
+          className={cn(quickEdit && "text-primary ring-1 ring-primary/40")}
+          onClick={() => toggleQuickEdit(!quickEdit)}
+        >
+          <Pencil size={13} />
+        </IconButton>
+        <IconButton
+          aria-label={`New ${concept?.name ?? "instance"}`}
+          onClick={() => setAdding(true)}
+        >
+          <Plus size={14} />
+        </IconButton>
+      </div>
+      <div className="-mx-1 min-h-0 flex-1 overflow-auto">
+        {rows.length === 0 ? (
+          <p className="px-1 text-sm text-muted-foreground">No matching items.</p>
+        ) : (
+          <InstanceTable
+            columns={columns}
+            rows={rows}
+            quickEdit={quickEdit}
+            onSaveCell={onSaveCell}
+            defaultSortKey={widget.orderBy ?? null}
+            dense
+          />
+        )}
+      </div>
+      {adding && (
+        <Modal title={`New ${concept?.name ?? "instance"}`} onClose={() => setAdding(false)}>
+          {!data ? (
+            <Spinner />
+          ) : (
+            <InstanceForm
+              fields={fields}
+              defaultLabelIds={concept?.defaultLabelIds ?? []}
+              onSubmit={(v) => create.mutate(v)}
+              onCancel={() => setAdding(false)}
+              pending={create.isPending}
+            />
+          )}
+          {create.error && (
+            <p className="mt-3 text-sm text-destructive">
+              {(create.error as { message?: string }).message ?? "Could not create."}
+            </p>
+          )}
+        </Modal>
+      )}
     </div>
   )
 }

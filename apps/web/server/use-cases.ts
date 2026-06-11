@@ -206,8 +206,38 @@ export const getInstanceDetail = (id: string): UC<unknown> =>
 export const listConcepts = (includeArchived = false, withCounts = false): UC<unknown> =>
   Effect.flatMap(ConceptService, (c) => c.list({ includeArchived, withCounts }))
 
+/** The dashboard a fresh concept starts with: its instance table as one
+ *  full-width list widget. An ORDINARY org dashboard — renameable, deletable;
+ *  the widget's own `conceptId` config is the only reference to the concept. */
+export const conceptDashboardSeed = (conceptId: string): DashboardBody => ({
+  widgets: [
+    {
+      id: crypto.randomUUID(),
+      type: "list",
+      title: null,
+      layout: { x: 0, y: 0, w: 12, h: 7 },
+      conceptId,
+      conditions: [],
+      orderBy: null,
+      limit: null,
+    },
+  ],
+})
+
 export const createConcept = (name: string, color?: string | null): UC<unknown> =>
-  Effect.flatMap(ConceptService, (c) => c.create({ name, color }))
+  Effect.gen(function* () {
+    const concepts = yield* ConceptService
+    const dashboards = yield* DashboardService
+    const concept = yield* concepts.create({ name, color })
+    // Every concept starts with a dashboard (deletable like any other).
+    yield* dashboards.create({
+      name: concept.name,
+      icon: concept.icon,
+      scope: "org",
+      body: conceptDashboardSeed(concept.id),
+    })
+    return concept
+  })
 
 export const updateConcept = (
   id: string,

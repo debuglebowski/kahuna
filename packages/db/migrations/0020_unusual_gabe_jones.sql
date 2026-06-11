@@ -1,0 +1,1 @@
+ALTER TABLE "concepts" DROP COLUMN "dashboard_body";

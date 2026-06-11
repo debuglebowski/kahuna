@@ -11,6 +11,7 @@ import {
 import {
   api,
   type Concept,
+  type Dashboard,
   type Label,
   type SidebarRule,
   type SidebarSection,
@@ -39,8 +40,8 @@ const STATIC_ITEMS: ReadonlyArray<{ key: string; label: string }> = [
 
 const SOURCE_KINDS: ReadonlyArray<{ kind: SidebarSource["kind"]; label: string }> = [
   { kind: "static", label: "Global items" },
-  { kind: "group", label: "Concept group" },
-  { kind: "list", label: "Concept list" },
+  { kind: "group", label: "Dashboard group" },
+  { kind: "list", label: "Item list" },
   { kind: "links", label: "Links" },
 ]
 
@@ -65,33 +66,33 @@ export const newSection = (): SidebarSection => ({
   source: { kind: "group", members: [], rules: [] },
 })
 
-function ConceptMultiSelect({
-  concepts,
+function DashboardMultiSelect({
+  dashboards,
   selectedIds,
   onChange,
 }: {
-  concepts: readonly Concept[]
+  dashboards: readonly Dashboard[]
   selectedIds: readonly string[]
   onChange: (ids: string[]) => void
 }) {
-  if (concepts.length === 0)
-    return <p className="text-xs text-muted-foreground">No concepts yet.</p>
-  const options = [...concepts]
+  if (dashboards.length === 0)
+    return <p className="text-xs text-muted-foreground">No dashboards yet.</p>
+  const options = [...dashboards]
     .sort((a, b) => a.name.localeCompare(b.name))
-    .map((c) => ({ id: c.id, label: c.pluralName || c.name }))
+    .map((d) => ({ id: d.id, label: d.name }))
   return (
     <MultiCombobox
       options={options}
       selectedIds={selectedIds}
       onChange={onChange}
-      placeholder="Concept"
-      searchPlaceholder="Search concepts…"
-      emptyText="No matching concepts."
+      placeholder="Dashboard"
+      searchPlaceholder="Search dashboards…"
+      emptyText="No matching dashboards."
     />
   )
 }
 
-/** The rule list for a group: each rule targets matching concepts or instances. */
+/** The rule list for a group: every dashboard, or matching instances of a concept. */
 function RuleList({
   rules,
   concepts,
@@ -111,23 +112,23 @@ function RuleList({
       {rules.map((rule, i) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: rules are positional
         <div key={i} className="rounded-md border border-border p-2">
-          <div className="mb-1.5 flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5">
             <Select
               value={rule.target}
               onValueChange={(v) =>
                 set(
                   i,
-                  v === "concepts"
-                    ? { target: "concepts", conditions: [] }
+                  v === "dashboards"
+                    ? { target: "dashboards" }
                     : { target: "items", conceptId: concepts[0]?.id ?? "", conditions: [] },
                 )
               }
             >
-              <SelectTrigger className="w-32">
+              <SelectTrigger className="w-36">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="concepts">Concepts</SelectItem>
+                <SelectItem value="dashboards">All dashboards</SelectItem>
                 <SelectItem value="items">Items of…</SelectItem>
               </SelectContent>
             </Select>
@@ -152,20 +153,23 @@ function RuleList({
               <X size={14} />
             </IconButton>
           </div>
-          <ConditionList
-            conceptId={rule.target === "items" ? rule.conceptId : ""}
-            conditions={rule.conditions}
-            labels={labels}
-            labelOnly={rule.target === "concepts"}
-            onChange={(conditions) => set(i, { ...rule, conditions })}
-            match={rule.match ?? "all"}
-            onMatchChange={(match) => set(i, { ...rule, match })}
-          />
+          {rule.target === "items" && (
+            <div className="mt-1.5">
+              <ConditionList
+                conceptId={rule.conceptId}
+                conditions={rule.conditions}
+                labels={labels}
+                onChange={(conditions) => set(i, { ...rule, conditions })}
+                match={rule.match ?? "all"}
+                onMatchChange={(match) => set(i, { ...rule, match })}
+              />
+            </div>
+          )}
         </div>
       ))}
       <button
         type="button"
-        onClick={() => onChange([...rules, { target: "concepts", conditions: [] }])}
+        onClick={() => onChange([...rules, { target: "dashboards" }])}
         className="text-xs font-medium text-muted-foreground hover:text-foreground"
       >
         + Rule
@@ -188,6 +192,8 @@ export function SectionEditor({
   const [draft, setDraft] = useState<SidebarSection>(section)
   const labelsQ = useQuery({ queryKey: ["labels"], queryFn: () => api.listLabels() })
   const labels = labelsQ.data ?? []
+  const dashboardsQ = useQuery({ queryKey: ["dashboards"], queryFn: () => api.listDashboards() })
+  const dashboards = dashboardsQ.data ?? []
   const src = draft.source
   const setSource = (source: SidebarSource) => setDraft((d) => ({ ...d, source }))
 
@@ -256,17 +262,17 @@ export function SectionEditor({
 
         {src.kind === "group" && (
           <div className="space-y-3">
-            <FieldRow label="Pinned concepts">
-              <ConceptMultiSelect
-                concepts={concepts}
+            <FieldRow label="Pinned dashboards">
+              <DashboardMultiSelect
+                dashboards={dashboards}
                 selectedIds={src.members
-                  .filter((m) => m.kind === "concept")
-                  .map((m) => m.conceptId)}
+                  .filter((m) => m.kind === "dashboard")
+                  .map((m) => m.dashboardId)}
                 onChange={(ids) =>
                   setSource({
                     ...src,
                     members: [
-                      ...ids.map((conceptId) => ({ kind: "concept" as const, conceptId })),
+                      ...ids.map((dashboardId) => ({ kind: "dashboard" as const, dashboardId })),
                       ...src.members.filter((m) => m.kind === "instance"),
                     ],
                   })

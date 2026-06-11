@@ -311,9 +311,9 @@ export type SidebarCondition = typeof SidebarCondition.Type
 /** How a condition set combines: every condition or at least one (absent = all). */
 const ConditionMatch = { match: Schema.optional(Schema.Literal("all", "any")) }
 
-/** A manually-pinned group member — a concept link or a single instance. */
+/** A manually-pinned group member — a dashboard link or a single instance. */
 export const SidebarMember = Schema.Union(
-  Schema.Struct({ kind: Schema.Literal("concept"), conceptId: Schema.String }),
+  Schema.Struct({ kind: Schema.Literal("dashboard"), dashboardId: Schema.String }),
   Schema.Struct({
     kind: Schema.Literal("instance"),
     conceptId: Schema.String,
@@ -321,13 +321,10 @@ export const SidebarMember = Schema.Union(
   }),
 )
 
-/** An auto-membership rule: matching concepts, or matching instances of a concept. */
+/** An auto-membership rule: every visible dashboard, or matching instances of a
+ *  concept (an instance rule is a data query, like a widget's `conceptId`). */
 export const SidebarRule = Schema.Union(
-  Schema.Struct({
-    target: Schema.Literal("concepts"),
-    conditions: Schema.Array(SidebarCondition),
-    ...ConditionMatch,
-  }),
+  Schema.Struct({ target: Schema.Literal("dashboards") }),
   Schema.Struct({
     target: Schema.Literal("items"),
     conceptId: Schema.String,

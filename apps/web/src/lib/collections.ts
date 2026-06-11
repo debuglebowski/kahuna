@@ -31,12 +31,15 @@ export { KEY } from "./routeEnvelope"
 
 // ── registry (key -> refetch thunk) ───────────────────────────────────────────
 
-const registry = new Map<string, () => Promise<unknown>>()
+// Refcounted: two mounted components may register the same key (e.g. the concept
+// page and a dashboard loader for the same concept) — the key must stay live
+// until the LAST registrant unmounts.
+const registry = new Map<string, { count: number; refetch: () => Promise<unknown> }>()
 
 export const mountedKeys = (): string[] => [...registry.keys()]
 
 export const refetchKeys = async (keys: ReadonlyArray<string>): Promise<void> => {
-  await Promise.all(keys.map((k) => registry.get(k)?.()))
+  await Promise.all(keys.map((k) => registry.get(k)?.refetch()))
 }
 
 /** A collection exposing the query-collection refetch util. */
@@ -48,13 +51,18 @@ interface Refetchable {
 /** Register `collection` under `key` while the calling component is mounted. */
 export function useRegisterCollection(key: string, collection: Refetchable): void {
   useEffect(() => {
-    registry.set(key, () => collection.utils.refetch())
+    const entry = registry.get(key)
+    if (entry) entry.count += 1
+    else registry.set(key, { count: 1, refetch: () => collection.utils.refetch() })
     // The stream only refetches mounted keys, so an already-synced collection
     // may have missed events while no page showed it — catch up on (re)mount.
     // A fresh collection ("loading") is already fetching current data.
     if (collection.status === "ready") void collection.utils.refetch()
     return () => {
-      registry.delete(key)
+      const cur = registry.get(key)
+      if (!cur) return
+      cur.count -= 1
+      if (cur.count <= 0) registry.delete(key)
     }
   }, [key, collection])
 }

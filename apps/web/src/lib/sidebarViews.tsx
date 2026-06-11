@@ -13,16 +13,16 @@ import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react
 import {
   api,
   type Concept,
+  type Dashboard,
   type Field,
   type Instance,
-  type SidebarCondition,
   type SidebarView,
   type SidebarViewBody,
 } from "./api"
 import { useSession } from "./auth-client"
 import { instancesByConcept, KEY, useRegisterCollection } from "./collections"
-import { type ConditionMatch, matchInstance } from "./conditions"
-import { ConceptIcon, DEFAULT_CONCEPT_ICON } from "./icons"
+import { matchInstance } from "./conditions"
+import { ConceptIcon } from "./icons"
 import { isRichTextEmpty, richTextPreview } from "./richtext"
 import { showValue } from "./utils"
 
@@ -72,6 +72,7 @@ export interface ConceptInstanceData {
 
 interface ResolveCtx {
   readonly concepts: readonly Concept[]
+  readonly dashboards: readonly Dashboard[]
   readonly instData: Record<string, ConceptInstanceData>
   readonly pathname: string
   /** Current user id (resolves `isMe` conditions); null when no session yet. */
@@ -80,20 +81,6 @@ interface ResolveCtx {
 
 // ── matching helpers ─────────────────────────────────────────────────────────--
 // Instance matching is the shared evaluator in `conditions.ts`.
-
-/** Concepts only support the label ops (against their static/default label sets). */
-const matchConcept = (
-  concept: Concept,
-  conds: readonly SidebarCondition[],
-  match?: ConditionMatch,
-): boolean => {
-  const has = (c: SidebarCondition) => {
-    const id = String(c.value)
-    const carried = concept.staticLabelIds.includes(id) || concept.defaultLabelIds.includes(id)
-    return c.op === "hasLabel" ? carried : c.op === "notHasLabel" ? !carried : false
-  }
-  return match === "any" && conds.length > 0 ? conds.some(has) : conds.every(has)
-}
 
 /** A display name for an instance: its first non-empty text field, else its
  *  first non-empty rich text field, else any non-synthetic string value, else
@@ -113,14 +100,15 @@ export const instanceLabel = (inst: Instance, fields: readonly Field[]): string 
 
 export const resolveView = (body: SidebarViewBody, ctx: ResolveCtx): ResolvedSection[] => {
   const conceptById = new Map(ctx.concepts.map((c) => [c.id, c] as const))
+  const dashboardById = new Map(ctx.dashboards.map((d) => [d.id, d] as const))
   const isActive = (to: string) => (to === "/" ? ctx.pathname === "/" : ctx.pathname.startsWith(to))
 
-  const conceptEntry = (c: Concept): ResolvedEntry => {
-    const to = `/concepts/${c.id}`
+  const dashboardEntry = (d: Dashboard): ResolvedEntry => {
+    const to = `/dashboards/${d.id}`
     return {
-      key: `c:${c.id}`,
-      label: c.pluralName || c.name,
-      icon: <ConceptIcon value={c.icon || DEFAULT_CONCEPT_ICON} size={16} />,
+      key: `d:${d.id}`,
+      label: d.name,
+      icon: <ConceptIcon value={d.icon || "lucide:LayoutDashboard"} size={16} />,
       to,
       active: ctx.pathname === to,
       external: false,
@@ -195,22 +183,21 @@ export const resolveView = (body: SidebarViewBody, ctx: ResolveCtx): ResolvedSec
     } else if (src.kind === "group") {
       // Manual members first, in their drag order.
       for (const m of src.members) {
-        if (m.kind === "concept") {
-          const c = conceptById.get(m.conceptId)
-          if (c) push(conceptEntry(c))
+        if (m.kind === "dashboard") {
+          const d = dashboardById.get(m.dashboardId)
+          if (d) push(dashboardEntry(d))
         } else {
           const data = ctx.instData[m.conceptId]
           const inst = data?.instances.find((i) => i.id === m.instanceId)
           if (inst) push(instanceEntry(inst, data?.fields ?? [], conceptById.get(m.conceptId)))
         }
       }
-      // Then rule-derived members (concepts then instances), each sorted by label.
-      const conceptMatches: Concept[] = []
+      // Then rule-derived members (dashboards then instances), each sorted by label.
+      const dashMatches: Dashboard[] = []
       const instMatches: { inst: Instance; fields: readonly Field[]; concept?: Concept }[] = []
       for (const rule of src.rules) {
-        if (rule.target === "concepts") {
-          for (const c of ctx.concepts)
-            if (matchConcept(c, rule.conditions, rule.match)) conceptMatches.push(c)
+        if (rule.target === "dashboards") {
+          for (const d of ctx.dashboards) if (!d.hidden) dashMatches.push(d)
         } else {
           const data = ctx.instData[rule.conceptId]
           const concept = conceptById.get(rule.conceptId)
@@ -219,8 +206,8 @@ export const resolveView = (body: SidebarViewBody, ctx: ResolveCtx): ResolvedSec
               instMatches.push({ inst, fields: data?.fields ?? [], concept })
         }
       }
-      conceptMatches.sort((a, b) => (a.pluralName || a.name).localeCompare(b.pluralName || b.name))
-      for (const c of conceptMatches) push(conceptEntry(c))
+      dashMatches.sort((a, b) => a.position - b.position || a.name.localeCompare(b.name))
+      for (const d of dashMatches) push(dashboardEntry(d))
       instMatches.sort((a, b) =>
         instanceLabel(a.inst, a.fields).localeCompare(instanceLabel(b.inst, b.fields)),
       )
@@ -272,11 +259,11 @@ export const DEFAULT_VIEW: SidebarView = {
         },
       },
       {
-        id: "concepts",
-        title: "Concepts",
+        id: "dashboards",
+        title: "Dashboards",
         icon: null,
-        // A smart group with an unconditional concepts rule == every concept.
-        source: { kind: "group", members: [], rules: [{ target: "concepts", conditions: [] }] },
+        // A smart group with a dashboards rule == every visible dashboard.
+        source: { kind: "group", members: [], rules: [{ target: "dashboards" }] },
       },
     ],
   },
@@ -328,10 +315,13 @@ export function useResolvedView(
   }, [])
   const { data: session } = useSession()
   const me = session?.user.id ?? null
+  // Dashboards are nav targets now (a pinned dashboard / the dashboards rule).
+  const dashboardsQ = useQuery({ queryKey: ["dashboards"], queryFn: () => api.listDashboards() })
+  const dashboards = dashboardsQ.data ?? []
   const needed = useMemo(() => referencedConceptIds(view.body), [view.body])
   const sections = useMemo(
-    () => resolveView(view.body, { concepts, instData, pathname, me }),
-    [view.body, concepts, instData, pathname, me],
+    () => resolveView(view.body, { concepts, dashboards, instData, pathname, me }),
+    [view.body, concepts, dashboards, instData, pathname, me],
   )
   const loaders = (
     <>

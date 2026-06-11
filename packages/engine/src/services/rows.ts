@@ -122,6 +122,35 @@ const toFieldConfig = (raw: unknown): FieldConfig =>
 const toIdArray = (raw: unknown): ReadonlyArray<string> =>
   Array.isArray(raw) ? raw.filter((x): x is string => typeof x === "string") : []
 
+/** Widget types this server build knows about. Unknown types are dropped on read
+ *  so a newer client's widget can't corrupt an older server's view of the body. */
+const KNOWN_WIDGETS = new Set(["metric", "list", "breakdown", "attention", "trend", "activity"])
+
+/** Coerce a jsonb body into a well-formed dashboard body (defensive against
+ *  garbage / drift): keep only widgets with a known `type` and a `layout`. */
+const toDashboardBody = (raw: unknown): DashboardBody => {
+  if (!raw || typeof raw !== "object") return { widgets: [] }
+  const r = raw as {
+    widgets?: unknown
+    cols?: unknown
+    rowHeight?: unknown
+  }
+  const widgets = Array.isArray(r.widgets)
+    ? r.widgets.filter(
+        (x): x is DashboardWidget =>
+          !!x &&
+          typeof x === "object" &&
+          KNOWN_WIDGETS.has((x as { type?: string }).type ?? "") &&
+          !!(x as { layout?: unknown }).layout,
+      )
+    : []
+  return {
+    widgets,
+    ...(typeof r.cols === "number" ? { cols: r.cols } : {}),
+    ...(typeof r.rowHeight === "number" ? { rowHeight: r.rowHeight } : {}),
+  }
+}
+
 export const toConcept = (r: ConceptRow): Concept => ({
   id: r.id,
   orgId: r.org_id,
@@ -262,35 +291,6 @@ export interface DashboardRow {
   readonly body: unknown
   readonly created_at: Date
   readonly updated_at: Date
-}
-
-/** Widget types this server build knows about. Unknown types are dropped on read
- *  so a newer client's widget can't corrupt an older server's view of the body. */
-const KNOWN_WIDGETS = new Set(["metric", "list", "breakdown", "attention", "trend", "activity"])
-
-/** Coerce a jsonb body into a well-formed dashboard body (defensive against
- *  garbage / drift): keep only widgets with a known `type` and a `layout`. */
-const toDashboardBody = (raw: unknown): DashboardBody => {
-  if (!raw || typeof raw !== "object") return { widgets: [] }
-  const r = raw as {
-    widgets?: unknown
-    cols?: unknown
-    rowHeight?: unknown
-  }
-  const widgets = Array.isArray(r.widgets)
-    ? r.widgets.filter(
-        (x): x is DashboardWidget =>
-          !!x &&
-          typeof x === "object" &&
-          KNOWN_WIDGETS.has((x as { type?: string }).type ?? "") &&
-          !!(x as { layout?: unknown }).layout,
-      )
-    : []
-  return {
-    widgets,
-    ...(typeof r.cols === "number" ? { cols: r.cols } : {}),
-    ...(typeof r.rowHeight === "number" ? { rowHeight: r.rowHeight } : {}),
-  }
 }
 
 export const toDashboard = (r: DashboardRow): Dashboard => ({

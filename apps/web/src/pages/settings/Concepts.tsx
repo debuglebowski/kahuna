@@ -50,8 +50,9 @@ import {
   ToggleChip,
   Toolbar,
 } from "../../components/ui"
-import { api, type Field, type Label } from "../../lib/api"
+import { api, type Field, type Instance, type Label } from "../../lib/api"
 import { ConceptIcon, DEFAULT_CONCEPT_ICON, DEFAULT_FIELD_ICON } from "../../lib/icons"
+import { showValue } from "../../lib/utils"
 import { ConceptGraphCanvas } from "./ConceptGraphCanvas"
 import { FieldForm, type FieldFormValue, fieldKindLabel } from "./FieldForm"
 
@@ -159,6 +160,7 @@ type Dialog =
   | { kind: "deleteConcept" }
   | { kind: "archiveField"; field: Field }
   | { kind: "deleteField"; field: Field }
+  | { kind: "deleteItem"; inst: Instance }
   | null
 
 export function Concepts() {
@@ -318,6 +320,36 @@ export function Concepts() {
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["concepts"] }),
   })
+  // Archived items: restore, or purge (admin) — the data-hygiene side of a
+  // concept, so it lives here with the rest of its configuration.
+  const archivedItems = useQuery({
+    queryKey: ["instances", selectedId, "archived"],
+    queryFn: () => api.listInstances(selectedId!, { includeArchived: true }),
+    enabled: !!selectedId,
+    select: (rows) => rows.filter((i) => i.archivedAt),
+  })
+  const refetchArchived = () =>
+    qc.invalidateQueries({ queryKey: ["instances", selectedId, "archived"] })
+  const restoreItem = useMutation({
+    mutationFn: (i: Instance) => api.restoreInstance(i.id, i.version),
+    onSuccess: refetchArchived,
+  })
+  const delItem = useMutation({
+    mutationFn: (i: Instance) => api.deleteInstance(i.id),
+    onSuccess: () => {
+      setDialog(null)
+      refetchArchived()
+    },
+  })
+  // A human-ish label for an item row: its first non-empty scalar value.
+  const itemLabel = (state: Record<string, unknown>) => {
+    for (const f of liveFields) {
+      if (f.kind === "relation" || f.kind === "file") continue
+      const v = state[f.id]
+      if (v !== undefined && v !== null && v !== "") return showValue(v)
+    }
+    return "this item"
+  }
   const addField = useMutation({
     mutationFn: (v: FieldFormValue) =>
       api.addField({
@@ -568,14 +600,6 @@ export function Concepts() {
             </span>
           }
           onClose={() => setSelectedId(null)}
-          headerAction={
-            <Link
-              to={`/concepts/${selected.id}`}
-              className="text-xs text-muted-foreground hover:text-foreground"
-            >
-              View instances
-            </Link>
-          }
         >
           <div className="space-y-5">
             <Card>
@@ -768,6 +792,40 @@ export function Concepts() {
                 )}
               </div>
             </Card>
+
+            {(archivedItems.data?.length ?? 0) > 0 && (
+              <Card>
+                <CardHeader title={`Archived items (${archivedItems.data!.length})`} />
+                <ul className="divide-y divide-border">
+                  {archivedItems.data!.map((r) => (
+                    <li key={r.id} className="flex items-center gap-2 px-6 py-2 opacity-80">
+                      <span className="flex-1 truncate text-sm text-foreground">
+                        {itemLabel(r.state)}
+                      </span>
+                      <IconButton
+                        aria-label={`Restore ${itemLabel(r.state)}`}
+                        disabled={restoreItem.isPending}
+                        onClick={() => restoreItem.mutate(r)}
+                      >
+                        <ArchiveRestore size={15} />
+                      </IconButton>
+                      {admin && (
+                        <IconButton
+                          variant="danger"
+                          aria-label={`Delete ${itemLabel(r.state)}`}
+                          onClick={() => setDialog({ kind: "deleteItem", inst: r })}
+                        >
+                          <Trash2 size={15} />
+                        </IconButton>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+                {restoreItem.error && (
+                  <p className="px-6 pb-4 text-sm text-destructive">{msgOf(restoreItem.error)}</p>
+                )}
+              </Card>
+            )}
 
             <Card>
               <CardHeader
@@ -991,6 +1049,23 @@ export function Concepts() {
           pending={delConcept.isPending || archiveConcept.isPending}
           error={delConcept.error ? msgOf(delConcept.error) : undefined}
           onConfirm={() => delConcept.mutate(selected.id)}
+          onCancel={() => setDialog(null)}
+        />
+      )}
+      {dialog?.kind === "deleteItem" && (
+        <ConfirmDialog
+          title="Delete item"
+          message={
+            <>
+              Permanently delete <strong>{itemLabel(dialog.inst.state)}</strong>? This can't be
+              undone, and is refused while other items still link to it.
+            </>
+          }
+          confirmLabel="Delete"
+          confirmVariant="danger"
+          pending={delItem.isPending}
+          error={delItem.error ? msgOf(delItem.error) : undefined}
+          onConfirm={() => delItem.mutate(dialog.inst)}
           onCancel={() => setDialog(null)}
         />
       )}

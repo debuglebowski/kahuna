@@ -416,17 +416,14 @@ export interface SidebarCondition {
 }
 /** How a condition set combines: every condition or at least one (absent = all). */
 export type ConditionMatch = "all" | "any"
-/** A manually-pinned group member — a concept link or a single instance. */
+/** A manually-pinned group member — a dashboard link or a single instance. */
 export type SidebarMember =
-  | { readonly kind: "concept"; readonly conceptId: Id }
+  | { readonly kind: "dashboard"; readonly dashboardId: Id }
   | { readonly kind: "instance"; readonly conceptId: Id; readonly instanceId: Id }
-/** An auto-membership rule: matching concepts, or matching instances of a concept. */
+/** An auto-membership rule: every visible dashboard, or matching instances of a
+ *  concept (an instance rule is a data query, like a widget's `conceptId`). */
 export type SidebarRule =
-  | {
-      readonly target: "concepts"
-      readonly conditions: ReadonlyArray<SidebarCondition>
-      readonly match?: ConditionMatch
-    }
+  | { readonly target: "dashboards" }
   | {
       readonly target: "items"
       readonly conceptId: Id

@@ -7,7 +7,7 @@ import { type SidebarViewRow, toSidebarView } from "./rows"
 
 /**
  * The built-in Default view's content (mirrors the client's `DEFAULT_VIEW.body`):
- * the global items + a smart group of every concept. Seeded as a real, shared,
+ * the global items + a smart group of every dashboard. Seeded as a real, shared,
  * fully-configurable view so the org's view list is never empty.
  */
 const DEFAULT_VIEW_BODY: SidebarViewBody = {
@@ -22,10 +22,10 @@ const DEFAULT_VIEW_BODY: SidebarViewBody = {
       },
     },
     {
-      id: "concepts",
-      title: "Concepts",
+      id: "dashboards",
+      title: "Dashboards",
       icon: null,
-      source: { kind: "group", members: [], rules: [{ target: "concepts", conditions: [] }] },
+      source: { kind: "group", members: [], rules: [{ target: "dashboards" }] },
     },
   ],
 }

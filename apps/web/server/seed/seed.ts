@@ -1,5 +1,11 @@
-import { ConceptService, FieldService, TaskStatusService } from "@kingsmaker/engine"
+import {
+  ConceptService,
+  DashboardService,
+  FieldService,
+  TaskStatusService,
+} from "@kingsmaker/engine"
 import { Effect } from "effect"
+import { conceptDashboardSeed } from "../use-cases"
 import { type ConceptSpec, defaultTaskStatuses, kingsmakerSpec } from "./spec"
 
 /** Get a concept by name, creating it if absent (idempotent). */
@@ -27,6 +33,7 @@ export const seedKingsmaker = Effect.gen(function* () {
   const concepts = yield* ConceptService
   const fields = yield* FieldService
   const taskStatuses = yield* TaskStatusService
+  const dashboards = yield* DashboardService
 
   // Annotation layer: seed the org's default task statuses (idempotent).
   yield* taskStatuses.ensureDefaults(defaultTaskStatuses)
@@ -35,6 +42,21 @@ export const seedKingsmaker = Effect.gen(function* () {
   for (const spec of kingsmakerSpec) {
     const concept = yield* ensureConcept(concepts, spec)
     idByName.set(spec.name, concept.id)
+  }
+
+  // Every concept starts with an ordinary org dashboard (its table as one list
+  // widget). Idempotent by name — like the concepts above, renames after seeding
+  // are the org's own business.
+  const existingDashboards = yield* dashboards.list()
+  const dashNames = new Set(existingDashboards.map((d) => d.name))
+  for (const spec of kingsmakerSpec) {
+    if (dashNames.has(spec.name)) continue
+    yield* dashboards.create({
+      name: spec.name,
+      icon: spec.icon ?? null,
+      scope: "org",
+      body: conceptDashboardSeed(idByName.get(spec.name)!),
+    })
   }
 
   for (const spec of kingsmakerSpec) {

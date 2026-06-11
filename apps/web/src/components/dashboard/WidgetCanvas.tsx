@@ -1,39 +1,15 @@
 import { Pencil, X } from "lucide-react"
-import { lazy, Suspense, useLayoutEffect, useRef, useState } from "react"
-import GridLayout, { type Layout } from "react-grid-layout"
-import "react-grid-layout/css/styles.css"
-import "react-resizable/css/styles.css"
+import { lazy, Suspense } from "react"
+import type { Layout } from "react-grid-layout"
+import { MeasuredGrid } from "@/components/MeasuredGrid"
 import { Spinner } from "@/components/ui"
 import type { Concept, DashboardBody, DashboardWidget } from "@/lib/api"
 import type { ConceptInstanceData } from "@/lib/conceptData"
-import { GRID_COLS, GRID_ROW_HEIGHT, widgetLayouts } from "@/lib/dashboards"
+import { widgetLayouts } from "@/lib/dashboards"
 import { ActivityWidget } from "./ActivityWidget"
 import { AttentionWidget } from "./AttentionWidget"
 import { ListWidget } from "./ListWidget"
 import { MetricWidget } from "./MetricWidget"
-
-/**
- * Container width for the grid, measured before first paint so tiles mount at
- * their final positions (RGL's WidthProvider mounts at a 1280px default and
- * animates tiles into place on remeasure; its measureBeforeMount mode leaks
- * its ResizeObserver onto the swapped-out placeholder node and goes deaf to
- * later resizes). Observing our own persistent wrapper avoids both.
- */
-function useMeasuredWidth() {
-  const ref = useRef<HTMLDivElement>(null)
-  const [width, setWidth] = useState<number | null>(null)
-  useLayoutEffect(() => {
-    const node = ref.current
-    if (!node) return
-    setWidth(node.getBoundingClientRect().width)
-    const observer = new ResizeObserver(() => {
-      setWidth(node.getBoundingClientRect().width)
-    })
-    observer.observe(node)
-    return () => observer.disconnect()
-  }, [])
-  return { ref, width }
-}
 
 // Lazy so recharts' bundle is only fetched when a chart widget is on screen.
 const BreakdownWidget = lazy(() =>
@@ -69,8 +45,6 @@ export function WidgetCanvas({
   onEdit?: (id: string) => void
   onRemove?: (id: string) => void
 }) {
-  const { ref, width } = useMeasuredWidth()
-
   const render = (w: DashboardWidget) => {
     const cid = w.conceptId ?? undefined
     const data = cid ? instData[cid] : undefined
@@ -84,7 +58,7 @@ export function WidgetCanvas({
         </p>
       )
     if (w.type === "metric") return <MetricWidget widget={w} data={data} concept={concept} />
-    if (w.type === "list") return <ListWidget widget={w} data={data} />
+    if (w.type === "list") return <ListWidget widget={w} data={data} concept={concept} />
     if (w.type === "attention") return <AttentionWidget widget={w} data={data} concept={concept} />
     if (w.type === "breakdown")
       return (
@@ -108,56 +82,45 @@ export function WidgetCanvas({
   }
 
   return (
-    <div ref={ref} className="-mx-1">
-      {width !== null && (
-        <GridLayout
-          width={width}
-          layout={widgetLayouts(body)}
-          cols={GRID_COLS}
-          rowHeight={GRID_ROW_HEIGHT}
-          margin={[12, 12]}
-          draggableCancel=".cancel-drag"
-          isDraggable={!readOnly}
-          isResizable={!readOnly}
-          onDragStop={onStop}
-          onResizeStop={onStop}
-          isBounded
+    <MeasuredGrid
+      layout={widgetLayouts(body)}
+      isDraggable={!readOnly}
+      isResizable={!readOnly}
+      onStop={onStop}
+    >
+      {body.widgets.map((w) => (
+        <div
+          key={w.id}
+          className="group flex flex-col overflow-hidden rounded-xl border bg-card p-3 shadow-sm"
         >
-          {body.widgets.map((w) => (
-            <div
-              key={w.id}
-              className="group flex flex-col overflow-hidden rounded-xl border bg-card p-3 shadow-sm"
-            >
-              <div className="mb-1 flex items-center justify-between gap-2">
-                <span className="truncate text-xs font-medium text-muted-foreground">
-                  {w.title || (w.conceptId ? cIndex.get(w.conceptId)?.name : "") || w.type}
-                </span>
-                {!readOnly && (
-                  <div className="flex shrink-0 items-center gap-0.5">
-                    <button
-                      type="button"
-                      aria-label="Edit widget"
-                      className="cancel-drag rounded p-0.5 text-muted-foreground opacity-0 transition hover:bg-muted hover:text-foreground group-hover:opacity-100"
-                      onClick={() => onEdit?.(w.id)}
-                    >
-                      <Pencil size={13} />
-                    </button>
-                    <button
-                      type="button"
-                      aria-label="Remove widget"
-                      className="cancel-drag rounded p-0.5 text-muted-foreground opacity-0 transition hover:bg-muted hover:text-foreground group-hover:opacity-100"
-                      onClick={() => onRemove?.(w.id)}
-                    >
-                      <X size={14} />
-                    </button>
-                  </div>
-                )}
+          <div className="mb-1 flex items-center justify-between gap-2">
+            <span className="truncate text-xs font-medium text-muted-foreground">
+              {w.title || (w.conceptId ? cIndex.get(w.conceptId)?.name : "") || w.type}
+            </span>
+            {!readOnly && (
+              <div className="flex shrink-0 items-center gap-0.5">
+                <button
+                  type="button"
+                  aria-label="Edit widget"
+                  className="cancel-drag rounded p-0.5 text-muted-foreground opacity-0 transition hover:bg-muted hover:text-foreground group-hover:opacity-100"
+                  onClick={() => onEdit?.(w.id)}
+                >
+                  <Pencil size={13} />
+                </button>
+                <button
+                  type="button"
+                  aria-label="Remove widget"
+                  className="cancel-drag rounded p-0.5 text-muted-foreground opacity-0 transition hover:bg-muted hover:text-foreground group-hover:opacity-100"
+                  onClick={() => onRemove?.(w.id)}
+                >
+                  <X size={14} />
+                </button>
               </div>
-              <div className="min-h-0 flex-1">{render(w)}</div>
-            </div>
-          ))}
-        </GridLayout>
-      )}
-    </div>
+            )}
+          </div>
+          <div className="min-h-0 flex-1">{render(w)}</div>
+        </div>
+      ))}
+    </MeasuredGrid>
   )
 }

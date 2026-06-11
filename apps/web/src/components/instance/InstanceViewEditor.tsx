@@ -1,8 +1,7 @@
 import { ArrowDown, ArrowUp, Check, Pencil, Plus, X } from "lucide-react"
-import { useLayoutEffect, useRef, useState } from "react"
-import GridLayout, { type Layout } from "react-grid-layout"
-import "react-grid-layout/css/styles.css"
-import "react-resizable/css/styles.css"
+import { useState } from "react"
+import type { Layout } from "react-grid-layout"
+import { MeasuredGrid } from "@/components/MeasuredGrid"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -10,30 +9,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { GRID_COLS, GRID_ROW_HEIGHT } from "@/lib/dashboards"
 import { TILE_CONTENT_KEYS, type TileContentKey, type ViewTile } from "../../lib/instanceViews"
 import { Button } from "../ui"
 import { InstanceTile } from "./InstanceTile"
 import { availableContents, TILE_CONTENTS } from "./registry"
 import type { InstanceCtx } from "./types"
-
-/** See WidgetCanvas: measure our own wrapper before first paint so tiles mount
- *  at their final positions (RGL's WidthProvider animates from a 1280px guess). */
-function useMeasuredWidth() {
-  const ref = useRef<HTMLDivElement>(null)
-  const [width, setWidth] = useState<number | null>(null)
-  useLayoutEffect(() => {
-    const node = ref.current
-    if (!node) return
-    setWidth(node.getBoundingClientRect().width)
-    const observer = new ResizeObserver(() => {
-      setWidth(node.getBoundingClientRect().width)
-    })
-    observer.observe(node)
-    return () => observer.disconnect()
-  }, [])
-  return { ref, width }
-}
 
 /** Reorder/remove this box's contents and add from the remaining catalog.
  *  Removing the last content removes the whole box (an empty box can't render). */
@@ -148,7 +128,6 @@ export function InstanceViewEditor({
   onCancel: () => void
   saving: boolean
 }) {
-  const { ref, width } = useMeasuredWidth()
   // Start from what's on screen, minus contents this concept can't show.
   const [tiles, setTiles] = useState<ViewTile[]>(() =>
     initial
@@ -220,66 +199,55 @@ export function InstanceViewEditor({
 
       {/* px-1 absorbs the grid's -mx-1 bleed so scrolling stays vertical-only. */}
       <div className="min-h-0 flex-1 overflow-y-auto px-1">
-        <div ref={ref} className="-mx-1">
-          {width !== null && (
-            <GridLayout
-              width={width}
-              layout={tiles.map((t) => ({
-                i: t.id,
-                x: t.x,
-                y: t.y,
-                w: t.w,
-                h: t.h,
-                minW: 2,
-                minH: 2,
-              }))}
-              cols={GRID_COLS}
-              rowHeight={GRID_ROW_HEIGHT}
-              margin={[12, 12]}
-              draggableCancel=".cancel-drag"
-              onDragStop={applyLayout}
-              onResizeStop={applyLayout}
-              isBounded
-            >
-              {tiles.map((t) => (
-                <div key={t.id} className="group relative">
-                  <div className="pointer-events-none h-full select-none">
-                    <InstanceTile contents={t.contents} ctx={ctx} />
-                  </div>
-                  <div className="cancel-drag absolute right-2 top-2 z-10 flex items-center gap-0.5 rounded-md border border-border bg-card/95 p-0.5 shadow-sm">
-                    <Popover>
-                      <PopoverTrigger asChild>
-                        <button
-                          type="button"
-                          aria-label="Edit box contents"
-                          className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-                        >
-                          <Pencil size={13} />
-                        </button>
-                      </PopoverTrigger>
-                      <PopoverContent align="end" className="w-64">
-                        <TileContentsEditor
-                          tile={t}
-                          ctx={ctx}
-                          onChange={(contents) => setContents(t.id, contents)}
-                          onRemoveTile={() => removeTile(t.id)}
-                        />
-                      </PopoverContent>
-                    </Popover>
+        <MeasuredGrid
+          layout={tiles.map((t) => ({
+            i: t.id,
+            x: t.x,
+            y: t.y,
+            w: t.w,
+            h: t.h,
+            minW: 2,
+            minH: 2,
+          }))}
+          onStop={applyLayout}
+        >
+          {tiles.map((t) => (
+            <div key={t.id} className="group relative">
+              <div className="pointer-events-none h-full select-none">
+                <InstanceTile contents={t.contents} ctx={ctx} />
+              </div>
+              <div className="cancel-drag absolute right-2 top-2 z-10 flex items-center gap-0.5 rounded-md border border-border bg-card/95 p-0.5 shadow-sm">
+                <Popover>
+                  <PopoverTrigger asChild>
                     <button
                       type="button"
-                      aria-label="Remove box"
+                      aria-label="Edit box contents"
                       className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-                      onClick={() => removeTile(t.id)}
                     >
-                      <X size={14} />
+                      <Pencil size={13} />
                     </button>
-                  </div>
-                </div>
-              ))}
-            </GridLayout>
-          )}
-        </div>
+                  </PopoverTrigger>
+                  <PopoverContent align="end" className="w-64">
+                    <TileContentsEditor
+                      tile={t}
+                      ctx={ctx}
+                      onChange={(contents) => setContents(t.id, contents)}
+                      onRemoveTile={() => removeTile(t.id)}
+                    />
+                  </PopoverContent>
+                </Popover>
+                <button
+                  type="button"
+                  aria-label="Remove box"
+                  className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                  onClick={() => removeTile(t.id)}
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            </div>
+          ))}
+        </MeasuredGrid>
       </div>
     </div>
   )

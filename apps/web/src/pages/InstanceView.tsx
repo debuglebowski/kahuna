@@ -2,7 +2,7 @@ import { useLiveQuery } from "@tanstack/react-db"
 import { useMutation, useQuery } from "@tanstack/react-query"
 import { Archive, EllipsisVertical, Pencil, Trash2 } from "lucide-react"
 import { useEffect, useState } from "react"
-import { Link, useNavigate, useParams } from "react-router-dom"
+import { useNavigate, useParams } from "react-router-dom"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -69,9 +69,10 @@ export function InstanceView() {
   const allConcepts = useQuery({ queryKey: ["concepts"], queryFn: () => api.listConcepts() })
   const prefs = useInstanceViewPrefs()
 
-  // Both navigate back to the concept on success (the item leaves the live view).
+  // The item leaves the live view on success — land on the dashboards home
+  // (concepts have no page of their own).
   const backToConcept = () => {
-    if (detail) navigate(`/concepts/${detail.concept.id}`)
+    navigate("/dashboards")
   }
   const archive = useMutation({
     mutationFn: (inst: { id: string; version: number }) =>
@@ -140,12 +141,11 @@ export function InstanceView() {
     <div className="flex h-full min-h-0 flex-col gap-3">
       <div className="flex shrink-0 items-center justify-between gap-3">
         <h2 className="flex min-w-0 items-center gap-1.5 text-base font-medium text-foreground">
-          <Link
-            to={`/concepts/${concept.id}`}
-            className="truncate text-muted-foreground transition-colors hover:text-foreground"
-          >
+          {/* Concepts have no page of their own (dashboards are the only view
+              surface), so the breadcrumb root is informational. */}
+          <span className="truncate text-muted-foreground">
             {concept.pluralName || concept.name}
-          </Link>
+          </span>
           <span className="text-muted-foreground/50">/</span>
           <span className="truncate">{labelOf(instance.state, fields)}</span>
           {concept.versioningEnabled &&

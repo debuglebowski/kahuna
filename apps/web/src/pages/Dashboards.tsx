@@ -2,7 +2,7 @@ import { useLiveQuery } from "@tanstack/react-db"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { LayoutDashboard, Plus, Settings } from "lucide-react"
 import { useMemo, useState } from "react"
-import { useNavigate } from "react-router-dom"
+import { useNavigate, useParams } from "react-router-dom"
 import { WidgetCanvas } from "@/components/dashboard/WidgetCanvas"
 import { WidgetEditor } from "@/components/dashboard/WidgetEditor"
 import { Button, IconButton, Spinner } from "@/components/ui"
@@ -46,17 +46,19 @@ export function Dashboards() {
     queryKey: ["dashboards"],
     queryFn: () => api.listDashboards(),
   })
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  // The selected dashboard lives in the URL (`/dashboards/:id`) so every
+  // dashboard is addressable — sidebar entries, links, reloads all land right.
+  const { id: routeId } = useParams()
   const selected = useMemo(() => {
     const all = dashboards ?? []
-    if (selectedId) return all.find((d) => d.id === selectedId) ?? all[0] ?? null
+    if (routeId) return all.find((d) => d.id === routeId) ?? null
     // Default landing: the lowest-position org-shared dashboard, else the first.
     return (
       all.filter((d) => d.ownerId === null).sort((a, b) => a.position - b.position)[0] ??
       all[0] ??
       null
     )
-  }, [dashboards, selectedId])
+  }, [dashboards, routeId])
 
   const { body, mutate, onStop, conflict, dismissConflict } = useDashboardBody(selected)
 
@@ -68,14 +70,20 @@ export function Dashboards() {
       api.createDashboard({ name: "New dashboard", scope: "personal", body: { widgets: [] } }),
     onSuccess: async (d) => {
       await qc.invalidateQueries({ queryKey: ["dashboards"] })
-      setSelectedId(d.id)
+      navigate(`/dashboards/${d.id}`)
     },
   })
 
   const [editingId, setEditingId] = useState<string | null>(null)
   const editing = body?.widgets.find((w) => w.id === editingId) ?? null
 
-  if (!body) return <Spinner />
+  if (!dashboards) return <Spinner />
+  if (!selected || !body)
+    return (
+      <p className="p-6 text-sm text-muted-foreground">
+        Dashboard not found — it may have been deleted.
+      </p>
+    )
 
   const addOfType = (type: DashboardWidget["type"]) => {
     const w = newWidget(body, type)
@@ -87,7 +95,7 @@ export function Dashboards() {
     <div className="flex flex-col gap-4">
       {loaders}
       <header className="flex items-center justify-between gap-2">
-        <Select value={selected?.id ?? ""} onValueChange={setSelectedId}>
+        <Select value={selected.id} onValueChange={(v) => navigate(`/dashboards/${v}`)}>
           <SelectTrigger className="cancel-drag border-0 px-0 text-xl font-semibold shadow-none focus-visible:ring-0">
             <SelectValue placeholder="Dashboard" />
           </SelectTrigger>
