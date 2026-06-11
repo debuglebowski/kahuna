@@ -180,8 +180,11 @@ export function InstanceViewEditor({
     ])
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between gap-3 rounded-xl border border-dashed border-border bg-muted/30 px-4 py-2">
+    // Fills the page slot it's given: toolbar pinned, grid scrolling below —
+    // RGL rows are fixed-height (unlike the canvas) so the layout can outgrow
+    // the viewport while editing.
+    <div className="flex min-h-0 flex-1 flex-col gap-3">
+      <div className="flex shrink-0 items-center justify-between gap-3 rounded-xl border border-dashed border-border bg-muted/30 px-4 py-2">
         <span className="text-sm text-muted-foreground">
           Editing layout — drag and resize boxes; a box with several contents shows them as tabs.
         </span>
@@ -215,65 +218,68 @@ export function InstanceViewEditor({
         </div>
       </div>
 
-      <div ref={ref} className="-mx-1">
-        {width !== null && (
-          <GridLayout
-            width={width}
-            layout={tiles.map((t) => ({
-              i: t.id,
-              x: t.x,
-              y: t.y,
-              w: t.w,
-              h: t.h,
-              minW: 2,
-              minH: 2,
-            }))}
-            cols={GRID_COLS}
-            rowHeight={GRID_ROW_HEIGHT}
-            margin={[12, 12]}
-            draggableCancel=".cancel-drag"
-            onDragStop={applyLayout}
-            onResizeStop={applyLayout}
-            isBounded
-          >
-            {tiles.map((t) => (
-              <div key={t.id} className="group relative">
-                <div className="pointer-events-none h-full select-none">
-                  <InstanceTile contents={t.contents} ctx={ctx} />
+      {/* px-1 absorbs the grid's -mx-1 bleed so scrolling stays vertical-only. */}
+      <div className="min-h-0 flex-1 overflow-y-auto px-1">
+        <div ref={ref} className="-mx-1">
+          {width !== null && (
+            <GridLayout
+              width={width}
+              layout={tiles.map((t) => ({
+                i: t.id,
+                x: t.x,
+                y: t.y,
+                w: t.w,
+                h: t.h,
+                minW: 2,
+                minH: 2,
+              }))}
+              cols={GRID_COLS}
+              rowHeight={GRID_ROW_HEIGHT}
+              margin={[12, 12]}
+              draggableCancel=".cancel-drag"
+              onDragStop={applyLayout}
+              onResizeStop={applyLayout}
+              isBounded
+            >
+              {tiles.map((t) => (
+                <div key={t.id} className="group relative">
+                  <div className="pointer-events-none h-full select-none">
+                    <InstanceTile contents={t.contents} ctx={ctx} />
+                  </div>
+                  <div className="cancel-drag absolute right-2 top-2 z-10 flex items-center gap-0.5 rounded-md border border-border bg-card/95 p-0.5 shadow-sm">
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <button
+                          type="button"
+                          aria-label="Edit box contents"
+                          className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                        >
+                          <Pencil size={13} />
+                        </button>
+                      </PopoverTrigger>
+                      <PopoverContent align="end" className="w-64">
+                        <TileContentsEditor
+                          tile={t}
+                          ctx={ctx}
+                          onChange={(contents) => setContents(t.id, contents)}
+                          onRemoveTile={() => removeTile(t.id)}
+                        />
+                      </PopoverContent>
+                    </Popover>
+                    <button
+                      type="button"
+                      aria-label="Remove box"
+                      className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                      onClick={() => removeTile(t.id)}
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
                 </div>
-                <div className="cancel-drag absolute right-2 top-2 z-10 flex items-center gap-0.5 rounded-md border border-border bg-card/95 p-0.5 shadow-sm">
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <button
-                        type="button"
-                        aria-label="Edit box contents"
-                        className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-                      >
-                        <Pencil size={13} />
-                      </button>
-                    </PopoverTrigger>
-                    <PopoverContent align="end" className="w-64">
-                      <TileContentsEditor
-                        tile={t}
-                        ctx={ctx}
-                        onChange={(contents) => setContents(t.id, contents)}
-                        onRemoveTile={() => removeTile(t.id)}
-                      />
-                    </PopoverContent>
-                  </Popover>
-                  <button
-                    type="button"
-                    aria-label="Remove box"
-                    className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-                    onClick={() => removeTile(t.id)}
-                  >
-                    <X size={14} />
-                  </button>
-                </div>
-              </div>
-            ))}
-          </GridLayout>
-        )}
+              ))}
+            </GridLayout>
+          )}
+        </div>
       </div>
     </div>
   )

@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/table"
 import { FilterChips, FilterTrigger } from "../components/FilterBar"
 import { EditableCell, isInlineEditable } from "../components/InlineCellEditor"
+import { usePageChrome } from "../components/Layout"
 import { Button, Card, ConfirmDialog, IconButton, Input, Modal, Spinner } from "../components/ui"
 import { api, type Instance, type SidebarCondition } from "../lib/api"
 import { useSession } from "../lib/auth-client"
@@ -32,6 +33,7 @@ import { isAdminRole, useFullOrg } from "./settings/SettingsLayout"
 
 /** Generic instance browser for a single concept (filter + click-to-sort). */
 export function ConceptView() {
+  usePageChrome({ fullWidth: true }) // wide table
   const { id = "" } = useParams()
   const navigate = useNavigate()
   const [filter, setFilter] = useState("")

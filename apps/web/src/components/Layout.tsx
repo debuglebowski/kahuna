@@ -1,6 +1,14 @@
 import { useLiveQuery } from "@tanstack/react-db"
 import { Check, ChevronsUpDown, PanelLeftClose, PanelLeftOpen, Settings2 } from "lucide-react"
-import { type ReactNode, useMemo, useRef, useState } from "react"
+import {
+  createContext,
+  type ReactNode,
+  useContext,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react"
 import { Link, useLocation, useNavigate } from "react-router-dom"
 import {
   DropdownMenu,
@@ -47,6 +55,27 @@ const write = (key: string, value: string) => {
   try {
     localStorage.setItem(key, value)
   } catch {}
+}
+
+/** Page chrome — what a page needs from the shell. Default is a centered,
+ *  readable-width column that scrolls. */
+interface PageChrome {
+  /** Full viewport width (wide tables, tile layouts). */
+  fullWidth?: boolean
+  /** Fill the viewport height exactly — the page owns its inner scrolling. */
+  fillHeight?: boolean
+}
+
+const PageChromeContext = createContext<(chrome: PageChrome) => void>(() => {})
+
+/** Pages declare their shell needs instead of Layout sniffing routes. Applied
+ *  before paint, reset on unmount. */
+export function usePageChrome({ fullWidth = false, fillHeight = false }: PageChrome) {
+  const set = useContext(PageChromeContext)
+  useLayoutEffect(() => {
+    set({ fullWidth, fillHeight })
+    return () => set({})
+  }, [set, fullWidth, fillHeight])
 }
 
 /** One nav row — a router link, or a plain anchor for external link entries. */
@@ -208,125 +237,131 @@ export function Layout({ children }: { children: ReactNode }) {
 
   const { sections, loaders } = useResolvedView(activeView, concepts ?? [], loc.pathname)
 
+  // What the current page asked of the shell via usePageChrome.
+  const [chrome, setChrome] = useState<PageChrome>({})
+
   // ── collapsed rail ───────────────────────────────────────────────────────────
   if (collapsed) {
     return (
-      <div className="flex min-h-screen">
-        {loaders}
-        <aside className="flex w-12 shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground">
-          <div className="flex flex-col items-center gap-1 py-4">
-            <IconButton
-              onClick={() => {
-                setCollapsed(false)
-                write(COLLAPSED_KEY, "0")
-              }}
-              aria-label="Expand sidebar"
-            >
-              <PanelLeftOpen size={18} />
-            </IconButton>
-          </div>
-          <nav
-            key={activeView.id}
-            className="km-view-in flex flex-1 flex-col overflow-y-auto px-1.5 pb-4"
-          >
-            <ViewNav sections={sections} collapsed />
-          </nav>
-          {pagerViews.length > 1 && (
-            <div className="flex flex-col items-center py-2">
-              <ViewSwitcher
-                views={pagerViews}
-                active={activeView}
-                size="sm"
-                onSelect={setActiveViewId}
-                onManage={() => navigate("/settings/sidebar")}
-              />
+      <PageChromeContext.Provider value={setChrome}>
+        <div className="flex h-dvh">
+          {loaders}
+          <aside className="flex w-12 shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground">
+            <div className="flex flex-col items-center gap-1 py-4">
+              <IconButton
+                onClick={() => {
+                  setCollapsed(false)
+                  write(COLLAPSED_KEY, "0")
+                }}
+                aria-label="Expand sidebar"
+              >
+                <PanelLeftOpen size={18} />
+              </IconButton>
             </div>
-          )}
-        </aside>
-        <main className="flex-1 overflow-y-auto">
-          <div className="px-6 py-6">{children}</div>
-        </main>
-      </div>
+            <nav
+              key={activeView.id}
+              className="km-view-in flex flex-1 flex-col overflow-y-auto px-1.5 pb-4"
+            >
+              <ViewNav sections={sections} collapsed />
+            </nav>
+            {pagerViews.length > 1 && (
+              <div className="flex flex-col items-center py-2">
+                <ViewSwitcher
+                  views={pagerViews}
+                  active={activeView}
+                  size="sm"
+                  onSelect={setActiveViewId}
+                  onManage={() => navigate("/settings/sidebar")}
+                />
+              </div>
+            )}
+          </aside>
+          <main className="flex-1 overflow-y-auto">
+            <div className={cn("px-6 py-6", chrome.fillHeight && "h-full")}>{children}</div>
+          </main>
+        </div>
+      </PageChromeContext.Provider>
     )
   }
 
   // ── expanded sidebar ─────────────────────────────────────────────────────────
   return (
-    <div className="flex min-h-screen">
-      {loaders}
-      <aside
-        style={{ width }}
-        className="relative flex shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground"
-      >
-        <div className="flex items-center justify-between px-4 py-3.5">
-          <span className="text-base font-semibold tracking-tight text-sidebar-foreground">
-            Kingsmaker
-          </span>
-          <div className="flex items-center gap-0.5">
-            <ThemeButton />
-            <IconButton
-              onClick={() => {
-                setCollapsed(true)
-                write(COLLAPSED_KEY, "1")
-              }}
-              aria-label="Collapse sidebar"
-            >
-              <PanelLeftClose size={18} />
-            </IconButton>
-          </div>
-        </div>
-
-        <nav key={activeView.id} className="km-view-in flex-1 overflow-y-auto px-2 pb-4">
-          {sections.every((s) => s.entries.length === 0) && (
-            <p className="px-3 py-2 text-xs text-muted-foreground">
-              This view is empty — configure it in Settings → Sidebar.
-            </p>
-          )}
-          <ViewNav sections={sections} collapsed={false} />
-        </nav>
-
-        {/* View switcher — only when there's more than one view to switch
-            between. Creating/editing views lives in Settings → Sidebar. */}
-        {pagerViews.length > 1 && (
-          <div className="p-2">
-            <ViewSwitcher
-              views={pagerViews}
-              active={activeView}
-              size="md"
-              onSelect={setActiveViewId}
-              onManage={() => navigate("/settings/sidebar")}
-            />
-          </div>
-        )}
-
-        <div className="border-t border-sidebar-border p-2">
-          <IdentityMenu />
-        </div>
-
-        <ResizeHandle
-          width={width}
-          onResize={resizeTo}
-          onCommit={commitWidth}
-          onReset={() => {
-            resizeTo(DEFAULT_WIDTH)
-            commitWidth()
-          }}
-        />
-      </aside>
-
-      <main className="flex-1 overflow-y-auto">
-        {/* Concept instance lists are wide tables — give them the full viewport;
-            everything else stays centered at a readable width. */}
-        <div
-          className={cn(
-            "px-6 py-6",
-            !loc.pathname.startsWith("/concepts/") && "mx-auto max-w-6xl",
-          )}
+    <PageChromeContext.Provider value={setChrome}>
+      <div className="flex h-dvh">
+        {loaders}
+        <aside
+          style={{ width }}
+          className="relative flex shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground"
         >
-          {children}
-        </div>
-      </main>
-    </div>
+          <div className="flex items-center justify-between px-4 py-3.5">
+            <span className="text-base font-semibold tracking-tight text-sidebar-foreground">
+              Kingsmaker
+            </span>
+            <div className="flex items-center gap-0.5">
+              <ThemeButton />
+              <IconButton
+                onClick={() => {
+                  setCollapsed(true)
+                  write(COLLAPSED_KEY, "1")
+                }}
+                aria-label="Collapse sidebar"
+              >
+                <PanelLeftClose size={18} />
+              </IconButton>
+            </div>
+          </div>
+
+          <nav key={activeView.id} className="km-view-in flex-1 overflow-y-auto px-2 pb-4">
+            {sections.every((s) => s.entries.length === 0) && (
+              <p className="px-3 py-2 text-xs text-muted-foreground">
+                This view is empty — configure it in Settings → Sidebar.
+              </p>
+            )}
+            <ViewNav sections={sections} collapsed={false} />
+          </nav>
+
+          {/* View switcher — only when there's more than one view to switch
+            between. Creating/editing views lives in Settings → Sidebar. */}
+          {pagerViews.length > 1 && (
+            <div className="p-2">
+              <ViewSwitcher
+                views={pagerViews}
+                active={activeView}
+                size="md"
+                onSelect={setActiveViewId}
+                onManage={() => navigate("/settings/sidebar")}
+              />
+            </div>
+          )}
+
+          <div className="border-t border-sidebar-border p-2">
+            <IdentityMenu />
+          </div>
+
+          <ResizeHandle
+            width={width}
+            onResize={resizeTo}
+            onCommit={commitWidth}
+            onReset={() => {
+              resizeTo(DEFAULT_WIDTH)
+              commitWidth()
+            }}
+          />
+        </aside>
+
+        <main className="flex-1 overflow-y-auto">
+          <div
+            className={cn(
+              "px-6 py-6",
+              !chrome.fullWidth && "mx-auto max-w-6xl",
+              chrome.fillHeight && "h-full",
+            )}
+          >
+            {children}
+          </div>
+        </main>
+      </div>
+    </PageChromeContext.Provider>
   )
 }
 

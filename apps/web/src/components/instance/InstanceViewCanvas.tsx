@@ -16,9 +16,11 @@ function useIsWide() {
 }
 
 /**
- * Read-only renderer for an instance view: tiles on a 12-column CSS grid (rows
- * auto-size to content; tile coords stay grid-editor-compatible for later). On
- * narrow screens the grid collapses to one column in reading order.
+ * Read-only renderer for an instance view: tiles on a 12-column CSS grid that
+ * fills the available height — rows split it evenly (with a floor so cramped
+ * layouts scroll rather than crush tile headers) and tiles scroll internally.
+ * On narrow screens the grid collapses to one scrolling column in reading
+ * order, with tiles back at their natural height.
  */
 export function InstanceViewCanvas({ view, ctx }: { view: InstanceViewDef; ctx: InstanceCtx }) {
   const wide = useIsWide()
@@ -29,27 +31,30 @@ export function InstanceViewCanvas({ view, ctx }: { view: InstanceViewDef; ctx: 
 
   if (!wide)
     return (
-      <div className="flex flex-col gap-3">
+      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
         {[...tiles]
           .sort((a, b) => a.y - b.y || a.x - b.x)
           .map((t) => (
-            <InstanceTile key={t.id} contents={t.contents} ctx={ctx} />
+            <div key={t.id} className="shrink-0">
+              <InstanceTile contents={t.contents} ctx={ctx} />
+            </div>
           ))}
       </div>
     )
 
+  const rows = Math.max(1, ...tiles.map((t) => t.y + t.h))
   return (
     <div
-      className="grid gap-3"
+      className="grid min-h-0 flex-1 gap-3 overflow-y-auto"
       style={{
         gridTemplateColumns: "repeat(12, minmax(0, 1fr))",
-        gridAutoRows: "minmax(0, auto)",
+        gridTemplateRows: `repeat(${rows}, minmax(3.5rem, 1fr))`,
       }}
     >
       {tiles.map((t) => (
         <div
           key={t.id}
-          className="min-w-0"
+          className="min-h-0 min-w-0"
           style={{
             gridColumn: `${t.x + 1} / span ${t.w}`,
             gridRow: `${t.y + 1} / span ${t.h}`,
