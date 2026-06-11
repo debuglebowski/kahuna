@@ -90,7 +90,11 @@ describe("versioning", () => {
       expect(live.find((x) => x.id === draft.id)).toBeDefined()
 
       const d = yield* instances.create({ conceptId: deal.id, fields: {} })
-      const edge = yield* relations.create({ fieldId: rel.id, fromId: d.id, toItemId: draft.itemId })
+      const edge = yield* relations.create({
+        fieldId: rel.id,
+        fromId: d.id,
+        toItemId: draft.itemId,
+      })
       expect(edge.toVersionId).toBeNull()
       expect(edge.toItemId).toBe(draft.itemId)
     }).pipe(Effect.provide(testLayer(newOrgId()))),
