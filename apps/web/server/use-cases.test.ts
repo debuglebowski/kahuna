@@ -21,6 +21,7 @@ import {
   getConceptGraph,
   getGraphLayout,
   getInstanceDetail,
+  getInstanceGraphLayout,
   getInstanceViewPrefs,
   linkRelation,
   listConcepts,
@@ -32,6 +33,7 @@ import {
   restoreInstance,
   restoreLabel,
   saveGraphLayout,
+  saveInstanceGraphLayout,
   updateField,
   updateInstanceViewPrefs,
 } from "./use-cases"
@@ -263,6 +265,35 @@ describe("concept graph layout (shared canvas positions)", () => {
 
     // Other orgs never see it.
     expect(await run(orgB, getGraphLayout)).toEqual({})
+  })
+
+  it("instance graph layouts: per-item rows, merge per node, ghost keys survive pruning", async () => {
+    const org = randomUUID()
+    const c = (await run(org, createConcept("Person"))) as WithId
+    const a = (await run(org, createInstance(c.id, {}))) as { itemId: string }
+    const b = (await run(org, createInstance(c.id, {}))) as { itemId: string }
+
+    // Empty before anything is saved; rows are keyed by the ROOT item.
+    expect(await run(org, getInstanceGraphLayout(a.itemId))).toEqual({})
+
+    // Patches merge per node; ghost keys (dangling refs) are kept, foreign ids pruned.
+    await run(org, saveInstanceGraphLayout(a.itemId, { [a.itemId]: { x: 1, y: 2 } }))
+    await run(
+      org,
+      saveInstanceGraphLayout(a.itemId, {
+        [b.itemId]: { x: 3, y: 4 },
+        "ghost:some-relation": { x: 5, y: 6 },
+        [randomUUID()]: { x: 9, y: 9 },
+      }),
+    )
+    expect(await run(org, getInstanceGraphLayout(a.itemId))).toEqual({
+      [a.itemId]: { x: 1, y: 2 },
+      [b.itemId]: { x: 3, y: 4 },
+      "ghost:some-relation": { x: 5, y: 6 },
+    })
+
+    // A different root item has its own independent layout.
+    expect(await run(org, getInstanceGraphLayout(b.itemId))).toEqual({})
   })
 })
 

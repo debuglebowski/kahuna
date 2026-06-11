@@ -288,13 +288,14 @@ const ServerRpcs = KingsmakerRpcs.middleware(AuthMiddleware)
 const HandlersLive = ServerRpcs.toLayer({
   listConcepts: ({ includeArchived, withCounts }) =>
     as<ReadonlyArray<Concept>>(uc.listConcepts(includeArchived, withCounts)),
-  createConcept: ({ name }) => as<Concept>(uc.createConcept(name)),
+  createConcept: ({ name, color }) => as<Concept>(uc.createConcept(name, color)),
   updateConcept: ({
     id,
     name,
     pluralName,
     description,
     icon,
+    color,
     versioningEnabled,
     staticLabelIds,
     defaultLabelIds,
@@ -305,6 +306,7 @@ const HandlersLive = ServerRpcs.toLayer({
         pluralName,
         description,
         icon,
+        color,
         versioningEnabled,
         staticLabelIds,
         defaultLabelIds,
@@ -325,6 +327,9 @@ const HandlersLive = ServerRpcs.toLayer({
   getConceptGraph: () => as<ConceptGraph>(uc.getConceptGraph),
   getGraphLayout: () => as<GraphLayout>(uc.getGraphLayout),
   saveGraphLayout: ({ positions }) => as<GraphLayout>(uc.saveGraphLayout(positions)),
+  getInstanceGraphLayout: ({ itemId }) => as<GraphLayout>(uc.getInstanceGraphLayout(itemId)),
+  saveInstanceGraphLayout: ({ itemId, positions }) =>
+    as<GraphLayout>(uc.saveInstanceGraphLayout(itemId, positions)),
   addField: ({ conceptId, name, kind, config, formula, icon }) =>
     admin<Field>(uc.addField({ conceptId, name, kind, config, formula, icon })),
   updateField: ({ id, name, config, formula, icon }) =>

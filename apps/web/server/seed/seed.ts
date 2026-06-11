@@ -11,6 +11,7 @@ const ensureConcept = (concepts: ConceptService, spec: ConceptSpec) =>
         pluralName: spec.pluralName,
         description: spec.description,
         icon: spec.icon,
+        color: spec.color,
       }),
     ),
   )

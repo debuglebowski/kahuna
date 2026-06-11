@@ -90,6 +90,7 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
       readonly pluralName?: string | null
       readonly description?: string
       readonly icon?: string | null
+      readonly color?: string | null
     }) =>
       sql.withTransaction(
         Effect.gen(function* () {
@@ -108,8 +109,8 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
           let slug = base
           for (let n = 2; used.has(slug); n++) slug = `${base}_${n}`
           const rows = yield* sql<ConceptRow>`
-            INSERT INTO concepts (org_id, slug, name, plural_name, description, icon)
-            VALUES (${orgId}, ${slug}, ${input.name}, ${input.pluralName?.trim() || null}, ${input.description ?? null}, ${input.icon ?? null})
+            INSERT INTO concepts (org_id, slug, name, plural_name, description, icon, color)
+            VALUES (${orgId}, ${slug}, ${input.name}, ${input.pluralName?.trim() || null}, ${input.description ?? null}, ${input.icon ?? null}, ${input.color ?? null})
             RETURNING *`
           const concept = toConcept(rows[0]!)
           yield* events.append({
@@ -137,6 +138,8 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
       readonly pluralName?: string | null
       // Omitted → left unchanged; explicit null → cleared.
       readonly icon?: string | null
+      // Omitted → left unchanged; explicit null → cleared.
+      readonly color?: string | null
       readonly staticLabelIds?: ReadonlyArray<string>
       readonly defaultLabelIds?: ReadonlyArray<string>
       // Toggle per-concept versioning. Enabling is always allowed (existing
@@ -189,6 +192,7 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
           const pluralName =
             input.pluralName === undefined ? current.pluralName : input.pluralName?.trim() || null
           const icon = input.icon === undefined ? current.icon : input.icon
+          const color = input.color === undefined ? current.color : input.color
           const staticIds = [...new Set(input.staticLabelIds ?? current.staticLabelIds)]
           const defaultIds = [...new Set(input.defaultLabelIds ?? current.defaultLabelIds)]
           // Bind the id arrays as JSON text + cast: `sql.json` serialises a
@@ -196,7 +200,7 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
           const rows = yield* sql<ConceptRow>`
             UPDATE concepts
             SET description = ${input.description}, name = ${finalName},
-                plural_name = ${pluralName}, icon = ${icon},
+                plural_name = ${pluralName}, icon = ${icon}, color = ${color},
                 versioning_enabled = ${versioningEnabled},
                 static_label_ids = ${JSON.stringify(staticIds)}::jsonb,
                 default_label_ids = ${JSON.stringify(defaultIds)}::jsonb
@@ -215,6 +219,7 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
               ...(name ? { name: concept.name } : {}),
               ...(input.pluralName !== undefined ? { pluralName: concept.pluralName } : {}),
               ...(input.icon !== undefined ? { icon: concept.icon } : {}),
+              ...(input.color !== undefined ? { color: concept.color } : {}),
               ...(input.versioningEnabled !== undefined
                 ? { versioningEnabled: concept.versioningEnabled }
                 : {}),

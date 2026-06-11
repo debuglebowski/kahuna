@@ -7,6 +7,7 @@ import {
   integer,
   jsonb,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   uniqueIndex,
@@ -40,6 +41,9 @@ export const concepts = pgTable(
     // Optional display glyph: a literal emoji (e.g. "🏢") or a curated lucide
     // icon name prefixed "lucide:" (e.g. "lucide:Building2"); null renders none.
     icon: text("icon"),
+    // Optional display color (hex, from the same pill palette as labels); used
+    // to tint the concept wherever instances are visualised. Null = neutral.
+    color: text("color"),
     // Label-id arrays drawn from the org-wide `labels` vocabulary. `static` =
     // inherited by every instance (read-time, never written per item); `default`
     // = snapshotted onto each new instance's `state.__labels` at creation time.
@@ -378,6 +382,23 @@ export const conceptGraphLayouts = pgTable("concept_graph_layouts", {
   positions: jsonb("positions").notNull().default(sql`'{}'::jsonb`),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 })
+
+/**
+ * Saved node positions for one item's relationship graph (the instance-page
+ * graph tile), keyed by the ROOT item whose graph was arranged. Same contract
+ * as the concept canvas: org-shared presentation state, last write wins per
+ * node (position keys are item ids, plus `ghost:<relationId>` for dangling refs).
+ */
+export const instanceGraphLayouts = pgTable(
+  "instance_graph_layouts",
+  {
+    orgId: text("org_id").notNull(),
+    itemId: uuid("item_id").notNull(),
+    positions: jsonb("positions").notNull().default(sql`'{}'::jsonb`),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.orgId, t.itemId] })],
+)
 
 export const attachments = pgTable("attachments", {
   id: uuid("id").primaryKey().defaultRandom(),

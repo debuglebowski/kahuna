@@ -62,6 +62,24 @@ describe("kingsmaker seed", () => {
     expect(byName.get("owner")?.kind).toBe("user")
   })
 
+  it("CompanyContact's reports_to is a self-referencing relation", async () => {
+    const org = randomUUID()
+    await run(org, seedKingsmaker)
+    const { reportsTo, contactId } = await run(
+      org,
+      Effect.gen(function* () {
+        const concepts = yield* ConceptService
+        const fieldSvc = yield* FieldService
+        const contact = yield* concepts.getByName("CompanyContact")
+        const fs = yield* fieldSvc.listFields(contact.id)
+        return { reportsTo: fs.find((f) => f.name === "reports_to"), contactId: contact.id }
+      }),
+    )
+    expect(reportsTo?.kind).toBe("relation")
+    expect(reportsTo?.config.target).toBe(contactId)
+    expect(reportsTo?.config.cardinality).toBe("one")
+  })
+
   it("CompanyNote carries a user (author) field", async () => {
     const org = randomUUID()
     await run(org, seedKingsmaker)

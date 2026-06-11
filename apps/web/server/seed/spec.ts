@@ -29,6 +29,9 @@ export interface ConceptSpec {
   readonly description?: string
   /** Display glyph: a literal emoji or `lucide:Name` (see engine `Concept.icon`). */
   readonly icon?: string
+  /** Display color: a hex from the web app's pill palette (see `PILL_COLORS`);
+   *  tints the concept's items in the relationship graph. */
+  readonly color?: string
   readonly fields: ReadonlyArray<FieldSpec>
 }
 
@@ -42,6 +45,7 @@ export interface ConceptSpec {
  * `relation` fields whose `targetName` is resolved to a concept id at seed time:
  *
  *   CompanyContact -works_at->  Company
+ *   CompanyContact -reports_to-> CompanyContact (self — org chart)
  *   CompanyNote    -about->     Company
  *   Agreement      -based_on->  AgreementTemplate
  *   Agreement      -for->       Company
@@ -54,6 +58,7 @@ export const kingsmakerSpec: ReadonlyArray<ConceptSpec> = [
     pluralName: "Companies",
     description: "A customer or counterparty — the hub of the graph.",
     icon: "🏢",
+    color: "#3b82f6",
     fields: [{ name: "name", kind: "text" }],
   },
   {
@@ -61,6 +66,7 @@ export const kingsmakerSpec: ReadonlyArray<ConceptSpec> = [
     pluralName: "Contacts",
     description: "A person at a company.",
     icon: "lucide:Contact",
+    color: "#10b981",
     fields: [
       { name: "name", kind: "text" },
       { name: "email", kind: "text", config: { format: "email" }, icon: "✉️" },
@@ -71,6 +77,13 @@ export const kingsmakerSpec: ReadonlyArray<ConceptSpec> = [
         config: { cardinality: "one" },
         icon: "🏢",
       },
+      {
+        name: "reports_to",
+        kind: "relation",
+        targetName: "CompanyContact",
+        config: { cardinality: "one" },
+        icon: "lucide:Network",
+      },
     ],
   },
   {
@@ -78,6 +91,7 @@ export const kingsmakerSpec: ReadonlyArray<ConceptSpec> = [
     pluralName: "Notes",
     description: "A freeform note about a company.",
     icon: "📝",
+    color: "#f59e0b",
     fields: [
       { name: "body", kind: "text" },
       { name: "noted_on", kind: "date", icon: "📅" },
@@ -95,6 +109,7 @@ export const kingsmakerSpec: ReadonlyArray<ConceptSpec> = [
     pluralName: "Agreement Templates",
     description: "A master template that agreements are executed from.",
     icon: "📋",
+    color: "#8b5cf6",
     fields: [
       { name: "name", kind: "text" },
       { name: "doc_type", kind: "enum", config: { options: ["msa", "dpa", "nda", "sow"] } },
@@ -116,6 +131,7 @@ export const kingsmakerSpec: ReadonlyArray<ConceptSpec> = [
     pluralName: "Agreements",
     description: "An executed agreement — based on a template, for a company.",
     icon: "lucide:FileText",
+    color: "#6366f1",
     fields: [
       { name: "title", kind: "text" },
       {
@@ -161,6 +177,7 @@ export const kingsmakerSpec: ReadonlyArray<ConceptSpec> = [
     pluralName: "Policies",
     description: "An internal governance policy with a review cadence.",
     icon: "🛡️",
+    color: "#f43f5e",
     fields: [
       { name: "title", kind: "text" },
       {
@@ -195,6 +212,7 @@ export const kingsmakerSpec: ReadonlyArray<ConceptSpec> = [
     pluralName: "Tasks",
     description: "A to-do assigned to a member, optionally tied to a company.",
     icon: "✅",
+    color: "#0ea5e9",
     fields: [
       { name: "title", kind: "text" },
       {
@@ -224,6 +242,7 @@ export const kingsmakerSpec: ReadonlyArray<ConceptSpec> = [
     pluralName: "Runbooks",
     description: "An internal operational runbook with a review cadence.",
     icon: "lucide:BookOpen",
+    color: "#14b8a6",
     fields: [
       { name: "title", kind: "text" },
       {

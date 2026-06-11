@@ -757,6 +757,18 @@ export class KingsmakerRpcs extends RpcGroup.make(
     success: GraphLayout,
     error: RpcError,
   }),
+  // Saved positions for one item's relationship graph (instance-page tile),
+  // keyed by the root item; same merge-patch contract as the concept canvas.
+  Rpc.make("getInstanceGraphLayout", {
+    payload: { itemId: Schema.String },
+    success: GraphLayout,
+    error: RpcError,
+  }),
+  Rpc.make("saveInstanceGraphLayout", {
+    payload: { itemId: Schema.String, positions: GraphLayout },
+    success: GraphLayout,
+    error: RpcError,
+  }),
   Rpc.make("addField", {
     payload: {
       conceptId: Schema.String,

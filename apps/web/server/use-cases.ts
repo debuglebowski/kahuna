@@ -369,6 +369,15 @@ export const getGraphLayout: UC<GraphLayoutPositions> = Effect.flatMap(GraphLayo
 export const saveGraphLayout = (positions: GraphLayoutPositions): UC<GraphLayoutPositions> =>
   Effect.flatMap(GraphLayoutService, (s) => s.save(positions))
 
+export const getInstanceGraphLayout = (itemId: string): UC<GraphLayoutPositions> =>
+  Effect.flatMap(GraphLayoutService, (s) => s.getForItem(itemId))
+
+export const saveInstanceGraphLayout = (
+  itemId: string,
+  positions: GraphLayoutPositions,
+): UC<GraphLayoutPositions> =>
+  Effect.flatMap(GraphLayoutService, (s) => s.saveForItem(itemId, positions))
+
 /**
  * The concept relationship graph: every concept is a node, and every relation
  * field is a directed edge from its concept to the field's target concept.

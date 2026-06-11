@@ -12,6 +12,7 @@ import type {
   FieldConfig,
   FieldKind,
   Instance,
+  InstanceGraphConfig,
   InstanceState,
   InstanceViewLayout,
   InstanceViewPrefs,
@@ -41,6 +42,7 @@ export interface ConceptRow {
   readonly plural_name: string | null
   readonly description: string | null
   readonly icon: string | null
+  readonly color: string | null
   readonly static_label_ids: unknown
   readonly default_label_ids: unknown
   readonly versioning_enabled: boolean
@@ -128,6 +130,7 @@ export const toConcept = (r: ConceptRow): Concept => ({
   pluralName: r.plural_name,
   description: r.description,
   icon: r.icon,
+  color: r.color,
   staticLabelIds: toIdArray(r.static_label_ids),
   defaultLabelIds: toIdArray(r.default_label_ids),
   versioningEnabled: r.versioning_enabled ?? false,
@@ -359,14 +362,34 @@ const toInstanceViewLayout = (v: unknown): InstanceViewLayout | null => {
   return { tiles: tiles.map(toInstanceViewTile).filter((t): t is InstanceViewTile => t !== null) }
 }
 
+const toInstanceGraphConfig = (v: unknown): InstanceGraphConfig | null => {
+  if (!v || typeof v !== "object") return null
+  const c = v as Record<string, unknown>
+  if (typeof c.depth !== "number" || !Number.isFinite(c.depth) || typeof c.layout !== "string")
+    return null
+  return {
+    fieldIds: Array.isArray(c.fieldIds)
+      ? c.fieldIds.filter((f): f is string => typeof f === "string")
+      : null,
+    depth: c.depth,
+    layout: c.layout,
+  }
+}
+
 /** Coerce a jsonb body into well-formed view prefs (defensive against drift):
- *  non-string override values and malformed tiles are dropped, missing
+ *  non-string override values and malformed tiles/configs are dropped, missing
  *  sections read as empty. */
 const toInstanceViewPrefsBody = (raw: unknown): InstanceViewPrefsBody => {
   if (!raw || typeof raw !== "object") return EMPTY_VIEW_PREFS
-  const r = raw as { defaultView?: unknown; byConcept?: unknown; customByConcept?: unknown }
+  const r = raw as {
+    defaultView?: unknown
+    byConcept?: unknown
+    customByConcept?: unknown
+    graphByConcept?: unknown
+  }
   const by = r.byConcept && typeof r.byConcept === "object" ? r.byConcept : {}
   const custom = r.customByConcept && typeof r.customByConcept === "object" ? r.customByConcept : {}
+  const graph = r.graphByConcept && typeof r.graphByConcept === "object" ? r.graphByConcept : {}
   return {
     defaultView: typeof r.defaultView === "string" ? r.defaultView : null,
     byConcept: Object.fromEntries(
@@ -376,6 +399,11 @@ const toInstanceViewPrefsBody = (raw: unknown): InstanceViewPrefsBody => {
       Object.entries(custom)
         .map(([k, v]) => [k, toInstanceViewLayout(v)] as const)
         .filter((e): e is [string, InstanceViewLayout] => e[1] !== null),
+    ),
+    graphByConcept: Object.fromEntries(
+      Object.entries(graph)
+        .map(([k, v]) => [k, toInstanceGraphConfig(v)] as const)
+        .filter((e): e is [string, InstanceGraphConfig] => e[1] !== null),
     ),
   }
 }

@@ -8,6 +8,7 @@ import {
   Rows3,
   StickyNote,
   Tags,
+  Waypoints,
 } from "lucide-react"
 import { notesBySubject, tasksBySubject } from "../../lib/collections"
 import type { ConceptCaps, TileContentKey } from "../../lib/instanceViews"
@@ -17,6 +18,7 @@ import { TaskList } from "../item/TaskList"
 import { ConnectedActions, ConnectedBody } from "./ConnectedContent"
 import { DetailsBody } from "./DetailsContent"
 import { DocumentBody } from "./DocumentContent"
+import { GraphActions, GraphBody } from "./GraphContent"
 import { LabelsBody } from "./LabelsContent"
 import type { InstanceCtx, TileContent } from "./types"
 import { VersionsBody } from "./VersionsContent"
@@ -66,6 +68,12 @@ export const TILE_CONTENTS: Record<TileContentKey, TileContent> = {
     Count: ConnectedCount,
     Actions: ConnectedActions,
     Body: ConnectedBody,
+  },
+  graph: {
+    title: "Relationships",
+    Icon: Waypoints,
+    Actions: GraphActions,
+    Body: GraphBody,
   },
   labels: { title: "Labels", Icon: Tags, Body: LabelsBody },
   versions: {

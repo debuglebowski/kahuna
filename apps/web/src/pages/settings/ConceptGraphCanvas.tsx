@@ -28,6 +28,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { SelfLoopEdge } from "../../components/graph/SelfLoopEdge"
+import { useGraphPositions } from "../../components/graph/useGraphPositions"
 import { Card, Spinner } from "../../components/ui"
 import { api, type ConceptGraph, type GraphLayout } from "../../lib/api"
 import {
@@ -40,7 +41,6 @@ import {
   layoutDagre,
 } from "../../lib/graphLayouts"
 import { ConceptIcon, DEFAULT_CONCEPT_ICON } from "../../lib/icons"
-import { useGraphPositions } from "./useGraphPositions"
 
 /** Stable empty fallback — a fresh `{}` would re-run the layout memo per render. */
 const NO_SAVED: GraphLayout = {}
@@ -63,7 +63,7 @@ function ConceptNode({ data }: NodeProps) {
     icon?: string | null
     dimmed?: boolean
   }
-  const [targetPos, sourcePos] = DIR_HANDLES[direction ?? "LR"]
+  const [targetPos, sourcePos] = DIR_HANDLES[direction ?? "TB"]
   return (
     <div
       className={
@@ -136,12 +136,12 @@ function buildFlow(graph: ConceptGraph, saved: GraphLayout): { nodes: Node[]; ed
     style: { stroke: "var(--ring)", strokeWidth: 1.5 },
   }))
 
-  const fallback = layoutDagre(toLayoutInput(graph), "LR")
+  const fallback = layoutDagre(toLayoutInput(graph), "TB")
   const nodes: Node[] = graph.nodes.map((n) => ({
     id: n.id,
     type: "concept",
     position: saved[n.id] ?? fallback.get(n.id) ?? { x: 0, y: 0 },
-    data: { label: n.name, selected: false, direction: "LR", icon: n.icon },
+    data: { label: n.name, selected: false, direction: "TB", icon: n.icon },
   }))
 
   return { nodes, edges }
@@ -178,7 +178,7 @@ function Flow({
     canRedo,
     onNodeDragStart,
     onNodeDragStop,
-  } = useGraphPositions(nodes, setNodes)
+  } = useGraphPositions(nodes, setNodes, api.saveGraphLayout)
 
   // Reflect selection + find-filter without re-running layout (preserves pan/zoom).
   const q = filter.trim().toLowerCase()
@@ -201,7 +201,7 @@ function Flow({
     (kind: LayoutKind) => {
       void computeLayout(kind, toLayoutInput(graph)).then((positions) => {
         pushHistory()
-        const direction = LAYOUT_DIR[kind] ?? "LR"
+        const direction = LAYOUT_DIR[kind] ?? "TB"
         setNodes((ns) =>
           ns.map((n) => ({
             ...n,

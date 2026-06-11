@@ -8,11 +8,14 @@ import {
   useRef,
   useState,
 } from "react"
-import { api, type GraphLayout } from "../../lib/api"
+import type { GraphLayout } from "../../lib/api"
 
 /**
- * Position state management for the concept graph canvas, split out of the
- * component so the canvas only wires handlers and renders status. Two concerns:
+ * Position state management for a graph canvas (concept graph, instance
+ * relationship graph), split out of the components so a canvas only wires
+ * handlers and renders status. The caller supplies `save` — a partial-patch
+ * persister (node id → position) — so each canvas brings its own endpoint.
+ * Two concerns:
  *
  * - **Debounced dirty-set persistence.** Changed node ids accumulate and a
  *   debounced flush sends only those entries as a PATCH — the server
@@ -25,7 +28,11 @@ import { api, type GraphLayout } from "../../lib/api"
  *   drag or one layout application = one step. ⌘Z/⇧⌘Z/Ctrl+Y are handled
  *   while the event target is inside the React Flow pane.
  */
-export function useGraphPositions(nodes: Node[], setNodes: Dispatch<SetStateAction<Node[]>>) {
+export function useGraphPositions(
+  nodes: Node[],
+  setNodes: Dispatch<SetStateAction<Node[]>>,
+  save: (patch: GraphLayout) => Promise<unknown>,
+) {
   const nodesRef = useRef(nodes)
   useEffect(() => {
     nodesRef.current = nodes
@@ -56,7 +63,7 @@ export function useGraphPositions(nodes: Node[], setNodes: Dispatch<SetStateActi
       }),
     )
     setSaveState("saving")
-    api.saveGraphLayout(patch).then(
+    save(patch).then(
       () => {
         retries.current = 0
         setSaveState(dirty.current.size > 0 ? "saving" : "idle")
@@ -73,7 +80,7 @@ export function useGraphPositions(nodes: Node[], setNodes: Dispatch<SetStateActi
         }
       },
     )
-  }, [])
+  }, [save])
   const scheduleSave = useCallback(() => {
     if (saveTimer.current) clearTimeout(saveTimer.current)
     retries.current = 0

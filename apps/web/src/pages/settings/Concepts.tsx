@@ -14,10 +14,21 @@ import {
 } from "@dnd-kit/sortable"
 import { CSS } from "@dnd-kit/utilities"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Archive, ArchiveRestore, Check, GripVertical, Pencil, Plus, Trash2, X } from "lucide-react"
+import {
+  Archive,
+  ArchiveRestore,
+  Check,
+  ChevronDown,
+  GripVertical,
+  Pencil,
+  Plus,
+  Trash2,
+  X,
+} from "lucide-react"
 import { useEffect, useState } from "react"
 import { Link, useOutletContext, useSearchParams } from "react-router-dom"
 import { Checkbox } from "@/components/ui/checkbox"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Textarea } from "@/components/ui/textarea"
 import { IconPicker } from "../../components/IconPicker"
 import { LabelMultiSelect } from "../../components/LabelMultiSelect"
@@ -26,12 +37,15 @@ import {
   Button,
   Card,
   CardHeader,
+  ColorSwatchPicker,
   ConfirmDialog,
   Drawer,
   IconButton,
   Input,
   LabelChip,
   Modal,
+  PILL_COLORS,
+  randomPillColor,
   Spinner,
   ToggleChip,
   Toolbar,
@@ -40,6 +54,10 @@ import { api, type Field, type Label } from "../../lib/api"
 import { ConceptIcon, DEFAULT_CONCEPT_ICON, DEFAULT_FIELD_ICON } from "../../lib/icons"
 import { ConceptGraphCanvas } from "./ConceptGraphCanvas"
 import { FieldForm, type FieldFormValue, fieldKindLabel } from "./FieldForm"
+
+/** Display name for a palette hex; a legacy out-of-palette hex shows verbatim. */
+const colorNameOf = (hex: string): string =>
+  PILL_COLORS.find((c) => c.hex === hex.toLowerCase())?.name ?? hex
 
 /** Resolve label ids → chips for the non-admin (read-only) concept view. */
 function ReadOnlyLabels({
@@ -160,6 +178,8 @@ export function Concepts() {
   const [name, setName] = useState("")
   const [pluralName, setPluralName] = useState("")
   const [icon, setIcon] = useState<string | null>(null)
+  const [color, setColor] = useState<string | null>(null)
+  const [colorOpen, setColorOpen] = useState(false)
   const [description, setDescription] = useState("")
   // Field add/edit happens in a modal; null = closed.
   const [fieldModal, setFieldModal] = useState<
@@ -177,11 +197,20 @@ export function Concepts() {
   const selected = concepts.data?.find((c) => c.id === selectedId) ?? null
   const labelVocab = useQuery({ queryKey: ["labels"], queryFn: () => api.listLabels() })
 
+  // Colors claimed by OTHER live concepts — the picker disables them so every
+  // concept keeps a unique color.
+  const takenColors = new Set(
+    (concepts.data ?? []).flatMap((c) =>
+      c.id !== selectedId && !c.archivedAt && c.color ? [c.color.toLowerCase()] : [],
+    ),
+  )
+
   // Seed the editor whenever the selected concept changes.
   useEffect(() => {
     setName(selected?.name ?? "")
     setPluralName(selected?.pluralName ?? "")
     setIcon(selected?.icon ?? null)
+    setColor(selected?.color ?? null)
     setDescription(selected?.description ?? "")
     setStaticLabelIds([...(selected?.staticLabelIds ?? [])])
     setDefaultLabelIds([...(selected?.defaultLabelIds ?? [])])
@@ -210,7 +239,15 @@ export function Concepts() {
   const refetchGraph = () => qc.invalidateQueries({ queryKey: ["conceptGraph"] })
 
   const createConcept = useMutation({
-    mutationFn: (name: string) => api.createConcept(name),
+    // New concepts start with a default color: a palette hex no live concept
+    // already uses (random reuse only once all 40 are claimed).
+    mutationFn: (name: string) =>
+      api.createConcept(
+        name,
+        randomPillColor(
+          (concepts.data ?? []).flatMap((c) => (c.archivedAt || !c.color ? [] : [c.color])),
+        ),
+      ),
     onSuccess: (c) => {
       setCreatingConcept(false)
       setNewName("")
@@ -231,6 +268,7 @@ export function Concepts() {
         pluralName: pluralName.trim() || null,
         description: description.trim() || null,
         icon,
+        color,
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["concepts"] })
@@ -578,6 +616,46 @@ export function Concepts() {
                 <p className="text-xs text-muted-foreground">
                   Shown in the sidebar; falls back to the singular name when blank.
                 </p>
+                <span className="block pt-1 text-sm leading-none font-medium text-foreground">
+                  Color
+                </span>
+                <Popover open={colorOpen} onOpenChange={setColorOpen}>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" disabled={!admin}>
+                      {color ? (
+                        <LabelChip color={color}>{colorNameOf(color)}</LabelChip>
+                      ) : (
+                        <span className="text-muted-foreground">No color</span>
+                      )}
+                      <ChevronDown className="text-muted-foreground" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent align="start" className="w-auto max-w-80 space-y-3">
+                    <ColorSwatchPicker
+                      label="Concept color"
+                      preview={name.trim() || "Concept"}
+                      value={color}
+                      taken={takenColors}
+                      onChange={(hex) => {
+                        setColor(hex)
+                        setColorOpen(false)
+                      }}
+                    />
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setColor(null)
+                        setColorOpen(false)
+                      }}
+                    >
+                      No color
+                    </Button>
+                  </PopoverContent>
+                </Popover>
+                <p className="text-xs text-muted-foreground">
+                  Tints this concept's items in the relationship graph; none renders neutral.
+                </p>
                 <span className="block text-sm leading-none font-medium text-foreground">
                   Description
                 </span>
@@ -659,8 +737,9 @@ export function Concepts() {
             <Card>
               <CardHeader title="Versioning" />
               <div className="space-y-3 p-6">
-                <label className="flex items-start gap-3">
+                <label htmlFor="versioning-toggle" className="flex items-start gap-3">
                   <Checkbox
+                    id="versioning-toggle"
                     checked={selected.versioningEnabled}
                     disabled={!admin || toggleVersioning.isPending}
                     onCheckedChange={(v) => toggleVersioning.mutate(v === true)}

@@ -16,6 +16,7 @@ export const TILE_CONTENT_KEYS = [
   "details",
   "document",
   "connected",
+  "graph",
   "labels",
   "versions",
   "notes",
@@ -72,7 +73,15 @@ export const INSTANCE_VIEWS: ReadonlyArray<InstanceViewDef> = [
     tiles: () => [
       {
         id: "all",
-        contents: ["details", "document", "connected", "labels", "versions", ...ANNOTATIONS],
+        contents: [
+          "details",
+          "document",
+          "connected",
+          "graph",
+          "labels",
+          "versions",
+          ...ANNOTATIONS,
+        ],
         x: 0,
         y: 0,
         w: 12,

@@ -89,7 +89,8 @@ export const api = {
     call((c) =>
       c.listConcepts({ includeArchived: opts?.includeArchived, withCounts: opts?.withCounts }),
     ),
-  createConcept: (name: string) => call((c) => c.createConcept({ name })),
+  createConcept: (name: string, color?: string | null) =>
+    call((c) => c.createConcept({ name, color })),
   updateConcept: (
     id: string,
     patch: {
@@ -97,6 +98,7 @@ export const api = {
       pluralName?: string | null
       description: string | null
       icon?: string | null
+      color?: string | null
       versioningEnabled?: boolean
       staticLabelIds?: ReadonlyArray<string>
       defaultLabelIds?: ReadonlyArray<string>
@@ -109,6 +111,7 @@ export const api = {
         pluralName: patch.pluralName,
         description: patch.description,
         icon: patch.icon,
+        color: patch.color,
         versioningEnabled: patch.versioningEnabled,
         staticLabelIds: patch.staticLabelIds,
         defaultLabelIds: patch.defaultLabelIds,
@@ -133,6 +136,9 @@ export const api = {
   getConceptGraph: () => call((c) => c.getConceptGraph()),
   getGraphLayout: () => call((c) => c.getGraphLayout()),
   saveGraphLayout: (positions: GraphLayout) => call((c) => c.saveGraphLayout({ positions })),
+  getInstanceGraphLayout: (itemId: string) => call((c) => c.getInstanceGraphLayout({ itemId })),
+  saveInstanceGraphLayout: (itemId: string, positions: GraphLayout) =>
+    call((c) => c.saveInstanceGraphLayout({ itemId, positions })),
   addField: (input: {
     conceptId: string
     name: string

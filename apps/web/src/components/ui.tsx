@@ -254,12 +254,17 @@ export function ColorSwatchPicker({
   onChange,
   label = "Color",
   preview = "Label",
+  taken,
 }: {
   value: string | null
   onChange: (hex: string) => void
   label?: string
   /** Text shown inside every pill (uniform, so only the colors differ). */
   preview?: string
+  /** Hexes already claimed elsewhere — rendered faded and unclickable so a
+   *  scheme that wants unique colors (e.g. concepts) can enforce it. The
+   *  current `value` should not be in the set. */
+  taken?: ReadonlySet<string>
 }) {
   // Regular/deep siblings render as one stacked column, so however the row
   // wraps, every deep pill sits directly under its regular counterpart.
@@ -272,18 +277,21 @@ export function ColorSwatchPicker({
         <div key={pair[0]!.hex} className="flex min-w-0 flex-col items-stretch gap-1">
           {pair.map((c) => {
             const selected = value?.toLowerCase() === c.hex
+            const unavailable = !selected && (taken?.has(c.hex) ?? false)
             return (
               <button
                 key={c.hex}
                 type="button"
+                disabled={unavailable}
                 aria-pressed={selected}
                 aria-label={`${label}: ${c.name}`}
-                title={c.name}
+                title={unavailable ? `${c.name} — already in use` : c.name}
                 onClick={() => onChange(c.hex)}
                 style={pillStyle(c.hex)}
                 className={cn(
                   "km-pill inline-flex max-w-28 justify-center rounded-full px-2 py-0.5 text-xs font-medium transition-transform hover:scale-105",
                   selected && "ring-2 ring-ring ring-offset-1 ring-offset-background",
+                  unavailable && "opacity-30 hover:scale-100",
                 )}
               >
                 <span className="truncate">{preview}</span>
