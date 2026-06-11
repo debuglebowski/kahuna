@@ -30,6 +30,7 @@ import { Button, Field as FieldRow, IconButton, Input, Modal } from "../ui"
 
 const STATIC_ITEMS: ReadonlyArray<{ key: string; label: string }> = [
   { key: "overview", label: "Overview" },
+  { key: "tasks", label: "Tasks" },
   { key: "dashboards", label: "Dashboards" },
   { key: "members", label: "Members" },
   { key: "automations", label: "Automations" },

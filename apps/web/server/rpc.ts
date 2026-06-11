@@ -24,6 +24,7 @@ import {
   type SidebarView,
   type Task,
   type TaskStatus,
+  type TaskSubjectRef,
 } from "../rpc/contract"
 import { auth } from "./auth"
 import { pool } from "./db"
@@ -424,6 +425,8 @@ const HandlersLive = ServerRpcs.toLayer({
     as<ReadonlyArray<Task>>(
       uc.listTasks({ subjectId, assignee, statusId, dueBefore, dueAfter, includeArchived, limit }),
     ),
+  resolveTaskSubjects: ({ subjectIds }) =>
+    as<ReadonlyArray<TaskSubjectRef>>(uc.resolveTaskSubjects(subjectIds)),
   createTask: ({ subjectId, title, statusId, assignee, dueAt, customFields }) =>
     checkThen(
       (orgId) => assertAssigneeMember(orgId, assignee),

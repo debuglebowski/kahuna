@@ -338,6 +338,7 @@ export const SidebarRule = Schema.Union(
 
 const SidebarStaticItem = Schema.Literal(
   "overview",
+  "tasks",
   "dashboards",
   "members",
   "automations",
@@ -573,6 +574,19 @@ export const Task = Schema.Struct({
   archivedAt: Schema.NullOr(Schema.Date),
 })
 export type Task = typeof Task.Type
+
+/** A task's annotated item resolved for display (global Tasks page): the item's
+ *  head version to route to, plus a server-resolved label (instance state is
+ *  keyed by field id, which the client can't resolve without that concept's
+ *  field defs — same reasoning as `RelatedInstance.label`). */
+export const TaskSubjectRef = Schema.Struct({
+  subjectId: Schema.String,
+  /** Routable head version (latest published, else newest version); null = item gone. */
+  instanceId: Schema.NullOr(Schema.String),
+  label: Schema.String,
+  conceptId: Schema.NullOr(Schema.String),
+})
+export type TaskSubjectRef = typeof TaskSubjectRef.Type
 
 // ── member pages + deactivation ─────────────────────────────────────────────────
 // A member's profile page is a widget canvas with the SAME body document as
@@ -1070,6 +1084,13 @@ export class KingsmakerRpcs extends RpcGroup.make(
       limit: Schema.optional(Schema.Number),
     },
     success: Schema.Array(Task),
+    error: RpcError,
+  }),
+  // Batch-resolve task subjects (item lineage ids) to routable instances +
+  // display labels — the global Tasks page's record chips.
+  Rpc.make("resolveTaskSubjects", {
+    payload: { subjectIds: Schema.Array(Schema.String) },
+    success: Schema.Array(TaskSubjectRef),
     error: RpcError,
   }),
   Rpc.make("createTask", {

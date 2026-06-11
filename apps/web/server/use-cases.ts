@@ -631,6 +631,51 @@ export const deleteNote = (id: string): UC<Note> =>
 export const listTasks = (filter: ListTasksFilter = {}): UC<ReadonlyArray<Task>> =>
   Effect.flatMap(AnnotationService, (a) => a.listTasks(filter))
 
+/**
+ * Batch-resolve task subjects (item lineage ids) for display: each to its head
+ * version (latest published, else newest — mirrors the Overview's click-through)
+ * plus a label from the concept's first text field (instance state is keyed by
+ * field id; the client lacks foreign field defs). A gone/dangling item degrades
+ * to a null instance rather than failing the batch.
+ */
+export const resolveTaskSubjects = (subjectIds: ReadonlyArray<string>): UC<unknown> =>
+  Effect.gen(function* () {
+    const instances = yield* InstanceService
+    const fieldsSvc = yield* FieldService
+    const fieldCache = new Map<string, ReadonlyArray<{ id: string; kind: string }>>()
+
+    const resolveOne = (subjectId: string) =>
+      Effect.gen(function* () {
+        const item = yield* instances.getItem(subjectId)
+        const head =
+          (yield* instances.headOf(subjectId)) ??
+          (yield* instances.listVersions(subjectId)).at(-1) ??
+          null
+        if (!head)
+          return { subjectId, instanceId: null, label: "(unavailable)", conceptId: item.conceptId }
+        let fields = fieldCache.get(head.conceptId)
+        if (!fields) {
+          fields = yield* fieldsSvc.listFields(head.conceptId)
+          fieldCache.set(head.conceptId, fields)
+        }
+        const textField = fields.find((f) => f.kind === "text" && head.state[f.id])
+        return {
+          subjectId,
+          instanceId: head.id,
+          label: textField ? String(head.state[textField.id]) : "(untitled)",
+          conceptId: head.conceptId,
+        }
+      }).pipe(
+        Effect.catchAll(() =>
+          Effect.succeed({ subjectId, instanceId: null, label: "(unavailable)", conceptId: null }),
+        ),
+      )
+
+    // Dedupe + cap: the page sends each task's subject once; 1000 bounds a
+    // pathological caller (listTasks itself defaults to 500 rows).
+    return yield* Effect.forEach([...new Set(subjectIds)].slice(0, 1000), resolveOne)
+  })
+
 export const createTask = (input: {
   readonly subjectId: string | null
   readonly title: string

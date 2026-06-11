@@ -433,7 +433,13 @@ export type SidebarRule =
       readonly conditions: ReadonlyArray<SidebarCondition>
       readonly match?: ConditionMatch
     }
-export type SidebarStaticItem = "overview" | "dashboards" | "members" | "automations" | "settings"
+export type SidebarStaticItem =
+  | "overview"
+  | "tasks"
+  | "dashboards"
+  | "members"
+  | "automations"
+  | "settings"
 export interface SidebarLink {
   readonly id: string
   readonly label: string

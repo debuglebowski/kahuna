@@ -11,6 +11,7 @@ import { MemberProfile } from "./pages/MemberProfile"
 import { MembersDirectory } from "./pages/MembersDirectory"
 import { Overview } from "./pages/Overview"
 import { Placeholder } from "./pages/Placeholder"
+import { Tasks } from "./pages/Tasks"
 import { Concepts } from "./pages/settings/Concepts"
 import { Dashboards as DashboardsSettings } from "./pages/settings/Dashboards"
 import { Labels } from "./pages/settings/Labels"
@@ -36,6 +37,7 @@ export function App() {
     <Layout>
       <Routes>
         <Route path="/" element={<Overview />} />
+        <Route path="/tasks" element={<Tasks />} />
         <Route path="/dashboards" element={<Dashboards />} />
         <Route path="/members" element={<MembersDirectory />} />
         <Route path="/members/:userId" element={<MemberProfile />} />

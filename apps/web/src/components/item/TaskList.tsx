@@ -16,7 +16,7 @@ import { AssigneePicker, type OrgMember } from "./AssigneePicker"
 import { DueDateControl } from "./DueDateControl"
 import { StatusSelect } from "./StatusSelect"
 
-function TaskComposer({ onCreate }: { onCreate: (title: string) => Promise<unknown> }) {
+export function TaskComposer({ onCreate }: { onCreate: (title: string) => Promise<unknown> }) {
   const [title, setTitle] = useState("")
   const create = useMutation({
     mutationFn: () => onCreate(title.trim()),
@@ -46,7 +46,7 @@ function TaskComposer({ onCreate }: { onCreate: (title: string) => Promise<unkno
   )
 }
 
-function TaskItem({
+export function TaskItem({
   task,
   statuses,
   members,

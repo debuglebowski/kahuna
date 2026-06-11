@@ -49,6 +49,7 @@ export type {
   Task,
   TaskStatus,
   TaskStatusCategory,
+  TaskSubjectRef,
   VersionStatus,
 } from "../../rpc/contract"
 
@@ -259,6 +260,8 @@ export const api = {
     includeArchived?: boolean
     limit?: number
   }) => call((c) => c.listTasks(filter ?? {})),
+  resolveTaskSubjects: (subjectIds: ReadonlyArray<string>) =>
+    call((c) => c.resolveTaskSubjects({ subjectIds })),
   createTask: (input: {
     subjectId: string | null
     title: string

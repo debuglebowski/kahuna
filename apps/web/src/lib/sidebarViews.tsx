@@ -1,6 +1,14 @@
 import { useLiveQuery } from "@tanstack/react-db"
 import { useQuery } from "@tanstack/react-query"
-import { Home, LayoutDashboard, Link as LinkIcon, Settings, Users, Workflow } from "lucide-react"
+import {
+  Home,
+  LayoutDashboard,
+  Link as LinkIcon,
+  ListTodo,
+  Settings,
+  Users,
+  Workflow,
+} from "lucide-react"
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react"
 import {
   api,
@@ -30,6 +38,7 @@ import { showValue } from "./utils"
 
 const GLOBAL_ITEMS: Record<string, { label: string; to: string; icon: ReactNode }> = {
   overview: { label: "Overview", to: "/", icon: <Home size={16} /> },
+  tasks: { label: "Tasks", to: "/tasks", icon: <ListTodo size={16} /> },
   dashboards: { label: "Dashboards", to: "/dashboards", icon: <LayoutDashboard size={16} /> },
   members: { label: "Members", to: "/members", icon: <Users size={16} /> },
   automations: { label: "Automations", to: "/automations", icon: <Workflow size={16} /> },
@@ -259,7 +268,7 @@ export const DEFAULT_VIEW: SidebarView = {
         icon: null,
         source: {
           kind: "static",
-          items: ["overview", "dashboards", "members", "automations", "settings"],
+          items: ["overview", "tasks", "dashboards", "members", "automations", "settings"],
         },
       },
       {
