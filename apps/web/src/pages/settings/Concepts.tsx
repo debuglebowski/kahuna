@@ -84,27 +84,30 @@ function msgOf(e: unknown): string {
 
 /** Render a field's config summary; `nameOf` resolves a relation target id → name. */
 function summarize(f: Field, nameOf: (id: string) => string): string {
-  switch (f.kind) {
-    case "enum":
-      return (f.config.options ?? []).join(", ")
-    case "relation":
-      return `→ ${f.config.target ? nameOf(f.config.target) : "?"} (${f.config.cardinality ?? "many"})`
-    case "computed":
-      return f.config.computedKind ?? ""
-    case "user":
-      return f.config.multiple ? "members (multiple)" : "member"
-    case "money":
-      return "amount + currency"
-    case "json":
-      return "json"
-    case "text":
-    case "number":
-      return [f.config.format && `format: ${f.config.format}`, f.config.multiple && "multiple"]
-        .filter(Boolean)
-        .join(" · ")
-    default:
-      return f.config.multiple ? "multiple" : ""
-  }
+  const base = (() => {
+    switch (f.kind) {
+      case "enum":
+        return (f.config.options ?? []).join(", ")
+      case "relation":
+        return `→ ${f.config.target ? nameOf(f.config.target) : "?"} (${f.config.cardinality ?? "many"})`
+      case "computed":
+        return f.config.computedKind ?? ""
+      case "user":
+        return f.config.multiple ? "members (multiple)" : "member"
+      case "money":
+        return "amount + currency"
+      case "json":
+        return "json"
+      case "text":
+      case "number":
+        return [f.config.format && `format: ${f.config.format}`, f.config.multiple && "multiple"]
+          .filter(Boolean)
+          .join(" · ")
+      default:
+        return f.config.multiple ? "multiple" : ""
+    }
+  })()
+  return [base, f.config.unique && "unique"].filter(Boolean).join(" · ")
 }
 
 /** A live field row wrapped for drag-reorder: grip handle + the shared row body. */

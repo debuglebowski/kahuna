@@ -291,6 +291,48 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
     const computed = yield* ComputedFields
     const labels = yield* LabelService
 
+    /** Enforce `config.unique` over a validated payload: no other item of the
+     *  concept may hold the same value — archived rows included, so only a
+     *  purge releases a value (a restore can never resurface a duplicate).
+     *  Text compares case-insensitively; other kinds by jsonb equality on the
+     *  validated, coerced value. `excludeItemId` skips the writer's own
+     *  lineage — versions of one item share values freely. Missing values
+     *  never conflict. Runs inside the write transaction; a concurrent
+     *  same-value race is accepted (no DB index backs jsonb keys). */
+    const checkUnique = (
+      defs: ReadonlyArray<Field>,
+      patch: InstanceState,
+      conceptId: string,
+      excludeItemId: string | null,
+    ) =>
+      Effect.gen(function* () {
+        const { orgId } = yield* OrgContext
+        for (const def of defs) {
+          if (!def.config.unique || !(def.id in patch)) continue
+          const value = patch[def.id]
+          if (isMissing(value)) continue
+          const notSelf = excludeItemId === null ? sql`` : sql` AND item_id <> ${excludeItemId}`
+          // Serialized + cast text→jsonb: `sql.json` mis-encodes bare scalars.
+          const taken =
+            def.kind === "text"
+              ? sql`lower(state->>${def.id}) = lower(${value as string})`
+              : sql`state->${def.id} = ${JSON.stringify(value)}::jsonb`
+          const clash = yield* sql<{ readonly id: string }>`
+            SELECT id FROM instances
+            WHERE org_id = ${orgId} AND concept_id = ${conceptId}
+              AND ${taken}${notSelf}
+            LIMIT 1`
+          if (clash[0]) {
+            return yield* Effect.fail(
+              new FieldValidationError({
+                message: `field "${def.name}" must be unique — this value is already in use`,
+                field: def.name,
+              }),
+            )
+          }
+        }
+      })
+
     /** Reject any label id that isn't a live vocabulary entry. */
     const assertLabelsExist = (ids: ReadonlyArray<string>) =>
       Effect.gen(function* () {
@@ -329,6 +371,7 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
           const validated = yield* validateFields(defs, rest)
           // An item cannot exist without its required values — drafts included.
           yield* checkRequired(defs, validated, "all")
+          yield* checkUnique(defs, validated, concept.id, null)
           // Per-item labels: use the caller's set if given, else snapshot the
           // concept's defaults (dropping any since soft-deleted). Static labels
           // are NOT written here — they're inherited at read time.
@@ -418,6 +461,7 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
           // Clear-protection only: a patch may not blank a required field, but
           // rows that predate the rule stay editable on their other fields.
           yield* checkRequired(defs, validated, "present")
+          yield* checkUnique(defs, validated, current.conceptId, current.itemId)
           yield* checkTransitions(defs, current.state, validated)
           let patch: InstanceState = validated
           if (rawLabels !== undefined) {
