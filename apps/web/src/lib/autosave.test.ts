@@ -10,7 +10,9 @@ const until = async (cond: () => boolean) => {
   expect(cond()).toBe(true)
 }
 
-const harness = (over: { save?: ReturnType<typeof vi.fn>; fetchVersion?: ReturnType<typeof vi.fn> } = {}) => {
+const harness = (
+  over: { save?: ReturnType<typeof vi.fn>; fetchVersion?: ReturnType<typeof vi.fn> } = {},
+) => {
   const statuses: Array<[AutosaveStatus, string | null]> = []
   // Default server: ack with version+1.
   const save = over.save ?? vi.fn((_v: string, version: number) => Promise.resolve(version + 1))

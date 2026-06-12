@@ -7,8 +7,8 @@ import {
   EMPTY_DOC,
   isRichTextValue,
   type RichTextDoc,
-  richTextPlain,
   type RichTextValue,
+  richTextPlain,
 } from "../../lib/richtext"
 import { RichTextToolbar } from "./RichTextToolbar"
 

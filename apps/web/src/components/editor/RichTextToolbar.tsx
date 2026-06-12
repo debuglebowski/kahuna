@@ -144,7 +144,12 @@ export function RichTextToolbar({ editor }: { editor: Editor }) {
         active={s.codeBlock}
         onClick={() => chain().toggleCodeBlock().run()}
       />
-      <Action label={s.link ? "Remove link" : "Link"} icon={Link2} active={s.link} onClick={setLink} />
+      <Action
+        label={s.link ? "Remove link" : "Link"}
+        icon={Link2}
+        active={s.link}
+        onClick={setLink}
+      />
       <Divider />
       <Action
         label="Undo"
