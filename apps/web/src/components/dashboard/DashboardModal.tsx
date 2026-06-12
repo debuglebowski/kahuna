@@ -244,6 +244,8 @@ export function DashboardModal({
                   <SelectItem value="shortcuts">Shortcuts</SelectItem>
                   <SelectItem value="note">Note</SelectItem>
                   <SelectItem value="kanban">Kanban</SelectItem>
+                  <SelectItem value="calendar">Calendar</SelectItem>
+                  <SelectItem value="gantt">Timeline / Gantt</SelectItem>
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">

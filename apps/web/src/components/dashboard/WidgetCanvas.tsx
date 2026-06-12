@@ -8,6 +8,8 @@ import type { ConceptInstanceData } from "@/lib/conceptData"
 import { widgetLayouts } from "@/lib/dashboards"
 import { ActivityWidget } from "./ActivityWidget"
 import { AttentionWidget } from "./AttentionWidget"
+import { CalendarWidget } from "./CalendarWidget"
+import { GanttWidget } from "./GanttWidget"
 import { GoalWidget } from "./GoalWidget"
 import { KanbanWidget } from "./KanbanWidget"
 import { ListWidget } from "./ListWidget"
@@ -89,8 +91,12 @@ export function WidgetCanvas({
     if (w.type === "shortcuts") return <ShortcutsWidget widget={w} />
     if (w.type === "note") return <NoteWidget widget={w} />
     if (w.type === "kanban") return <KanbanWidget widget={w} data={data} />
-    // calendar/gantt/files are in the contract but their renderers land in
-    // later phases; a tile from a newer body also falls through here.
+    // Calendar is multi-source — it resolves its concepts from `instData`
+    // itself instead of the single-concept `data` scope.
+    if (w.type === "calendar") return <CalendarWidget widget={w} instData={instData} />
+    if (w.type === "gantt") return <GanttWidget widget={w} data={data} />
+    // files is in the contract but its renderer lands in a later phase; a
+    // tile from a newer body also falls through here.
     return (
       <p className="text-sm text-muted-foreground">
         Unsupported widget ({(w as DashboardWidget).type}).

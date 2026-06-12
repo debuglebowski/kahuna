@@ -17,6 +17,7 @@ import { ConditionList, useFields } from "../ConditionList"
 import { RichTextEditor } from "../editor/RichTextEditor"
 import { MultiCombobox } from "../MultiCombobox"
 import { Field as FieldRow, IconButton, Input, ToggleChip } from "../ui"
+import { CalendarSourcesEditor } from "./CalendarSourcesEditor"
 import { ShortcutItemsEditor } from "./ShortcutItemsEditor"
 
 /** "InstanceCreated" → "Instance created" (the event-type filter options). */
@@ -34,6 +35,7 @@ const CONDITION_TYPES = new Set<DashboardWidget["type"]>([
   "attention",
   "goal",
   "kanban",
+  "gantt",
 ])
 
 const ALL_TASK_META = ["due", "priority", "labels", "assignee"] as const
@@ -86,6 +88,11 @@ export function WidgetEditor({
   const computedFields = (fields.data ?? []).filter((f) => f.kind === "computed")
   // Kanban columns: single-valued enums only (a card sits in exactly one column).
   const enumFields = (fields.data ?? []).filter((f) => f.kind === "enum" && !f.config.multiple)
+  const dateFields = (fields.data ?? []).filter((f) => f.kind === "date")
+  // Gantt swimlanes: enum or user fields (a multi value lanes by its first).
+  const laneFields = (fields.data ?? []).filter((f) => f.kind === "enum" || f.kind === "user")
+  // Gantt progress: plain 0–100 numbers (money amounts aren't percentages).
+  const plainNumberFields = (fields.data ?? []).filter((f) => f.kind === "number")
   const kanbanOptions =
     widget.type === "kanban"
       ? ((fields.data ?? []).find((f) => f.id === widget.groupBy)?.config.options ?? [])
@@ -1067,6 +1074,201 @@ export function WidgetEditor({
               </ToggleChip>
             </div>
           </FieldRow>
+        </>
+      )}
+
+      {widget.type === "calendar" && (
+        <>
+          <div className="grid grid-cols-2 gap-3">
+            <FieldRow label="Mode">
+              <Select
+                value={widget.mode}
+                onValueChange={(v) => patch({ mode: v as "month" | "week" | "agenda" })}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="month">Month</SelectItem>
+                  <SelectItem value="week">Week</SelectItem>
+                  <SelectItem value="agenda">Agenda</SelectItem>
+                </SelectContent>
+              </Select>
+            </FieldRow>
+            {widget.mode === "month" && (
+              <FieldRow label="Density">
+                <Select
+                  value={widget.density ?? "full"}
+                  onValueChange={(v) => patch({ density: v as "full" | "dots" })}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="full">Event cells</SelectItem>
+                    <SelectItem value="dots">Dots + count</SelectItem>
+                  </SelectContent>
+                </Select>
+              </FieldRow>
+            )}
+          </div>
+          <FieldRow label="Overlay">
+            <ToggleChip
+              pressed={widget.includeTasks ?? false}
+              onPressedChange={(p) => patch({ includeTasks: p })}
+            >
+              Org tasks (due date)
+            </ToggleChip>
+          </FieldRow>
+          <FieldRow label="Sources">
+            <CalendarSourcesEditor
+              sources={widget.sources}
+              concepts={concepts}
+              labels={labels}
+              onChange={(sources) => patch({ sources })}
+            />
+          </FieldRow>
+        </>
+      )}
+
+      {widget.type === "gantt" && (
+        <>
+          <div className="grid grid-cols-2 gap-3">
+            <FieldRow label="Start field">
+              <Select
+                value={widget.startField || "__none"}
+                onValueChange={(v) => patch({ startField: v === "__none" ? "" : v })}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Date field…" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none">—</SelectItem>
+                  {dateFields.map((f) => (
+                    <SelectItem key={f.id} value={f.id}>
+                      {f.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </FieldRow>
+            <FieldRow label="End field (optional)">
+              <Select
+                value={widget.endField || "__none"}
+                onValueChange={(v) => patch({ endField: v === "__none" ? null : v })}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Milestones" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none">None (milestones)</SelectItem>
+                  {dateFields.map((f) => (
+                    <SelectItem key={f.id} value={f.id}>
+                      {f.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </FieldRow>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <FieldRow label="Scale">
+              <Select
+                value={widget.scale}
+                onValueChange={(v) => patch({ scale: v as "day" | "week" | "month" })}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="day">Day</SelectItem>
+                  <SelectItem value="week">Week</SelectItem>
+                  <SelectItem value="month">Month</SelectItem>
+                </SelectContent>
+              </Select>
+            </FieldRow>
+            <FieldRow label="Window">
+              <Select
+                value={widget.window ?? "fit"}
+                onValueChange={(v) => patch({ window: v as "fit" | "90d" | "quarter" })}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="fit">Fit the data</SelectItem>
+                  <SelectItem value="90d">Rolling 90 days</SelectItem>
+                  <SelectItem value="quarter">This quarter</SelectItem>
+                </SelectContent>
+              </Select>
+            </FieldRow>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <FieldRow label="Group by (optional)">
+              <Select
+                value={widget.groupBy || "__none"}
+                onValueChange={(v) => patch({ groupBy: v === "__none" ? null : v })}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Flat" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none">Flat</SelectItem>
+                  {laneFields.map((f) => (
+                    <SelectItem key={f.id} value={f.id}>
+                      {f.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </FieldRow>
+            <FieldRow label="Bar label">
+              <Select
+                value={widget.barLabelField || "__name"}
+                onValueChange={(v) => patch({ barLabelField: v === "__name" ? null : v })}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__name">Name</SelectItem>
+                  {scalarFields.map((f) => (
+                    <SelectItem key={f.id} value={f.id}>
+                      {f.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </FieldRow>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <FieldRow label="Progress (optional)">
+              <Select
+                value={widget.progressField || "__none"}
+                onValueChange={(v) => patch({ progressField: v === "__none" ? null : v })}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Off" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none">Off</SelectItem>
+                  {plainNumberFields.map((f) => (
+                    <SelectItem key={f.id} value={f.id}>
+                      {f.name} (0–100)
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </FieldRow>
+            <FieldRow label="Show">
+              <ToggleChip
+                pressed={widget.showTodayLine ?? true}
+                onPressedChange={(p) => patch({ showTodayLine: p })}
+              >
+                Today line
+              </ToggleChip>
+            </FieldRow>
+          </div>
         </>
       )}
 

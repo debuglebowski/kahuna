@@ -27,6 +27,11 @@ export const referencedConceptIds = (body: DashboardBody): string[] => {
   const ids = new Set<string>()
   for (const w of body.widgets) {
     if (w.type === "trend" || w.type === "activity" || w.type === "tasks") continue
+    // Calendar scopes per-source, not via a single conceptId.
+    if (w.type === "calendar") {
+      for (const s of w.sources) if (s.conceptId) ids.add(s.conceptId)
+      continue
+    }
     if (!("conceptId" in w)) continue
     if (w.conceptId) ids.add(w.conceptId)
   }
