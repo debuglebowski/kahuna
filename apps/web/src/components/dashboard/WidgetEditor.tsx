@@ -10,7 +10,7 @@ import {
 import { api, type Concept, type DashboardWidget } from "@/lib/api"
 import { ConditionList, useFields } from "../ConditionList"
 import { MultiCombobox } from "../MultiCombobox"
-import { Field as FieldRow, IconButton, Input } from "../ui"
+import { Field as FieldRow, IconButton, Input, ToggleChip } from "../ui"
 
 /**
  * Configure one dashboard widget — the side panel of the dashboard edit modal's
@@ -59,24 +59,27 @@ export function WidgetEditor({
         />
       </FieldRow>
 
-      <FieldRow label="Concept">
-        <Select
-          value={conceptId || "__none"}
-          onValueChange={(v) => patch({ conceptId: v === "__none" ? null : v })}
-        >
-          <SelectTrigger className="w-full">
-            <SelectValue placeholder="Select a concept…" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="__none">Select a concept…</SelectItem>
-            {concepts.map((c) => (
-              <SelectItem key={c.id} value={c.id}>
-                {c.pluralName || c.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </FieldRow>
+      {/* Org-global widgets (tasks/members/welcome) have no concept to pick. */}
+      {"conceptId" in widget && (
+        <FieldRow label="Concept">
+          <Select
+            value={conceptId || "__none"}
+            onValueChange={(v) => patch({ conceptId: v === "__none" ? null : v })}
+          >
+            <SelectTrigger className="w-full">
+              <SelectValue placeholder="Select a concept…" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__none">Select a concept…</SelectItem>
+              {concepts.map((c) => (
+                <SelectItem key={c.id} value={c.id}>
+                  {c.pluralName || c.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </FieldRow>
+      )}
 
       {widget.type === "metric" && (
         <div className="grid grid-cols-2 gap-3">
@@ -276,6 +279,65 @@ export function WidgetEditor({
             className="w-28"
           />
         </FieldRow>
+      )}
+
+      {widget.type === "tasks" && (
+        <>
+          <FieldRow label="Default assignee">
+            <Select
+              value={widget.assignee ?? "all"}
+              onValueChange={(v) => patch({ assignee: v as "all" | "me" | "none" })}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Everyone</SelectItem>
+                <SelectItem value="me">Me</SelectItem>
+                <SelectItem value="none">Unassigned</SelectItem>
+              </SelectContent>
+            </Select>
+          </FieldRow>
+          <FieldRow label="Show">
+            <div className="flex flex-wrap gap-1.5">
+              <ToggleChip
+                pressed={widget.showToolbar ?? true}
+                onPressedChange={(p) => patch({ showToolbar: p })}
+              >
+                Toolbar
+              </ToggleChip>
+              <ToggleChip
+                pressed={widget.showComposer ?? true}
+                onPressedChange={(p) => patch({ showComposer: p })}
+              >
+                Composer
+              </ToggleChip>
+              <ToggleChip
+                pressed={widget.showDone ?? false}
+                onPressedChange={(p) => patch({ showDone: p })}
+              >
+                Completed
+              </ToggleChip>
+            </div>
+          </FieldRow>
+        </>
+      )}
+
+      {widget.type === "members" && (
+        <FieldRow label="Show">
+          <ToggleChip
+            pressed={widget.showToolbar ?? true}
+            onPressedChange={(p) => patch({ showToolbar: p })}
+          >
+            Toolbar
+          </ToggleChip>
+        </FieldRow>
+      )}
+
+      {widget.type === "welcome" && (
+        <p className="text-xs text-muted-foreground">
+          No settings — the greeting rotates on every visit.
+        </p>
       )}
 
       {conceptId && "conditions" in widget && (

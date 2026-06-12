@@ -566,6 +566,24 @@ export interface ActivityWidget extends WidgetBase {
   readonly conceptId?: string | null
   readonly limit?: number | null
 }
+/** Tasks — the org-global task list (schedule buckets), not concept-scoped. */
+export interface TasksWidget extends WidgetBase {
+  readonly type: "tasks"
+  /** Default assignee scope; the in-tile toolbar can change it at runtime. */
+  readonly assignee?: "all" | "me" | "none"
+  readonly showToolbar?: boolean
+  readonly showComposer?: boolean
+  readonly showDone?: boolean
+}
+/** Members — the org directory (incl. admin management), not concept-scoped. */
+export interface MembersWidget extends WidgetBase {
+  readonly type: "members"
+  readonly showToolbar?: boolean
+}
+/** Welcome — a big-title greeting for the viewer. No config beyond the base. */
+export interface WelcomeWidget extends WidgetBase {
+  readonly type: "welcome"
+}
 export type DashboardWidget =
   | MetricWidget
   | ListWidget
@@ -573,6 +591,9 @@ export type DashboardWidget =
   | AttentionWidget
   | TrendWidget
   | ActivityWidget
+  | TasksWidget
+  | MembersWidget
+  | WelcomeWidget
 export interface DashboardBody {
   readonly widgets: ReadonlyArray<DashboardWidget>
   /** Grid columns (default 12) and row height in px. Forward-compat. */

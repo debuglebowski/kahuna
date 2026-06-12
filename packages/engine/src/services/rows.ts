@@ -123,7 +123,17 @@ const toIdArray = (raw: unknown): ReadonlyArray<string> =>
 
 /** Widget types this server build knows about. Unknown types are dropped on read
  *  so a newer client's widget can't corrupt an older server's view of the body. */
-const KNOWN_WIDGETS = new Set(["metric", "list", "breakdown", "attention", "trend", "activity"])
+const KNOWN_WIDGETS = new Set([
+  "metric",
+  "list",
+  "breakdown",
+  "attention",
+  "trend",
+  "activity",
+  "tasks",
+  "members",
+  "welcome",
+])
 
 /** Coerce a jsonb body into a well-formed dashboard body (defensive against
  *  garbage / drift): keep only widgets with a known `type` and a `layout`. */

@@ -9,7 +9,10 @@ import { widgetLayouts } from "@/lib/dashboards"
 import { ActivityWidget } from "./ActivityWidget"
 import { AttentionWidget } from "./AttentionWidget"
 import { ListWidget } from "./ListWidget"
+import { MembersWidget } from "./MembersWidget"
 import { MetricWidget } from "./MetricWidget"
+import { TasksWidget } from "./TasksWidget"
+import { WelcomeWidget } from "./WelcomeWidget"
 
 // Lazy so recharts' bundle is only fetched when a chart widget is on screen.
 const BreakdownWidget = lazy(() =>
@@ -46,7 +49,7 @@ export function WidgetCanvas({
   onRemove?: (id: string) => void
 }) {
   const render = (w: DashboardWidget) => {
-    const cid = w.conceptId ?? undefined
+    const cid = "conceptId" in w ? (w.conceptId ?? undefined) : undefined
     const data = cid ? instData[cid] : undefined
     const concept = cid ? cIndex.get(cid) : undefined
     // Dangling ref: a concept was set but no longer exists (archived/deleted).
@@ -73,6 +76,9 @@ export function WidgetCanvas({
         </Suspense>
       )
     if (w.type === "activity") return <ActivityWidget widget={w} />
+    if (w.type === "tasks") return <TasksWidget widget={w} />
+    if (w.type === "members") return <MembersWidget widget={w} />
+    if (w.type === "welcome") return <WelcomeWidget />
     // All known types handled; a tile from a newer body falls through here.
     return (
       <p className="text-sm text-muted-foreground">
@@ -95,7 +101,9 @@ export function WidgetCanvas({
         >
           <div className="mb-1 flex items-center justify-between gap-2">
             <span className="truncate text-xs font-medium text-muted-foreground">
-              {w.title || (w.conceptId ? cIndex.get(w.conceptId)?.name : "") || w.type}
+              {w.title ||
+                ("conceptId" in w && w.conceptId ? cIndex.get(w.conceptId)?.name : "") ||
+                w.type}
             </span>
             {!readOnly && (
               <div className="flex shrink-0 items-center gap-0.5">

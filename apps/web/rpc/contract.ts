@@ -474,6 +474,25 @@ const ActivityWidget = Schema.Struct({
   type: Schema.Literal("activity"),
   limit: Schema.optional(Schema.NullOr(Schema.Number)),
 })
+// The remaining widgets render org-global surfaces — no `conceptId` on purpose.
+const TasksWidget = Schema.Struct({
+  ...widgetBase,
+  type: Schema.Literal("tasks"),
+  /** Default assignee scope; the in-tile toolbar can change it at runtime. */
+  assignee: Schema.optional(Schema.Literal("all", "me", "none")),
+  showToolbar: Schema.optional(Schema.Boolean),
+  showComposer: Schema.optional(Schema.Boolean),
+  showDone: Schema.optional(Schema.Boolean),
+})
+const MembersWidget = Schema.Struct({
+  ...widgetBase,
+  type: Schema.Literal("members"),
+  showToolbar: Schema.optional(Schema.Boolean),
+})
+const WelcomeWidget = Schema.Struct({
+  ...widgetBase,
+  type: Schema.Literal("welcome"),
+})
 
 export const DashboardWidget = Schema.Union(
   MetricWidget,
@@ -482,6 +501,9 @@ export const DashboardWidget = Schema.Union(
   AttentionWidget,
   TrendWidget,
   ActivityWidget,
+  TasksWidget,
+  MembersWidget,
+  WelcomeWidget,
 )
 export type DashboardWidget = typeof DashboardWidget.Type
 

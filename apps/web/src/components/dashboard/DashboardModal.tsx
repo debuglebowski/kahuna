@@ -243,6 +243,9 @@ export function DashboardModal({
                   <SelectItem value="attention">Attention</SelectItem>
                   <SelectItem value="trend">Trend</SelectItem>
                   <SelectItem value="activity">Activity</SelectItem>
+                  <SelectItem value="tasks">Tasks</SelectItem>
+                  <SelectItem value="members">Members</SelectItem>
+                  <SelectItem value="welcome">Welcome</SelectItem>
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">

@@ -50,6 +50,34 @@ describe("dashboards (DashboardService)", () => {
     }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
 
+  it.effect("org-global widget types (tasks/members/welcome) round-trip intact", () =>
+    Effect.gen(function* () {
+      const dash = yield* DashboardService
+      const home = (yield* dash.list())[0]!
+      const widgets: DashboardWidget[] = [
+        {
+          type: "tasks",
+          id: "t1",
+          title: null,
+          layout: { x: 0, y: 0, w: 6, h: 5 },
+          assignee: "me",
+          showComposer: false,
+        },
+        {
+          type: "members",
+          id: "m1",
+          title: null,
+          layout: { x: 6, y: 0, w: 4, h: 5 },
+          showToolbar: false,
+        },
+        { type: "welcome", id: "g1", title: null, layout: { x: 0, y: 5, w: 6, h: 2 } },
+      ]
+      const updated = yield* dash.update({ id: home.id, body: { widgets } })
+      // KNOWN_WIDGETS must recognise the new types or toDashboardBody drops them.
+      expect(updated.body.widgets).toEqual(widgets)
+    }).pipe(Effect.provide(testLayer(newOrgId()))),
+  )
+
   it.effect("owner scoping: a member never sees another member's personal dashboard", () =>
     Effect.gen(function* () {
       const org = newOrgId()

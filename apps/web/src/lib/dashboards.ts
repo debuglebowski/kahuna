@@ -26,6 +26,7 @@ export const referencedConceptIds = (body: DashboardBody): string[] => {
   const ids = new Set<string>()
   for (const w of body.widgets) {
     if (w.type === "trend" || w.type === "activity") continue
+    if (!("conceptId" in w)) continue
     if (w.conceptId) ids.add(w.conceptId)
   }
   return [...ids]
@@ -97,6 +98,9 @@ const DEFAULT_SIZE: Record<DashboardWidget["type"], { w: number; h: number }> = 
   attention: { w: 4, h: 3 },
   trend: { w: 6, h: 3 },
   activity: { w: 4, h: 4 },
+  tasks: { w: 6, h: 5 },
+  members: { w: 4, h: 5 },
+  welcome: { w: 6, h: 2 },
 }
 
 /** A blank widget of the given type, appended at the bottom of the grid with no
@@ -107,20 +111,29 @@ export const newWidget = (body: DashboardBody, type: DashboardWidget["type"]): D
     id: crypto.randomUUID(),
     title: null,
     layout: { ...nextSlot(body, size.w, size.h), ...size },
-    conceptId: null,
   } as const
+  // Only the concept-scoped types carry `conceptId` — spreading it from `base`
+  // would silently persist it onto the org-global widgets (spreads bypass
+  // excess-property checks).
+  const scoped = { ...base, conceptId: null } as const
   switch (type) {
     case "metric":
-      return { ...base, type: "metric", conditions: [], agg: "count" }
+      return { ...scoped, type: "metric", conditions: [], agg: "count" }
     case "list":
-      return { ...base, type: "list", conditions: [], orderBy: null, limit: 10 }
+      return { ...scoped, type: "list", conditions: [], orderBy: null, limit: 10 }
     case "breakdown":
-      return { ...base, type: "breakdown", conditions: [], groupBy: "", chart: "bar" }
+      return { ...scoped, type: "breakdown", conditions: [], groupBy: "", chart: "bar" }
     case "attention":
-      return { ...base, type: "attention" }
+      return { ...scoped, type: "attention" }
     case "trend":
-      return { ...base, type: "trend", bucket: "day", since: "30d" }
+      return { ...scoped, type: "trend", bucket: "day", since: "30d" }
     case "activity":
-      return { ...base, type: "activity" }
+      return { ...scoped, type: "activity" }
+    case "tasks":
+      return { ...base, type: "tasks" }
+    case "members":
+      return { ...base, type: "members" }
+    case "welcome":
+      return { ...base, type: "welcome" }
   }
 }
