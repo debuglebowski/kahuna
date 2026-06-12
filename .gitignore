@@ -11,3 +11,4 @@ snapshots/
 coverage/
 .vite/
 screenshots/
+*.tsbuildinfo
