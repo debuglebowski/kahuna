@@ -21,11 +21,12 @@ export interface GridItem {
 }
 
 /** Concept ids whose INSTANCES a dashboard needs loaded. Excludes trend/activity
- *  — those read the event log (via `listEvents`), not the instance collections. */
+ *  (those read the event log via `listEvents`) and tasks (its `conceptId` is a
+ *  task filter resolved through the subject refs, not an instance scope). */
 export const referencedConceptIds = (body: DashboardBody): string[] => {
   const ids = new Set<string>()
   for (const w of body.widgets) {
-    if (w.type === "trend" || w.type === "activity") continue
+    if (w.type === "trend" || w.type === "activity" || w.type === "tasks") continue
     if (!("conceptId" in w)) continue
     if (w.conceptId) ids.add(w.conceptId)
   }
@@ -167,6 +168,29 @@ export const formatWidgetNumber = (n: number): string =>
   Number.isInteger(n)
     ? n.toLocaleString()
     : n.toLocaleString(undefined, { maximumFractionDigits: 2 })
+
+export type MetricFormat = "plain" | "compact" | "currency" | "percent"
+
+/** Metric hero number in the widget's configured format. `percent` treats the
+ *  value as a ratio (0.42 → "42%"); `currency` falls back to USD when the
+ *  field's values carry no code. */
+export const formatMetric = (n: number, format: MetricFormat, currency?: string): string => {
+  switch (format) {
+    case "compact":
+      return n.toLocaleString(undefined, { notation: "compact", maximumFractionDigits: 1 })
+    case "currency":
+      try {
+        return n.toLocaleString(undefined, { style: "currency", currency: currency || "USD" })
+      } catch {
+        // unknown currency code stored on the values — degrade to a suffix
+        return `${formatWidgetNumber(n)} ${currency}`
+      }
+    case "percent":
+      return n.toLocaleString(undefined, { style: "percent", maximumFractionDigits: 1 })
+    default:
+      return formatWidgetNumber(n)
+  }
+}
 
 export type SizeVariant = "sm" | "md" | "lg"
 

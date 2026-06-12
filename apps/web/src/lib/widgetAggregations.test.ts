@@ -6,11 +6,15 @@ import {
   BANDS_KEY,
   bandOf,
   bandRollup,
+  collapseOther,
   countInstances,
+  createdOnOrBefore,
   groupBy,
   kanbanBuckets,
   matchInstance,
   metricValue,
+  OTHER_KEY,
+  sortBuckets,
   staleInstances,
   sumField,
   timeBucket,
@@ -118,6 +122,54 @@ describe("groupBy", () => {
       { key: "urgent", count: 2 },
       { key: "vip", count: 1 },
     ])
+  })
+})
+
+describe("sortBuckets / collapseOther (breakdown)", () => {
+  const buckets = [
+    { key: "open", count: 5 },
+    { key: "won", count: 3 },
+    { key: "lost", count: 2 },
+  ]
+
+  it("count keeps the input order; label sorts by display name", () => {
+    expect(sortBuckets(buckets, "count").map((b) => b.key)).toEqual(["open", "won", "lost"])
+    expect(sortBuckets(buckets, "label").map((b) => b.key)).toEqual(["lost", "open", "won"])
+  })
+
+  it("label sorts by the resolved name, not the raw key", () => {
+    const names: Record<string, string> = { open: "Zeta", won: "Alpha", lost: "Mid" }
+    const out = sortBuckets(buckets, "label", { labelOf: (k) => names[k] ?? k })
+    expect(out.map((b) => b.key)).toEqual(["won", "lost", "open"])
+  })
+
+  it("field follows the configured order; unknown keys trail in label order", () => {
+    const data = [...buckets, { key: "—", count: 1 }]
+    const out = sortBuckets(data, "field", { order: ["won", "lost", "open"] })
+    expect(out.map((b) => b.key)).toEqual(["won", "lost", "open", "—"])
+  })
+
+  it("collapseOther folds the tail into one Other bucket; no-op when within max", () => {
+    expect(collapseOther(buckets, 1)).toEqual([
+      { key: "open", count: 5 },
+      { key: OTHER_KEY, count: 5 },
+    ])
+    expect(collapseOther(buckets, 2)).toEqual([
+      { key: "open", count: 5 },
+      { key: "won", count: 3 },
+      { key: OTHER_KEY, count: 2 },
+    ])
+    expect(collapseOther(buckets, 3)).toEqual(buckets)
+    expect(collapseOther(buckets, null)).toEqual(buckets)
+  })
+})
+
+describe("createdOnOrBefore (metric delta baseline)", () => {
+  it("keeps only instances that existed at the cutoff", () => {
+    const old = { ...inst({}), createdAt: new Date("2026-01-01") }
+    const recent = { ...inst({}), createdAt: new Date("2026-06-01") }
+    const out = createdOnOrBefore([old, recent], Date.parse("2026-03-01"))
+    expect(out.map((i) => i.id)).toEqual([old.id])
   })
 })
 

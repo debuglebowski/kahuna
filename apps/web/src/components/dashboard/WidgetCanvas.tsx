@@ -53,7 +53,9 @@ export function WidgetCanvas({
   onRemove?: (id: string) => void
 }) {
   const render = (w: DashboardWidget) => {
-    const cid = "conceptId" in w ? (w.conceptId ?? undefined) : undefined
+    // Tasks' conceptId is a task FILTER (resolved via subject refs), not an
+    // instance-data scope — it must not gate on the instance collections.
+    const cid = "conceptId" in w && w.type !== "tasks" ? (w.conceptId ?? undefined) : undefined
     const data = cid ? instData[cid] : undefined
     const concept = cid ? cIndex.get(cid) : undefined
     // Dangling ref: a concept was set but no longer exists (archived/deleted).
@@ -82,7 +84,7 @@ export function WidgetCanvas({
     if (w.type === "activity") return <ActivityWidget widget={w} />
     if (w.type === "tasks") return <TasksWidget widget={w} />
     if (w.type === "members") return <MembersWidget widget={w} />
-    if (w.type === "welcome") return <WelcomeWidget />
+    if (w.type === "welcome") return <WelcomeWidget widget={w} />
     if (w.type === "goal") return <GoalWidget widget={w} data={data} concept={concept} />
     if (w.type === "shortcuts") return <ShortcutsWidget widget={w} />
     if (w.type === "note") return <NoteWidget widget={w} />
@@ -98,10 +100,13 @@ export function WidgetCanvas({
 
   // A note can be title-less by design — don't fall back to the type name, and
   // in read-only view drop the header row entirely (edit mode keeps it for the
-  // hover actions).
+  // hover actions). Tasks' conceptId is a filter, not the tile's subject —
+  // its header stays the type name.
   const headerLabel = (w: DashboardWidget): string =>
     w.title ||
-    ("conceptId" in w && w.conceptId ? (cIndex.get(w.conceptId)?.name ?? "") : "") ||
+    ("conceptId" in w && w.conceptId && w.type !== "tasks"
+      ? (cIndex.get(w.conceptId)?.name ?? "")
+      : "") ||
     (w.type === "note" ? "" : w.type)
 
   return (

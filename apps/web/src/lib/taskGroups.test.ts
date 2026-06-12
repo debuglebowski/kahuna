@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest"
-import type { Task } from "../../rpc/contract"
-import { daysOverdue, groupTasks, isSnoozed, type TaskPredicates } from "./taskGroups"
+import type { Task, TaskPriority, TaskStatus } from "../../rpc/contract"
+import {
+  daysOverdue,
+  groupTasks,
+  groupTasksBy,
+  isSnoozed,
+  matchesDue,
+  type TaskPredicates,
+} from "./taskGroups"
 
 // Fixed "now": 2026-06-11 noon UTC — today=06-11, tomorrow=06-12.
 const NOW = new Date("2026-06-11T12:00:00.000Z")
@@ -122,5 +129,83 @@ describe("daysOverdue", () => {
     expect(daysOverdue("2026-06-01T00:00:00.000Z", NOW)).toBe(10)
     expect(daysOverdue("2026-06-11T00:00:00.000Z", NOW)).toBe(0)
     expect(daysOverdue("2026-06-12T00:00:00.000Z", NOW)).toBe(-1)
+  })
+})
+
+describe("matchesDue", () => {
+  it("overdue = strictly before today; week = today through +7d; undated never matches", () => {
+    const past = task({ dueAt: "2026-06-01T00:00:00.000Z" })
+    const today = task({ dueAt: "2026-06-11T00:00:00.000Z" })
+    const in7 = task({ dueAt: "2026-06-18T00:00:00.000Z" })
+    const in9 = task({ dueAt: "2026-06-20T00:00:00.000Z" })
+    const undated = task({ dueAt: null })
+    expect(matchesDue(past, "overdue", NOW)).toBe(true)
+    expect(matchesDue(today, "overdue", NOW)).toBe(false)
+    expect(matchesDue(today, "week", NOW)).toBe(true)
+    expect(matchesDue(in7, "week", NOW)).toBe(true)
+    expect(matchesDue(in9, "week", NOW)).toBe(false)
+    expect(matchesDue(past, "week", NOW)).toBe(false)
+    expect(matchesDue(undated, "week", NOW)).toBe(false)
+    expect(matchesDue(undated, "any", NOW)).toBe(true)
+  })
+})
+
+describe("groupTasksBy", () => {
+  const status = (id: string, name: string, position: number): TaskStatus => ({
+    id,
+    name,
+    category: "todo",
+    color: null,
+    position,
+    isDefault: false,
+    archivedAt: null,
+  })
+  const priority = (id: string, name: string, position: number): TaskPriority => ({
+    id,
+    name,
+    color: null,
+    position,
+    archivedAt: null,
+  })
+  const statuses = [status("s1", "Todo", 0), status("s2", "Doing", 1)]
+  const priorities = [priority("p1", "High", 0)]
+
+  it("status: one group per status in position order, unset/unknown trail; empty dropped", () => {
+    const a = task({ statusId: "s2" })
+    const b = task({ statusId: "s1" })
+    const c = task({ statusId: null })
+    const groups = groupTasksBy([a, b, c], "status", allOpen, NOW, statuses, priorities)
+    expect(groups.map((g) => g.key)).toEqual(["s:s1", "s:s2", "s:none"])
+    expect(groups[0]?.title).toBe("Todo")
+    expect(groups[2]?.tasks.map((t) => t.id)).toEqual([c.id])
+  })
+
+  it("priority: groups by priorityId with a No-priority tail", () => {
+    const a = task({ priorityId: "p1" })
+    const b = task({ priorityId: null })
+    const groups = groupTasksBy([a, b], "priority", allOpen, NOW, statuses, priorities)
+    expect(groups.map((g) => g.key)).toEqual(["p:p1", "p:none"])
+  })
+
+  it("none: a single flat 'all' group sorted by due asc; empty input → no groups", () => {
+    const late = task({ dueAt: "2026-08-01T00:00:00.000Z" })
+    const soon = task({ dueAt: "2026-06-12T00:00:00.000Z" })
+    const undated = task({ dueAt: null })
+    const groups = groupTasksBy([late, undated, soon], "none", allOpen, NOW, statuses, priorities)
+    expect(groups.map((g) => g.key)).toEqual(["all"])
+    expect(groups[0]?.tasks.map((t) => t.id)).toEqual([soon.id, late.id, undated.id])
+    expect(groupTasksBy([], "none", allOpen, NOW, statuses, priorities)).toEqual([])
+  })
+
+  it("schedule delegates to the Zero-style buckets", () => {
+    const groups = groupTasksBy(
+      [task({ dueAt: "2026-06-11T00:00:00.000Z" })],
+      "schedule",
+      allOpen,
+      NOW,
+      statuses,
+      priorities,
+    )
+    expect(groups.map((g) => g.key)).toEqual(["today"])
   })
 })

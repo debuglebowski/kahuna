@@ -61,6 +61,50 @@ export interface GroupBucket {
   readonly count: number
 }
 
+/** Synthetic bucket key for the collapsed "Other" tail (see `collapseOther`). */
+export const OTHER_KEY = "__other"
+
+/** Re-order breakdown buckets: by count (input order), by display label, or by
+ *  a field's configured option order (unknown keys keep label order, at the
+ *  end). `labelOf` maps a bucket key to its display name. */
+export const sortBuckets = (
+  buckets: ReadonlyArray<GroupBucket>,
+  sort: "count" | "label" | "field",
+  opts?: { labelOf?: (key: string) => string; order?: ReadonlyArray<string> },
+): GroupBucket[] => {
+  if (sort === "count") return [...buckets]
+  const labelOf = opts?.labelOf ?? ((k: string) => k)
+  const byLabel = (a: GroupBucket, b: GroupBucket) => labelOf(a.key).localeCompare(labelOf(b.key))
+  if (sort === "label") return [...buckets].sort(byLabel)
+  const pos = new Map((opts?.order ?? []).map((k, i) => [k, i] as const))
+  return [...buckets].sort((a, b) => {
+    const pa = pos.get(a.key)
+    const pb = pos.get(b.key)
+    if (pa != null && pb != null) return pa - pb
+    if (pa != null) return -1
+    if (pb != null) return 1
+    return byLabel(a, b)
+  })
+}
+
+/** Collapse the tail past `max` buckets into one "Other" bucket (OTHER_KEY).
+ *  Non-positive/absent max, or nothing to collapse, returns the input as-is. */
+export const collapseOther = (
+  buckets: ReadonlyArray<GroupBucket>,
+  max: number | null | undefined,
+): GroupBucket[] => {
+  if (!max || max <= 0 || buckets.length <= max) return [...buckets]
+  const head = buckets.slice(0, max)
+  const rest = buckets.slice(max).reduce((s, b) => s + b.count, 0)
+  return [...head, { key: OTHER_KEY, count: rest }]
+}
+
+/** The subset of instances that already existed at `cutoffMs` — the baseline
+ *  population for a metric's "vs N days ago" delta. Approximate by design:
+ *  archived/deleted drift is invisible to a created-at cutoff. */
+export const createdOnOrBefore = (instances: readonly Instance[], cutoffMs: number): Instance[] =>
+  instances.filter((i) => new Date(i.createdAt).getTime() <= cutoffMs)
+
 /** Group matching instances by a field id, or by label (`__labels` fans one
  *  bucket per label id; multi-value fields fan out too). Buckets sorted by count
  *  desc. Missing scalar values fall into a "—" bucket; no-label instances are

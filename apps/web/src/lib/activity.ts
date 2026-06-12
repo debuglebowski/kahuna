@@ -43,6 +43,10 @@ export const eventLabel = (eventType: string): string =>
     .replace(/[._]/g, " ")
     .toLowerCase()
 
+/** Every event type the feed knows a phrase for — the Activity widget's
+ *  event-type filter options. */
+export const KNOWN_EVENT_TYPES: ReadonlyArray<string> = Object.keys(LABELS)
+
 // ── payload-derived metadata ────────────────────────────────────────────────
 
 /** Id → display-name lookups the feed wires in from whatever reference data it

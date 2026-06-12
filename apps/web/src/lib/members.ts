@@ -15,6 +15,9 @@ export interface OrgMember {
   readonly id: string
   readonly userId: string
   readonly role: string
+  /** Membership creation time ("joined") — present on BetterAuth rows, but
+   *  optional here so older payloads degrade gracefully. */
+  readonly createdAt?: string | Date
   readonly user?: {
     readonly id?: string
     readonly name?: string | null

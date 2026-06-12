@@ -370,6 +370,17 @@ const widgetBase = {
  *  render in per-concept context (implicit conceptId) later. */
 const ConceptScoped = { conceptId: Schema.optional(Schema.NullOr(Schema.String)) }
 
+/** One curated shortcut. `ref` is an instance id, dashboard id, or URL per `kind`;
+ *  `label` is a display snapshot (dashboards re-resolve to the live name).
+ *  Used by the Shortcuts widget and the Welcome widget's quick links. */
+const ShortcutItem = Schema.Struct({
+  id: Schema.String,
+  kind: Schema.Literal("instance", "dashboard", "url"),
+  ref: Schema.String,
+  label: Schema.optional(Schema.NullOr(Schema.String)),
+  icon: Schema.optional(Schema.NullOr(Schema.String)),
+})
+
 const MetricWidget = Schema.Struct({
   ...widgetBase,
   ...ConceptScoped,
@@ -378,6 +389,12 @@ const MetricWidget = Schema.Struct({
   ...ConditionMatch,
   agg: Schema.Literal("count", "sum", "avg"),
   field: Schema.optional(Schema.NullOr(Schema.String)),
+  /** `auto` renders the wide stat bar on short, wide tiles. */
+  variant: Schema.optional(Schema.Literal("auto", "tile", "bar")),
+  format: Schema.optional(Schema.Literal("plain", "compact", "currency", "percent")),
+  /** Secondary stat: change vs the value N days ago (instance-createdAt based). */
+  delta: Schema.optional(Schema.Literal("off", "7d", "30d")),
+  includeArchived: Schema.optional(Schema.Boolean),
 })
 const ListWidget = Schema.Struct({
   ...widgetBase,
@@ -388,6 +405,9 @@ const ListWidget = Schema.Struct({
   orderBy: Schema.optional(Schema.NullOr(Schema.String)),
   limit: Schema.optional(Schema.NullOr(Schema.Number)),
   columns: Schema.optional(Schema.Array(Schema.String)),
+  /** `auto` switches to cards on narrow tiles (w < 5). */
+  variant: Schema.optional(Schema.Literal("auto", "table", "cards")),
+  archived: Schema.optional(Schema.Literal("exclude", "include", "only")),
 })
 const BreakdownWidget = Schema.Struct({
   ...widgetBase,
@@ -397,6 +417,12 @@ const BreakdownWidget = Schema.Struct({
   ...ConditionMatch,
   groupBy: Schema.String,
   chart: Schema.Literal("bar", "pie"),
+  /** `field` = the enum's configured option order (falls back to label). */
+  sort: Schema.optional(Schema.Literal("count", "label", "field")),
+  /** Value labels on bars / in the legend. */
+  values: Schema.optional(Schema.Literal("count", "percent", "both")),
+  /** Collapse groups past this many into an "Other" bucket; null/absent = all. */
+  maxGroups: Schema.optional(Schema.NullOr(Schema.Number)),
 })
 const AttentionWidget = Schema.Struct({
   ...widgetBase,
@@ -405,6 +431,13 @@ const AttentionWidget = Schema.Struct({
   computedField: Schema.optional(Schema.NullOr(Schema.String)),
   bands: Schema.optional(Schema.Array(Schema.Literal("cooling", "cold", "heating", "steady"))),
   limit: Schema.optional(Schema.NullOr(Schema.Number)),
+  /** `bands` = badge rollup + stale queue; `strip` = heat strip + worst-N. */
+  variant: Schema.optional(Schema.Literal("bands", "strip")),
+  /** "34d" quiet-duration per stale row (default on). */
+  showDays: Schema.optional(Schema.Boolean),
+  /** Pre-filter the population before the rollup; absent = all instances. */
+  conditions: Schema.optional(Schema.Array(SidebarCondition)),
+  ...ConditionMatch,
 })
 const TrendWidget = Schema.Struct({
   ...widgetBase,
@@ -413,14 +446,23 @@ const TrendWidget = Schema.Struct({
   eventTypes: Schema.optional(Schema.Array(Schema.String)),
   bucket: Schema.Literal("day", "week"),
   since: Schema.Literal("7d", "30d", "90d"),
+  chart: Schema.optional(Schema.Literal("area", "bars")),
+  /** Header verdict: % change vs the prior period of the same length. */
+  showDelta: Schema.optional(Schema.Boolean),
 })
 const ActivityWidget = Schema.Struct({
   ...widgetBase,
   ...ConceptScoped,
   type: Schema.Literal("activity"),
   limit: Schema.optional(Schema.NullOr(Schema.Number)),
+  /** `auto` picks the dense log on wide tiles (w >= 6), else the timeline rail. */
+  variant: Schema.optional(Schema.Literal("auto", "timeline", "log")),
+  /** Inline payload snippets ("stage: open → nego", note previews). */
+  showDiffs: Schema.optional(Schema.Boolean),
+  /** Client-side event-type filter (e.g. notes only); absent = all. */
+  eventTypes: Schema.optional(Schema.Array(Schema.String)),
 })
-// The remaining widgets render org-global surfaces — no `conceptId` on purpose.
+// The remaining widgets render org-global surfaces — no instance data scoping.
 const TasksWidget = Schema.Struct({
   ...widgetBase,
   type: Schema.Literal("tasks"),
@@ -429,15 +471,40 @@ const TasksWidget = Schema.Struct({
   showToolbar: Schema.optional(Schema.Boolean),
   showComposer: Schema.optional(Schema.Boolean),
   showDone: Schema.optional(Schema.Boolean),
+  /** `checklist` = flat rows, no toolbar/composer/groups chrome. */
+  variant: Schema.optional(Schema.Literal("full", "checklist")),
+  groupBy: Schema.optional(Schema.Literal("schedule", "status", "priority", "none")),
+  /** Which row metadata to render; absent = all. */
+  rowMeta: Schema.optional(Schema.Array(Schema.Literal("due", "priority", "labels", "assignee"))),
+  /** Only tasks in these statuses; absent/empty = all. */
+  statusIds: Schema.optional(Schema.Array(Schema.String)),
+  /** `week` = due within the next 7 days (incl. today). */
+  due: Schema.optional(Schema.Literal("any", "overdue", "week")),
+  /** FILTER, not data scoping: only tasks annotating that concept's records
+   *  (task → item → conceptId, resolved via `resolveTaskSubjects`). */
+  conceptId: Schema.optional(Schema.NullOr(Schema.String)),
 })
 const MembersWidget = Schema.Struct({
   ...widgetBase,
   type: Schema.Literal("members"),
   showToolbar: Schema.optional(Schema.Boolean),
+  /** `rows` = the directory list (default); `grid` = avatar orientation cards. */
+  variant: Schema.optional(Schema.Literal("rows", "grid")),
+  /** Row metadata toggles (rows variant); absent = role + email. */
+  fields: Schema.optional(Schema.Array(Schema.Literal("role", "email", "joined"))),
+  sort: Schema.optional(Schema.Literal("name", "role", "joined")),
+  /** Cap shown members, with a "view all" link; null/absent = all. */
+  limit: Schema.optional(Schema.NullOr(Schema.Number)),
 })
 const WelcomeWidget = Schema.Struct({
   ...widgetBase,
   type: Schema.Literal("welcome"),
+  /** `hero` = the big-title banner (default); `card` = compact orientation card. */
+  variant: Schema.optional(Schema.Literal("hero", "card")),
+  /** "12 members · 87 events this week" line under the greeting. */
+  showPulse: Schema.optional(Schema.Boolean),
+  /** Curated quick links (same shape as Shortcuts items); absent/empty = none. */
+  links: Schema.optional(Schema.Array(ShortcutItem)),
 })
 // Goal — a metric with a finish line: current value vs a manual target.
 const GoalWidget = Schema.Struct({
@@ -455,16 +522,8 @@ const GoalWidget = Schema.Struct({
   variant: Schema.optional(Schema.Literal("bar", "ring", "number")),
   showPercent: Schema.optional(Schema.Boolean),
 })
-/** One curated shortcut. `ref` is an instance id, dashboard id, or URL per `kind`;
- *  `label` is a display snapshot (dashboards re-resolve to the live name). */
-const ShortcutItem = Schema.Struct({
-  id: Schema.String,
-  kind: Schema.Literal("instance", "dashboard", "url"),
-  ref: Schema.String,
-  label: Schema.optional(Schema.NullOr(Schema.String)),
-  icon: Schema.optional(Schema.NullOr(Schema.String)),
-})
 // Shortcuts — hand-picked jump-off points; fully manual by design (no filters).
+// (`ShortcutItem` is declared above the widget structs — Welcome reuses it.)
 const ShortcutsWidget = Schema.Struct({
   ...widgetBase,
   type: Schema.Literal("shortcuts"),

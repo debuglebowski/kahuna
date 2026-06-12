@@ -505,6 +505,12 @@ export interface MetricWidget extends WidgetBase {
   readonly agg: "count" | "sum" | "avg"
   /** Field id to sum/avg (ignored for count). */
   readonly field?: string | null
+  /** `auto` renders the wide stat bar on short, wide tiles. */
+  readonly variant?: "auto" | "tile" | "bar"
+  readonly format?: "plain" | "compact" | "currency" | "percent"
+  /** Secondary stat: change vs the value N days ago (instance-createdAt based). */
+  readonly delta?: "off" | "7d" | "30d"
+  readonly includeArchived?: boolean
 }
 /** List/Table — instances of a concept matching a filter, rendered as a table. */
 export interface ListWidget extends WidgetBase {
@@ -516,6 +522,9 @@ export interface ListWidget extends WidgetBase {
   readonly limit?: number | null
   /** Field ids to show as columns; empty/absent = concept default columns. */
   readonly columns?: ReadonlyArray<string>
+  /** `auto` switches to cards on narrow tiles (w < 5). */
+  readonly variant?: "auto" | "table" | "cards"
+  readonly archived?: "exclude" | "include" | "only"
 }
 /** Breakdown — group instances by an enum field or by label → bar/pie chart. */
 export interface BreakdownWidget extends WidgetBase {
@@ -526,6 +535,12 @@ export interface BreakdownWidget extends WidgetBase {
   /** A field id (enum) to group by, or `__labels` to group by label. */
   readonly groupBy: string
   readonly chart: "bar" | "pie"
+  /** `field` = the enum's configured option order (falls back to label). */
+  readonly sort?: "count" | "label" | "field"
+  /** Value labels on bars / in the legend. */
+  readonly values?: "count" | "percent" | "both"
+  /** Collapse groups past this many into an "Other" bucket; null/absent = all. */
+  readonly maxGroups?: number | null
 }
 /** Attention — decay/momentum band rollup + a stale-queue list. */
 export interface AttentionWidget extends WidgetBase {
@@ -536,6 +551,13 @@ export interface AttentionWidget extends WidgetBase {
   /** Bands to surface in the stale queue, in order. */
   readonly bands?: ReadonlyArray<"cooling" | "cold" | "heating" | "steady">
   readonly limit?: number | null
+  /** `bands` = badge rollup + stale queue; `strip` = heat strip + worst-N. */
+  readonly variant?: "bands" | "strip"
+  /** "34d" quiet-duration per stale row (default on). */
+  readonly showDays?: boolean
+  /** Pre-filter the population before the rollup; absent = all instances. */
+  readonly conditions?: ReadonlyArray<SidebarCondition>
+  readonly match?: ConditionMatch
 }
 /** Chart/Trend — time-series of events bucketed per day/week. */
 export interface TrendWidget extends WidgetBase {
@@ -546,12 +568,21 @@ export interface TrendWidget extends WidgetBase {
   readonly eventTypes?: ReadonlyArray<string>
   readonly bucket: "day" | "week"
   readonly since: "7d" | "30d" | "90d"
+  readonly chart?: "area" | "bars"
+  /** Header verdict: % change vs the prior period of the same length. */
+  readonly showDelta?: boolean
 }
 /** Activity feed — recent events as a list. */
 export interface ActivityWidget extends WidgetBase {
   readonly type: "activity"
   readonly conceptId?: string | null
   readonly limit?: number | null
+  /** `auto` picks the dense log on wide tiles (w >= 6), else the timeline rail. */
+  readonly variant?: "auto" | "timeline" | "log"
+  /** Inline payload snippets ("stage: open → nego", note previews). */
+  readonly showDiffs?: boolean
+  /** Client-side event-type filter (e.g. notes only); absent = all. */
+  readonly eventTypes?: ReadonlyArray<string>
 }
 /** Tasks — the org-global task list (schedule buckets), not concept-scoped. */
 export interface TasksWidget extends WidgetBase {
@@ -561,15 +592,40 @@ export interface TasksWidget extends WidgetBase {
   readonly showToolbar?: boolean
   readonly showComposer?: boolean
   readonly showDone?: boolean
+  /** `checklist` = flat rows, no toolbar/composer/groups chrome. */
+  readonly variant?: "full" | "checklist"
+  readonly groupBy?: "schedule" | "status" | "priority" | "none"
+  /** Which row metadata to render; absent = all. */
+  readonly rowMeta?: ReadonlyArray<"due" | "priority" | "labels" | "assignee">
+  /** Only tasks in these statuses; absent/empty = all. */
+  readonly statusIds?: ReadonlyArray<string>
+  /** `week` = due within the next 7 days (incl. today). */
+  readonly due?: "any" | "overdue" | "week"
+  /** FILTER, not data scoping: only tasks annotating that concept's records
+   *  (task → item → conceptId, resolved via `resolveTaskSubjects`). */
+  readonly conceptId?: string | null
 }
 /** Members — the org directory (incl. admin management), not concept-scoped. */
 export interface MembersWidget extends WidgetBase {
   readonly type: "members"
   readonly showToolbar?: boolean
+  /** `rows` = the directory list (default); `grid` = avatar orientation cards. */
+  readonly variant?: "rows" | "grid"
+  /** Row metadata toggles (rows variant); absent = role + email. */
+  readonly fields?: ReadonlyArray<"role" | "email" | "joined">
+  readonly sort?: "name" | "role" | "joined"
+  /** Cap shown members, with a "view all" link; null/absent = all. */
+  readonly limit?: number | null
 }
-/** Welcome — a big-title greeting for the viewer. No config beyond the base. */
+/** Welcome — a big-title greeting for the viewer. */
 export interface WelcomeWidget extends WidgetBase {
   readonly type: "welcome"
+  /** `hero` = the big-title banner (default); `card` = compact orientation card. */
+  readonly variant?: "hero" | "card"
+  /** "12 members · 87 events this week" line under the greeting. */
+  readonly showPulse?: boolean
+  /** Curated quick links (same shape as Shortcuts items); absent/empty = none. */
+  readonly links?: ReadonlyArray<ShortcutItem>
 }
 /** Goal — a metric with a finish line: current value vs a manual target. */
 export interface GoalWidget extends WidgetBase {

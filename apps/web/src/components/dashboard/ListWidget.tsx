@@ -1,13 +1,14 @@
-import { useMutation } from "@tanstack/react-query"
+import { useMutation, useQuery } from "@tanstack/react-query"
 import { Pencil, Plus } from "lucide-react"
 import { useMemo, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { InstanceTable } from "@/components/InstanceTable"
-import { IconButton, Modal, Spinner } from "@/components/ui"
-import { api, type Concept, type DashboardWidget, type Instance } from "@/lib/api"
+import { Badge, IconButton, Modal, Spinner } from "@/components/ui"
+import { api, type Concept, type DashboardWidget, type Field, type Instance } from "@/lib/api"
 import { useSession } from "@/lib/auth-client"
 import { instancesByConcept } from "@/lib/collections"
 import type { ConceptInstanceData } from "@/lib/conceptData"
+import { FieldValueCell } from "@/lib/fieldDisplay"
 import { useQuickEdit } from "@/lib/quickEdit"
 import { cn, showValue } from "@/lib/utils"
 import { matchInstance } from "@/lib/widgetAggregations"
@@ -34,6 +35,15 @@ export function ListWidget({
   const conceptId = widget.conceptId ?? ""
   const [quickEdit, toggleQuickEdit] = useQuickEdit(conceptId)
   const [adding, setAdding] = useState(false)
+  const archived = widget.archived ?? "exclude"
+
+  // The live collection excludes archived rows; include/only pull them via a
+  // plain query (same pattern as the Kanban board's archived toggle).
+  const archivedQ = useQuery({
+    queryKey: ["list-archived", conceptId],
+    queryFn: () => api.listInstances(conceptId, { includeArchived: true }),
+    enabled: archived !== "exclude" && !!conceptId,
+  })
 
   // Columns: explicit selection, else the concept's scalar fields (no relation/file).
   const columns = useMemo(() => {
@@ -44,16 +54,33 @@ export function ListWidget({
   }, [fields, widget.columns])
 
   const rows = useMemo(() => {
-    let r = (data?.instances ?? []).filter((i) =>
-      matchInstance(i, widget.conditions, { match: widget.match, me }),
-    )
+    const archivedRows = (archivedQ.data ?? []).filter((i) => i.archivedAt != null)
+    const pool =
+      archived === "only"
+        ? archivedRows
+        : archived === "include"
+          ? [...(data?.instances ?? []), ...archivedRows]
+          : (data?.instances ?? [])
+    let r = pool.filter((i) => matchInstance(i, widget.conditions, { match: widget.match, me }))
     if (widget.orderBy) {
       const key = widget.orderBy
       r = [...r].sort((a, b) => showValue(a.state[key]).localeCompare(showValue(b.state[key])))
     }
     if (widget.limit && widget.limit > 0) r = r.slice(0, widget.limit)
     return r
-  }, [data?.instances, widget.conditions, widget.match, me, widget.orderBy, widget.limit])
+  }, [
+    data?.instances,
+    archived,
+    archivedQ.data,
+    widget.conditions,
+    widget.match,
+    me,
+    widget.orderBy,
+    widget.limit,
+  ])
+
+  const variant = widget.variant ?? "auto"
+  const cards = variant === "cards" || (variant === "auto" && widget.layout.w < 5)
 
   // One field saved per edit; refetch (success or fail) reconciles value + version.
   const onSaveCell = async (inst: Instance, fieldId: string, value: unknown) => {
@@ -99,6 +126,17 @@ export function ListWidget({
       <div className="-mx-1 min-h-0 flex-1 overflow-auto">
         {rows.length === 0 ? (
           <p className="px-1 text-sm text-muted-foreground">No matching items.</p>
+        ) : cards ? (
+          <div className="space-y-1.5 px-1">
+            {rows.map((i) => (
+              <InstanceCard
+                key={i.id}
+                inst={i}
+                columns={columns}
+                onOpen={() => navigate(`/instances/${i.id}`)}
+              />
+            ))}
+          </div>
         ) : (
           <InstanceTable
             columns={columns}
@@ -131,5 +169,45 @@ export function ListWidget({
         </Modal>
       )}
     </div>
+  )
+}
+
+/** Narrow-tile row: first column as the title, the next few as a meta line. */
+function InstanceCard({
+  inst,
+  columns,
+  onOpen,
+}: {
+  inst: Instance
+  columns: readonly Field[]
+  onOpen: () => void
+}) {
+  const [title, ...rest] = columns
+  const meta = rest
+    .slice(0, 3)
+    .map((f) => ({ f, v: inst.state[f.id] }))
+    .filter(({ v }) => v !== null && v !== undefined && v !== "")
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="block w-full rounded-md border border-border bg-card p-2 text-left shadow-xs hover:bg-accent/40"
+    >
+      <div className="flex items-start justify-between gap-1">
+        <span className="min-w-0 truncate text-sm font-medium text-foreground">
+          {title ? showValue(inst.state[title.id]) || "—" : "—"}
+        </span>
+        {inst.archivedAt != null && <Badge tone="amber">Archived</Badge>}
+      </div>
+      {meta.length > 0 && (
+        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 truncate text-xs text-muted-foreground">
+          {meta.map(({ f, v }) => (
+            <span key={f.id} className="inline-flex max-w-44 items-center truncate">
+              <FieldValueCell field={f} value={v} />
+            </span>
+          ))}
+        </div>
+      )}
+    </button>
   )
 }

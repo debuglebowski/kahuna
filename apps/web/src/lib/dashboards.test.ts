@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 import type { DashboardBody } from "./api"
 import {
   addWidget,
+  formatMetric,
   formatWidgetNumber,
   newWidget,
   referencedConceptIds,
@@ -86,6 +87,21 @@ describe("display helpers (metric + goal)", () => {
     expect(sizeVariant({ w: 3, h: 3 })).toBe("md")
     expect(sizeVariant({ w: 4, h: 5 })).toBe("lg")
   })
+
+  it("formats the metric per the configured number format", () => {
+    expect(formatMetric(1234, "plain")).toBe((1234).toLocaleString())
+    expect(formatMetric(1234, "compact")).toBe(
+      (1234).toLocaleString(undefined, { notation: "compact", maximumFractionDigits: 1 }),
+    )
+    expect(formatMetric(99.5, "currency", "EUR")).toBe(
+      (99.5).toLocaleString(undefined, { style: "currency", currency: "EUR" }),
+    )
+    expect(formatMetric(0.42, "percent")).toBe(
+      (0.42).toLocaleString(undefined, { style: "percent", maximumFractionDigits: 1 }),
+    )
+    // unknown currency code degrades to a suffix instead of throwing
+    expect(formatMetric(5, "currency", "NOPE")).toBe(`5 NOPE`)
+  })
 })
 
 describe("referencedConceptIds", () => {
@@ -97,5 +113,10 @@ describe("referencedConceptIds", () => {
     const metric = { ...newWidget(body, "metric"), conceptId: "c1" }
     body = addWidget(body, metric)
     expect(referencedConceptIds(body)).toEqual(["c1"])
+  })
+
+  it("skips the tasks widget's conceptId — it's a task filter, not a data scope", () => {
+    const tasks = { ...newWidget(empty, "tasks"), conceptId: "c9" }
+    expect(referencedConceptIds(addWidget(empty, tasks))).toEqual([])
   })
 })

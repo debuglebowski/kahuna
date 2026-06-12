@@ -15,8 +15,9 @@ const KIND_ICON: Record<Item["kind"], typeof Box> = {
 }
 
 /** Bare hosts are stored as typed ("example.com") — default them to https so the
- *  anchor doesn't resolve relative to the app. */
-const urlHref = (ref: string): string => (/^[a-z][a-z0-9+.-]*:/i.test(ref) ? ref : `https://${ref}`)
+ *  anchor doesn't resolve relative to the app. (Shared with Welcome's links.) */
+export const urlHref = (ref: string): string =>
+  /^[a-z][a-z0-9+.-]*:/i.test(ref) ? ref : `https://${ref}`
 
 /** Curated jump-off points — hand-picked links to instances, dashboards, or
  *  external URLs. Fully manual by design: the curation IS the filter. */

@@ -4,6 +4,7 @@ import {
   Bar,
   BarChart,
   Cell,
+  LabelList,
   Legend,
   Pie,
   PieChart,
@@ -15,7 +16,13 @@ import {
 import { api, type DashboardWidget } from "@/lib/api"
 import { useSession } from "@/lib/auth-client"
 import type { ConceptInstanceData } from "@/lib/conceptData"
-import { groupBy, LABELS_KEY } from "@/lib/widgetAggregations"
+import {
+  collapseOther,
+  groupBy,
+  LABELS_KEY,
+  OTHER_KEY,
+  sortBuckets,
+} from "@/lib/widgetAggregations"
 
 type Breakdown = Extract<DashboardWidget, { type: "breakdown" }>
 
@@ -57,19 +64,30 @@ export function BreakdownWidget({
   const me = session?.user.id ?? null
   const rows = useMemo(() => {
     if (!widget.conceptId || !widget.groupBy) return []
-    return groupBy(data?.instances ?? [], widget.conditions, widget.groupBy, {
+    const buckets = groupBy(data?.instances ?? [], widget.conditions, widget.groupBy, {
       match: widget.match,
       me,
-    }).map((b) => ({
-      name: byLabel ? labelName(b.key) : b.key,
+    })
+    // sort=field follows the enum's configured option order (labels/users have
+    // no configured order — sortBuckets falls back to label order for them).
+    const order = data?.fields.find((f) => f.id === widget.groupBy)?.config.options
+    const sorted = sortBuckets(buckets, widget.sort ?? "count", {
+      labelOf: byLabel ? labelName : undefined,
+      order,
+    })
+    return collapseOther(sorted, widget.maxGroups).map((b) => ({
+      name: b.key === OTHER_KEY ? "Other" : byLabel ? labelName(b.key) : b.key,
       value: b.count,
     }))
   }, [
     data?.instances,
+    data?.fields,
     widget.conceptId,
     widget.groupBy,
     widget.conditions,
     widget.match,
+    widget.sort,
+    widget.maxGroups,
     me,
     byLabel,
     labelName,
@@ -78,6 +96,18 @@ export function BreakdownWidget({
   if (!widget.conceptId || !widget.groupBy)
     return <p className="text-sm text-muted-foreground">Pick a concept and a group-by.</p>
   if (rows.length === 0) return <p className="text-sm text-muted-foreground">No data.</p>
+
+  const total = rows.reduce((s, r) => s + r.value, 0)
+  const pct = (v: number) => `${total > 0 ? Math.round((v / total) * 100) : 0}%`
+  const valueLabel =
+    widget.values == null
+      ? null
+      : (v: number) =>
+          widget.values === "count"
+            ? String(v)
+            : widget.values === "percent"
+              ? pct(v)
+              : `${v} (${pct(v)})`
 
   return (
     <div className="h-full w-full text-xs">
@@ -90,14 +120,31 @@ export function BreakdownWidget({
               ))}
             </Pie>
             <Tooltip />
-            <Legend />
+            <Legend
+              formatter={
+                valueLabel
+                  ? (name: string, entry) => {
+                      const v = (entry?.payload as { value?: number } | undefined)?.value
+                      return v == null ? name : `${name} · ${valueLabel(v)}`
+                    }
+                  : undefined
+              }
+            />
           </PieChart>
         ) : (
-          <BarChart data={rows} margin={{ top: 8, right: 8, bottom: 0, left: -16 }}>
+          <BarChart data={rows} margin={{ top: 14, right: 8, bottom: 0, left: -16 }}>
             <XAxis dataKey="name" tick={{ fontSize: 11 }} interval={0} />
             <YAxis allowDecimals={false} tick={{ fontSize: 11 }} width={28} />
             <Tooltip />
             <Bar dataKey="value" radius={[3, 3, 0, 0]}>
+              {valueLabel && (
+                <LabelList
+                  dataKey="value"
+                  position="top"
+                  formatter={(v: unknown) => (typeof v === "number" ? valueLabel(v) : "")}
+                  style={{ fontSize: 10 }}
+                />
+              )}
               {rows.map((r, i) => (
                 <Cell key={r.name} fill={PALETTE[i % PALETTE.length]} />
               ))}

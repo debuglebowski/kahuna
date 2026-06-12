@@ -58,32 +58,59 @@ import {
 import { parseDateValue } from "@/lib/dates"
 import { ConceptIcon } from "@/lib/icons"
 import { useMembers } from "@/lib/members"
-import { daysOverdue, groupTasks, isSnoozed, type TaskGroup } from "@/lib/taskGroups"
+import {
+  daysOverdue,
+  groupTasksBy,
+  isSnoozed,
+  matchesDue,
+  type TaskGroup,
+  type TaskGroupBy,
+} from "@/lib/taskGroups"
 import { isAdminRole } from "@/pages/settings/SettingsLayout"
 
 /** An assignee scope: "__all" | "__me" | "__none" | a member's userId. */
 export type AssigneeScope = string
 
+/** A row-metadata element the widget can toggle off. */
+export type TaskRowMeta = "due" | "priority" | "labels" | "assignee"
+const ALL_META: ReadonlyArray<TaskRowMeta> = ["due", "priority", "labels", "assignee"]
+
 /**
  * The org-global task directory: every task — item-bound and org-level —
  * bucketed by schedule (Overdue / Today / Tomorrow / month / Not scheduled),
- * Zero-style. Rows are dense single-liners (Linear-style): status dot, assignee
- * avatar and due date edit inline via menus; rename, archive and delete live
- * behind a hover-revealed overflow menu. The composer at the top creates
- * org-level (record-less) tasks. Shared by the `/tasks` page and the `tasks`
- * dashboard widget — the props seed the (still runtime-interactive) toolbar
- * state and toggle chrome the widget may not have room for.
+ * Zero-style (or by status / priority / flat via `groupBy`). Rows are dense
+ * single-liners (Linear-style): status dot, assignee avatar and due date edit
+ * inline via menus; rename, archive and delete live behind a hover-revealed
+ * overflow menu. The composer at the top creates org-level (record-less)
+ * tasks. Shared by the `/tasks` page and the `tasks` dashboard widget — the
+ * props seed the (still runtime-interactive) toolbar state, toggle chrome the
+ * widget may not have room for, and pin config-time filters (status / due /
+ * concept). `variant: "checklist"` drops all chrome: flat borderless rows.
  */
 export function TaskDirectory({
   defaultAssignee = "__all",
   showToolbar = true,
   showComposer = true,
   defaultShowDone = false,
+  variant = "full",
+  groupBy = "schedule",
+  rowMeta = ALL_META,
+  statusIds,
+  due = "any",
+  conceptId,
 }: {
   defaultAssignee?: AssigneeScope
   showToolbar?: boolean
   showComposer?: boolean
   defaultShowDone?: boolean
+  variant?: "full" | "checklist"
+  groupBy?: TaskGroupBy
+  rowMeta?: ReadonlyArray<TaskRowMeta>
+  /** Config-time status filter; absent/empty = all statuses. */
+  statusIds?: ReadonlyArray<string>
+  due?: "any" | "overdue" | "week"
+  /** Only tasks annotating that concept's records (via the subject refs). */
+  conceptId?: string | null
 }) {
   const { data: session } = useSession()
   const me = session?.user
@@ -150,25 +177,53 @@ export function TaskDirectory({
   )
   const refetch = () => tasksGlobalCollection.utils.refetch()
 
+  const statusIdSet = useMemo(
+    () => (statusIds && statusIds.length > 0 ? new Set(statusIds) : null),
+    [statusIds],
+  )
   const shown = useMemo(() => {
     const q = filter.trim().toLowerCase()
+    const now = new Date()
     return (tasksQ.data ?? []).filter((t) => {
       // The "Closed" toggle gates both closed categories (done + cancelled).
       if (!showDone && (isDone(t) || isCancelled(t))) return false
       if (assignee === "__me" && t.assignee !== me?.id) return false
       if (assignee === "__none" && t.assignee !== null) return false
       if (!assignee.startsWith("__") && t.assignee !== assignee) return false
+      if (statusIdSet && !statusIdSet.has(t.statusId ?? "")) return false
+      if (!matchesDue(t, due, now)) return false
+      if (conceptId && refBySubject.get(t.subjectId ?? "")?.conceptId !== conceptId) return false
       if (q) {
         const record = t.subjectId ? (refBySubject.get(t.subjectId)?.label ?? "") : ""
         if (!t.title.toLowerCase().includes(q) && !record.toLowerCase().includes(q)) return false
       }
       return true
     })
-  }, [tasksQ.data, isDone, isCancelled, refBySubject, filter, assignee, showDone, me?.id])
+  }, [
+    tasksQ.data,
+    isDone,
+    isCancelled,
+    refBySubject,
+    filter,
+    assignee,
+    showDone,
+    me?.id,
+    statusIdSet,
+    due,
+    conceptId,
+  ])
 
   const groups = useMemo(
-    () => groupTasks(shown, { isDone, isCancelled }, new Date()),
-    [shown, isDone, isCancelled],
+    () =>
+      groupTasksBy(
+        shown,
+        variant === "checklist" ? "none" : groupBy,
+        { isDone, isCancelled },
+        new Date(),
+        statuses,
+        priorities,
+      ),
+    [shown, variant, groupBy, isDone, isCancelled, statuses, priorities],
   )
 
   // Pickers drop deactivated members (the directory still badges them).
@@ -180,7 +235,14 @@ export function TaskDirectory({
   const canMutate = (t: Task) =>
     admin || (!!me?.id && (t.createdBy === me.id || t.assignee === me.id))
 
-  if (tasksQ.isLoading || statusesQ.isLoading) return <Spinner />
+  // The concept filter resolves through the subject refs — wait for them, or
+  // every task flickers out before the refs arrive.
+  if (
+    tasksQ.isLoading ||
+    statusesQ.isLoading ||
+    (conceptId && subjectIds.length > 0 && refsQ.isLoading)
+  )
+    return <Spinner />
 
   const toggleCollapsed = (key: string) =>
     setCollapsed((prev) => {
@@ -190,9 +252,12 @@ export function TaskDirectory({
       return next
     })
 
+  const checklist = variant === "checklist"
+  const meta = new Set(rowMeta)
+
   return (
-    <div className="space-y-4">
-      {showToolbar && (
+    <div className={checklist ? "space-y-1" : "space-y-4"}>
+      {showToolbar && !checklist && (
         <Toolbar filter={filter} onFilter={setFilter} placeholder="Filter tasks…">
           <Select value={assignee} onValueChange={setAssignee}>
             <SelectTrigger className="h-8 w-44">
@@ -215,7 +280,7 @@ export function TaskDirectory({
         </Toolbar>
       )}
 
-      {showComposer && (
+      {showComposer && !checklist && (
         <div className="overflow-hidden rounded-xl border bg-card shadow-sm">
           <TaskComposer
             onCreate={(title) => api.createTask({ subjectId: null, title }).then(refetch)}
@@ -224,35 +289,49 @@ export function TaskDirectory({
       )}
 
       {groups.length === 0 ? (
-        <div className="flex min-h-[160px] items-center justify-center rounded-xl border border-dashed p-8">
-          <p className="text-sm text-muted-foreground">
-            {(tasksQ.data ?? []).length === 0
-              ? showComposer
-                ? "No tasks yet — add one above, or from any record's Tasks panel."
-                : "No tasks yet — add one from any record's Tasks panel."
-              : "No tasks match the current filters."}
-          </p>
-        </div>
+        checklist ? (
+          <p className="text-sm text-muted-foreground">No tasks.</p>
+        ) : (
+          <div className="flex min-h-[160px] items-center justify-center rounded-xl border border-dashed p-8">
+            <p className="text-sm text-muted-foreground">
+              {(tasksQ.data ?? []).length === 0
+                ? showComposer
+                  ? "No tasks yet — add one above, or from any record's Tasks panel."
+                  : "No tasks yet — add one from any record's Tasks panel."
+                : "No tasks match the current filters."}
+            </p>
+          </div>
+        )
       ) : (
         groups.map((g) => (
-          <section key={g.key} className="space-y-2">
-            <button
-              type="button"
-              onClick={() => toggleCollapsed(g.key)}
-              className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium ${
-                g.tone === "overdue"
-                  ? "bg-destructive/10 text-destructive"
-                  : "bg-muted/60 text-foreground"
-              }`}
-            >
-              {collapsed.has(g.key) ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
-              {g.title}
-              <span className={g.tone === "overdue" ? "" : "text-muted-foreground"}>
-                {g.tasks.length}
-              </span>
-            </button>
+          <section key={g.key} className={checklist ? "" : "space-y-2"}>
+            {/* The flat group ("all") carries no header — `none` grouping and
+                the checklist variant render bare rows. */}
+            {g.key !== "all" && (
+              <button
+                type="button"
+                onClick={() => toggleCollapsed(g.key)}
+                className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium ${
+                  g.tone === "overdue"
+                    ? "bg-destructive/10 text-destructive"
+                    : "bg-muted/60 text-foreground"
+                }`}
+              >
+                {collapsed.has(g.key) ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+                {g.title}
+                <span className={g.tone === "overdue" ? "" : "text-muted-foreground"}>
+                  {g.tasks.length}
+                </span>
+              </button>
+            )}
             {!collapsed.has(g.key) && (
-              <div className="divide-y divide-border/60 overflow-hidden rounded-xl border bg-card shadow-sm">
+              <div
+                className={
+                  checklist
+                    ? "divide-y divide-border/40"
+                    : "divide-y divide-border/60 overflow-hidden rounded-xl border bg-card shadow-sm"
+                }
+              >
                 {g.tasks.map((t) => (
                   <TaskRow
                     key={t.id}
@@ -275,6 +354,7 @@ export function TaskDirectory({
                     assigneeMember={t.assignee ? memberByUserId.get(t.assignee) : undefined}
                     pickerMembers={pickerMembers}
                     canMutate={canMutate(t)}
+                    meta={meta}
                     onSaved={refetch}
                     onEdit={() => setEditing(t)}
                   />
@@ -328,6 +408,7 @@ function TaskRow({
   assigneeMember,
   pickerMembers,
   canMutate,
+  meta,
   onSaved,
   onEdit,
 }: {
@@ -343,6 +424,8 @@ function TaskRow({
   assigneeMember: OrgMember | undefined
   pickerMembers: ReadonlyArray<OrgMember>
   canMutate: boolean
+  /** Which metadata elements render (the widget's row-meta toggles). */
+  meta: ReadonlySet<TaskRowMeta>
   onSaved: () => void
   onEdit: () => void
 }) {
@@ -459,32 +542,34 @@ function TaskRow({
       </DropdownMenu>
 
       {/* priority: flag, click to change (clearable) */}
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild disabled={!canMutate || setPriority.isPending}>
-          <button
-            type="button"
-            title={priority?.name ?? "Set priority"}
-            aria-label={priority?.name ?? "Set priority"}
-            className="flex size-5 shrink-0 items-center justify-center rounded-sm enabled:cursor-pointer enabled:hover:bg-accent"
-          >
-            <PriorityFlag priority={priority} size={13} />
-          </button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="start">
-          <DropdownMenuItem onSelect={() => setPriority.mutate(null)}>
-            <PriorityFlag priority={null} />
-            No priority
-            {!task.priorityId && <Check size={14} className="ml-auto" />}
-          </DropdownMenuItem>
-          {livePriorities.map((p) => (
-            <DropdownMenuItem key={p.id} onSelect={() => setPriority.mutate(p.id)}>
-              <PriorityFlag priority={p} />
-              {p.name}
-              {p.id === task.priorityId && <Check size={14} className="ml-auto" />}
+      {meta.has("priority") && (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild disabled={!canMutate || setPriority.isPending}>
+            <button
+              type="button"
+              title={priority?.name ?? "Set priority"}
+              aria-label={priority?.name ?? "Set priority"}
+              className="flex size-5 shrink-0 items-center justify-center rounded-sm enabled:cursor-pointer enabled:hover:bg-accent"
+            >
+              <PriorityFlag priority={priority} size={13} />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start">
+            <DropdownMenuItem onSelect={() => setPriority.mutate(null)}>
+              <PriorityFlag priority={null} />
+              No priority
+              {!task.priorityId && <Check size={14} className="ml-auto" />}
             </DropdownMenuItem>
-          ))}
-        </DropdownMenuContent>
-      </DropdownMenu>
+            {livePriorities.map((p) => (
+              <DropdownMenuItem key={p.id} onSelect={() => setPriority.mutate(p.id)}>
+                <PriorityFlag priority={p} />
+                {p.name}
+                {p.id === task.priorityId && <Check size={14} className="ml-auto" />}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
 
       {/* title (rename swaps in a borderless input) */}
       {renaming ? (
@@ -526,11 +611,12 @@ function TaskRow({
           aria-label="Has description"
         />
       )}
-      {taskLabels.map((l) => (
-        <LabelChip key={l.id} color={l.color} primary={l.primary}>
-          {l.name}
-        </LabelChip>
-      ))}
+      {meta.has("labels") &&
+        taskLabels.map((l) => (
+          <LabelChip key={l.id} color={l.color} primary={l.primary}>
+            {l.name}
+          </LabelChip>
+        ))}
       {task.blockedAt && !closed && (
         <Badge tone="red">
           {task.blockedReason ? `Blocked · ${task.blockedReason}` : "Blocked"}
@@ -559,87 +645,91 @@ function TaskRow({
           ))}
 
         {/* due date: text trigger, popover editor; bare calendar icon when unset */}
-        <Popover open={dueOpen} onOpenChange={(o) => canMutate && setDueOpen(o)}>
-          <PopoverTrigger asChild disabled={!canMutate && !task.dueAt}>
-            <button
-              type="button"
-              aria-label="Set due date"
-              className={`text-xs enabled:cursor-pointer ${
-                task.dueAt
-                  ? group.key === "overdue" || isOverdue(task.dueAt)
-                    ? "font-medium text-destructive"
-                    : "text-muted-foreground enabled:hover:text-foreground"
-                  : "text-muted-foreground/60 opacity-0 group-hover:opacity-100 enabled:hover:text-foreground data-[state=open]:opacity-100"
-              }`}
-            >
-              {task.dueAt ? (
-                group.key === "overdue" ? (
-                  `${daysOverdue(task.dueAt, new Date())}d`
+        {meta.has("due") && (
+          <Popover open={dueOpen} onOpenChange={(o) => canMutate && setDueOpen(o)}>
+            <PopoverTrigger asChild disabled={!canMutate && !task.dueAt}>
+              <button
+                type="button"
+                aria-label="Set due date"
+                className={`text-xs enabled:cursor-pointer ${
+                  task.dueAt
+                    ? group.key === "overdue" || isOverdue(task.dueAt)
+                      ? "font-medium text-destructive"
+                      : "text-muted-foreground enabled:hover:text-foreground"
+                    : "text-muted-foreground/60 opacity-0 group-hover:opacity-100 enabled:hover:text-foreground data-[state=open]:opacity-100"
+                }`}
+              >
+                {task.dueAt ? (
+                  group.key === "overdue" ? (
+                    `${daysOverdue(task.dueAt, new Date())}d`
+                  ) : (
+                    shortDate(task.dueAt)
+                  )
                 ) : (
-                  shortDate(task.dueAt)
-                )
-              ) : (
-                <Calendar size={14} />
-              )}
-            </button>
-          </PopoverTrigger>
-          <PopoverContent align="end" className="w-auto p-2">
-            <div className="flex items-center gap-1.5">
-              <Input
-                type="date"
-                className="h-8 w-[9.5rem]"
-                value={task.dueAt ? task.dueAt.slice(0, 10) : ""}
-                disabled={setDue.isPending}
-                onChange={(e) =>
-                  setDue.mutate(e.target.value ? new Date(e.target.value).toISOString() : null)
-                }
-              />
-              {task.dueAt && (
-                <button
-                  type="button"
-                  aria-label="Clear due date"
-                  onClick={() => setDue.mutate(null)}
-                  className="rounded-sm p-1 text-muted-foreground hover:text-foreground"
-                >
-                  <X size={14} />
-                </button>
-              )}
-            </div>
-          </PopoverContent>
-        </Popover>
+                  <Calendar size={14} />
+                )}
+              </button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-auto p-2">
+              <div className="flex items-center gap-1.5">
+                <Input
+                  type="date"
+                  className="h-8 w-[9.5rem]"
+                  value={task.dueAt ? task.dueAt.slice(0, 10) : ""}
+                  disabled={setDue.isPending}
+                  onChange={(e) =>
+                    setDue.mutate(e.target.value ? new Date(e.target.value).toISOString() : null)
+                  }
+                />
+                {task.dueAt && (
+                  <button
+                    type="button"
+                    aria-label="Clear due date"
+                    onClick={() => setDue.mutate(null)}
+                    className="rounded-sm p-1 text-muted-foreground hover:text-foreground"
+                  >
+                    <X size={14} />
+                  </button>
+                )}
+              </div>
+            </PopoverContent>
+          </Popover>
+        )}
 
         {/* assignee: avatar trigger, member menu */}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild disabled={!canMutate || assign.isPending}>
-            <button
-              type="button"
-              title={assigneeMember ? memberLabel(assigneeMember) : "Assign"}
-              aria-label={assigneeMember ? memberLabel(assigneeMember) : "Assign"}
-              className="flex shrink-0 items-center enabled:cursor-pointer"
-            >
-              {assigneeMember ? (
-                <MemberAvatar member={assigneeMember} size={20} />
-              ) : (
-                <CircleUserRound size={18} className="text-muted-foreground/50" />
-              )}
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem onSelect={() => assign.mutate(null)}>
-              <CircleUserRound size={16} className="text-muted-foreground" />
-              Unassigned
-              {!task.assignee && <Check size={14} className="ml-auto" />}
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            {pickerMembers.map((m) => (
-              <DropdownMenuItem key={m.userId} onSelect={() => assign.mutate(m.userId)}>
-                <MemberAvatar member={m} size={16} />
-                {memberLabel(m)}
-                {task.assignee === m.userId && <Check size={14} className="ml-auto" />}
+        {meta.has("assignee") && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild disabled={!canMutate || assign.isPending}>
+              <button
+                type="button"
+                title={assigneeMember ? memberLabel(assigneeMember) : "Assign"}
+                aria-label={assigneeMember ? memberLabel(assigneeMember) : "Assign"}
+                className="flex shrink-0 items-center enabled:cursor-pointer"
+              >
+                {assigneeMember ? (
+                  <MemberAvatar member={assigneeMember} size={20} />
+                ) : (
+                  <CircleUserRound size={18} className="text-muted-foreground/50" />
+                )}
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onSelect={() => assign.mutate(null)}>
+                <CircleUserRound size={16} className="text-muted-foreground" />
+                Unassigned
+                {!task.assignee && <Check size={14} className="ml-auto" />}
               </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
+              <DropdownMenuSeparator />
+              {pickerMembers.map((m) => (
+                <DropdownMenuItem key={m.userId} onSelect={() => assign.mutate(m.userId)}>
+                  <MemberAvatar member={m} size={16} />
+                  {memberLabel(m)}
+                  {task.assignee === m.userId && <Check size={14} className="ml-auto" />}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
 
         {/* overflow: edit / rename / archive / delete (hover-revealed) */}
         <DropdownMenu>
