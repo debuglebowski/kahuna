@@ -12,8 +12,8 @@ import { Badge as BadgePrimitive } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
-import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
+import { TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
 
@@ -417,6 +417,48 @@ export function Modal({
 }
 
 /**
+ * Left-hand vertical tab rail for large editing modals, styled like the app
+ * sidebar (sidebar surface + accent-pill active state). Render inside a
+ * `<Tabs orientation="vertical">` next to the TabsContent panes; fill it with
+ * {@link TabRailItem}s. `title` sits above the items like the sidebar brand —
+ * put the modal's DialogTitle there so the dialog keeps its accessible name.
+ */
+export function TabRail({ title, children }: { title?: ReactNode; children: ReactNode }) {
+  return (
+    <div className="flex w-48 shrink-0 flex-col gap-4 overflow-y-auto border-r border-border bg-sidebar p-2">
+      {title && <div className="min-w-0 px-3 pt-2">{title}</div>}
+      <TabsList variant="line" className="w-full flex-col items-stretch gap-1 p-0">
+        {children}
+      </TabsList>
+    </div>
+  )
+}
+
+/** One rail entry — icon + label, mirroring the sidebar nav-item recipe. */
+export function TabRailItem({
+  value,
+  icon,
+  children,
+}: {
+  value: string
+  icon?: ReactNode
+  children: ReactNode
+}) {
+  return (
+    <TabsTrigger
+      value={value}
+      // The bg overrides repeat the line-variant group scope — the primitive's
+      // `…variant=line…:bg-transparent` rules out-specify a plain data-[state=active]
+      // class, so an unscoped override silently loses.
+      className="h-auto flex-none justify-start gap-2.5 rounded-md px-3 py-1.5 text-sm text-sidebar-foreground/70 after:hidden hover:bg-sidebar-accent hover:text-sidebar-accent-foreground data-[state=active]:font-medium data-[state=active]:text-sidebar-accent-foreground data-[state=active]:shadow-none group-data-[variant=line]/tabs-list:data-[state=active]:bg-sidebar-accent dark:text-sidebar-foreground/70 dark:hover:text-sidebar-accent-foreground dark:data-[state=active]:border-transparent dark:data-[state=active]:text-sidebar-accent-foreground dark:group-data-[variant=line]/tabs-list:data-[state=active]:bg-sidebar-accent"
+    >
+      {icon && <span className="flex h-5 w-5 shrink-0 items-center justify-center">{icon}</span>}
+      <span className="truncate">{children}</span>
+    </TabsTrigger>
+  )
+}
+
+/**
  * A focused confirm dialog over the shadcn {@link AlertDialog}. Used for
  * destructive actions: an "Archive" confirm (single primary action), or a
  * "Delete" confirm with a red CTA plus an optional secondary ("Archive
@@ -478,41 +520,5 @@ export function ConfirmDialog({
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
-  )
-}
-
-/** Right-anchored slide-over panel. Built on the shadcn {@link Sheet}; Esc or
- *  backdrop closes it. The header carries an optional action plus a close X. */
-export function Drawer({
-  title,
-  onClose,
-  headerAction,
-  children,
-}: {
-  title: ReactNode
-  onClose: () => void
-  headerAction?: ReactNode
-  children: ReactNode
-}) {
-  return (
-    <Sheet open onOpenChange={(open) => !open && onClose()}>
-      <SheetContent
-        side="right"
-        showCloseButton={false}
-        aria-describedby={undefined}
-        className="w-[640px] max-w-[95vw] gap-0 p-0 sm:max-w-[640px]"
-      >
-        <div className="flex items-center justify-between gap-2 border-b px-6 py-4">
-          <SheetTitle className="min-w-0 truncate">{title}</SheetTitle>
-          <div className="flex shrink-0 items-center gap-2">
-            {headerAction}
-            <IconButton onClick={onClose} aria-label="Close">
-              <X size={16} />
-            </IconButton>
-          </div>
-        </div>
-        <div className="flex-1 overflow-y-auto p-6">{children}</div>
-      </SheetContent>
-    </Sheet>
   )
 }

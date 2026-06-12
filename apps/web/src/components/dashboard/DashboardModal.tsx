@@ -1,8 +1,8 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query"
-import { LayoutDashboard, Plus, Trash2 } from "lucide-react"
+import { LayoutDashboard, Plus, SlidersHorizontal, Trash2 } from "lucide-react"
 import { useMemo, useState } from "react"
 import { IconPicker } from "@/components/IconPicker"
-import { Button, ConfirmDialog, Field, Input } from "@/components/ui"
+import { Button, ConfirmDialog, Field, Input, TabRail, TabRailItem } from "@/components/ui"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import {
   Select,
@@ -11,7 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Tabs, TabsContent } from "@/components/ui/tabs"
 import { api, type Concept, type Dashboard, type DashboardWidget } from "@/lib/api"
 import { useConceptData } from "@/lib/conceptData"
 import {
@@ -143,30 +143,24 @@ export function DashboardModal({
         className="flex h-[88vh] w-[min(1280px,96vw)] flex-col gap-0 p-0 sm:max-w-none"
       >
         {loaders}
-        <Tabs defaultValue="general" className="flex min-h-0 flex-1 flex-col gap-0">
-          <header className="flex shrink-0 items-center justify-between gap-3 border-b px-5 py-3">
-            <div className="flex min-w-0 items-center gap-4">
-              <DialogTitle className="truncate text-base">
+        <Tabs defaultValue="general" orientation="vertical" className="min-h-0 flex-1 gap-0">
+          <TabRail
+            title={
+              <DialogTitle className="block truncate text-sm font-semibold">
                 {draft.name.trim() || "Edit dashboard"}
               </DialogTitle>
-              <TabsList>
-                <TabsTrigger value="general">General</TabsTrigger>
-                <TabsTrigger value="layout">Layout</TabsTrigger>
-              </TabsList>
-            </div>
-            <div className="flex shrink-0 items-center gap-2">
-              {saveError && <p className="max-w-md text-xs text-destructive">{saveError}</p>}
-              <Button variant="outline" onClick={requestClose}>
-                Cancel
-              </Button>
-              <Button onClick={() => save.mutate()} disabled={save.isPending}>
-                {save.isPending ? "Saving…" : "Save"}
-              </Button>
-            </div>
-          </header>
+            }
+          >
+            <TabRailItem value="general" icon={<SlidersHorizontal size={16} />}>
+              General
+            </TabRailItem>
+            <TabRailItem value="layout" icon={<LayoutDashboard size={16} />}>
+              Layout
+            </TabRailItem>
+          </TabRail>
 
-          <TabsContent value="general" className="min-h-0 flex-1 overflow-y-auto p-6">
-            <div className="max-w-lg space-y-4">
+          <TabsContent value="general" className="min-h-0 flex-1 overflow-y-auto p-6 pb-24">
+            <div className="space-y-4">
               <div className="flex items-end gap-2">
                 <IconPicker value={draft.icon} onChange={(icon) => patch({ icon })} />
                 <div className="flex-1">
@@ -254,7 +248,7 @@ export function DashboardModal({
             </div>
 
             <div className="flex min-h-0 flex-1">
-              <div className="min-w-0 flex-1 overflow-y-auto p-4">
+              <div className="min-w-0 flex-1 overflow-y-auto p-4 pb-24">
                 {draft.body.widgets.length === 0 ? (
                   <div className="flex h-full min-h-[280px] flex-col items-center justify-center rounded-xl border border-dashed p-12 text-center">
                     <div className="mb-4 flex size-10 items-center justify-center rounded-lg bg-muted text-muted-foreground">
@@ -280,7 +274,7 @@ export function DashboardModal({
                 )}
               </div>
               {editing && (
-                <aside className="w-[360px] shrink-0 overflow-y-auto border-l p-4">
+                <aside className="w-[360px] shrink-0 overflow-y-auto border-l p-4 pb-24">
                   <WidgetEditor
                     widget={editing}
                     concepts={concepts}
@@ -292,6 +286,22 @@ export function DashboardModal({
             </div>
           </TabsContent>
         </Tabs>
+
+        <div className="pointer-events-none absolute right-6 bottom-6 z-10 flex flex-col items-end gap-2">
+          {saveError && (
+            <p className="pointer-events-auto max-w-md rounded-md border border-destructive/30 bg-background px-3 py-2 text-xs text-destructive shadow-lg">
+              {saveError}
+            </p>
+          )}
+          <div className="pointer-events-auto flex gap-2">
+            <Button variant="outline" className="shadow-lg" onClick={requestClose}>
+              Cancel
+            </Button>
+            <Button className="shadow-lg" onClick={() => save.mutate()} disabled={save.isPending}>
+              {save.isPending ? "Saving…" : "Save"}
+            </Button>
+          </div>
+        </div>
       </DialogContent>
 
       {confirmingClose && (

@@ -17,6 +17,7 @@ import { useLiveQuery } from "@tanstack/react-db"
 import { useMutation } from "@tanstack/react-query"
 import { GripVertical, Pencil, Plus, Trash2 } from "lucide-react"
 import { useState } from "react"
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import {
   Select,
   SelectContent,
@@ -30,7 +31,7 @@ import {
   Badge,
   Button,
   Card,
-  Drawer,
+  ConfirmDialog,
   Field,
   IconButton,
   Input,
@@ -185,6 +186,18 @@ function ViewEditor({
   const [scope, setScope] = useState<"personal" | "org">(view.ownerId ? "personal" : "org")
   const [hidden, setHidden] = useState(view.hidden)
   const [sections, setSections] = useState<SidebarSection[]>([...view.body.sections])
+  const [dirty, setDirty] = useState(false)
+  const [confirmingClose, setConfirmingClose] = useState(false)
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
+
+  // Every edit goes through one of these so the discard confirm only fires
+  // when the draft actually diverged.
+  const edit =
+    <T,>(set: (v: T) => void) =>
+    (v: T) => {
+      set(v)
+      setDirty(true)
+    }
 
   const save = useMutation({
     mutationFn: () =>
@@ -202,78 +215,116 @@ function ViewEditor({
     },
   })
 
+  const requestClose = () => (dirty ? setConfirmingClose(true) : onClose())
+
   return (
-    <Drawer
-      title="Edit view"
-      onClose={onClose}
-      headerAction={
-        <Button onClick={() => save.mutate()} disabled={save.isPending}>
-          {save.isPending ? "Saving…" : "Save"}
-        </Button>
-      }
-    >
-      <div className="space-y-4">
-        <div className="flex items-end gap-2">
-          <IconPicker value={icon} onChange={setIcon} />
-          <div className="flex-1">
-            <Field label="Name (optional)">
-              <Input
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="View name…"
-              />
+    <Dialog open onOpenChange={(open) => !open && requestClose()}>
+      <DialogContent
+        showCloseButton={false}
+        aria-describedby={undefined}
+        className="flex max-h-[85vh] flex-col gap-0 p-0 sm:max-w-2xl"
+      >
+        <header className="flex shrink-0 items-center justify-between gap-3 border-b px-5 py-3">
+          <DialogTitle className="truncate text-base">{name.trim() || "Edit view"}</DialogTitle>
+          <div className="flex shrink-0 items-center gap-2">
+            {save.error && (
+              <p className="max-w-md text-xs text-destructive">{(save.error as Error).message}</p>
+            )}
+            <Button variant="outline" onClick={requestClose}>
+              Cancel
+            </Button>
+            <Button onClick={() => save.mutate()} disabled={save.isPending}>
+              {save.isPending ? "Saving…" : "Save"}
+            </Button>
+          </div>
+        </header>
+
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-6">
+          <div className="flex items-end gap-2">
+            <IconPicker value={icon} onChange={edit(setIcon)} />
+            <div className="flex-1">
+              <Field label="Name (optional)">
+                <Input
+                  value={name}
+                  onChange={(e) => edit(setName)(e.target.value)}
+                  placeholder="View name…"
+                />
+              </Field>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Scope">
+              <Select value={scope} onValueChange={(v) => edit(setScope)(v as "personal" | "org")}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="personal">Personal (only me)</SelectItem>
+                  <SelectItem value="org">Org (everyone)</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field label="Visibility">
+              <Select
+                value={hidden ? "hidden" : "shown"}
+                onValueChange={(v) => edit(setHidden)(v === "hidden")}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="shown">Shown in pager</SelectItem>
+                  <SelectItem value="hidden">Hidden</SelectItem>
+                </SelectContent>
+              </Select>
             </Field>
           </div>
-        </div>
 
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Scope">
-            <Select value={scope} onValueChange={(v) => setScope(v as "personal" | "org")}>
-              <SelectTrigger className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="personal">Personal (only me)</SelectItem>
-                <SelectItem value="org">Org (everyone)</SelectItem>
-              </SelectContent>
-            </Select>
+          <Field label="Sections">
+            <SectionList sections={sections} concepts={concepts} onChange={edit(setSections)} />
           </Field>
-          <Field label="Visibility">
-            <Select
-              value={hidden ? "hidden" : "shown"}
-              onValueChange={(v) => setHidden(v === "hidden")}
+
+          <div className="border-t border-border pt-3">
+            <Button
+              variant="destructive"
+              onClick={() => setConfirmingDelete(true)}
+              disabled={del.isPending || !canDelete}
+              title={canDelete ? undefined : "The last shared view can't be deleted."}
             >
-              <SelectTrigger className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="shown">Shown in pager</SelectItem>
-                <SelectItem value="hidden">Hidden</SelectItem>
-              </SelectContent>
-            </Select>
-          </Field>
+              <Trash2 size={15} /> Delete view
+            </Button>
+            {!canDelete && (
+              <p className="mt-1.5 text-xs text-muted-foreground">
+                This is the last shared view — it can't be deleted.
+              </p>
+            )}
+          </div>
         </div>
+      </DialogContent>
 
-        <Field label="Sections">
-          <SectionList sections={sections} concepts={concepts} onChange={setSections} />
-        </Field>
-
-        <div className="border-t border-border pt-3">
-          <Button
-            variant="destructive"
-            onClick={() => del.mutate()}
-            disabled={del.isPending || !canDelete}
-            title={canDelete ? undefined : "The last shared view can't be deleted."}
-          >
-            <Trash2 size={15} /> {del.isPending ? "Deleting…" : "Delete view"}
-          </Button>
-          {!canDelete && (
-            <p className="mt-1.5 text-xs text-muted-foreground">
-              This is the last shared view — it can't be deleted.
-            </p>
-          )}
-        </div>
-      </div>
-    </Drawer>
+      {confirmingClose && (
+        <ConfirmDialog
+          title="Discard changes?"
+          message="Your edits to this view haven't been saved."
+          confirmLabel="Discard"
+          confirmVariant="danger"
+          onConfirm={onClose}
+          onCancel={() => setConfirmingClose(false)}
+        />
+      )}
+      {confirmingDelete && (
+        <ConfirmDialog
+          title="Delete view?"
+          message={`"${name.trim() || "Untitled view"}" and its sections will be permanently deleted.`}
+          confirmLabel="Delete"
+          confirmVariant="danger"
+          pending={del.isPending}
+          error={del.error ? (del.error as Error).message : undefined}
+          onConfirm={() => del.mutate()}
+          onCancel={() => setConfirmingDelete(false)}
+        />
+      )}
+    </Dialog>
   )
 }

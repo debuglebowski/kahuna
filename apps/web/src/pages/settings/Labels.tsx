@@ -10,7 +10,6 @@ import {
   CardHeader,
   ColorSwatchPicker,
   ConfirmDialog,
-  Drawer,
   IconButton,
   Input,
   LabelChip,
@@ -31,7 +30,7 @@ function labelMsg(e: unknown): string {
   return err?.message ?? "Something went wrong."
 }
 
-/** Shared name / color fields for the create modal and edit drawer. */
+/** Shared name / color fields for the create and edit modals. */
 function LabelFields({
   name,
   setName,
@@ -70,7 +69,7 @@ function LabelFields({
   )
 }
 
-/** Create a new label in a modal (editing happens in the drawer). */
+/** Create a new label in a modal (editing happens in {@link LabelModal}). */
 function CreateLabelModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
   const [name, setName] = useState("")
   const [color, setColor] = useState(() => randomPillColor())
@@ -112,8 +111,8 @@ function CreateLabelModal({ onClose, onSaved }: { onClose: () => void; onSaved: 
   )
 }
 
-/** Edit a label in a drawer: the form, plus a Danger zone (archive/restore/delete). */
-function LabelDrawer({
+/** Edit a label in a modal: the form, plus a Danger zone (archive/restore/delete). */
+function LabelModal({
   label,
   admin,
   onClose,
@@ -140,14 +139,17 @@ function LabelDrawer({
 
   const save = useMutation({
     mutationFn: () => api.renameLabel(label.id, { name: name.trim(), color: color.trim() || null }),
-    onSuccess: onSaved,
+    onSuccess: () => {
+      onSaved()
+      onClose()
+    },
   })
   const submit = () => {
     if (name.trim()) save.mutate()
   }
 
   return (
-    <Drawer
+    <Modal
       title={
         <span className="flex items-center gap-2">
           <LabelChip color={label.color} primary={label.primary}>
@@ -158,30 +160,29 @@ function LabelDrawer({
       onClose={onClose}
     >
       <div className="space-y-5">
-        <Card>
-          <CardHeader
-            title="Label"
-            action={
-              admin && (
-                <Button onClick={submit} disabled={save.isPending || !name.trim()}>
-                  <Check size={15} />
-                  {save.isPending ? "Saving…" : "Save"}
-                </Button>
-              )
-            }
+        <div className="space-y-3">
+          <LabelFields
+            name={name}
+            setName={setName}
+            color={color}
+            setColor={setColor}
+            onSubmit={submit}
+            disabled={!admin}
           />
-          <div className="space-y-3 p-4">
-            <LabelFields
-              name={name}
-              setName={setName}
-              color={color}
-              setColor={setColor}
-              onSubmit={submit}
-              disabled={!admin}
-            />
-            <Feedback error={save.error} />
-          </div>
-        </Card>
+          {admin && (
+            <div className="flex gap-2">
+              <Button onClick={submit} disabled={save.isPending || !name.trim()}>
+                <Check size={15} />
+                {save.isPending ? "Saving…" : "Save"}
+              </Button>
+              <Button variant="outline" onClick={onClose}>
+                <X size={15} />
+                Cancel
+              </Button>
+            </div>
+          )}
+          <Feedback error={save.error} />
+        </div>
 
         {admin && (
           <Card className="border-destructive/40">
@@ -246,7 +247,7 @@ function LabelDrawer({
           </Card>
         )}
       </div>
-    </Drawer>
+    </Modal>
   )
 }
 
@@ -270,8 +271,8 @@ export function Labels() {
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["labels"] })
 
-  // Archive / delete close both the confirm dialog and the edit drawer; restore
-  // closes the drawer too (all three "remove" the label from where you were).
+  // Archive / delete close both the confirm dialog and the edit modal; restore
+  // closes the modal too (all three "remove" the label from where you were).
   const archive = useMutation({
     mutationFn: (id: string) => api.archiveLabel(id),
     onSuccess: () => {
@@ -326,7 +327,7 @@ export function Labels() {
 
       {creating && <CreateLabelModal onClose={() => setCreating(false)} onSaved={invalidate} />}
       {editing && (
-        <LabelDrawer
+        <LabelModal
           key={editing.id}
           label={editing}
           admin={admin}
@@ -395,9 +396,9 @@ export function Labels() {
   )
 }
 
-/** One vocabulary row — chip + color, with an edit pencil (opens the drawer) for admins.
+/** One vocabulary row — chip + color, with an edit pencil (opens the modal) for admins.
  *  Archived rows render dimmed with a badge; archive/restore/delete live in the
- *  drawer's Danger zone, not on the row. */
+ *  modal's Danger zone, not on the row. */
 function LabelRow({ label, onEdit }: { label: Label; onEdit?: () => void }) {
   return (
     <li className={`flex items-center gap-3 px-6 py-3${label.archivedAt ? " opacity-60" : ""}`}>
