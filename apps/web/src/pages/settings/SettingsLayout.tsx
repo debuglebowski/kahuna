@@ -1,23 +1,47 @@
 import { useQuery } from "@tanstack/react-query"
-import { Link, Navigate, Outlet, useLocation } from "react-router-dom"
+import { Building2, LayoutDashboard, PanelLeft, Shapes, Tags, UserRound } from "lucide-react"
+import type { ReactNode } from "react"
+import { Navigate, Outlet, useLocation } from "react-router-dom"
 import { Spinner } from "../../components/ui"
 import { authClient, useSession } from "../../lib/auth-client"
-import { cn } from "../../lib/utils"
 
-interface Tab {
+interface SettingsItem {
   readonly to: string
   readonly label: string
   readonly admin: boolean
+  readonly icon: ReactNode
 }
 
-const TABS: ReadonlyArray<Tab> = [
-  { to: "profile", label: "Profile", admin: false },
-  { to: "organization", label: "Organization", admin: true },
-  { to: "concepts", label: "Concepts", admin: false },
-  { to: "labels", label: "Labels", admin: false },
-  { to: "sidebar", label: "Sidebar", admin: false },
-  { to: "dashboards", label: "Dashboards", admin: false },
+interface SettingsGroup {
+  readonly title: string
+  readonly items: ReadonlyArray<SettingsItem>
+}
+
+/** The settings nav — rendered by Layout as the sidebar while under /settings,
+ *  and the source of truth for the admin route guard here. */
+export const SETTINGS_NAV: ReadonlyArray<SettingsGroup> = [
+  {
+    title: "Account",
+    items: [{ to: "profile", label: "Profile", admin: false, icon: <UserRound size={16} /> }],
+  },
+  {
+    title: "Organization",
+    items: [
+      { to: "organization", label: "Organization", admin: true, icon: <Building2 size={16} /> },
+      { to: "concepts", label: "Concepts", admin: false, icon: <Shapes size={16} /> },
+      { to: "labels", label: "Labels", admin: false, icon: <Tags size={16} /> },
+      { to: "sidebar", label: "Sidebar", admin: false, icon: <PanelLeft size={16} /> },
+      {
+        to: "dashboards",
+        label: "Dashboards",
+        admin: false,
+        icon: <LayoutDashboard size={16} />,
+      },
+    ],
+  },
 ]
+
+const ALL_ITEMS = SETTINGS_NAV.flatMap((g) => g.items)
 
 /** Active org + my membership — drives both the role gate and the Org/Members pages. */
 export function useFullOrg() {
@@ -35,44 +59,29 @@ export function isAdminRole(role: string | null | undefined) {
   return role === "owner" || role === "admin"
 }
 
-export function SettingsLayout() {
+/** My admin-ness in the active org — shared by the settings guard and the
+ *  settings sidebar nav (which hides admin-only entries). */
+export function useIsAdmin() {
   const { data: session } = useSession()
-  const loc = useLocation()
   const org = useFullOrg()
-
-  if (org.isPending) return <Spinner />
-
   const myRole = org.data?.members?.find((m) => m.userId === session?.user.id)?.role
-  const admin = isAdminRole(myRole)
-  const tabs = TABS.filter((t) => !t.admin || admin)
+  return { admin: isAdminRole(myRole), isPending: org.isPending }
+}
+
+export function SettingsLayout() {
+  const loc = useLocation()
+  const { admin, isPending } = useIsAdmin()
+
+  if (isPending) return <Spinner />
 
   // Soft-guard direct navigation to an admin section by a non-admin member.
   const seg = loc.pathname.split("/")[2] ?? ""
-  const onHiddenTab = TABS.some((t) => t.to === seg && t.admin) && !admin
-  if (onHiddenTab) return <Navigate to="/settings/profile" replace />
+  const item = ALL_ITEMS.find((t) => t.to === seg)
+  if (item?.admin && !admin) return <Navigate to="/settings/profile" replace />
 
   return (
     <div className="space-y-5">
-      <h2 className="text-2xl font-bold tracking-tight text-foreground">Settings</h2>
-      <nav className="flex gap-1 border-b border-border">
-        {tabs.map((t) => {
-          const active = seg === t.to
-          return (
-            <Link
-              key={t.to}
-              to={t.to}
-              className={cn(
-                "-mb-px border-b-2 px-3 py-2 text-sm font-medium",
-                active
-                  ? "border-primary text-foreground"
-                  : "border-transparent text-muted-foreground hover:text-foreground",
-              )}
-            >
-              {t.label}
-            </Link>
-          )
-        })}
-      </nav>
+      {item && <h2 className="text-2xl font-bold tracking-tight text-foreground">{item.label}</h2>}
       <Outlet context={{ admin }} />
     </div>
   )

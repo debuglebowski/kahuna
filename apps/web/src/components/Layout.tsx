@@ -1,9 +1,17 @@
 import { useLiveQuery } from "@tanstack/react-db"
-import { Check, ChevronsUpDown, PanelLeftClose, PanelLeftOpen, Settings2 } from "lucide-react"
+import {
+  Check,
+  ChevronLeft,
+  ChevronsUpDown,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Settings2,
+} from "lucide-react"
 import {
   createContext,
   type ReactNode,
   useContext,
+  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -33,6 +41,7 @@ import {
 import { useLiveSync } from "../lib/useLiveSync"
 import { useSafetyRefetch } from "../lib/useSafetyRefetch"
 import { cn } from "../lib/utils"
+import { SETTINGS_NAV, useIsAdmin } from "../pages/settings/SettingsLayout"
 import { IdentityMenu } from "./IdentityMenu"
 import { ThemeButton } from "./ThemeButton"
 import { IconButton } from "./ui"
@@ -138,6 +147,33 @@ function ViewNav({ sections, collapsed }: { sections: ResolvedSection[]; collaps
   )
 }
 
+/** The settings nav as resolved sections, so {@link ViewNav} renders it like
+ *  any other view. Admin-only entries are hidden for non-admin members (the
+ *  route guard in SettingsLayout backs this up). */
+function useSettingsSections(pathname: string): ResolvedSection[] {
+  const { admin } = useIsAdmin()
+  return useMemo(
+    () =>
+      SETTINGS_NAV.map((group) => ({
+        id: group.title,
+        title: group.title,
+        icon: null,
+        collapsed: false,
+        entries: group.items
+          .filter((t) => !t.admin || admin)
+          .map((t) => ({
+            key: t.to,
+            label: t.label,
+            icon: t.icon,
+            to: `/settings/${t.to}`,
+            active: pathname.startsWith(`/settings/${t.to}`),
+            external: false,
+          })),
+      })),
+    [admin, pathname],
+  )
+}
+
 /** Drag handle on the sidebar's right edge — the ARIA "window splitter"
  *  pattern (focusable separator, arrow keys nudge). The sidebar sits at the
  *  viewport's left edge, so the pointer's clientX is the new width directly.
@@ -237,6 +273,15 @@ export function Layout({ children }: { children: ReactNode }) {
 
   const { sections, loaders } = useResolvedView(activeView, concepts ?? [], loc.pathname)
 
+  // Settings is its own surface — under /settings the whole sidebar swaps to
+  // the settings nav, with a "Back to app" button returning wherever you were.
+  const inSettings = loc.pathname.startsWith("/settings")
+  const settingsSections = useSettingsSections(loc.pathname)
+  const backTo = useRef("/")
+  useEffect(() => {
+    if (!loc.pathname.startsWith("/settings")) backTo.current = loc.pathname + loc.search
+  }, [loc])
+
   // What the current page asked of the shell via usePageChrome.
   const [chrome, setChrome] = useState<PageChrome>({})
 
@@ -257,14 +302,23 @@ export function Layout({ children }: { children: ReactNode }) {
               >
                 <PanelLeftOpen size={18} />
               </IconButton>
+              {inSettings && (
+                <IconButton
+                  onClick={() => navigate(backTo.current)}
+                  aria-label="Back to app"
+                  title="Back to app"
+                >
+                  <ChevronLeft size={18} />
+                </IconButton>
+              )}
             </div>
             <nav
-              key={activeView.id}
+              key={inSettings ? "__settings__" : activeView.id}
               className="km-view-in flex flex-1 flex-col overflow-y-auto px-1.5 pb-4"
             >
-              <ViewNav sections={sections} collapsed />
+              <ViewNav sections={inSettings ? settingsSections : sections} collapsed />
             </nav>
-            {pagerViews.length > 1 && (
+            {!inSettings && pagerViews.length > 1 && (
               <div className="flex flex-col items-center py-2">
                 <ViewSwitcher
                   views={pagerViews}
@@ -293,12 +347,16 @@ export function Layout({ children }: { children: ReactNode }) {
           style={{ width }}
           className="relative flex shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground"
         >
-          <div className="flex items-center justify-between px-4 py-3.5">
-            <span className="text-base font-semibold tracking-tight text-sidebar-foreground">
-              Kingsmaker
-            </span>
-            <div className="flex items-center gap-0.5">
-              <ThemeButton />
+          {inSettings ? (
+            <div className="flex items-center gap-1.5 px-3 py-3.5">
+              <button
+                type="button"
+                onClick={() => navigate(backTo.current)}
+                className="flex flex-1 items-center gap-1.5 rounded-md border border-sidebar-border bg-sidebar-accent px-2.5 py-1.5 text-sm font-medium text-sidebar-accent-foreground shadow-xs hover:bg-sidebar-accent/70"
+              >
+                <ChevronLeft size={15} className="-ml-0.5 shrink-0" />
+                <span className="truncate">Back to app</span>
+              </button>
               <IconButton
                 onClick={() => {
                   setCollapsed(true)
@@ -309,20 +367,47 @@ export function Layout({ children }: { children: ReactNode }) {
                 <PanelLeftClose size={18} />
               </IconButton>
             </div>
-          </div>
+          ) : (
+            <div className="flex items-center justify-between px-4 py-3.5">
+              <span className="text-base font-semibold tracking-tight text-sidebar-foreground">
+                Kingsmaker
+              </span>
+              <div className="flex items-center gap-0.5">
+                <ThemeButton />
+                <IconButton
+                  onClick={() => {
+                    setCollapsed(true)
+                    write(COLLAPSED_KEY, "1")
+                  }}
+                  aria-label="Collapse sidebar"
+                >
+                  <PanelLeftClose size={18} />
+                </IconButton>
+              </div>
+            </div>
+          )}
 
-          <nav key={activeView.id} className="km-view-in flex-1 overflow-y-auto px-2 pb-4">
-            {sections.every((s) => s.entries.length === 0) && (
-              <p className="px-3 py-2 text-xs text-muted-foreground">
-                This view is empty — configure it in Settings → Sidebar.
-              </p>
+          <nav
+            key={inSettings ? "__settings__" : activeView.id}
+            className="km-view-in flex-1 overflow-y-auto px-2 pb-4"
+          >
+            {inSettings ? (
+              <ViewNav sections={settingsSections} collapsed={false} />
+            ) : (
+              <>
+                {sections.every((s) => s.entries.length === 0) && (
+                  <p className="px-3 py-2 text-xs text-muted-foreground">
+                    This view is empty — configure it in Settings → Sidebar.
+                  </p>
+                )}
+                <ViewNav sections={sections} collapsed={false} />
+              </>
             )}
-            <ViewNav sections={sections} collapsed={false} />
           </nav>
 
           {/* View switcher — only when there's more than one view to switch
             between. Creating/editing views lives in Settings → Sidebar. */}
-          {pagerViews.length > 1 && (
+          {!inSettings && pagerViews.length > 1 && (
             <div className="p-2">
               <ViewSwitcher
                 views={pagerViews}
