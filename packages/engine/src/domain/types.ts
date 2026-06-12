@@ -430,6 +430,8 @@ export type SidebarRule =
       readonly conditions: ReadonlyArray<SidebarCondition>
       readonly match?: ConditionMatch
     }
+// "dashboards" is legacy-tolerated: the client no longer renders or offers it,
+// but persisted bodies still carry it.
 export type SidebarStaticItem =
   | "overview"
   | "tasks"
@@ -591,18 +593,11 @@ export interface Dashboard {
   readonly updatedAt: Date
 }
 
-// ── member pages + deactivation ─────────────────────────────────────────────────
-// A member's profile page is a widget canvas with the SAME opaque body document
-// as dashboards (`DashboardBody`), but a fixed scope by design: exactly one page
-// per (org, user), the owner edits, every org member reads. Deactivation is the
-// member analogue of archive: a marker row (org_id, user_id), restorable, that
-// blocks org access and hides the user from pickers. Both reference bauth users
-// logically (like `actor`) — the auth tables are never touched.
-
-export interface MemberPage {
-  readonly userId: string
-  readonly body: DashboardBody
-}
+// ── member deactivation + prefs ──────────────────────────────────────────────────
+// Deactivation is the member analogue of archive: a marker row (org_id,
+// user_id), restorable, that blocks org access and hides the user from pickers.
+// It references bauth users logically (like `actor`) — the auth tables are
+// never touched.
 
 // A member's instance-detail layout prefs: which preset view to render, as a
 // global default plus per-concept overrides keyed by concept id. View keys

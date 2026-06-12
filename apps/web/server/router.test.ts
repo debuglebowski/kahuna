@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest"
 import { auth } from "./auth"
 import { handleApi } from "./router"
 import { runEngineOrThrow } from "./runtime"
-import { deactivateMember, getMemberPage } from "./use-cases"
+import { deactivateMember, listDeactivatedMembers } from "./use-cases"
 
 /** Convert a Set-Cookie response header into a request Cookie header. */
 const cookieHeader = (res: Response): string =>
@@ -126,10 +126,12 @@ describe("DELETE /api/org/members/:userId (purge a deactivated member)", () => {
     // Purge: membership + per-member engine data go; a second delete 404s.
     expect((await del(owner.headers))?.status).toBe(200)
     expect((await del(owner.headers))?.status).toBe(404)
-    const page = await runEngineOrThrow(
+    const markers = await runEngineOrThrow(
       { orgId: owner.orgId, actor: owner.email },
-      getMemberPage(userId),
+      listDeactivatedMembers,
     )
-    expect((page as { body: { widgets: unknown[] } }).body.widgets).toEqual([])
+    expect(
+      (markers as ReadonlyArray<{ userId: string }>).find((m) => m.userId === userId),
+    ).toBeUndefined()
   })
 })

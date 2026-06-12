@@ -1,159 +1,98 @@
 import { useLiveQuery } from "@tanstack/react-db"
-import { useQueries, useQuery } from "@tanstack/react-query"
-import { LayoutDashboard, Mail, Plus } from "lucide-react"
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react"
-import type { Layout } from "react-grid-layout"
-import { useParams } from "react-router-dom"
-import { WidgetCanvas } from "@/components/dashboard/WidgetCanvas"
-import { WidgetEditor } from "@/components/dashboard/WidgetEditor"
+import { useMutation, useQuery } from "@tanstack/react-query"
+import { Activity, ListTodo, Mail } from "lucide-react"
+import { useMemo } from "react"
+import { useNavigate, useParams } from "react-router-dom"
+import { EventRows } from "@/components/dashboard/ActivityWidget"
+import { isOverdue } from "@/components/item/DueDateControl"
+import { Dot } from "@/components/item/StatusSelect"
 import { Badge, Card, Spinner } from "@/components/ui"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import { api, type Task } from "@/lib/api"
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
-import { api, type Concept, type DashboardBody, type DashboardWidget, type Field } from "@/lib/api"
-import { useSession } from "@/lib/auth-client"
-import { conceptsCollection, KEY, useRegisterCollection } from "@/lib/collections"
-import { conceptIndex, useConceptData } from "@/lib/conceptData"
-import {
-  addWidget,
-  applyLayouts,
-  newWidget,
-  referencedConceptIds,
-  removeWidget,
-  updateWidget,
-} from "@/lib/dashboards"
+  KEY,
+  taskStatusesCollection,
+  tasksGlobalCollection,
+  useRegisterCollection,
+} from "@/lib/collections"
+import { formatDateValue } from "@/lib/dates"
 import { memberLabel, useMembers } from "@/lib/members"
 import { initialsOf } from "@/lib/utils"
 
 const roleTone = (role: string) => (role === "owner" ? "blue" : role === "admin" ? "amber" : "gray")
 
-/**
- * Build the default page shown until the member customises theirs: one list
- * widget per concept that has a user-kind field, filtered to this member
- * ("assigned to you"). Computed at render time and NEVER persisted — it tracks
- * schema changes for free, and a future Tasks widget just joins the seed.
- */
-const seedWidgets = (
-  fieldsByConcept: ReadonlyArray<readonly [string, ReadonlyArray<Field>]>,
-  cIndex: Map<string, Concept>,
-  userId: string,
-): DashboardBody => {
-  const widgets: DashboardWidget[] = []
-  for (const [conceptId, fields] of fieldsByConcept) {
-    const userField = fields.find((f) => f.kind === "user")
-    if (!userField) continue
-    const concept = cIndex.get(conceptId)
-    const n = widgets.length
-    widgets.push({
-      id: `seed-${conceptId}`,
-      type: "list",
-      title: concept ? `${concept.pluralName || concept.name} · ${userField.name}` : null,
-      layout: { x: (n % 2) * 6, y: Math.floor(n / 2) * 4, w: 6, h: 4 },
-      conceptId,
-      conditions: [{ field: userField.id, op: "eq", value: userId }],
-      orderBy: null,
-      limit: 10,
-    })
-  }
-  return { widgets }
-}
+/** How many of the member's open tasks / authored events the page shows. */
+const TASK_LIMIT = 5
+const EVENT_LIMIT = 10
 
 /**
- * A member's profile page (`/members/:userId`): identity header + a widget
- * canvas with the same machinery as dashboards. Only the member themself may
- * edit (enforced server-side too — `updateMemberPage` always writes the
- * caller's own page); everyone else gets a read-only canvas.
+ * A member's profile page (`/members/:userId`): identity header plus two fixed
+ * sections — the member's open tasks (top 5 from the global task layer) and
+ * their recent activity (org events they authored). No per-member widget
+ * canvas; the page reads the same live layers everything else does.
  */
 export function MemberProfile() {
   const { userId = "" } = useParams()
-  const { data: session } = useSession()
+  const navigate = useNavigate()
   const { members, deactivatedSet, isPending: membersPending } = useMembers()
-  const conceptsLive = useLiveQuery((q) => q.from({ c: conceptsCollection }))
-  useRegisterCollection(KEY.concepts, conceptsCollection)
-  const concepts = (conceptsLive.data ?? []) as Concept[]
-  const conceptsLoaded = !!conceptsLive.data
-  const cIndex = useMemo(() => conceptIndex(concepts), [concepts])
 
-  const isOwner = session?.user.id === userId
-  const member = members.find((m) => m.userId === userId)
+  useRegisterCollection(KEY.tasksGlobal, tasksGlobalCollection)
+  useRegisterCollection(KEY.taskStatuses, taskStatusesCollection)
+  const tasksQ = useLiveQuery((q) => q.from({ t: tasksGlobalCollection }))
+  const statusesQ = useLiveQuery((q) => q.from({ s: taskStatusesCollection }))
 
-  const page = useQuery({
-    queryKey: ["memberPage", userId],
-    queryFn: () => api.getMemberPage(userId),
+  const statusById = useMemo(
+    () => new Map((statusesQ.data ?? []).map((s) => [s.id, s])),
+    [statusesQ.data],
+  )
+
+  // The member's open tasks: assigned to them, not archived, not done —
+  // dated ones first (soonest due on top), then the rest newest-first.
+  const tasks = useMemo(
+    () =>
+      (tasksQ.data ?? [])
+        .filter(
+          (t) =>
+            t.assignee === userId &&
+            !t.archivedAt &&
+            statusById.get(t.statusId ?? "")?.category !== "done",
+        )
+        .sort((a, b) => {
+          if (a.dueAt && b.dueAt) return a.dueAt.localeCompare(b.dueAt)
+          if (a.dueAt || b.dueAt) return a.dueAt ? -1 : 1
+          return +new Date(b.createdAt) - +new Date(a.createdAt)
+        })
+        .slice(0, TASK_LIMIT),
+    [tasksQ.data, statusById, userId],
+  )
+
+  // Recent activity = the newest org events this member authored. The event
+  // feed has no actor filter server-side, so filter a recent window client-side.
+  const eventsQ = useQuery({
+    queryKey: ["events", null, "member", userId],
+    queryFn: () => api.listEvents({ limit: 500 }),
     enabled: !!userId,
   })
+  const events = useMemo(
+    () => (eventsQ.data ?? []).filter((e) => e.actor === userId).slice(0, EVENT_LIMIT),
+    [eventsQ.data, userId],
+  )
 
-  // Field defs of every concept — the seed needs to know which have user fields.
-  // `combine` keeps the result structurally shared, so the seed memo below only
-  // recomputes when a field list actually changes. `pending` gates the canvas:
-  // seeding from a half-resolved set would reposition tiles as each query lands
-  // (the grid animates every move).
-  const fieldsByConcept = useQueries({
-    queries: concepts.map((c) => ({
-      queryKey: ["fields", c.id],
-      queryFn: () => api.listFields(c.id),
-    })),
-    combine: (results) => ({
-      lists: concepts.map((c, i) => [c.id, (results[i]?.data ?? []) as Field[]] as const),
-      pending: results.some((r) => r.isPending),
-    }),
+  // A task points at its item lineage; the route wants an instance, so resolve
+  // the head version (latest published, else the draft) on click.
+  const open = useMutation({
+    mutationFn: async (t: Task) => {
+      if (!t.subjectId) return null
+      const versions = [...(await api.listVersions(t.subjectId))].sort(
+        (a, b) => b.versionSeq - a.versionSeq,
+      )
+      return versions.find((v) => v.versionStatus === "published") ?? versions[0] ?? null
+    },
+    onSuccess: (head) => head && navigate(`/instances/${head.id}`),
   })
 
-  // Local working copy (the dashboards pattern): (re)loaded when the subject
-  // changes, so live refetches never clobber in-flight edits. Layout effect so
-  // a customised page never paints a frame of seed tiles before the saved body
-  // replaces them.
-  const [body, setBody] = useState<DashboardBody | null>(null)
-  const loadedFor = useRef<string | null>(null)
-  useLayoutEffect(() => {
-    if (page.data && loadedFor.current !== userId) {
-      loadedFor.current = userId
-      setBody(page.data.body)
-    }
-  }, [page.data, userId])
-
-  // An un-customised page renders the computed seed; the first edit persists it.
-  const seed = useMemo(
-    () => seedWidgets(fieldsByConcept.lists, cIndex, userId),
-    [fieldsByConcept.lists, cIndex, userId],
-  )
-  const effective = body && body.widgets.length > 0 ? body : seed
-  const usingSeed = effective === seed
-
-  const ids = useMemo(() => referencedConceptIds(effective), [effective])
-  const { instData, loaders } = useConceptData(ids)
-
-  const mutate = useCallback((next: DashboardBody) => {
-    setBody(next)
-    void api.updateMemberPage(next)
-  }, [])
-  const onStop = useCallback(
-    (layout: Layout[]) => mutate(applyLayouts(effective, layout)),
-    [effective, mutate],
-  )
-
-  const [editingId, setEditingId] = useState<string | null>(null)
-  const editing = effective.widgets.find((w) => w.id === editingId) ?? null
-
-  const addOfType = (type: DashboardWidget["type"]) => {
-    const w = newWidget(effective, type)
-    mutate(addWidget(effective, w))
-    setEditingId(w.id)
-  }
-
-  // The seed gate (concepts + every field list resolved) only applies while the
-  // page is uncustomised — a saved body renders without waiting on field defs.
-  if (
-    membersPending ||
-    (page.isPending && !!userId) ||
-    (usingSeed && (!conceptsLoaded || fieldsByConcept.pending))
-  )
-    return <Spinner />
+  if (membersPending) return <Spinner />
+  const member = members.find((m) => m.userId === userId)
   if (!member) {
     return (
       <Card className="p-6">
@@ -169,83 +108,101 @@ export function MemberProfile() {
   const deactivated = deactivatedSet.has(userId)
 
   return (
-    <div className="flex flex-col gap-4">
-      {loaders}
-      <header className="flex items-center justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-3">
-          <Avatar className="size-12">
-            <AvatarImage src={member.user?.image ?? undefined} alt="" />
-            <AvatarFallback>{initialsOf(member.user?.name, email ?? userId)}</AvatarFallback>
-          </Avatar>
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <h2 className="truncate text-xl font-semibold text-foreground">{label}</h2>
-              {deactivated && <Badge tone="red">deactivated</Badge>}
-              <Badge tone={roleTone(member.role)}>{member.role}</Badge>
-            </div>
-            {email && (
-              <a
-                href={`mailto:${email}`}
-                className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground hover:underline"
-              >
-                <Mail size={13} />
-                {email}
-              </a>
-            )}
+    <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
+      <header className="flex items-center gap-3">
+        <Avatar className="size-12">
+          <AvatarImage src={member.user?.image ?? undefined} alt="" />
+          <AvatarFallback>{initialsOf(member.user?.name, email ?? userId)}</AvatarFallback>
+        </Avatar>
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <h2 className="truncate text-xl font-semibold text-foreground">{label}</h2>
+            {deactivated && <Badge tone="red">deactivated</Badge>}
+            <Badge tone={roleTone(member.role)}>{member.role}</Badge>
           </div>
+          {email && (
+            <a
+              href={`mailto:${email}`}
+              className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground hover:underline"
+            >
+              <Mail size={13} />
+              {email}
+            </a>
+          )}
         </div>
-
-        {isOwner && (
-          <Select value="" onValueChange={(t) => addOfType(t as DashboardWidget["type"])}>
-            <SelectTrigger className="cancel-drag" size="sm">
-              <Plus size={14} />
-              <SelectValue placeholder="Add widget" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="metric">Metric</SelectItem>
-              <SelectItem value="list">List / Table</SelectItem>
-              <SelectItem value="breakdown">Breakdown</SelectItem>
-              <SelectItem value="attention">Attention</SelectItem>
-              <SelectItem value="trend">Trend</SelectItem>
-              <SelectItem value="activity">Activity</SelectItem>
-            </SelectContent>
-          </Select>
-        )}
       </header>
 
-      {effective.widgets.length === 0 ? (
-        <div className="flex min-h-[320px] flex-col items-center justify-center rounded-xl border border-dashed p-12 text-center">
-          <div className="mb-4 flex size-10 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-            <LayoutDashboard size={20} />
+      <section className="space-y-3">
+        <h3 className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
+          <ListTodo size={15} />
+          Tasks
+        </h3>
+        {tasksQ.isLoading || statusesQ.isLoading ? (
+          <Spinner />
+        ) : tasks.length === 0 ? (
+          <EmptyBox>No open tasks.</EmptyBox>
+        ) : (
+          <div className="overflow-hidden rounded-xl border bg-card shadow-sm">
+            <div className="divide-y divide-border">
+              {tasks.map((t) => {
+                const status = statusById.get(t.statusId ?? "")
+                return (
+                  <div key={t.id} className="flex items-center gap-2.5 px-4 py-3">
+                    <button
+                      type="button"
+                      disabled={!t.subjectId || open.isPending}
+                      onClick={() => open.mutate(t)}
+                      className="min-w-0 flex-1 truncate text-left text-sm text-foreground enabled:cursor-pointer enabled:hover:underline"
+                    >
+                      {t.title}
+                    </button>
+                    {status && (
+                      <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+                        <Dot status={status} />
+                        {status.name}
+                      </span>
+                    )}
+                    {t.dueAt && (
+                      <span
+                        className={`shrink-0 text-xs ${isOverdue(t.dueAt) ? "font-medium text-destructive" : "text-muted-foreground"}`}
+                      >
+                        {formatDateValue(t.dueAt)}
+                      </span>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+            {open.error && (
+              <p className="px-4 pb-3 text-sm text-destructive">{(open.error as Error).message}</p>
+            )}
           </div>
-          <h2 className="mb-1 text-lg font-medium text-foreground">Nothing here yet</h2>
-          <p className="max-w-sm text-sm text-balance text-muted-foreground">
-            {isOwner
-              ? "Add a widget to show colleagues what you're working on."
-              : `${label} hasn't put anything on their page yet.`}
-          </p>
-        </div>
-      ) : (
-        <WidgetCanvas
-          body={effective}
-          instData={instData}
-          cIndex={cIndex}
-          conceptsLoaded={conceptsLoaded}
-          readOnly={!isOwner}
-          onStop={onStop}
-          onEdit={setEditingId}
-          onRemove={(id) => mutate(removeWidget(effective, id))}
-        />
-      )}
+        )}
+      </section>
 
-      {isOwner && editing && (
-        <WidgetEditor
-          widget={editing}
-          concepts={concepts}
-          onSave={(w) => mutate(updateWidget(effective, w.id, w))}
-          onClose={() => setEditingId(null)}
-        />
-      )}
+      <section className="space-y-3">
+        <h3 className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
+          <Activity size={15} />
+          Recent activity
+        </h3>
+        {eventsQ.isLoading ? (
+          <Spinner />
+        ) : events.length === 0 ? (
+          <EmptyBox>No recent activity.</EmptyBox>
+        ) : (
+          <div className="rounded-xl border bg-card px-4 py-2 shadow-sm">
+            <EventRows events={events} />
+          </div>
+        )}
+      </section>
+    </div>
+  )
+}
+
+function EmptyBox({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex min-h-[120px] items-center justify-center rounded-xl border border-dashed p-8">
+      <p className="text-sm text-muted-foreground">{children}</p>
     </div>
   )
 }

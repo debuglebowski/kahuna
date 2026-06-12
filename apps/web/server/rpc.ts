@@ -17,7 +17,6 @@ import {
   type Item,
   KingsmakerRpcs,
   type Label,
-  type MemberPage,
   type Note,
   type Relation,
   RpcError,
@@ -484,10 +483,6 @@ const HandlersLive = ServerRpcs.toLayer({
   restoreAnnotationField: ({ id }) => admin<AnnotationField>(uc.restoreAnnotationField(id)),
   reorderAnnotationFields: ({ annotationType, orders }) =>
     admin<ReadonlyArray<AnnotationField>>(uc.reorderAnnotationFields(annotationType, orders)),
-  // Member pages: any member reads any page; a write always targets the caller's
-  // own page (the engine upserts on the actor — owner-only by construction).
-  getMemberPage: ({ userId }) => as<MemberPage>(uc.getMemberPage(userId)),
-  updateMemberPage: ({ body }) => as<MemberPage>(uc.updateMemberPage(body)),
   // Instance-view layout prefs: both target the caller's own row.
   getInstanceViewPrefs: () => as<InstanceViewPrefs>(uc.getInstanceViewPrefs),
   updateInstanceViewPrefs: ({ body }) => as<InstanceViewPrefs>(uc.updateInstanceViewPrefs(body)),

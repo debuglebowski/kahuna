@@ -313,32 +313,10 @@ export const dashboards = pgTable(
 )
 
 /**
- * A member's profile page — a grid canvas of widgets (same opaque body document
- * as `dashboards`, resolved client-side). Exactly one page per (org, user), so
- * it is keyed by the member rather than carrying name/position/hidden. Scope is
- * fixed by design: the owner edits, every org member reads — so unlike
- * dashboards there is no `owner_id` switch.
- */
-export const memberPages = pgTable(
-  "member_pages",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    orgId: text("org_id").notNull(),
-    // Logical FK into bauth_user.id (see header comment) — the page's subject+owner.
-    userId: text("user_id").notNull(),
-    body: jsonb("body").notNull().default(sql`'{"widgets":[]}'::jsonb`),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-  },
-  (t) => [uniqueIndex("member_pages_org_user_uq").on(t.orgId, t.userId)],
-)
-
-/**
  * A member's instance-detail layout choices — which preset view to render, as a
  * global default plus per-concept overrides (`{ defaultView, byConcept }`,
  * keyed by concept id). The body is opaque to the engine: view keys name
- * client-defined presets. One row per (org, user); owner-only writes, like
- * `member_pages`.
+ * client-defined presets. One row per (org, user); owner-only writes.
  */
 export const instanceViewPrefs = pgTable(
   "instance_view_prefs",

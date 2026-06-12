@@ -358,16 +358,9 @@ export const reorderDashboards = (
   orders: ReadonlyArray<{ readonly id: string; readonly position: number }>,
 ): UC<unknown> => Effect.flatMap(DashboardService, (s) => s.reorder(orders))
 
-// ── member pages + deactivation ─────────────────────────────────────────────────
+// ── member deactivation + prefs ──────────────────────────────────────────────────
 
-export const getMemberPage = (userId: string): UC<unknown> =>
-  Effect.flatMap(MemberService, (m) => m.getPage(userId))
-
-/** Always the caller's own page (owner-only by construction). */
-export const updateMemberPage = (body: DashboardBody): UC<unknown> =>
-  Effect.flatMap(MemberService, (m) => m.updatePage(body))
-
-/** The caller's instance-view layout prefs (own row only, like member pages). */
+/** The caller's instance-view layout prefs (own row only by construction). */
 export const getInstanceViewPrefs: UC<unknown> = Effect.flatMap(MemberService, (m) =>
   m.getViewPrefs(),
 )
@@ -385,7 +378,7 @@ export const deactivateMember = (userId: string): UC<unknown> =>
 export const reactivateMember = (userId: string): UC<unknown> =>
   Effect.flatMap(MemberService, (m) => Effect.map(m.reactivate(userId), () => ({ userId })))
 
-/** The engine half of a member purge (page + marker); the membership removal
+/** The engine half of a member purge (prefs + marker); the membership removal
  *  itself happens in the router against BetterAuth. */
 export const purgeMemberData = (userId: string): UC<unknown> =>
   Effect.flatMap(MemberService, (m) => Effect.map(m.purgeMemberData(userId), () => ({ userId })))

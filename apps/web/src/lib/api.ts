@@ -35,7 +35,6 @@ export type {
   InstanceViewPrefsBody,
   Item,
   Label,
-  MemberPage,
   Note,
   RelatedInstance,
   Relation,
@@ -328,10 +327,8 @@ export const api = {
     annotationType: "note" | "task",
     orders: ReadonlyArray<{ id: string; position: number }>,
   ) => call((c) => c.reorderAnnotationFields({ annotationType, orders })),
-  // Member pages + deactivation. A page write always targets the caller's own
-  // page; member purge is a plain-HTTP DELETE (see Members directory page).
-  getMemberPage: (userId: string) => call((c) => c.getMemberPage({ userId })),
-  updateMemberPage: (body: DashboardBody) => call((c) => c.updateMemberPage({ body })),
+  // Member deactivation; member purge is a plain-HTTP DELETE (see Members
+  // directory page).
   // Instance-view layout prefs — always the caller's own row.
   getInstanceViewPrefs: () => call((c) => c.getInstanceViewPrefs()),
   updateInstanceViewPrefs: (body: InstanceViewPrefsBody) =>

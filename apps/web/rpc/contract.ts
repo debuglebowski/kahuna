@@ -333,6 +333,8 @@ export const SidebarRule = Schema.Union(
   }),
 )
 
+// "dashboards" is legacy-tolerated: no longer rendered or offered by the editor
+// (the dashboards section is the nav), but persisted bodies still carry it.
 const SidebarStaticItem = Schema.Literal(
   "overview",
   "tasks",
@@ -585,17 +587,9 @@ export const TaskSubjectRef = Schema.Struct({
 })
 export type TaskSubjectRef = typeof TaskSubjectRef.Type
 
-// ── member pages + deactivation ─────────────────────────────────────────────────
-// A member's profile page is a widget canvas with the SAME body document as
-// dashboards, but a fixed scope: one page per (org, user), the owner edits,
-// every org member reads. Deactivation is the member analogue of archive — a
-// restorable marker that blocks org access and hides the user from pickers.
-
-export const MemberPage = Schema.Struct({
-  userId: Schema.String,
-  body: DashboardBody,
-})
-export type MemberPage = typeof MemberPage.Type
+// ── member deactivation ─────────────────────────────────────────────────────────
+// Deactivation is the member analogue of archive — a restorable marker that
+// blocks org access and hides the user from pickers.
 
 // A member's instance-detail layout prefs: which preset view to render, as a
 // global default plus per-concept overrides keyed by concept id. View keys
@@ -1236,18 +1230,6 @@ export class KingsmakerRpcs extends RpcGroup.make(
       orders: Schema.Array(Schema.Struct({ id: Schema.String, position: Schema.Number })),
     },
     success: Schema.Array(AnnotationField),
-    error: RpcError,
-  }),
-  // Member pages: any member reads any page; a write always targets the
-  // CALLER's own page (owner-only by construction — no userId in the payload).
-  Rpc.make("getMemberPage", {
-    payload: { userId: Schema.String },
-    success: MemberPage,
-    error: RpcError,
-  }),
-  Rpc.make("updateMemberPage", {
-    payload: { body: DashboardBody },
-    success: MemberPage,
     error: RpcError,
   }),
   // Instance-view layout prefs: both calls target the CALLER's own row
