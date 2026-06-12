@@ -53,8 +53,13 @@ export function ViewNav({
               </button>
             )}
             {collapsed && i > 0 && <div className="mx-2 my-2 border-t border-sidebar-border" />}
-            {!isClosed &&
-              section.entries.map((e) => <NavEntry key={e.key} entry={e} collapsed={collapsed} />)}
+            {!isClosed && (
+              <div className="space-y-0.5">
+                {section.entries.map((e) => (
+                  <NavEntry key={e.key} entry={e} collapsed={collapsed} />
+                ))}
+              </div>
+            )}
           </div>
         )
       })}
