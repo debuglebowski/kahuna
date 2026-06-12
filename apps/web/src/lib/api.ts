@@ -8,7 +8,9 @@ import {
   type GraphLayout,
   type InstanceViewPrefsBody,
   KingsmakerRpcs,
+  type RichTextEnvelope,
   type SidebarViewBody,
+  type TaskStatusCategory,
 } from "../../rpc/contract"
 
 export type {
@@ -38,14 +40,13 @@ export type {
   Note,
   RelatedInstance,
   Relation,
+  RichTextEnvelope,
   SidebarCondition,
-  SidebarMember,
-  SidebarRule,
   SidebarSection,
-  SidebarSource,
   SidebarView,
   SidebarViewBody,
   Task,
+  TaskPriority,
   TaskStatus,
   TaskStatusCategory,
   TaskSubjectRef,
@@ -264,7 +265,10 @@ export const api = {
   createTask: (input: {
     subjectId: string | null
     title: string
+    description?: RichTextEnvelope | null
     statusId?: string | null
+    priorityId?: string | null
+    labelIds?: ReadonlyArray<string>
     assignee?: string | null
     dueAt?: string | null
     customFields?: Fields
@@ -272,12 +276,26 @@ export const api = {
   updateTask: (
     id: string,
     expectedVersion: number,
-    patch: { title?: string; dueAt?: string | null; customFields?: Fields },
+    patch: {
+      title?: string
+      description?: RichTextEnvelope | null
+      priorityId?: string | null
+      labelIds?: ReadonlyArray<string>
+      dueAt?: string | null
+      customFields?: Fields
+    },
   ) => call((c) => c.updateTask({ id, expectedVersion, ...patch })),
   setTaskStatus: (id: string, expectedVersion: number, statusId: string) =>
     call((c) => c.setTaskStatus({ id, expectedVersion, statusId })),
   assignTask: (id: string, expectedVersion: number, assignee: string | null) =>
     call((c) => c.assignTask({ id, expectedVersion, assignee })),
+  snoozeTask: (id: string, expectedVersion: number, until: string | null) =>
+    call((c) => c.snoozeTask({ id, expectedVersion, until })),
+  setTaskBlocked: (
+    id: string,
+    expectedVersion: number,
+    blocked: null | { reason?: string | null; taskId?: string | null },
+  ) => call((c) => c.setTaskBlocked({ id, expectedVersion, blocked })),
   archiveTask: (id: string, expectedVersion: number) =>
     call((c) => c.archiveTask({ id, expectedVersion })),
   restoreTask: (id: string, expectedVersion: number) =>
@@ -290,7 +308,7 @@ export const api = {
     call((c) => c.listTaskStatuses({ includeArchived: opts?.includeArchived })),
   createTaskStatus: (input: {
     name: string
-    category: "todo" | "active" | "done"
+    category: TaskStatusCategory
     color?: string | null
     isDefault?: boolean
   }) => call((c) => c.createTaskStatus(input)),
@@ -298,13 +316,24 @@ export const api = {
     id: string
     name?: string
     color?: string | null
-    category?: "todo" | "active" | "done"
+    category?: TaskStatusCategory
     isDefault?: boolean
   }) => call((c) => c.updateTaskStatus(input)),
   archiveTaskStatus: (id: string) => call((c) => c.archiveTaskStatus({ id })),
   restoreTaskStatus: (id: string) => call((c) => c.restoreTaskStatus({ id })),
   reorderTaskStatuses: (orders: ReadonlyArray<{ id: string; position: number }>) =>
     call((c) => c.reorderTaskStatuses({ orders })),
+  // ── annotation layer: task priorities (admin) ─────────────────────────────────
+  listTaskPriorities: (opts?: { includeArchived?: boolean }) =>
+    call((c) => c.listTaskPriorities({ includeArchived: opts?.includeArchived })),
+  createTaskPriority: (input: { name: string; color?: string | null }) =>
+    call((c) => c.createTaskPriority(input)),
+  updateTaskPriority: (input: { id: string; name?: string; color?: string | null }) =>
+    call((c) => c.updateTaskPriority(input)),
+  archiveTaskPriority: (id: string) => call((c) => c.archiveTaskPriority({ id })),
+  restoreTaskPriority: (id: string) => call((c) => c.restoreTaskPriority({ id })),
+  reorderTaskPriorities: (orders: ReadonlyArray<{ id: string; position: number }>) =>
+    call((c) => c.reorderTaskPriorities({ orders })),
   // ── annotation layer: custom-field definitions (admin) ─────────────────────────
   listAnnotationFields: (annotationType: "note" | "task", opts?: { includeArchived?: boolean }) =>
     call((c) => c.listAnnotationFields({ annotationType, includeArchived: opts?.includeArchived })),

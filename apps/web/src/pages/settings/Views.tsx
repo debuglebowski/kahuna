@@ -15,8 +15,8 @@ import {
 import { CSS } from "@dnd-kit/utilities"
 import { useLiveQuery } from "@tanstack/react-db"
 import { useMutation } from "@tanstack/react-query"
-import { GripVertical, Pencil, Plus, Trash2 } from "lucide-react"
-import { useState } from "react"
+import { GripVertical, PanelLeft, Pencil, Plus, SlidersHorizontal, Trash2 } from "lucide-react"
+import { useMemo, useState } from "react"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import {
   Select,
@@ -25,22 +25,28 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { Tabs, TabsContent } from "@/components/ui/tabs"
 import { IconPicker } from "../../components/IconPicker"
-import { SectionList } from "../../components/sidebar/SectionList"
+import { SectionsEditor } from "../../components/sidebar/SectionsEditor"
+import { ViewNav } from "../../components/sidebar/ViewNav"
 import {
   Badge,
   Button,
   Card,
+  CardHeader,
   ConfirmDialog,
   Field,
   IconButton,
   Input,
   Spinner,
+  TabRail,
+  TabRailItem,
   Toolbar,
 } from "../../components/ui"
 import { api, type SidebarSection, type SidebarView } from "../../lib/api"
-import { conceptsCollection, sidebarViewsCollection } from "../../lib/collections"
+import { sidebarViewsCollection } from "../../lib/collections"
 import { ConceptIcon } from "../../lib/icons"
+import { globalsSection, resolveView, useDashboards } from "../../lib/sidebarViews"
 
 const refetchViews = () => sidebarViewsCollection.utils.refetch()
 
@@ -48,7 +54,6 @@ const refetchViews = () => sidebarViewsCollection.utils.refetch()
  *  in-sidebar edit mode uses, plus scope/visibility/order controls). */
 export function Views() {
   const { data: views } = useLiveQuery((q) => q.from({ v: sidebarViewsCollection }))
-  const { data: concepts } = useLiveQuery((q) => q.from({ c: conceptsCollection }))
   const [editing, setEditing] = useState<SidebarView | null>(null)
   const [filter, setFilter] = useState("")
   const sorted = [...(views ?? [])].sort((a, b) => a.position - b.position)
@@ -60,7 +65,12 @@ export function Views() {
 
   const createMut = useMutation({
     mutationFn: () =>
-      api.createView({ name: "New view", scope: "personal", body: { sections: [] } }),
+      // Fresh views start with the untitled globals section on top.
+      api.createView({
+        name: "New view",
+        scope: "personal",
+        body: { sections: [globalsSection()] },
+      }),
     onSuccess: async (v) => {
       await refetchViews()
       setEditing(v)
@@ -112,7 +122,6 @@ export function Views() {
       {editing && (
         <ViewEditor
           view={editing}
-          concepts={concepts ?? []}
           // The last shared (Default) view can't be deleted — keep the list non-empty.
           canDelete={!(editing.ownerId === null && sorted.filter((v) => !v.ownerId).length <= 1)}
           onClose={() => setEditing(null)}
@@ -172,12 +181,10 @@ function ViewRow({
 
 function ViewEditor({
   view,
-  concepts,
   canDelete,
   onClose,
 }: {
   view: SidebarView
-  concepts: readonly import("../../lib/api").Concept[]
   canDelete: boolean
   onClose: () => void
 }) {
@@ -198,6 +205,19 @@ function ViewEditor({
       set(v)
       setDirty(true)
     }
+
+  // Sections edit in place (dnd previews don't dirty the draft; commits do).
+  const dashboards = useDashboards()
+  const applySections = (next: readonly SidebarSection[], commit: boolean) => {
+    setSections([...next])
+    if (commit) setDirty(true)
+  }
+  // Live preview of the draft, rendered exactly like the sidebar. The neutral
+  // pathname keeps every entry inactive.
+  const previewSections = useMemo(
+    () => resolveView({ sections }, { dashboards, pathname: "" }),
+    [sections, dashboards],
+  )
 
   const save = useMutation({
     mutationFn: () =>
@@ -222,83 +242,134 @@ function ViewEditor({
       <DialogContent
         showCloseButton={false}
         aria-describedby={undefined}
-        className="flex max-h-[85vh] flex-col gap-0 p-0 sm:max-w-2xl"
+        className="flex h-[85vh] w-[min(1080px,96vw)] flex-col gap-0 p-0 sm:max-w-none"
       >
-        <header className="flex shrink-0 items-center justify-between gap-3 border-b px-5 py-3">
-          <DialogTitle className="truncate text-base">{name.trim() || "Edit view"}</DialogTitle>
-          <div className="flex shrink-0 items-center gap-2">
-            {save.error && (
-              <p className="max-w-md text-xs text-destructive">{(save.error as Error).message}</p>
-            )}
-            <Button variant="outline" onClick={requestClose}>
+        <Tabs defaultValue="general" orientation="vertical" className="min-h-0 flex-1 gap-0">
+          <TabRail
+            title={
+              <DialogTitle className="block truncate text-sm font-semibold">
+                {name.trim() || "Edit view"}
+              </DialogTitle>
+            }
+          >
+            <TabRailItem value="general" icon={<SlidersHorizontal size={16} />}>
+              General
+            </TabRailItem>
+            <TabRailItem value="sections" icon={<PanelLeft size={16} />}>
+              Sections
+            </TabRailItem>
+          </TabRail>
+
+          <TabsContent value="general" className="min-h-0 flex-1 overflow-y-auto p-6 pb-24">
+            <div className="space-y-4">
+              <div className="flex items-end gap-2">
+                <IconPicker value={icon} onChange={edit(setIcon)} />
+                <div className="flex-1">
+                  <Field label="Name (optional)">
+                    <Input
+                      value={name}
+                      onChange={(e) => edit(setName)(e.target.value)}
+                      placeholder="View name…"
+                    />
+                  </Field>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Scope">
+                  <Select
+                    value={scope}
+                    onValueChange={(v) => edit(setScope)(v as "personal" | "org")}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="personal">Personal (only me)</SelectItem>
+                      <SelectItem value="org">Org (everyone)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </Field>
+                <Field label="Visibility">
+                  <Select
+                    value={hidden ? "hidden" : "shown"}
+                    onValueChange={(v) => edit(setHidden)(v === "hidden")}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="shown">Shown in pager</SelectItem>
+                      <SelectItem value="hidden">Hidden</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </Field>
+              </div>
+
+              <Card className="border-destructive/40">
+                <CardHeader title={<span className="text-destructive">Danger zone</span>} />
+                <div className="flex items-center justify-between gap-4 px-4 py-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-foreground">Delete this view</p>
+                    <p className="text-xs text-muted-foreground">
+                      {canDelete
+                        ? "Removes the layout and its sections permanently. Dashboards are unaffected."
+                        : "This is the last shared view — it can't be deleted."}
+                    </p>
+                  </div>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    className="shrink-0"
+                    onClick={() => setConfirmingDelete(true)}
+                    disabled={del.isPending || !canDelete}
+                  >
+                    <Trash2 size={14} /> Delete
+                  </Button>
+                </div>
+              </Card>
+            </div>
+          </TabsContent>
+
+          <TabsContent value="sections" className="flex min-h-0 flex-1">
+            <div className="min-w-0 flex-1 overflow-y-auto p-6 pb-24">
+              <div className="mb-2 text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">
+                Sections
+              </div>
+              <SectionsEditor
+                sections={sections}
+                dashboards={dashboards}
+                onChange={applySections}
+              />
+            </div>
+            {/* Live preview — the draft rendered exactly like the real sidebar,
+                as a floating card beside the editor. */}
+            <aside className="hidden w-72 shrink-0 overflow-y-auto p-6 pb-24 pl-0 sm:block">
+              <div className="mb-2 text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">
+                Preview
+              </div>
+              <div className="rounded-lg border border-sidebar-border bg-sidebar text-sidebar-foreground shadow-sm">
+                <div className="pointer-events-none px-2 py-3">
+                  <ViewNav sections={previewSections} collapsed={false} />
+                </div>
+              </div>
+            </aside>
+          </TabsContent>
+        </Tabs>
+
+        <div className="pointer-events-none absolute right-6 bottom-6 z-10 flex flex-col items-end gap-2">
+          {save.error && (
+            <p className="pointer-events-auto max-w-md rounded-md border border-destructive/30 bg-background px-3 py-2 text-xs text-destructive shadow-lg">
+              {(save.error as Error).message}
+            </p>
+          )}
+          <div className="pointer-events-auto flex gap-2">
+            <Button variant="outline" className="shadow-lg" onClick={requestClose}>
               Cancel
             </Button>
-            <Button onClick={() => save.mutate()} disabled={save.isPending}>
+            <Button className="shadow-lg" onClick={() => save.mutate()} disabled={save.isPending}>
               {save.isPending ? "Saving…" : "Save"}
             </Button>
-          </div>
-        </header>
-
-        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-6">
-          <div className="flex items-end gap-2">
-            <IconPicker value={icon} onChange={edit(setIcon)} />
-            <div className="flex-1">
-              <Field label="Name (optional)">
-                <Input
-                  value={name}
-                  onChange={(e) => edit(setName)(e.target.value)}
-                  placeholder="View name…"
-                />
-              </Field>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Scope">
-              <Select value={scope} onValueChange={(v) => edit(setScope)(v as "personal" | "org")}>
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="personal">Personal (only me)</SelectItem>
-                  <SelectItem value="org">Org (everyone)</SelectItem>
-                </SelectContent>
-              </Select>
-            </Field>
-            <Field label="Visibility">
-              <Select
-                value={hidden ? "hidden" : "shown"}
-                onValueChange={(v) => edit(setHidden)(v === "hidden")}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="shown">Shown in pager</SelectItem>
-                  <SelectItem value="hidden">Hidden</SelectItem>
-                </SelectContent>
-              </Select>
-            </Field>
-          </div>
-
-          <Field label="Sections">
-            <SectionList sections={sections} concepts={concepts} onChange={edit(setSections)} />
-          </Field>
-
-          <div className="border-t border-border pt-3">
-            <Button
-              variant="destructive"
-              onClick={() => setConfirmingDelete(true)}
-              disabled={del.isPending || !canDelete}
-              title={canDelete ? undefined : "The last shared view can't be deleted."}
-            >
-              <Trash2 size={15} /> Delete view
-            </Button>
-            {!canDelete && (
-              <p className="mt-1.5 text-xs text-muted-foreground">
-                This is the last shared view — it can't be deleted.
-              </p>
-            )}
           </div>
         </div>
       </DialogContent>

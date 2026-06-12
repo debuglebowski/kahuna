@@ -155,6 +155,34 @@
       "when": 1781217810279,
       "tag": "0021_cold_the_enforcers",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1781248485346,
+      "tag": "0022_sidebar_dashboard_sections",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1781254000000,
+      "tag": "0023_sidebar_entry_ids",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1781256600000,
+      "tag": "0024_task_fields_and_priorities",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1781256500000,
+      "tag": "0025_sidebar_globals_section",
+      "breakpoints": true
     }
   ]
 }

@@ -276,10 +276,9 @@ export const GraphLayout = Schema.Record({
 })
 export type GraphLayout = typeof GraphLayout.Type
 
-// ── sidebar views (configurable nav layouts) ───────────────────────────────────
-// A View is an ordered stack of sections, switched via the sidebar pager. The
-// whole layout is `SidebarViewBody` and is resolved CLIENT-SIDE against the live
-// concept/instance collections — the server only persists/serves the document.
+// ── shared filter conditions ───────────────────────────────────────────────────
+// Used by the dashboard widget schemas below (and FilterBar); the "Sidebar"
+// prefix is historical — sidebar sections no longer carry conditions.
 
 /** One filter condition. `field` = a field id, or `__labels` for the label ops.
  *  Value shape varies by op: `between` = [min, max], `in`/`notIn` = an array,
@@ -311,74 +310,21 @@ export type SidebarCondition = typeof SidebarCondition.Type
 /** How a condition set combines: every condition or at least one (absent = all). */
 const ConditionMatch = { match: Schema.optional(Schema.Literal("all", "any")) }
 
-/** A manually-pinned group member — a dashboard link or a single instance. */
-export const SidebarMember = Schema.Union(
-  Schema.Struct({ kind: Schema.Literal("dashboard"), dashboardId: Schema.String }),
-  Schema.Struct({
-    kind: Schema.Literal("instance"),
-    conceptId: Schema.String,
-    instanceId: Schema.String,
-  }),
-)
-
-/** An auto-membership rule: every visible dashboard, or matching instances of a
- *  concept (an instance rule is a data query, like a widget's `conceptId`). */
-export const SidebarRule = Schema.Union(
-  Schema.Struct({ target: Schema.Literal("dashboards") }),
-  Schema.Struct({
-    target: Schema.Literal("items"),
-    conceptId: Schema.String,
-    conditions: Schema.Array(SidebarCondition),
-    ...ConditionMatch,
-  }),
-)
-
-// "dashboards" is legacy-tolerated: no longer rendered or offered by the editor
-// (the dashboards section is the nav), but persisted bodies still carry it.
-const SidebarStaticItem = Schema.Literal(
-  "overview",
-  "tasks",
-  "dashboards",
-  "members",
-  "automations",
-  "settings",
-)
-
-const SidebarLink = Schema.Struct({
-  id: Schema.String,
-  label: Schema.String,
-  icon: Schema.optional(Schema.NullOr(Schema.String)),
-  /** `/instances/:id`, a concept route, or an external URL. */
-  to: Schema.String,
-})
-
-export const SidebarSource = Schema.Union(
-  Schema.Struct({ kind: Schema.Literal("static"), items: Schema.Array(SidebarStaticItem) }),
-  Schema.Struct({
-    kind: Schema.Literal("group"),
-    members: Schema.Array(SidebarMember),
-    rules: Schema.Array(SidebarRule),
-  }),
-  Schema.Struct({
-    kind: Schema.Literal("list"),
-    conceptId: Schema.String,
-    conditions: Schema.Array(SidebarCondition),
-    ...ConditionMatch,
-    orderBy: Schema.optional(Schema.NullOr(Schema.String)),
-    limit: Schema.optional(Schema.NullOr(Schema.Number)),
-  }),
-  Schema.Struct({ kind: Schema.Literal("links"), items: Schema.Array(SidebarLink) }),
-)
-export type SidebarMember = typeof SidebarMember.Type
-export type SidebarRule = typeof SidebarRule.Type
-export type SidebarSource = typeof SidebarSource.Type
+// ── sidebar views (configurable nav layouts) ───────────────────────────────────
+// A View is an ordered stack of sections, switched via the sidebar pager. The
+// whole layout is `SidebarViewBody`; the server only persists/serves the
+// document. The global nav items (Overview, Tasks, …) render in a fixed block
+// above the sections unless placed into one (a `global:<key>` entry).
 
 export const SidebarSection = Schema.Struct({
   id: Schema.String,
   title: Schema.NullOr(Schema.String),
   icon: Schema.NullOr(Schema.String),
   collapsed: Schema.optional(Schema.Boolean),
-  source: SidebarSource,
+  /** Ordered, explicitly-placed entries: a dashboard uuid, or `global:<key>`
+   *  for a placed global nav item. Unknown/deleted ids are skipped at render
+   *  time (kept in the body so nothing is silently pruned). */
+  entryIds: Schema.Array(Schema.String),
 })
 export type SidebarSection = typeof SidebarSection.Type
 
@@ -536,8 +482,29 @@ export type Dashboard = typeof Dashboard.Type
 export const AnnotationType = Schema.Literal("note", "task")
 export type AnnotationType = typeof AnnotationType.Type
 
-export const TaskStatusCategory = Schema.Literal("todo", "active", "done")
+/** `done` = completed (sets `completedAt`); `cancelled` = closed without
+ *  completing (never sets it). */
+export const TaskStatusCategory = Schema.Literal("todo", "active", "done", "cancelled")
 export type TaskStatusCategory = typeof TaskStatusCategory.Type
+
+/** A rich-text value: ProseMirror doc + server-derived plain text (the same
+ *  envelope instance `richtext` fields use; the server re-derives `text`). */
+export const RichTextEnvelope = Schema.Struct({
+  doc: Schema.Record({ key: Schema.String, value: Schema.Unknown }),
+  text: Schema.String,
+})
+export type RichTextEnvelope = typeof RichTextEnvelope.Type
+
+/** A per-org configurable task priority (no semantics beyond position order;
+ *  a new task starts with NO priority). */
+export const TaskPriority = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+  color: Schema.NullOr(Schema.String),
+  position: Schema.Number,
+  archivedAt: Schema.NullOr(Schema.Date),
+})
+export type TaskPriority = typeof TaskPriority.Type
 
 /** A per-org configurable task status. `category` carries completion semantics. */
 export const TaskStatus = Schema.Struct({
@@ -583,10 +550,24 @@ export const Task = Schema.Struct({
   /** Annotated item lineage (items.id); null = org-level / standalone. */
   subjectId: Schema.NullOr(Schema.String),
   title: Schema.String,
+  /** Rich-text description; null = none. */
+  description: Schema.NullOr(RichTextEnvelope),
   statusId: Schema.NullOr(Schema.String),
+  /** Priority (task_priorities.id); null = no priority. */
+  priorityId: Schema.NullOr(Schema.String),
+  /** This task's own label ids (org label vocabulary, orphan-tolerant). */
+  labelIds: Schema.Array(Schema.String),
   assignee: Schema.NullOr(Schema.String),
   /** ISO date string or null. */
   dueAt: Schema.NullOr(Schema.String),
+  /** Hidden from "open" lists until this passes (ISO string); read-time check. */
+  snoozedUntil: Schema.NullOr(Schema.String),
+  /** Blocked marker; non-null = blocked (with optional reason + blocking task). */
+  blockedAt: Schema.NullOr(Schema.Date),
+  blockedReason: Schema.NullOr(Schema.String),
+  blockedByTaskId: Schema.NullOr(Schema.String),
+  /** Set on entering the `done` category, cleared on leaving; `cancelled` never sets it. */
+  completedAt: Schema.NullOr(Schema.Date),
   createdBy: Schema.NullOr(Schema.String),
   customFields: State,
   version: Schema.Number,
@@ -1110,7 +1091,10 @@ export class KingsmakerRpcs extends RpcGroup.make(
     payload: {
       subjectId: Schema.NullOr(Schema.String),
       title: Schema.String,
+      description: Schema.optional(Schema.NullOr(RichTextEnvelope)),
       statusId: Schema.optional(Schema.NullOr(Schema.String)),
+      priorityId: Schema.optional(Schema.NullOr(Schema.String)),
+      labelIds: Schema.optional(Schema.Array(Schema.String)),
       assignee: Schema.optional(Schema.NullOr(Schema.String)),
       dueAt: Schema.optional(Schema.NullOr(Schema.String)),
       customFields: Schema.optional(Fields),
@@ -1123,6 +1107,9 @@ export class KingsmakerRpcs extends RpcGroup.make(
       id: Schema.String,
       expectedVersion: Schema.Number,
       title: Schema.optional(Schema.String),
+      description: Schema.optional(Schema.NullOr(RichTextEnvelope)),
+      priorityId: Schema.optional(Schema.NullOr(Schema.String)),
+      labelIds: Schema.optional(Schema.Array(Schema.String)),
       dueAt: Schema.optional(Schema.NullOr(Schema.String)),
       customFields: Schema.optional(Fields),
     },
@@ -1139,6 +1126,31 @@ export class KingsmakerRpcs extends RpcGroup.make(
       id: Schema.String,
       expectedVersion: Schema.Number,
       assignee: Schema.NullOr(Schema.String),
+    },
+    success: Task,
+    error: RpcError,
+  }),
+  // Snooze (hide from "open" lists until `until` passes) / unsnooze (null).
+  Rpc.make("snoozeTask", {
+    payload: {
+      id: Schema.String,
+      expectedVersion: Schema.Number,
+      until: Schema.NullOr(Schema.String),
+    },
+    success: Task,
+    error: RpcError,
+  }),
+  // Block (optional reason + optional blocking-task pointer) / unblock (null).
+  Rpc.make("setTaskBlocked", {
+    payload: {
+      id: Schema.String,
+      expectedVersion: Schema.Number,
+      blocked: Schema.NullOr(
+        Schema.Struct({
+          reason: Schema.optional(Schema.NullOr(Schema.String)),
+          taskId: Schema.optional(Schema.NullOr(Schema.String)),
+        }),
+      ),
     },
     success: Task,
     error: RpcError,
@@ -1207,6 +1219,46 @@ export class KingsmakerRpcs extends RpcGroup.make(
       orders: Schema.Array(Schema.Struct({ id: Schema.String, position: Schema.Number })),
     },
     success: Schema.Array(TaskStatus),
+    error: RpcError,
+  }),
+  // ── annotation layer: task priorities (admin) ─────────────────────────────────
+  Rpc.make("listTaskPriorities", {
+    payload: { includeArchived: Schema.optional(Schema.Boolean) },
+    success: Schema.Array(TaskPriority),
+    error: RpcError,
+  }),
+  Rpc.make("createTaskPriority", {
+    payload: {
+      name: Schema.String,
+      color: Schema.optional(Schema.NullOr(Schema.String)),
+    },
+    success: TaskPriority,
+    error: RpcError,
+  }),
+  Rpc.make("updateTaskPriority", {
+    payload: {
+      id: Schema.String,
+      name: Schema.optional(Schema.String),
+      color: Schema.optional(Schema.NullOr(Schema.String)),
+    },
+    success: TaskPriority,
+    error: RpcError,
+  }),
+  Rpc.make("archiveTaskPriority", {
+    payload: { id: Schema.String },
+    success: TaskPriority,
+    error: RpcError,
+  }),
+  Rpc.make("restoreTaskPriority", {
+    payload: { id: Schema.String },
+    success: TaskPriority,
+    error: RpcError,
+  }),
+  Rpc.make("reorderTaskPriorities", {
+    payload: {
+      orders: Schema.Array(Schema.Struct({ id: Schema.String, position: Schema.Number })),
+    },
+    success: Schema.Array(TaskPriority),
     error: RpcError,
   }),
   // ── annotation layer: custom-field definitions (admin) ─────────────────────────

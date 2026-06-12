@@ -6,31 +6,6 @@ import { OrgContext } from "./OrgContext"
 import { type SidebarViewRow, toSidebarView } from "./rows"
 
 /**
- * The built-in Default view's content (mirrors the client's `DEFAULT_VIEW.body`):
- * the global items + a smart group of every dashboard. Seeded as a real, shared,
- * fully-configurable view so the org's view list is never empty.
- */
-const DEFAULT_VIEW_BODY: SidebarViewBody = {
-  sections: [
-    {
-      id: "globals",
-      title: null,
-      icon: null,
-      source: {
-        kind: "static",
-        items: ["overview", "tasks", "members", "automations", "settings"],
-      },
-    },
-    {
-      id: "dashboards",
-      title: "Dashboards",
-      icon: null,
-      source: { kind: "group", members: [], rules: [{ target: "dashboards" }] },
-    },
-  ],
-}
-
-/**
  * CRUD for sidebar Views — configurable nav layouts. `owner_id` null = org-shared
  * (any member may read/edit), else personal to that user. The `body` document is
  * opaque here (never inspected); the web client resolves it. Per the product
@@ -45,14 +20,26 @@ export class SidebarViewService extends Effect.Service<SidebarViewService>()(
       const sql = yield* PgClient.PgClient
 
       /** Guarantee the org has at least one shared view by seeding the Default
-       *  if none exists. Atomic (INSERT … WHERE NOT EXISTS), so concurrent reads
+       *  if none exists: an untitled section holding the global nav items, then
+       *  a "Dashboards" section pre-populated with the org's shared, non-hidden
+       *  dashboards. Atomic (INSERT … WHERE NOT EXISTS), so concurrent reads
        *  never double-seed; a no-op once the org has any shared view. */
       const ensureDefault = Effect.gen(function* () {
         const { orgId } = yield* OrgContext
         yield* sql`
           INSERT INTO sidebar_views (org_id, owner_id, name, icon, position, body)
           SELECT ${orgId}, NULL, 'Default', 'lucide:LayoutGrid', 0,
-                 ${JSON.stringify(DEFAULT_VIEW_BODY)}::jsonb
+            jsonb_build_object('sections', jsonb_build_array(
+              jsonb_build_object(
+                'id', 'globals', 'title', NULL, 'icon', NULL,
+                'entryIds', '["global:overview","global:tasks","global:members","global:automations","global:settings"]'::jsonb),
+              jsonb_build_object(
+                'id', 'dashboards', 'title', 'Dashboards', 'icon', NULL,
+                'entryIds', COALESCE((
+                  SELECT jsonb_agg(to_jsonb(d.id::text) ORDER BY d.position, d.name)
+                  FROM dashboards d
+                  WHERE d.org_id = ${orgId} AND d.owner_id IS NULL AND NOT d.hidden
+                ), '[]'::jsonb))))
           WHERE NOT EXISTS (
             SELECT 1 FROM sidebar_views WHERE org_id = ${orgId} AND owner_id IS NULL
           )`

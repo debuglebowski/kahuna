@@ -1,4 +1,5 @@
 import { Schema } from "effect"
+import type { RichTextValue } from "./richtext"
 
 /**
  * Lightweight id aliases. (Branded ids were considered but add constant
@@ -338,15 +339,32 @@ export type EventPayload =
       readonly assignee: string | null
       readonly dueAt: string | null
       readonly customFields: Record<string, unknown>
+      // Absent on legacy events (pre-priority/labels/description).
+      readonly priorityId?: Id | null
+      readonly labelIds?: ReadonlyArray<Id>
+      readonly hasDescription?: boolean
     }
   | {
       readonly _tag: "TaskUpdated"
       readonly title?: string
       readonly dueAt?: string | null
       readonly customFields?: Record<string, unknown>
+      readonly priorityId?: Id | null
+      readonly labelIds?: ReadonlyArray<Id>
+      // The description envelope is too large for an audit payload — events
+      // carry only the fact that it changed.
+      readonly descriptionChanged?: boolean
     }
   | { readonly _tag: "TaskStatusChanged"; readonly from: Id | null; readonly to: Id }
   | { readonly _tag: "TaskAssigned"; readonly from: string | null; readonly to: string | null }
+  | { readonly _tag: "TaskSnoozed"; readonly until: string }
+  | { readonly _tag: "TaskUnsnoozed" }
+  | {
+      readonly _tag: "TaskBlocked"
+      readonly reason: string | null
+      readonly taskId: Id | null
+    }
+  | { readonly _tag: "TaskUnblocked" }
   | { readonly _tag: "TaskArchived"; readonly subjectId: Id | null }
   | { readonly _tag: "TaskRestored"; readonly subjectId: Id | null }
   | { readonly _tag: "TaskPurged"; readonly subjectId: Id | null }
@@ -356,6 +374,12 @@ export type EventPayload =
   | { readonly _tag: "TaskStatusArchived" }
   | { readonly _tag: "TaskStatusRestored" }
   | { readonly _tag: "TaskStatusReordered" }
+  // Task-priority vocabulary edits (settings). subjectKind "taskPriority".
+  | { readonly _tag: "TaskPriorityCreated"; readonly name: string }
+  | { readonly _tag: "TaskPriorityUpdated"; readonly name: string }
+  | { readonly _tag: "TaskPriorityArchived" }
+  | { readonly _tag: "TaskPriorityRestored" }
+  | { readonly _tag: "TaskPriorityReordered" }
   // Annotation custom-field definition edits (settings). subjectKind "annotationField".
   | {
       readonly _tag: "AnnotationFieldAdded"
@@ -384,11 +408,10 @@ export interface Attachment {
   readonly createdAt: Date
 }
 
-// ── sidebar views (configurable nav layouts) ───────────────────────────────────
-// The whole layout is the serializable `SidebarViewBody` below. It is OPAQUE to
-// the engine (never read or filtered server-side); the web client resolves it
-// against the live concept/instance collections. These mirror the contract's
-// `SidebarView*` schemas (kept separate so the contract stays engine-free).
+// ── shared filter conditions ───────────────────────────────────────────────────
+// Used by the dashboard widget types below; the "Sidebar" prefix is historical —
+// sidebar sections no longer carry conditions. These mirror the contract's
+// schemas (kept separate so the contract stays engine-free).
 
 /** One filter condition. `field` is a field id, or `__labels` for the label ops.
  *  Value shape varies by op: `between` = [min, max], `in`/`notIn` = an array,
@@ -416,58 +439,22 @@ export interface SidebarCondition {
 }
 /** How a condition set combines: every condition or at least one (absent = all). */
 export type ConditionMatch = "all" | "any"
-/** A manually-pinned group member — a dashboard link or a single instance. */
-export type SidebarMember =
-  | { readonly kind: "dashboard"; readonly dashboardId: Id }
-  | { readonly kind: "instance"; readonly conceptId: Id; readonly instanceId: Id }
-/** An auto-membership rule: every visible dashboard, or matching instances of a
- *  concept (an instance rule is a data query, like a widget's `conceptId`). */
-export type SidebarRule =
-  | { readonly target: "dashboards" }
-  | {
-      readonly target: "items"
-      readonly conceptId: Id
-      readonly conditions: ReadonlyArray<SidebarCondition>
-      readonly match?: ConditionMatch
-    }
-// "dashboards" is legacy-tolerated: the client no longer renders or offers it,
-// but persisted bodies still carry it.
-export type SidebarStaticItem =
-  | "overview"
-  | "tasks"
-  | "dashboards"
-  | "members"
-  | "automations"
-  | "settings"
-export interface SidebarLink {
-  readonly id: string
-  readonly label: string
-  readonly icon?: string | null
-  /** `/instances/:id`, a concept route, or an external URL. */
-  readonly to: string
-}
-export type SidebarSource =
-  | { readonly kind: "static"; readonly items: ReadonlyArray<SidebarStaticItem> }
-  | {
-      readonly kind: "group"
-      readonly members: ReadonlyArray<SidebarMember>
-      readonly rules: ReadonlyArray<SidebarRule>
-    }
-  | {
-      readonly kind: "list"
-      readonly conceptId: Id
-      readonly conditions: ReadonlyArray<SidebarCondition>
-      readonly match?: ConditionMatch
-      readonly orderBy?: string | null
-      readonly limit?: number | null
-    }
-  | { readonly kind: "links"; readonly items: ReadonlyArray<SidebarLink> }
+
+// ── sidebar views (configurable nav layouts) ───────────────────────────────────
+// The whole layout is the serializable `SidebarViewBody` below. It is OPAQUE to
+// the engine (never read or filtered server-side); the web client resolves it.
+// The global nav items (Overview, Tasks, …) render in a fixed block above the
+// sections unless placed into one (a `global:<key>` entry).
+
 export interface SidebarSection {
   readonly id: string
   readonly title: string | null
   readonly icon: string | null
   readonly collapsed?: boolean
-  readonly source: SidebarSource
+  /** Ordered, explicitly-placed entries: a dashboard uuid, or `global:<key>`
+   *  for a placed global nav item. Unknown/deleted ids are skipped at render
+   *  time (kept in the body so nothing is silently pruned). */
+  readonly entryIds: ReadonlyArray<string>
 }
 export interface SidebarViewBody {
   readonly sections: ReadonlyArray<SidebarSection>
@@ -675,14 +662,16 @@ export type SubjectKind =
   | "note"
   | "task"
   | "taskStatus"
+  | "taskPriority"
   | "annotationField"
 
 /** The annotation variant. Append-only; "comment" etc. may follow. */
 export type AnnotationType = "note" | "task"
 
 /** Semantic bucket for a task status — completion/grouping key off this, never
- *  the renameable `name`. */
-export type TaskStatusCategory = "todo" | "active" | "done"
+ *  the renameable `name`. `done` = completed (sets `completedAt`); `cancelled`
+ *  = closed without completing (never sets it). */
+export type TaskStatusCategory = "todo" | "active" | "done" | "cancelled"
 
 /** A per-org configurable task status (Open / In progress / Done …). Keyed by
  *  `id` (renameable `name`); `category` carries the semantics; soft-deleted. */
@@ -694,6 +683,18 @@ export interface TaskStatus {
   readonly category: TaskStatusCategory
   /** The status applied to a newly created task (exactly one live per org). */
   readonly isDefault: boolean
+  readonly position: number
+  readonly archivedAt: Date | null
+}
+
+/** A per-org configurable task priority (Urgent / High / …). The `TaskStatus`
+ *  shape minus category/default: no semantics beyond `position` (lower = more
+ *  urgent); a new task starts with NO priority. Soft-deleted like statuses. */
+export interface TaskPriority {
+  readonly id: Id
+  readonly orgId: OrgId
+  readonly name: string
+  readonly color: string | null
   readonly position: number
   readonly archivedAt: Date | null
 }
@@ -736,12 +737,28 @@ export interface Task {
   /** The annotated item lineage (`items.id`); null = org-level / standalone. */
   readonly subjectId: Id | null
   readonly title: string
+  /** Rich-text description (`{ doc, text }` envelope); null = none. */
+  readonly description: RichTextValue | null
   /** Current status (`task_statuses.id`); null only if the status was purged. */
   readonly statusId: Id | null
+  /** Priority (`task_priorities.id`); null = no priority. */
+  readonly priorityId: Id | null
+  /** This task's own label ids (org label vocabulary). */
+  readonly labelIds: ReadonlyArray<Id>
   /** Assignee (bauth_user.id); null = unassigned. */
   readonly assignee: string | null
   /** Due date (ISO string) or null. */
   readonly dueAt: string | null
+  /** Hidden from "open" lists until this passes (ISO string); read-time check. */
+  readonly snoozedUntil: string | null
+  /** Blocked marker; non-null = blocked (with optional reason + blocking task). */
+  readonly blockedAt: Date | null
+  readonly blockedReason: string | null
+  /** The blocking task (`annotations.id`); informational, no auto-unblock. */
+  readonly blockedByTaskId: Id | null
+  /** Set when the status enters the `done` category, cleared when it leaves.
+   *  `cancelled` never sets it — closed ≠ completed. */
+  readonly completedAt: Date | null
   readonly createdBy: string | null
   readonly customFields: Record<string, unknown>
   readonly version: number

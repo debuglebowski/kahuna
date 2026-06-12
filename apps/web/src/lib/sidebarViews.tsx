@@ -1,42 +1,54 @@
-import { useLiveQuery } from "@tanstack/react-db"
 import { useQuery } from "@tanstack/react-query"
-import { Home, Link as LinkIcon, ListTodo, Settings, Users, Workflow } from "lucide-react"
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react"
+import { Home, ListTodo, Settings, Users, Workflow } from "lucide-react"
+import { type ReactNode, useMemo } from "react"
 import {
   api,
-  type Concept,
   type Dashboard,
-  type Field,
-  type Instance,
+  type SidebarSection,
   type SidebarView,
   type SidebarViewBody,
 } from "./api"
-import { useSession } from "./auth-client"
-import { instancesByConcept, KEY, useRegisterCollection } from "./collections"
-import { matchInstance } from "./conditions"
 import { ConceptIcon } from "./icons"
-import { isRichTextEmpty, richTextPreview } from "./richtext"
-import { showValue } from "./utils"
 
 /**
  * Client-side resolution of a sidebar View document into rendered nav entries.
- * The server only stores the (opaque) document; everything here runs against the
- * live concept/instance collections, so smart groups/lists react to data changes
- * with no reload. `useResolvedView` mounts the instance collections a view needs
- * and hands back the resolved sections plus the loader nodes to render.
+ * The server only stores the (opaque) document; a section is an ordered list of
+ * entry ids — dashboard uuids plus `global:<key>` for the global nav items,
+ * which are ordinary section entries (seeded into an untitled first section;
+ * re-added via the "+" picker after removal).
  */
 
-// ── static (global) nav targets ────────────────────────────────────────────────
+// ── global (static) nav targets ────────────────────────────────────────────────
 
-// "dashboards" is gone from this map but stays a legal body literal — persisted
-// views that still carry it resolve to nothing (the dashboards SECTION is the nav).
-const GLOBAL_ITEMS: Record<string, { label: string; to: string; icon: ReactNode }> = {
-  overview: { label: "Overview", to: "/", icon: <Home size={16} /> },
-  tasks: { label: "Tasks", to: "/tasks", icon: <ListTodo size={16} /> },
-  members: { label: "Members", to: "/members", icon: <Users size={16} /> },
-  automations: { label: "Automations", to: "/automations", icon: <Workflow size={16} /> },
-  settings: { label: "Settings", to: "/settings", icon: <Settings size={16} /> },
-}
+export const GLOBAL_NAV: ReadonlyArray<{
+  key: string
+  label: string
+  to: string
+  icon: ReactNode
+}> = [
+  { key: "overview", label: "Overview", to: "/", icon: <Home size={16} /> },
+  { key: "tasks", label: "Tasks", to: "/tasks", icon: <ListTodo size={16} /> },
+  { key: "members", label: "Members", to: "/members", icon: <Users size={16} /> },
+  { key: "automations", label: "Automations", to: "/automations", icon: <Workflow size={16} /> },
+  { key: "settings", label: "Settings", to: "/settings", icon: <Settings size={16} /> },
+]
+
+/** A global nav item's entry id (`global:<key>`); everything else in
+ *  `entryIds` is a dashboard uuid. */
+const GLOBAL_PREFIX = "global:"
+export const globalEntryId = (key: string) => `${GLOBAL_PREFIX}${key}`
+export const isGlobalEntryId = (id: string) => id.startsWith(GLOBAL_PREFIX)
+const globalByKey = new Map(GLOBAL_NAV.map((g) => [g.key, g] as const))
+export const globalNavFor = (entryId: string) =>
+  isGlobalEntryId(entryId) ? globalByKey.get(entryId.slice(GLOBAL_PREFIX.length)) : undefined
+
+/** The untitled section every fresh view starts with: all globals, on top. */
+export const globalsSection = (id: string = crypto.randomUUID()): SidebarSection => ({
+  id,
+  title: null,
+  icon: null,
+  entryIds: GLOBAL_NAV.map((g) => globalEntryId(g.key)),
+})
 
 // ── resolved shapes ────────────────────────────────────────────────────────────
 
@@ -46,8 +58,6 @@ export interface ResolvedEntry {
   readonly icon: ReactNode
   readonly to: string
   readonly active: boolean
-  /** External URL — render as a plain anchor, not a router link. */
-  readonly external: boolean
 }
 
 export interface ResolvedSection {
@@ -58,155 +68,63 @@ export interface ResolvedSection {
   readonly entries: ResolvedEntry[]
 }
 
-export interface ConceptInstanceData {
-  readonly instances: readonly Instance[]
-  readonly fields: readonly Field[]
+// ── pure resolution ────────────────────────────────────────────────────────────
+
+const isActive = (pathname: string, to: string) =>
+  to === "/" ? pathname === "/" : pathname.startsWith(to)
+
+const globalEntry = (g: (typeof GLOBAL_NAV)[number], pathname: string): ResolvedEntry => ({
+  key: `g:${g.key}`,
+  label: g.label,
+  icon: g.icon,
+  to: g.to,
+  active: isActive(pathname, g.to),
+})
+
+const dashboardEntry = (d: Dashboard, pathname: string): ResolvedEntry => {
+  const to = `/dashboards/${d.id}`
+  return {
+    key: `d:${d.id}`,
+    label: d.name,
+    icon: <ConceptIcon value={d.icon || "lucide:LayoutDashboard"} size={16} />,
+    to,
+    active: pathname === to,
+  }
 }
 
-interface ResolveCtx {
-  readonly concepts: readonly Concept[]
-  readonly dashboards: readonly Dashboard[]
-  readonly instData: Record<string, ConceptInstanceData>
-  readonly pathname: string
-  /** Current user id (resolves `isMe` conditions); null when no session yet. */
-  readonly me?: string | null
+/** One entry id → a rendered entry; null for deleted/hidden dashboards and
+ *  unknown global keys (the id stays in the body, it just doesn't render). */
+const resolveEntry = (
+  id: string,
+  ctx: { dashboards: ReadonlyMap<string, Dashboard> | readonly Dashboard[]; pathname: string },
+): ResolvedEntry | null => {
+  const g = globalNavFor(id)
+  if (g) return globalEntry(g, ctx.pathname)
+  if (isGlobalEntryId(id)) return null
+  const byId =
+    ctx.dashboards instanceof Map
+      ? ctx.dashboards
+      : new Map((ctx.dashboards as readonly Dashboard[]).map((d) => [d.id, d] as const))
+  const d = byId.get(id)
+  return d && !d.hidden ? dashboardEntry(d, ctx.pathname) : null
 }
 
-// ── matching helpers ─────────────────────────────────────────────────────────--
-// Instance matching is the shared evaluator in `conditions.ts`.
-
-/** A display name for an instance: its first non-empty text field, else its
- *  first non-empty rich text field, else any non-synthetic string value, else
- *  a placeholder (mirrors the detail view). */
-export const instanceLabel = (inst: Instance, fields: readonly Field[]): string => {
-  const text = fields.find((f) => f.kind === "text" && inst.state[f.id])
-  if (text) return showValue(inst.state[text.id])
-  const rich = fields.find((f) => f.kind === "richtext" && !isRichTextEmpty(inst.state[f.id]))
-  if (rich) return richTextPreview(inst.state[rich.id], 80)
-  for (const [k, v] of Object.entries(inst.state)) {
-    if (!k.startsWith("__") && typeof v === "string" && v) return v
-  }
-  return "(untitled)"
-}
-
-// ── pure resolution ──────────────────────────────────────────────────────────--
-
-export const resolveView = (body: SidebarViewBody, ctx: ResolveCtx): ResolvedSection[] => {
-  const conceptById = new Map(ctx.concepts.map((c) => [c.id, c] as const))
-  const dashboardById = new Map(ctx.dashboards.map((d) => [d.id, d] as const))
-  const isActive = (to: string) => (to === "/" ? ctx.pathname === "/" : ctx.pathname.startsWith(to))
-
-  const dashboardEntry = (d: Dashboard): ResolvedEntry => {
-    const to = `/dashboards/${d.id}`
-    return {
-      key: `d:${d.id}`,
-      label: d.name,
-      icon: <ConceptIcon value={d.icon || "lucide:LayoutDashboard"} size={16} />,
-      to,
-      active: ctx.pathname === to,
-      external: false,
-    }
-  }
-  const instanceEntry = (
-    inst: Instance,
-    fields: readonly Field[],
-    concept: Concept | undefined,
-  ): ResolvedEntry => {
-    const to = `/instances/${inst.id}`
-    return {
-      key: `i:${inst.id}`,
-      label: instanceLabel(inst, fields),
-      icon: <ConceptIcon value={concept?.icon || "lucide:CircleDot"} size={16} />,
-      to,
-      active: ctx.pathname === to,
-      external: false,
-    }
-  }
-
+/** Resolve a view body's sections. Deleted/hidden dashboards, unknown global
+ *  keys, and duplicate ids are skipped; the ids stay in the body. */
+export const resolveView = (
+  body: SidebarViewBody,
+  ctx: { dashboards: readonly Dashboard[]; pathname: string },
+): ResolvedSection[] => {
+  const byId = new Map(ctx.dashboards.map((d) => [d.id, d] as const))
   return body.sections.map((section) => {
     const entries: ResolvedEntry[] = []
     const seen = new Set<string>()
-    const push = (e: ResolvedEntry) => {
-      if (seen.has(e.to)) return
-      seen.add(e.to)
-      entries.push(e)
+    for (const id of section.entryIds) {
+      if (seen.has(id)) continue
+      seen.add(id)
+      const entry = resolveEntry(id, { dashboards: byId, pathname: ctx.pathname })
+      if (entry) entries.push(entry)
     }
-
-    const src = section.source
-    if (src.kind === "static") {
-      for (const key of src.items) {
-        const g = GLOBAL_ITEMS[key]
-        if (g)
-          push({
-            key: `s:${key}`,
-            label: g.label,
-            icon: g.icon,
-            to: g.to,
-            active: isActive(g.to),
-            external: false,
-          })
-      }
-    } else if (src.kind === "links") {
-      for (const l of src.items) {
-        const external = /^https?:\/\//.test(l.to)
-        push({
-          key: `l:${l.id}`,
-          label: l.label,
-          icon: l.icon ? <ConceptIcon value={l.icon} size={16} /> : <LinkIcon size={16} />,
-          to: l.to,
-          active: !external && isActive(l.to),
-          external,
-        })
-      }
-    } else if (src.kind === "list") {
-      const data = ctx.instData[src.conceptId]
-      const concept = conceptById.get(src.conceptId)
-      const fields = data?.fields ?? []
-      let rows = (data?.instances ?? []).filter((i) =>
-        matchInstance(i, src.conditions, { match: src.match, me: ctx.me }),
-      )
-      const orderBy = src.orderBy
-      rows = [...rows].sort((a, b) =>
-        orderBy
-          ? showValue(a.state[orderBy]).localeCompare(showValue(b.state[orderBy]))
-          : instanceLabel(a, fields).localeCompare(instanceLabel(b, fields)),
-      )
-      if (src.limit && src.limit > 0) rows = rows.slice(0, src.limit)
-      for (const inst of rows) push(instanceEntry(inst, fields, concept))
-    } else if (src.kind === "group") {
-      // Manual members first, in their drag order.
-      for (const m of src.members) {
-        if (m.kind === "dashboard") {
-          const d = dashboardById.get(m.dashboardId)
-          if (d) push(dashboardEntry(d))
-        } else {
-          const data = ctx.instData[m.conceptId]
-          const inst = data?.instances.find((i) => i.id === m.instanceId)
-          if (inst) push(instanceEntry(inst, data?.fields ?? [], conceptById.get(m.conceptId)))
-        }
-      }
-      // Then rule-derived members (dashboards then instances), each sorted by label.
-      const dashMatches: Dashboard[] = []
-      const instMatches: { inst: Instance; fields: readonly Field[]; concept?: Concept }[] = []
-      for (const rule of src.rules) {
-        if (rule.target === "dashboards") {
-          for (const d of ctx.dashboards) if (!d.hidden) dashMatches.push(d)
-        } else {
-          const data = ctx.instData[rule.conceptId]
-          const concept = conceptById.get(rule.conceptId)
-          for (const inst of data?.instances ?? [])
-            if (matchInstance(inst, rule.conditions, { match: rule.match, me: ctx.me }))
-              instMatches.push({ inst, fields: data?.fields ?? [], concept })
-        }
-      }
-      dashMatches.sort((a, b) => a.position - b.position || a.name.localeCompare(b.name))
-      for (const d of dashMatches) push(dashboardEntry(d))
-      instMatches.sort((a, b) =>
-        instanceLabel(a.inst, a.fields).localeCompare(instanceLabel(b.inst, b.fields)),
-      )
-      for (const m of instMatches) push(instanceEntry(m.inst, m.fields, m.concept))
-    }
-
     return {
       id: section.id,
       title: section.title,
@@ -217,21 +135,7 @@ export const resolveView = (body: SidebarViewBody, ctx: ResolveCtx): ResolvedSec
   })
 }
 
-/** Concept ids whose instances a view needs loaded (item rules / lists / pins). */
-export const referencedConceptIds = (body: SidebarViewBody): string[] => {
-  const ids = new Set<string>()
-  for (const s of body.sections) {
-    const src = s.source
-    if (src.kind === "list") ids.add(src.conceptId)
-    else if (src.kind === "group") {
-      for (const m of src.members) if (m.kind === "instance") ids.add(m.conceptId)
-      for (const r of src.rules) if (r.target === "items") ids.add(r.conceptId)
-    }
-  }
-  return [...ids]
-}
-
-// ── the built-in default view (== today's sidebar; never persisted until edited) ─
+// ── the built-in default view (fallback before the server seeds one) ──────────
 
 export const DEFAULT_VIEW: SidebarView = {
   id: "__default__",
@@ -240,88 +144,22 @@ export const DEFAULT_VIEW: SidebarView = {
   icon: "lucide:LayoutGrid",
   position: 0,
   hidden: false,
-  body: {
-    sections: [
-      {
-        id: "globals",
-        title: null,
-        icon: null,
-        source: {
-          kind: "static",
-          items: ["overview", "tasks", "members", "automations", "settings"],
-        },
-      },
-      {
-        id: "dashboards",
-        title: "Dashboards",
-        icon: null,
-        // A smart group with a dashboards rule == every visible dashboard.
-        source: { kind: "group", members: [], rules: [{ target: "dashboards" }] },
-      },
-    ],
-  },
+  body: { sections: [globalsSection("globals")] },
 }
 
-// ── live data loading ────────────────────────────────────────────────────────--
+// ── live data loading ──────────────────────────────────────────────────────────
 
-function ConceptDataLoader({
-  conceptId,
-  onData,
-}: {
-  conceptId: string
-  onData: (id: string, d: ConceptInstanceData) => void
-}) {
-  const col = instancesByConcept(conceptId)
-  useRegisterCollection(KEY.instances(conceptId), col)
-  const live = useLiveQuery((q) => q.from({ i: col }), [col])
-  const fields = useQuery({
-    queryKey: ["fields", conceptId],
-    queryFn: () => api.listFields(conceptId),
-    enabled: !!conceptId,
-  })
-  useEffect(() => {
-    onData(conceptId, {
-      instances: live.data ?? [],
-      fields: (fields.data ?? []) as readonly Field[],
-    })
-  }, [conceptId, live.data, fields.data, onData])
-  return null
+/** The live dashboards list every sidebar consumer resolves against. */
+export function useDashboards(): readonly Dashboard[] {
+  const q = useQuery({ queryKey: ["dashboards"], queryFn: () => api.listDashboards() })
+  return q.data ?? []
 }
 
-/**
- * Resolve a view against live data. Returns the rendered sections plus `loaders`
- * — invisible components the caller must render, which mount the instance
- * collections the view depends on (and keep them live-synced).
- */
-export function useResolvedView(
-  view: SidebarView,
-  concepts: readonly Concept[],
-  pathname: string,
-): { sections: ResolvedSection[]; loaders: ReactNode } {
-  const [instData, setInstData] = useState<Record<string, ConceptInstanceData>>({})
-  const onData = useCallback((id: string, d: ConceptInstanceData) => {
-    setInstData((prev) =>
-      prev[id]?.instances === d.instances && prev[id]?.fields === d.fields
-        ? prev
-        : { ...prev, [id]: d },
-    )
-  }, [])
-  const { data: session } = useSession()
-  const me = session?.user.id ?? null
-  // Dashboards are nav targets now (a pinned dashboard / the dashboards rule).
-  const dashboardsQ = useQuery({ queryKey: ["dashboards"], queryFn: () => api.listDashboards() })
-  const dashboards = dashboardsQ.data ?? []
-  const needed = useMemo(() => referencedConceptIds(view.body), [view.body])
-  const sections = useMemo(
-    () => resolveView(view.body, { concepts, dashboards, instData, pathname, me }),
-    [view.body, concepts, dashboards, instData, pathname, me],
+/** Resolve a view against the live dashboards list. */
+export function useResolvedView(view: SidebarView, pathname: string): ResolvedSection[] {
+  const dashboards = useDashboards()
+  return useMemo(
+    () => resolveView(view.body, { dashboards, pathname }),
+    [view.body, dashboards, pathname],
   )
-  const loaders = (
-    <>
-      {needed.map((cid) => (
-        <ConceptDataLoader key={cid} conceptId={cid} onData={onData} />
-      ))}
-    </>
-  )
-  return { sections, loaders }
 }

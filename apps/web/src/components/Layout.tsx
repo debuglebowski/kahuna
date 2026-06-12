@@ -17,7 +17,7 @@ import {
   useRef,
   useState,
 } from "react"
-import { Link, useLocation, useNavigate } from "react-router-dom"
+import { useLocation, useNavigate } from "react-router-dom"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -32,17 +32,13 @@ import {
   useRegisterCollection,
 } from "../lib/collections"
 import { ConceptIcon } from "../lib/icons"
-import {
-  DEFAULT_VIEW,
-  type ResolvedEntry,
-  type ResolvedSection,
-  useResolvedView,
-} from "../lib/sidebarViews"
+import { DEFAULT_VIEW, type ResolvedSection, useResolvedView } from "../lib/sidebarViews"
 import { useLiveSync } from "../lib/useLiveSync"
 import { useSafetyRefetch } from "../lib/useSafetyRefetch"
 import { cn } from "../lib/utils"
 import { SETTINGS_NAV, useIsAdmin } from "../pages/settings/SettingsLayout"
 import { IdentityMenu } from "./IdentityMenu"
+import { ViewNav } from "./sidebar/ViewNav"
 import { ThemeButton } from "./ThemeButton"
 import { IconButton } from "./ui"
 
@@ -87,66 +83,6 @@ export function usePageChrome({ fullWidth = false, fillHeight = false }: PageChr
   }, [set, fullWidth, fillHeight])
 }
 
-/** One nav row — a router link, or a plain anchor for external link entries. */
-function NavEntry({ entry, collapsed }: { entry: ResolvedEntry; collapsed: boolean }) {
-  const className = cn(
-    "flex items-center rounded-md text-sm",
-    collapsed ? "justify-center p-2" : "gap-2.5 px-3 py-1.5",
-    entry.active
-      ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
-      : "text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
-  )
-  const inner = (
-    <>
-      <span className="flex h-5 w-5 shrink-0 items-center justify-center">{entry.icon}</span>
-      {!collapsed && <span className="truncate">{entry.label}</span>}
-    </>
-  )
-  const title = collapsed ? entry.label : undefined
-  return entry.external ? (
-    <a href={entry.to} target="_blank" rel="noreferrer" title={title} className={className}>
-      {inner}
-    </a>
-  ) : (
-    <Link to={entry.to} title={title} className={className}>
-      {inner}
-    </Link>
-  )
-}
-
-/** A view's resolved sections, with collapsible titled groups. */
-function ViewNav({ sections, collapsed }: { sections: ResolvedSection[]; collapsed: boolean }) {
-  const [closed, setClosed] = useState<Record<string, boolean>>({})
-  return (
-    <>
-      {sections.map((section, i) => {
-        const isClosed = closed[section.id] ?? section.collapsed
-        // The title is optional. When present it's a collapsible header; when
-        // absent the section still renders its entries — just delimited by a
-        // little spacing (so an untitled section after another reads as its own).
-        const hasTitle = !collapsed && !!section.title
-        return (
-          <div key={section.id} className={!collapsed && !hasTitle && i > 0 ? "mt-3" : undefined}>
-            {hasTitle && (
-              <button
-                type="button"
-                onClick={() => setClosed((c) => ({ ...c, [section.id]: !isClosed }))}
-                className="mt-5 mb-1 flex w-full items-center gap-1.5 px-3 text-xs font-medium text-sidebar-foreground/70 hover:text-sidebar-foreground"
-              >
-                {section.icon && <ConceptIcon value={section.icon} size={12} />}
-                <span className="truncate">{section.title}</span>
-              </button>
-            )}
-            {collapsed && i > 0 && <div className="mx-2 my-2 border-t border-sidebar-border" />}
-            {!isClosed &&
-              section.entries.map((e) => <NavEntry key={e.key} entry={e} collapsed={collapsed} />)}
-          </div>
-        )
-      })}
-    </>
-  )
-}
-
 /** The settings nav as resolved sections, so {@link ViewNav} renders it like
  *  any other view. Admin-only entries are hidden for non-admin members (the
  *  route guard in SettingsLayout backs this up). */
@@ -167,7 +103,6 @@ function useSettingsSections(pathname: string): ResolvedSection[] {
             icon: t.icon,
             to: `/settings/${t.to}`,
             active: pathname.startsWith(`/settings/${t.to}`),
-            external: false,
           })),
       })),
     [admin, pathname],
@@ -253,9 +188,10 @@ export function Layout({ children }: { children: ReactNode }) {
   // Single live-sync connection + safety backstop (Layout wraps every authed page).
   useLiveSync()
   useSafetyRefetch()
+  // Concepts stay registered (live-sync coverage app-wide) even though the
+  // sidebar itself no longer resolves against them.
   useRegisterCollection(KEY.concepts, conceptsCollection)
   useRegisterCollection(KEY.views, sidebarViewsCollection)
-  const { data: concepts } = useLiveQuery((q) => q.from({ c: conceptsCollection }))
   const { data: views } = useLiveQuery((q) => q.from({ v: sidebarViewsCollection }))
 
   // Pager shows non-hidden views, ordered by `position` — the same order the
@@ -271,7 +207,9 @@ export function Layout({ children }: { children: ReactNode }) {
     write(ACTIVE_VIEW_KEY, id)
   }
 
-  const { sections, loaders } = useResolvedView(activeView, concepts ?? [], loc.pathname)
+  // The sidebar is read-only — sections render resolved; all editing lives in
+  // Settings → Sidebar.
+  const sections = useResolvedView(activeView, loc.pathname)
 
   // Settings is its own surface — under /settings the whole sidebar swaps to
   // the settings nav, with a "Back to app" button returning wherever you were.
@@ -290,7 +228,6 @@ export function Layout({ children }: { children: ReactNode }) {
     return (
       <PageChromeContext.Provider value={setChrome}>
         <div className="flex h-dvh">
-          {loaders}
           <aside className="flex w-12 shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground">
             <div className="flex flex-col items-center gap-1 py-4">
               <IconButton
@@ -342,7 +279,6 @@ export function Layout({ children }: { children: ReactNode }) {
   return (
     <PageChromeContext.Provider value={setChrome}>
       <div className="flex h-dvh">
-        {loaders}
         <aside
           style={{ width }}
           className="relative flex shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground"

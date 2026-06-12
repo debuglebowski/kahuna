@@ -57,7 +57,7 @@ import {
 } from "../../lib/instanceGraph"
 import { useInstanceViewPrefs } from "../../lib/instanceViews"
 import { queryClient } from "../../lib/queryClient"
-import { instanceLabel } from "../../lib/sidebarViews"
+import { instanceLabel } from "../../lib/instanceLabel"
 import { SelfLoopEdge } from "../graph/SelfLoopEdge"
 import { useGraphPositions } from "../graph/useGraphPositions"
 import { Button, pillStyle, Spinner } from "../ui"

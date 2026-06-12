@@ -255,10 +255,11 @@ export const events = pgTable(
  * A user-configurable sidebar layout — a "View": an ordered stack of sections,
  * switched via the sidebar pager. `owner_id` null = org-shared (any member sees
  * and may edit it); non-null = personal to that user. The whole layout lives in
- * `body` (a serializable document: sections + their content sources/rules) and
- * is **opaque to the engine** — never read or filtered server-side; the web
- * client resolves it against the live concept/instance collections. This keeps
- * views off the event store and sets up "define views in code" later.
+ * `body` (a serializable document: sections of ordered entry ids — dashboards
+ * and placed global nav items) and is
+ * **opaque to the engine** — never read or filtered server-side; the web client
+ * resolves it against the live dashboards list. This keeps views off the event
+ * store and sets up "define views in code" later.
  */
 export const sidebarViews = pgTable(
   "sidebar_views",
@@ -440,6 +441,24 @@ export const annotations = pgTable(
     // boundary (like instance `user`-kind fields).
     assignee: text("assignee"),
     dueAt: timestamp("due_at", { withTimezone: true }),
+    // Rich-text description: a `{ doc, text }` envelope (ProseMirror JSON +
+    // server-derived plain text), same shape as instance `richtext` fields.
+    description: jsonb("description"),
+    // Logical fk → task_priorities.id; null = no priority (orphan-tolerant).
+    priorityId: uuid("priority_id"),
+    // This task's own label ids (labels.id array) — the org label vocabulary,
+    // mirroring the instance `__labels` pattern but as a real column.
+    labelIds: jsonb("label_ids").notNull().default(sql`'[]'::jsonb`),
+    // Hidden from "open" lists until this passes (read-time check, no sweeper).
+    snoozedUntil: timestamp("snoozed_until", { withTimezone: true }),
+    // Blocked marker: when set the task renders blocked; reason + an optional
+    // pointer to the blocking task (logical fk → annotations.id, no auto-unblock).
+    blockedAt: timestamp("blocked_at", { withTimezone: true }),
+    blockedReason: text("blocked_reason"),
+    blockedByTaskId: uuid("blocked_by_task_id"),
+    // Set when the status enters the `done` category, cleared when it leaves.
+    // `cancelled` never sets it — closed ≠ completed.
+    completedAt: timestamp("completed_at", { withTimezone: true }),
 
     // Author/creator (= event actor = bauth_user.id); drives edit/purge rights.
     createdBy: text("created_by"),
@@ -494,6 +513,33 @@ export const taskStatuses = pgTable(
   // Partial unique so a name frees up after its status is archived.
   (t) => [
     uniqueIndex("task_statuses_org_name_uq")
+      .on(t.orgId, t.name)
+      .where(sql`${t.archivedAt} IS NULL`),
+  ],
+)
+
+/**
+ * Per-org, configurable task priorities (Urgent / High / … — editable names,
+ * colors and order). The `task_statuses` shape minus category/is_default: a
+ * priority carries no semantics beyond its position (lower = more urgent), and
+ * a new task starts with NO priority (`annotations.priority_id` null). Seeded
+ * for every org by `seedKingsmaker`. Soft-deleted like statuses.
+ */
+export const taskPriorities = pgTable(
+  "task_priorities",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: text("org_id").notNull(),
+    name: text("name").notNull(),
+    // Optional free hex color (e.g. "#dc2626"); null → neutral chip.
+    color: text("color"),
+    // Display order within the picker (ascending; lower = more urgent).
+    position: integer("position").notNull().default(0),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+  },
+  // Partial unique so a name frees up after its priority is archived.
+  (t) => [
+    uniqueIndex("task_priorities_org_name_uq")
       .on(t.orgId, t.name)
       .where(sql`${t.archivedAt} IS NULL`),
   ],

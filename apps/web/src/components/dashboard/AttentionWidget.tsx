@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom"
 import { Badge, decayTone, momentumTone } from "@/components/ui"
 import type { Concept, DashboardWidget, Field } from "@/lib/api"
 import type { ConceptInstanceData } from "@/lib/conceptData"
-import { instanceLabel } from "@/lib/sidebarViews"
+import { instanceLabel } from "@/lib/instanceLabel"
 import { bandRollup, daysOf, staleInstances } from "@/lib/widgetAggregations"
 
 type Attention = Extract<DashboardWidget, { type: "attention" }>
