@@ -1,12 +1,19 @@
 import { PgClient } from "@effect/sql-pg"
 import { Effect } from "effect"
+import {
+  deriveRichText,
+  isRichText,
+  MAX_RICHTEXT_CHARS,
+  type RichTextValue,
+} from "../domain/richtext"
 import { validateCustomFields } from "../domain/scalar"
 import type { AnnotationType, EngineEvent } from "../domain/types"
-import { AnnotationNotFound, ItemNotFound, VersionConflict } from "../errors"
+import { AnnotationNotFound, FieldValidationError, ItemNotFound, VersionConflict } from "../errors"
 import { AnnotationFieldService } from "./AnnotationFieldService"
 import { EventStore } from "./EventStore"
 import { OrgContext } from "./OrgContext"
 import { type AnnotationRow, type EventRow, toEvent, toNote, toTask } from "./rows"
+import { TaskPriorityService } from "./TaskPriorityService"
 import { TaskStatusService } from "./TaskStatusService"
 
 export interface ListTasksFilter {
@@ -35,6 +42,7 @@ export class AnnotationService extends Effect.Service<AnnotationService>()(
       const events = yield* EventStore
       const annotationFields = yield* AnnotationFieldService
       const statuses = yield* TaskStatusService
+      const priorities = yield* TaskPriorityService
 
       // ── shared helpers ──────────────────────────────────────────────────────
 
@@ -77,6 +85,41 @@ export class AnnotationService extends Effect.Service<AnnotationService>()(
                 actual: Number(row.version),
               }),
             )
+
+      /** Shape-check + cap a description envelope, re-deriving its plain text
+       *  server-side (the instance `richtext` rules). `null` clears. */
+      const validateDescription = (
+        v: unknown,
+      ): Effect.Effect<RichTextValue | null, FieldValidationError> => {
+        if (v === null) return Effect.succeed(null)
+        if (!isRichText(v))
+          return Effect.fail(
+            new FieldValidationError({
+              message: `description expects { doc, text } rich text`,
+              field: "description",
+            }),
+          )
+        if (JSON.stringify(v.doc).length > MAX_RICHTEXT_CHARS)
+          return Effect.fail(
+            new FieldValidationError({ message: `description is too large`, field: "description" }),
+          )
+        return Effect.succeed(deriveRichText(v))
+      }
+
+      /** Label ids are stored raw and resolved to live labels at read time
+       *  (orphan-tolerant, mirroring instance `__labels`) — only shape-checked. */
+      const coerceLabelIds = (v: ReadonlyArray<string>): ReadonlyArray<string> =>
+        v.filter((id): id is string => typeof id === "string" && id.length > 0)
+
+      const assertValidSnooze = (until: string | null) =>
+        until !== null && Number.isNaN(Date.parse(until))
+          ? Effect.fail(
+              new FieldValidationError({
+                message: `snoozedUntil expects an ISO date`,
+                field: "snoozedUntil",
+              }),
+            )
+          : Effect.void
 
       // ── notes ────────────────────────────────────────────────────────────────
 
@@ -172,7 +215,10 @@ export class AnnotationService extends Effect.Service<AnnotationService>()(
       const createTask = (input: {
         readonly subjectId: string | null
         readonly title: string
+        readonly description?: RichTextValue | null
         readonly statusId?: string | null
+        readonly priorityId?: string | null
+        readonly labelIds?: ReadonlyArray<string>
         readonly assignee?: string | null
         readonly dueAt?: string | null
         readonly customFields?: Record<string, unknown>
@@ -183,14 +229,17 @@ export class AnnotationService extends Effect.Service<AnnotationService>()(
             yield* assertSubject(input.subjectId)
             const statusId = input.statusId ?? (yield* statuses.defaultStatusId())
             if (statusId) yield* statuses.assertLive(statusId)
+            if (input.priorityId) yield* priorities.assertLive(input.priorityId)
+            const description = yield* validateDescription(input.description ?? null)
+            const labelIds = coerceLabelIds(input.labelIds ?? [])
             const custom = yield* validateCustom("task", input.customFields)
             const subjectKind = input.subjectId === null ? null : "item"
             const dueAt = input.dueAt ?? null
             const rows = yield* sql<AnnotationRow>`
               INSERT INTO annotations
-                (org_id, type, subject_id, subject_kind, title, status_id, assignee, due_at, created_by, custom_fields)
+                (org_id, type, subject_id, subject_kind, title, description, status_id, priority_id, label_ids, assignee, due_at, created_by, custom_fields)
               VALUES
-                (${orgId}, 'task', ${input.subjectId}, ${subjectKind}, ${input.title}, ${statusId}, ${input.assignee ?? null}, ${dueAt}, ${actor}, ${sql.json(custom)})
+                (${orgId}, 'task', ${input.subjectId}, ${subjectKind}, ${input.title}, ${description ? sql.json(description) : null}, ${statusId}, ${input.priorityId ?? null}, ${JSON.stringify(labelIds)}, ${input.assignee ?? null}, ${dueAt}, ${actor}, ${sql.json(custom)})
               RETURNING *`
             const task = toTask(rows[0]!)
             yield* events.append({
@@ -205,6 +254,9 @@ export class AnnotationService extends Effect.Service<AnnotationService>()(
                 assignee: task.assignee,
                 dueAt: task.dueAt,
                 customFields: task.customFields,
+                priorityId: task.priorityId,
+                labelIds: task.labelIds,
+                hasDescription: task.description !== null,
               },
             })
             return task
@@ -215,6 +267,9 @@ export class AnnotationService extends Effect.Service<AnnotationService>()(
         readonly id: string
         readonly expectedVersion: number
         readonly title?: string
+        readonly description?: RichTextValue | null
+        readonly priorityId?: string | null
+        readonly labelIds?: ReadonlyArray<string>
         readonly dueAt?: string | null
         readonly customFields?: Record<string, unknown>
       }) =>
@@ -226,6 +281,15 @@ export class AnnotationService extends Effect.Service<AnnotationService>()(
             const current = toTask(row)
             const title = input.title ?? current.title
             const dueAt = input.dueAt === undefined ? current.dueAt : input.dueAt
+            const description =
+              input.description === undefined
+                ? current.description
+                : yield* validateDescription(input.description)
+            if (input.priorityId) yield* priorities.assertLive(input.priorityId)
+            const priorityId =
+              input.priorityId === undefined ? current.priorityId : input.priorityId
+            const labelIds =
+              input.labelIds === undefined ? current.labelIds : coerceLabelIds(input.labelIds)
             const customPatch = yield* validateCustom("task", input.customFields)
             const custom =
               input.customFields === undefined
@@ -234,6 +298,10 @@ export class AnnotationService extends Effect.Service<AnnotationService>()(
             const rows = yield* sql<AnnotationRow>`
               UPDATE annotations
               SET title = ${title}, due_at = ${dueAt}, custom_fields = ${sql.json(custom)},
+                  description = ${description ? sql.json(description) : null},
+                  -- A top-level array must be stringified: sql.json/raw params
+                  -- serialize JS arrays as Postgres array literals, not JSON.
+                  priority_id = ${priorityId}, label_ids = ${JSON.stringify(labelIds)},
                   version = version + 1, updated_at = now()
               WHERE org_id = ${orgId} AND id = ${input.id} RETURNING *`
             const task = toTask(rows[0]!)
@@ -246,6 +314,9 @@ export class AnnotationService extends Effect.Service<AnnotationService>()(
                 title: task.title,
                 dueAt: task.dueAt,
                 customFields: task.customFields,
+                priorityId: task.priorityId,
+                labelIds: task.labelIds,
+                descriptionChanged: input.description !== undefined,
               },
             })
             return task
@@ -264,8 +335,26 @@ export class AnnotationService extends Effect.Service<AnnotationService>()(
             yield* assertVersion(row, input.expectedVersion)
             yield* statuses.assertLive(input.statusId)
             const from = row.status_id
+            // completedAt keys off the `done` CATEGORY: set on entering, cleared
+            // on leaving, kept across done→done moves. `cancelled` never sets it
+            // (closed ≠ completed). An orphaned from-status counts as not-done.
+            const toStatus = yield* statuses.getById(input.statusId)
+            const fromCategory = from
+              ? yield* statuses.getById(from).pipe(
+                  Effect.map((s) => s.category),
+                  Effect.catchAll(() => Effect.succeed(null)),
+                )
+              : null
+            const completedAt =
+              toStatus.category === "done"
+                ? fromCategory === "done"
+                  ? sql`completed_at`
+                  : sql`now()`
+                : sql`NULL`
             const rows = yield* sql<AnnotationRow>`
-              UPDATE annotations SET status_id = ${input.statusId}, version = version + 1, updated_at = now()
+              UPDATE annotations
+              SET status_id = ${input.statusId}, completed_at = ${completedAt},
+                  version = version + 1, updated_at = now()
               WHERE org_id = ${orgId} AND id = ${input.id} RETURNING *`
             const task = toTask(rows[0]!)
             yield* events.append({
@@ -273,6 +362,88 @@ export class AnnotationService extends Effect.Service<AnnotationService>()(
               subjectId: task.id,
               eventType: "TaskStatusChanged",
               payload: { _tag: "TaskStatusChanged", from, to: input.statusId },
+            })
+            return task
+          }),
+        )
+
+      /** Snooze (hide from "open" lists until `until` passes — a read-time check,
+       *  no sweeper) or unsnooze (`until` null). */
+      const snoozeTask = (input: {
+        readonly id: string
+        readonly expectedVersion: number
+        readonly until: string | null
+      }) =>
+        sql.withTransaction(
+          Effect.gen(function* () {
+            const { orgId } = yield* OrgContext
+            const row = yield* loadForUpdate(input.id, "task")
+            yield* assertVersion(row, input.expectedVersion)
+            yield* assertValidSnooze(input.until)
+            const rows = yield* sql<AnnotationRow>`
+              UPDATE annotations SET snoozed_until = ${input.until}, version = version + 1, updated_at = now()
+              WHERE org_id = ${orgId} AND id = ${input.id} RETURNING *`
+            const task = toTask(rows[0]!)
+            yield* events.append({
+              subjectKind: "task",
+              subjectId: task.id,
+              eventType: input.until ? "TaskSnoozed" : "TaskUnsnoozed",
+              payload: input.until
+                ? { _tag: "TaskSnoozed", until: input.until }
+                : { _tag: "TaskUnsnoozed" },
+            })
+            return task
+          }),
+        )
+
+      /** Block (with optional reason + optional pointer to the blocking task) or
+       *  unblock (`blocked` null). The link is informational — no auto-unblock.
+       *  Re-saving reason/link while already blocked keeps the original time. */
+      const setTaskBlocked = (input: {
+        readonly id: string
+        readonly expectedVersion: number
+        readonly blocked: null | {
+          readonly reason?: string | null
+          readonly taskId?: string | null
+        }
+      }) =>
+        sql.withTransaction(
+          Effect.gen(function* () {
+            const { orgId } = yield* OrgContext
+            const row = yield* loadForUpdate(input.id, "task")
+            yield* assertVersion(row, input.expectedVersion)
+            const reason = input.blocked?.reason?.trim() || null
+            const taskId = input.blocked?.taskId || null
+            if (taskId) {
+              if (taskId === input.id)
+                return yield* Effect.fail(
+                  new FieldValidationError({
+                    message: "a task cannot be blocked by itself",
+                    field: "blockedByTaskId",
+                  }),
+                )
+              const blocker = yield* sql<{ readonly id: string }>`
+                SELECT id FROM annotations
+                WHERE org_id = ${orgId} AND id = ${taskId} AND type = 'task' AND archived_at IS NULL
+                LIMIT 1`
+              if (!blocker[0])
+                return yield* Effect.fail(new AnnotationNotFound({ annotationId: taskId }))
+            }
+            const blockedAt = input.blocked ? sql`COALESCE(blocked_at, now())` : sql`NULL`
+            const rows = yield* sql<AnnotationRow>`
+              UPDATE annotations
+              SET blocked_at = ${blockedAt}, blocked_reason = ${input.blocked ? reason : null},
+                  blocked_by_task_id = ${input.blocked ? taskId : null},
+                  version = version + 1, updated_at = now()
+              WHERE org_id = ${orgId} AND id = ${input.id} RETURNING *`
+            const task = toTask(rows[0]!)
+            yield* events.append({
+              subjectKind: "task",
+              subjectId: task.id,
+              eventType: input.blocked ? "TaskBlocked" : "TaskUnblocked",
+              payload: input.blocked
+                ? { _tag: "TaskBlocked", reason, taskId }
+                : { _tag: "TaskUnblocked" },
             })
             return task
           }),
@@ -526,6 +697,8 @@ export class AnnotationService extends Effect.Service<AnnotationService>()(
         updateTask,
         setTaskStatus,
         assignTask,
+        snoozeTask,
+        setTaskBlocked,
         archiveTask,
         restoreTask,
         purgeTask,
@@ -536,6 +709,11 @@ export class AnnotationService extends Effect.Service<AnnotationService>()(
         readActivityForSubject,
       } as const
     }),
-    dependencies: [EventStore.Default, AnnotationFieldService.Default, TaskStatusService.Default],
+    dependencies: [
+      EventStore.Default,
+      AnnotationFieldService.Default,
+      TaskStatusService.Default,
+      TaskPriorityService.Default,
+    ],
   },
 ) {}

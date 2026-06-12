@@ -21,7 +21,8 @@ export default defineConfig(({ mode }) => ({
     port: 5173,
     proxy: {
       // Forward API + auth traffic to the Bun server during development.
-      "/api": "http://localhost:3000",
+      // API_PROXY lets a second dev stack point at its own server instance.
+      "/api": process.env.API_PROXY ?? "http://localhost:3000",
     },
   },
 }))

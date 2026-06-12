@@ -201,6 +201,22 @@ export class TaskStatusInUse extends Schema.TaggedError<TaskStatusInUse>()("Task
   reason: Schema.String,
 }) {}
 
+export class TaskPriorityNotFound extends Schema.TaggedError<TaskPriorityNotFound>()(
+  "TaskPriorityNotFound",
+  { priorityId: Schema.String },
+) {}
+
+export class TaskPriorityNameConflict extends Schema.TaggedError<TaskPriorityNameConflict>()(
+  "TaskPriorityNameConflict",
+  { name: Schema.String },
+) {}
+
+/** A task priority can't be archived while live tasks still reference it. */
+export class TaskPriorityInUse extends Schema.TaggedError<TaskPriorityInUse>()(
+  "TaskPriorityInUse",
+  { priorityId: Schema.String, taskCount: Schema.Number },
+) {}
+
 export class AnnotationFieldNotFound extends Schema.TaggedError<AnnotationFieldNotFound>()(
   "AnnotationFieldNotFound",
   { fieldId: Schema.String },
@@ -251,6 +267,9 @@ export type EngineError =
   | TaskStatusNotFound
   | TaskStatusNameConflict
   | TaskStatusInUse
+  | TaskPriorityNotFound
+  | TaskPriorityNameConflict
+  | TaskPriorityInUse
   | AnnotationFieldNotFound
   | AnnotationFieldNameConflict
   | AnnotationFieldConfigInvalid

@@ -28,9 +28,12 @@ import {
   type OrgContext,
   QueryService,
   RelationService,
+  type RichTextValue,
   type SidebarViewBody,
   SidebarViewService,
   type Task,
+  type TaskPriority,
+  TaskPriorityService,
   type TaskStatus,
   type TaskStatusCategory,
   TaskStatusService,
@@ -702,7 +705,10 @@ export const resolveTaskSubjects = (subjectIds: ReadonlyArray<string>): UC<unkno
 export const createTask = (input: {
   readonly subjectId: string | null
   readonly title: string
+  readonly description?: RichTextValue | null
   readonly statusId?: string | null
+  readonly priorityId?: string | null
+  readonly labelIds?: ReadonlyArray<string>
   readonly assignee?: string | null
   readonly dueAt?: string | null
   readonly customFields?: Record<string, unknown>
@@ -712,6 +718,9 @@ export const updateTask = (input: {
   readonly id: string
   readonly expectedVersion: number
   readonly title?: string
+  readonly description?: RichTextValue | null
+  readonly priorityId?: string | null
+  readonly labelIds?: ReadonlyArray<string>
   readonly dueAt?: string | null
   readonly customFields?: Record<string, unknown>
 }): UC<Task> => Effect.flatMap(AnnotationService, (a) => a.updateTask(input))
@@ -725,6 +734,16 @@ export const assignTask = (
   assignee: string | null,
 ): UC<Task> =>
   Effect.flatMap(AnnotationService, (a) => a.assignTask({ id, expectedVersion, assignee }))
+
+export const snoozeTask = (id: string, expectedVersion: number, until: string | null): UC<Task> =>
+  Effect.flatMap(AnnotationService, (a) => a.snoozeTask({ id, expectedVersion, until }))
+
+export const setTaskBlocked = (
+  id: string,
+  expectedVersion: number,
+  blocked: null | { readonly reason?: string | null; readonly taskId?: string | null },
+): UC<Task> =>
+  Effect.flatMap(AnnotationService, (a) => a.setTaskBlocked({ id, expectedVersion, blocked }))
 
 export const archiveTask = (id: string, expectedVersion: number): UC<Task> =>
   Effect.flatMap(AnnotationService, (a) => a.archiveTask(id, expectedVersion))
@@ -802,6 +821,32 @@ export const restoreTaskStatus = (id: string): UC<TaskStatus> =>
 export const reorderTaskStatuses = (
   orders: ReadonlyArray<{ readonly id: string; readonly position: number }>,
 ): UC<ReadonlyArray<TaskStatus>> => Effect.flatMap(TaskStatusService, (s) => s.reorder(orders))
+
+// ── annotation layer: task priorities (admin) ────────────────────────────────────
+
+export const listTaskPriorities = (includeArchived = false): UC<ReadonlyArray<TaskPriority>> =>
+  Effect.flatMap(TaskPriorityService, (s) => s.list({ includeArchived }))
+
+export const createTaskPriority = (input: {
+  readonly name: string
+  readonly color?: string | null
+}): UC<TaskPriority> => Effect.flatMap(TaskPriorityService, (s) => s.create(input))
+
+export const updateTaskPriority = (input: {
+  readonly id: string
+  readonly name?: string
+  readonly color?: string | null
+}): UC<TaskPriority> => Effect.flatMap(TaskPriorityService, (s) => s.update(input))
+
+export const archiveTaskPriority = (id: string): UC<TaskPriority> =>
+  Effect.flatMap(TaskPriorityService, (s) => s.archive(id))
+
+export const restoreTaskPriority = (id: string): UC<TaskPriority> =>
+  Effect.flatMap(TaskPriorityService, (s) => s.restore(id))
+
+export const reorderTaskPriorities = (
+  orders: ReadonlyArray<{ readonly id: string; readonly position: number }>,
+): UC<ReadonlyArray<TaskPriority>> => Effect.flatMap(TaskPriorityService, (s) => s.reorder(orders))
 
 // ── annotation layer: custom-field definitions (admin) ──────────────────────────
 

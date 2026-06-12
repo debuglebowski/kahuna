@@ -14,6 +14,7 @@ import { MemberService } from "./services/MemberService"
 import { QueryService } from "./services/QueryService"
 import { RelationService } from "./services/RelationService"
 import { SidebarViewService } from "./services/SidebarViewService"
+import { TaskPriorityService } from "./services/TaskPriorityService"
 import { TaskStatusService } from "./services/TaskStatusService"
 
 /**
@@ -35,6 +36,7 @@ export const EngineLive = Layer.mergeAll(
   DashboardService.Default,
   GraphLayoutService.Default,
   TaskStatusService.Default,
+  TaskPriorityService.Default,
   AnnotationFieldService.Default,
   AnnotationService.Default,
 )
@@ -55,5 +57,6 @@ export type EngineServices =
   | DashboardService
   | GraphLayoutService
   | TaskStatusService
+  | TaskPriorityService
   | AnnotationFieldService
   | AnnotationService

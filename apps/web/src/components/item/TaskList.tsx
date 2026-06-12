@@ -1,17 +1,21 @@
 import { useLiveQuery } from "@tanstack/react-db"
-import { useMutation } from "@tanstack/react-query"
-import { Archive, ArchiveRestore, Plus, Trash2 } from "lucide-react"
+import { useMutation, useQuery } from "@tanstack/react-query"
+import { Archive, ArchiveRestore, Maximize2, Plus, Trash2 } from "lucide-react"
 import { useEffect, useState } from "react"
+import { PrioritySelect } from "@/components/tasks/PriorityControl"
+import { TaskModal } from "@/components/tasks/TaskModal"
 import { Checkbox } from "@/components/ui/checkbox"
-import type { Task, TaskStatus } from "../../lib/api"
+import type { Label, Task, TaskPriority, TaskStatus } from "../../lib/api"
 import { api } from "../../lib/api"
 import {
   KEY,
+  taskPrioritiesCollection,
   taskStatusesCollection,
   tasksBySubject,
   useRegisterCollection,
 } from "../../lib/collections"
-import { Button, ConfirmDialog, IconButton, Input } from "../ui"
+import { isSnoozed } from "../../lib/taskGroups"
+import { Badge, Button, ConfirmDialog, IconButton, Input } from "../ui"
 import { AssigneePicker, type OrgMember } from "./AssigneePicker"
 import { DueDateControl } from "./DueDateControl"
 import { StatusSelect } from "./StatusSelect"
@@ -49,26 +53,33 @@ export function TaskComposer({ onCreate }: { onCreate: (title: string) => Promis
 export function TaskItem({
   task,
   statuses,
+  priorities,
+  labels,
   members,
   canMutate,
   onSaved,
 }: {
   task: Task
   statuses: ReadonlyArray<TaskStatus>
+  priorities: ReadonlyArray<TaskPriority>
+  labels: ReadonlyArray<Label>
   members: ReadonlyArray<OrgMember>
   canMutate: boolean
   onSaved: () => void
 }) {
   const [title, setTitle] = useState(task.title)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [editing, setEditing] = useState(false)
   useEffect(() => setTitle(task.title), [task.title])
 
   const current = statuses.find((s) => s.id === task.statusId)
   const isDone = current?.category === "done"
+  // Cancelled renders closed (struck) like done, but the checkbox only drives done.
+  const isClosed = isDone || current?.category === "cancelled"
   const doneStatus = statuses.find((s) => s.category === "done" && !s.archivedAt)
   const openStatus =
     statuses.find((s) => s.isDefault && !s.archivedAt) ??
-    statuses.find((s) => s.category !== "done" && !s.archivedAt)
+    statuses.find((s) => s.category !== "done" && s.category !== "cancelled" && !s.archivedAt)
 
   // Each mutation reuses the row's current version for optimistic concurrency; a
   // refetch reseeds it. Errors surface on the row.
@@ -86,6 +97,11 @@ export function TaskItem({
   })
   const setDue = useMutation({
     mutationFn: (iso: string | null) => api.updateTask(task.id, task.version, { dueAt: iso }),
+    onSuccess: onSaved,
+  })
+  const setPriority = useMutation({
+    mutationFn: (priorityId: string | null) =>
+      api.updateTask(task.id, task.version, { priorityId }),
     onSuccess: onSaved,
   })
   const archive = useMutation({
@@ -107,6 +123,7 @@ export function TaskItem({
     setStatusTo.error ||
     assign.error ||
     setDue.error ||
+    setPriority.error ||
     archive.error ||
     del.error
 
@@ -126,7 +143,7 @@ export function TaskItem({
             onChange={(e) => setTitle(e.target.value)}
             onBlur={() => title.trim() && title !== task.title && saveTitle.mutate()}
             onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
-            className={`h-8 border-transparent px-1 hover:border-input focus:border-input ${isDone ? "text-muted-foreground line-through" : ""}`}
+            className={`h-8 border-transparent px-1 hover:border-input focus:border-input ${isClosed ? "text-muted-foreground line-through" : ""}`}
           />
           <div className="flex flex-wrap items-center gap-2">
             <div className="w-40">
@@ -135,6 +152,14 @@ export function TaskItem({
                 statuses={statuses}
                 disabled={!canMutate}
                 onChange={(s) => setStatusTo.mutate(s)}
+              />
+            </div>
+            <div className="w-36">
+              <PrioritySelect
+                value={task.priorityId}
+                priorities={priorities}
+                disabled={!canMutate}
+                onChange={(p) => setPriority.mutate(p)}
               />
             </div>
             <div className="w-44">
@@ -150,23 +175,46 @@ export function TaskItem({
               disabled={!canMutate}
               onChange={(iso) => setDue.mutate(iso)}
             />
+            {task.blockedAt && !isClosed && (
+              <Badge tone="red">
+                {task.blockedReason ? `Blocked · ${task.blockedReason}` : "Blocked"}
+              </Badge>
+            )}
+            {isSnoozed(task, new Date()) && !isClosed && <Badge tone="amber">Snoozed</Badge>}
           </div>
           {err && <p className="text-sm text-destructive">{(err as Error).message}</p>}
         </div>
-        {canMutate && (
-          <span className="flex shrink-0 items-center gap-1">
-            <IconButton
-              aria-label={task.archivedAt ? "Restore task" : "Archive task"}
-              onClick={() => archive.mutate()}
-            >
-              {task.archivedAt ? <ArchiveRestore size={14} /> : <Archive size={14} />}
-            </IconButton>
-            <IconButton aria-label="Delete task" onClick={() => setConfirmDelete(true)}>
-              <Trash2 size={14} />
-            </IconButton>
-          </span>
-        )}
+        <span className="flex shrink-0 items-center gap-1">
+          <IconButton aria-label="Open task details" onClick={() => setEditing(true)}>
+            <Maximize2 size={14} />
+          </IconButton>
+          {canMutate && (
+            <>
+              <IconButton
+                aria-label={task.archivedAt ? "Restore task" : "Archive task"}
+                onClick={() => archive.mutate()}
+              >
+                {task.archivedAt ? <ArchiveRestore size={14} /> : <Archive size={14} />}
+              </IconButton>
+              <IconButton aria-label="Delete task" onClick={() => setConfirmDelete(true)}>
+                <Trash2 size={14} />
+              </IconButton>
+            </>
+          )}
+        </span>
       </div>
+      {editing && (
+        <TaskModal
+          task={task}
+          statuses={statuses}
+          priorities={priorities}
+          labels={labels}
+          members={members}
+          canMutate={canMutate}
+          onClose={() => setEditing(false)}
+          onSaved={onSaved}
+        />
+      )}
       {confirmDelete && (
         <ConfirmDialog
           title="Delete task"
@@ -200,9 +248,13 @@ export function TaskList({
   const collection = tasksBySubject(subjectId)
   useRegisterCollection(KEY.tasks(subjectId), collection)
   useRegisterCollection(KEY.taskStatuses, taskStatusesCollection)
+  useRegisterCollection(KEY.taskPriorities, taskPrioritiesCollection)
   const q = useLiveQuery((qb) => qb.from({ t: collection }), [subjectId, collection])
   const statusesQ = useLiveQuery((qb) => qb.from({ s: taskStatusesCollection }))
+  const prioritiesQ = useLiveQuery((qb) => qb.from({ p: taskPrioritiesCollection }))
+  const labelsQ = useQuery({ queryKey: ["labels"], queryFn: () => api.listLabels() })
   const statuses = [...(statusesQ.data ?? [])].sort((a, b) => a.position - b.position)
+  const priorities = [...(prioritiesQ.data ?? [])].sort((a, b) => a.position - b.position)
   const refetch = () => collection.utils.refetch()
 
   const all = [...(q.data ?? [])].sort(
@@ -235,6 +287,8 @@ export function TaskList({
               key={t.id}
               task={t}
               statuses={statuses}
+              priorities={priorities}
+              labels={labelsQ.data ?? []}
               members={members}
               canMutate={canMutate(t)}
               onSaved={refetch}

@@ -16,6 +16,13 @@ export {
   type MomentumResult,
   momentum,
 } from "./computed/momentum"
+export {
+  deriveRichText,
+  isRichText,
+  MAX_RICHTEXT_CHARS,
+  type RichTextValue,
+  richTextWalk,
+} from "./domain/richtext"
 export * from "./domain/types"
 export * from "./errors"
 export { EngineLive, type EngineServices } from "./layers"
@@ -51,4 +58,5 @@ export { type CreateRelationInput, RelationService } from "./services/RelationSe
 export { SidebarViewService } from "./services/SidebarViewService"
 // Infrastructure
 export { healthCheck, PgLive } from "./services/Sql"
+export { TaskPriorityService, type TaskPrioritySpec } from "./services/TaskPriorityService"
 export { TaskStatusService, type TaskStatusSpec } from "./services/TaskStatusService"

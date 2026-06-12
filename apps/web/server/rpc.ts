@@ -22,6 +22,7 @@ import {
   RpcError,
   type SidebarView,
   type Task,
+  type TaskPriority,
   type TaskStatus,
   type TaskSubjectRef,
 } from "../rpc/contract"
@@ -426,15 +427,53 @@ const HandlersLive = ServerRpcs.toLayer({
     ),
   resolveTaskSubjects: ({ subjectIds }) =>
     as<ReadonlyArray<TaskSubjectRef>>(uc.resolveTaskSubjects(subjectIds)),
-  createTask: ({ subjectId, title, statusId, assignee, dueAt, customFields }) =>
+  createTask: ({
+    subjectId,
+    title,
+    description,
+    statusId,
+    priorityId,
+    labelIds,
+    assignee,
+    dueAt,
+    customFields,
+  }) =>
     checkThen(
       (orgId) => assertAssigneeMember(orgId, assignee),
-      uc.createTask({ subjectId, title, statusId, assignee, dueAt, customFields }),
+      uc.createTask({
+        subjectId,
+        title,
+        description,
+        statusId,
+        priorityId,
+        labelIds,
+        assignee,
+        dueAt,
+        customFields,
+      }),
     ),
-  updateTask: ({ id, expectedVersion, title, dueAt, customFields }) =>
+  updateTask: ({
+    id,
+    expectedVersion,
+    title,
+    description,
+    priorityId,
+    labelIds,
+    dueAt,
+    customFields,
+  }) =>
     guarded<Task>(
       (orgId, actor) => assertCanMutateAnnotation(orgId, actor, id),
-      uc.updateTask({ id, expectedVersion, title, dueAt, customFields }),
+      uc.updateTask({
+        id,
+        expectedVersion,
+        title,
+        description,
+        priorityId,
+        labelIds,
+        dueAt,
+        customFields,
+      }),
     ),
   setTaskStatus: ({ id, expectedVersion, statusId }) =>
     guarded<Task>(
@@ -448,6 +487,16 @@ const HandlersLive = ServerRpcs.toLayer({
         await assertAssigneeMember(orgId, assignee)
       },
       uc.assignTask(id, expectedVersion, assignee),
+    ),
+  snoozeTask: ({ id, expectedVersion, until }) =>
+    guarded<Task>(
+      (orgId, actor) => assertCanMutateAnnotation(orgId, actor, id),
+      uc.snoozeTask(id, expectedVersion, until),
+    ),
+  setTaskBlocked: ({ id, expectedVersion, blocked }) =>
+    guarded<Task>(
+      (orgId, actor) => assertCanMutateAnnotation(orgId, actor, id),
+      uc.setTaskBlocked(id, expectedVersion, blocked),
     ),
   archiveTask: ({ id, expectedVersion }) =>
     guarded<Task>(
@@ -473,6 +522,16 @@ const HandlersLive = ServerRpcs.toLayer({
   restoreTaskStatus: ({ id }) => admin<TaskStatus>(uc.restoreTaskStatus(id)),
   reorderTaskStatuses: ({ orders }) =>
     admin<ReadonlyArray<TaskStatus>>(uc.reorderTaskStatuses(orders)),
+  listTaskPriorities: ({ includeArchived }) =>
+    as<ReadonlyArray<TaskPriority>>(uc.listTaskPriorities(includeArchived)),
+  createTaskPriority: ({ name, color }) =>
+    admin<TaskPriority>(uc.createTaskPriority({ name, color })),
+  updateTaskPriority: ({ id, name, color }) =>
+    admin<TaskPriority>(uc.updateTaskPriority({ id, name, color })),
+  archiveTaskPriority: ({ id }) => admin<TaskPriority>(uc.archiveTaskPriority(id)),
+  restoreTaskPriority: ({ id }) => admin<TaskPriority>(uc.restoreTaskPriority(id)),
+  reorderTaskPriorities: ({ orders }) =>
+    admin<ReadonlyArray<TaskPriority>>(uc.reorderTaskPriorities(orders)),
   listAnnotationFields: ({ annotationType, includeArchived }) =>
     as<ReadonlyArray<AnnotationField>>(uc.listAnnotationFields(annotationType, includeArchived)),
   addAnnotationField: ({ annotationType, name, kind, config, icon }) =>

@@ -24,6 +24,7 @@ export interface LiveEnvelope {
     | "note"
     | "task"
     | "taskStatus"
+    | "taskPriority"
     | "annotationField"
   readonly subjectId: string
   readonly type: string
@@ -53,6 +54,8 @@ export const KEY = {
   tasksGlobal: "tasks:global",
   /** Org-wide task-status vocabulary. */
   taskStatuses: "taskStatuses",
+  /** Org-wide task-priority vocabulary. */
+  taskPriorities: "taskPriorities",
   /** Annotation custom-field defs for a type. */
   annotationFields: (type: string) => `annotationFields:${type}`,
 } as const
@@ -87,6 +90,9 @@ export const routeEnvelope = (env: LiveEnvelope, mounted: ReadonlyArray<string>)
     for (const k of byPrefix("activity:")) candidates.add(k)
   } else if (env.kind === "taskStatus") {
     candidates.add(KEY.taskStatuses)
+    for (const k of byPrefix("tasks:")) candidates.add(k)
+  } else if (env.kind === "taskPriority") {
+    candidates.add(KEY.taskPriorities)
     for (const k of byPrefix("tasks:")) candidates.add(k)
   } else if (env.kind === "annotationField") {
     for (const k of byPrefix("annotationFields:")) candidates.add(k)

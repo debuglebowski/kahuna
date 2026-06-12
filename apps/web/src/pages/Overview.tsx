@@ -17,6 +17,7 @@ import {
   useRegisterCollection,
 } from "@/lib/collections"
 import { formatDateValue } from "@/lib/dates"
+import { isSnoozed } from "@/lib/taskGroups"
 import { pickWelcome } from "@/lib/welcomeMessages"
 
 /**
@@ -46,13 +47,19 @@ export function Overview() {
   const mine = useMemo(() => {
     const uid = me?.id
     if (!uid) return []
+    const now = new Date()
     return (tasksQ.data ?? [])
-      .filter(
-        (t) =>
+      .filter((t) => {
+        const category = statusById.get(t.statusId ?? "")?.category
+        return (
           t.assignee === uid &&
           !t.archivedAt &&
-          statusById.get(t.statusId ?? "")?.category !== "done",
-      )
+          // Open only: closed (done/cancelled) and still-snoozed tasks drop out.
+          category !== "done" &&
+          category !== "cancelled" &&
+          !isSnoozed(t, now)
+        )
+      })
       .sort((a, b) => {
         // Dated tasks first (soonest due on top), then the rest newest-first.
         if (a.dueAt && b.dueAt) return a.dueAt.localeCompare(b.dueAt)

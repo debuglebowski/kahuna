@@ -1,3 +1,4 @@
+import { isRichText } from "../domain/richtext"
 import type {
   AnnotationField,
   AnnotationType,
@@ -27,6 +28,7 @@ import type {
   SidebarViewBody,
   SubjectKind,
   Task,
+  TaskPriority,
   TaskStatus,
   TaskStatusCategory,
   VersionStatus,
@@ -448,6 +450,14 @@ export interface AnnotationRow {
   readonly status_id: string | null
   readonly assignee: string | null
   readonly due_at: Date | null
+  readonly description: unknown
+  readonly priority_id: string | null
+  readonly label_ids: unknown
+  readonly snoozed_until: Date | null
+  readonly blocked_at: Date | null
+  readonly blocked_reason: string | null
+  readonly blocked_by_task_id: string | null
+  readonly completed_at: Date | null
   readonly created_by: string | null
   readonly custom_fields: unknown
   readonly version: number | string
@@ -469,14 +479,26 @@ export const toNote = (r: AnnotationRow): Note => ({
   archivedAt: r.archived_at,
 })
 
+/** Coerce a jsonb label-ids column into a string array (defensive vs null). */
+const toLabelIds = (raw: unknown): ReadonlyArray<string> =>
+  Array.isArray(raw) ? raw.filter((v): v is string => typeof v === "string") : []
+
 export const toTask = (r: AnnotationRow): Task => ({
   id: r.id,
   orgId: r.org_id,
   subjectId: r.subject_id,
   title: r.title ?? "",
+  description: isRichText(r.description) ? r.description : null,
   statusId: r.status_id,
+  priorityId: r.priority_id,
+  labelIds: toLabelIds(r.label_ids),
   assignee: r.assignee,
   dueAt: r.due_at ? r.due_at.toISOString() : null,
+  snoozedUntil: r.snoozed_until ? r.snoozed_until.toISOString() : null,
+  blockedAt: r.blocked_at,
+  blockedReason: r.blocked_reason,
+  blockedByTaskId: r.blocked_by_task_id,
+  completedAt: r.completed_at,
   createdBy: r.created_by,
   customFields: toCustomFields(r.custom_fields),
   version: Number(r.version),
@@ -503,6 +525,24 @@ export const toTaskStatus = (r: TaskStatusRow): TaskStatus => ({
   color: r.color,
   category: r.category as TaskStatusCategory,
   isDefault: r.is_default,
+  position: Number(r.position),
+  archivedAt: r.archived_at,
+})
+
+export interface TaskPriorityRow {
+  readonly id: string
+  readonly org_id: string
+  readonly name: string
+  readonly color: string | null
+  readonly position: number | string
+  readonly archived_at: Date | null
+}
+
+export const toTaskPriority = (r: TaskPriorityRow): TaskPriority => ({
+  id: r.id,
+  orgId: r.org_id,
+  name: r.name,
+  color: r.color,
   position: Number(r.position),
   archivedAt: r.archived_at,
 })

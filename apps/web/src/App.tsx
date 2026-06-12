@@ -16,6 +16,7 @@ import { Labels } from "./pages/settings/Labels"
 import { Organization } from "./pages/settings/Organization"
 import { Profile } from "./pages/settings/Profile"
 import { SettingsLayout } from "./pages/settings/SettingsLayout"
+import { Tasks as TasksSettings } from "./pages/settings/Tasks"
 import { Views } from "./pages/settings/Views"
 import { Tasks } from "./pages/Tasks"
 
@@ -59,6 +60,7 @@ export function App() {
           <Route path="concepts" element={<Concepts />} />
           <Route path="concepts-graph" element={<Navigate to="/settings/concepts" replace />} />
           <Route path="labels" element={<Labels />} />
+          <Route path="tasks" element={<TasksSettings />} />
           <Route path="sidebar" element={<Views />} />
           <Route path="dashboards" element={<DashboardsSettings />} />
         </Route>

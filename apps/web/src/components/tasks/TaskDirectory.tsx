@@ -2,6 +2,7 @@ import { useLiveQuery } from "@tanstack/react-db"
 import { useMutation, useQuery } from "@tanstack/react-query"
 import { format } from "date-fns"
 import {
+  AlignLeft,
   Calendar,
   Check,
   ChevronDown,
@@ -16,7 +17,17 @@ import { MemberAvatar, memberLabel, type OrgMember } from "@/components/item/Ass
 import { isOverdue } from "@/components/item/DueDateControl"
 import { Dot } from "@/components/item/StatusSelect"
 import { TaskComposer } from "@/components/item/TaskList"
-import { ConfirmDialog, Input, Spinner, ToggleChip, Toolbar } from "@/components/ui"
+import { PriorityFlag } from "@/components/tasks/PriorityControl"
+import { TaskModal } from "@/components/tasks/TaskModal"
+import {
+  Badge,
+  ConfirmDialog,
+  Input,
+  LabelChip,
+  Spinner,
+  ToggleChip,
+  Toolbar,
+} from "@/components/ui"
 import { Checkbox } from "@/components/ui/checkbox"
 import {
   DropdownMenu,
@@ -33,12 +44,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import type { Concept, Task, TaskStatus, TaskSubjectRef } from "@/lib/api"
+import type { Concept, Label, Task, TaskPriority, TaskStatus, TaskSubjectRef } from "@/lib/api"
 import { api } from "@/lib/api"
 import { useSession } from "@/lib/auth-client"
 import {
   conceptsCollection,
   KEY,
+  taskPrioritiesCollection,
   taskStatusesCollection,
   tasksGlobalCollection,
   useRegisterCollection,
@@ -46,7 +58,7 @@ import {
 import { parseDateValue } from "@/lib/dates"
 import { ConceptIcon } from "@/lib/icons"
 import { useMembers } from "@/lib/members"
-import { daysOverdue, groupTasks, type TaskGroup } from "@/lib/taskGroups"
+import { daysOverdue, groupTasks, isSnoozed, type TaskGroup } from "@/lib/taskGroups"
 import { isAdminRole } from "@/pages/settings/SettingsLayout"
 
 /** An assignee scope: "__all" | "__me" | "__none" | a member's userId. */
@@ -80,16 +92,26 @@ export function TaskDirectory({
 
   useRegisterCollection(KEY.tasksGlobal, tasksGlobalCollection)
   useRegisterCollection(KEY.taskStatuses, taskStatusesCollection)
+  useRegisterCollection(KEY.taskPriorities, taskPrioritiesCollection)
   useRegisterCollection(KEY.concepts, conceptsCollection)
   const tasksQ = useLiveQuery((q) => q.from({ t: tasksGlobalCollection }))
   const statusesQ = useLiveQuery((q) => q.from({ s: taskStatusesCollection }))
+  const prioritiesQ = useLiveQuery((q) => q.from({ p: taskPrioritiesCollection }))
   const conceptsQ = useLiveQuery((q) => q.from({ c: conceptsCollection }))
+  const labelsQ = useQuery({ queryKey: ["labels"], queryFn: () => api.listLabels() })
 
   const statuses = useMemo(
     () => [...(statusesQ.data ?? [])].sort((a, b) => a.position - b.position),
     [statusesQ.data],
   )
   const statusById = useMemo(() => new Map(statuses.map((s) => [s.id, s])), [statuses])
+  const priorities = useMemo(
+    () => [...(prioritiesQ.data ?? [])].sort((a, b) => a.position - b.position),
+    [prioritiesQ.data],
+  )
+  const priorityById = useMemo(() => new Map(priorities.map((p) => [p.id, p])), [priorities])
+  const labels = useMemo(() => labelsQ.data ?? [], [labelsQ.data])
+  const labelById = useMemo(() => new Map(labels.map((l) => [l.id, l])), [labels])
   const conceptById = useMemo(
     () => new Map((conceptsQ.data ?? []).map((c) => [c.id, c])),
     [conceptsQ.data],
@@ -116,9 +138,14 @@ export function TaskDirectory({
   const [assignee, setAssignee] = useState(defaultAssignee)
   const [showDone, setShowDone] = useState(defaultShowDone)
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set())
+  const [editing, setEditing] = useState<Task | null>(null)
 
   const isDone = useCallback(
     (t: Task) => statusById.get(t.statusId ?? "")?.category === "done",
+    [statusById],
+  )
+  const isCancelled = useCallback(
+    (t: Task) => statusById.get(t.statusId ?? "")?.category === "cancelled",
     [statusById],
   )
   const refetch = () => tasksGlobalCollection.utils.refetch()
@@ -126,7 +153,8 @@ export function TaskDirectory({
   const shown = useMemo(() => {
     const q = filter.trim().toLowerCase()
     return (tasksQ.data ?? []).filter((t) => {
-      if (!showDone && isDone(t)) return false
+      // The "Closed" toggle gates both closed categories (done + cancelled).
+      if (!showDone && (isDone(t) || isCancelled(t))) return false
       if (assignee === "__me" && t.assignee !== me?.id) return false
       if (assignee === "__none" && t.assignee !== null) return false
       if (!assignee.startsWith("__") && t.assignee !== assignee) return false
@@ -136,9 +164,12 @@ export function TaskDirectory({
       }
       return true
     })
-  }, [tasksQ.data, isDone, refBySubject, filter, assignee, showDone, me?.id])
+  }, [tasksQ.data, isDone, isCancelled, refBySubject, filter, assignee, showDone, me?.id])
 
-  const groups = useMemo(() => groupTasks(shown, isDone, new Date()), [shown, isDone])
+  const groups = useMemo(
+    () => groupTasks(shown, { isDone, isCancelled }, new Date()),
+    [shown, isDone, isCancelled],
+  )
 
   // Pickers drop deactivated members (the directory still badges them).
   const pickerMembers = useMemo(
@@ -179,7 +210,7 @@ export function TaskDirectory({
             </SelectContent>
           </Select>
           <ToggleChip pressed={showDone} onPressedChange={setShowDone}>
-            Completed
+            Closed
           </ToggleChip>
         </Toolbar>
       )}
@@ -229,6 +260,12 @@ export function TaskDirectory({
                     group={g}
                     status={statusById.get(t.statusId ?? "")}
                     statuses={statuses}
+                    priority={priorityById.get(t.priorityId ?? "")}
+                    priorities={priorities}
+                    taskLabels={t.labelIds.flatMap((id) => {
+                      const l = labelById.get(id)
+                      return l ? [l] : []
+                    })}
                     subjectRef={t.subjectId ? refBySubject.get(t.subjectId) : undefined}
                     concept={
                       t.subjectId
@@ -239,12 +276,27 @@ export function TaskDirectory({
                     pickerMembers={pickerMembers}
                     canMutate={canMutate(t)}
                     onSaved={refetch}
+                    onEdit={() => setEditing(t)}
                   />
                 ))}
               </div>
             )}
           </section>
         ))
+      )}
+
+      {editing && (
+        <TaskModal
+          key={editing.id}
+          task={editing}
+          statuses={statuses}
+          priorities={priorities}
+          labels={labels}
+          members={pickerMembers}
+          canMutate={canMutate(editing)}
+          onClose={() => setEditing(null)}
+          onSaved={refetch}
+        />
       )}
     </div>
   )
@@ -268,30 +320,42 @@ function TaskRow({
   group,
   status,
   statuses,
+  priority,
+  priorities,
+  taskLabels,
   subjectRef,
   concept,
   assigneeMember,
   pickerMembers,
   canMutate,
   onSaved,
+  onEdit,
 }: {
   task: Task
   group: TaskGroup
   status: TaskStatus | undefined
   statuses: ReadonlyArray<TaskStatus>
+  priority: TaskPriority | undefined
+  priorities: ReadonlyArray<TaskPriority>
+  taskLabels: ReadonlyArray<Label>
   subjectRef: TaskSubjectRef | undefined
   concept: Concept | undefined
   assigneeMember: OrgMember | undefined
   pickerMembers: ReadonlyArray<OrgMember>
   canMutate: boolean
   onSaved: () => void
+  onEdit: () => void
 }) {
   const done = status?.category === "done"
+  // Cancelled renders closed (struck) like done, but the checkbox only drives done.
+  const closed = done || status?.category === "cancelled"
   const doneStatus = statuses.find((s) => s.category === "done" && !s.archivedAt)
   const openStatus =
     statuses.find((s) => s.isDefault && !s.archivedAt) ??
-    statuses.find((s) => s.category !== "done" && !s.archivedAt)
+    statuses.find((s) => s.category !== "done" && s.category !== "cancelled" && !s.archivedAt)
   const liveStatuses = statuses.filter((s) => !s.archivedAt)
+  const livePriorities = priorities.filter((p) => !p.archivedAt)
+  const snoozed = isSnoozed(task, new Date())
 
   const [renaming, setRenaming] = useState(false)
   const [title, setTitle] = useState(task.title)
@@ -323,6 +387,11 @@ function TaskRow({
       onSaved()
     },
   })
+  const setPriority = useMutation({
+    mutationFn: (priorityId: string | null) =>
+      api.updateTask(task.id, task.version, { priorityId }),
+    onSuccess: onSaved,
+  })
   const rename = useMutation({
     mutationFn: () => api.updateTask(task.id, task.version, { title: title.trim() }),
     onSuccess: () => {
@@ -341,6 +410,7 @@ function TaskRow({
     setStatusTo.error ??
     assign.error ??
     setDue.error ??
+    setPriority.error ??
     rename.error ??
     archive.error ??
     del.error
@@ -350,7 +420,7 @@ function TaskRow({
     else setRenaming(false)
   }
 
-  const titleClass = `truncate text-sm ${done ? "text-muted-foreground line-through" : "text-foreground"}`
+  const titleClass = `truncate text-sm ${closed ? "text-muted-foreground line-through" : "text-foreground"}`
 
   return (
     <div className="group flex h-9 items-center gap-2.5 px-3 hover:bg-accent/40">
@@ -388,6 +458,34 @@ function TaskRow({
         </DropdownMenuContent>
       </DropdownMenu>
 
+      {/* priority: flag, click to change (clearable) */}
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild disabled={!canMutate || setPriority.isPending}>
+          <button
+            type="button"
+            title={priority?.name ?? "Set priority"}
+            aria-label={priority?.name ?? "Set priority"}
+            className="flex size-5 shrink-0 items-center justify-center rounded-sm enabled:cursor-pointer enabled:hover:bg-accent"
+          >
+            <PriorityFlag priority={priority} size={13} />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start">
+          <DropdownMenuItem onSelect={() => setPriority.mutate(null)}>
+            <PriorityFlag priority={null} />
+            No priority
+            {!task.priorityId && <Check size={14} className="ml-auto" />}
+          </DropdownMenuItem>
+          {livePriorities.map((p) => (
+            <DropdownMenuItem key={p.id} onSelect={() => setPriority.mutate(p.id)}>
+              <PriorityFlag priority={p} />
+              {p.name}
+              {p.id === task.priorityId && <Check size={14} className="ml-auto" />}
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+
       {/* title (rename swaps in a borderless input) */}
       {renaming ? (
         <Input
@@ -412,7 +510,34 @@ function TaskRow({
           {task.title}
         </Link>
       ) : (
-        <span className={`min-w-0 ${titleClass}`}>{task.title}</span>
+        // No record to route to — the title opens the task editor instead.
+        <button
+          type="button"
+          onClick={onEdit}
+          className={`min-w-0 ${titleClass} text-left hover:underline`}
+        >
+          {task.title}
+        </button>
+      )}
+      {task.description && (
+        <AlignLeft
+          size={13}
+          className="shrink-0 text-muted-foreground/60"
+          aria-label="Has description"
+        />
+      )}
+      {taskLabels.map((l) => (
+        <LabelChip key={l.id} color={l.color} primary={l.primary}>
+          {l.name}
+        </LabelChip>
+      ))}
+      {task.blockedAt && !closed && (
+        <Badge tone="red">
+          {task.blockedReason ? `Blocked · ${task.blockedReason}` : "Blocked"}
+        </Badge>
+      )}
+      {snoozed && task.snoozedUntil && !closed && (
+        <Badge tone="amber">Snoozed · {shortDate(task.snoozedUntil)}</Badge>
       )}
       {err && <span className="shrink-0 text-xs text-destructive">{(err as Error).message}</span>}
 
@@ -516,35 +641,40 @@ function TaskRow({
           </DropdownMenuContent>
         </DropdownMenu>
 
-        {/* overflow: rename / archive / delete (hover-revealed) */}
-        {canMutate && (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button
-                type="button"
-                aria-label="Task actions"
-                className="rounded-sm p-0.5 text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-foreground data-[state=open]:opacity-100"
-              >
-                <MoreHorizontal size={15} />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem
-                onSelect={() => {
-                  setTitle(task.title)
-                  setRenaming(true)
-                }}
-              >
-                Rename
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => archive.mutate()}>Archive</DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem variant="destructive" onSelect={() => setConfirmDelete(true)}>
-                Delete
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        )}
+        {/* overflow: edit / rename / archive / delete (hover-revealed) */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              aria-label="Task actions"
+              className="rounded-sm p-0.5 text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-foreground data-[state=open]:opacity-100"
+            >
+              <MoreHorizontal size={15} />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onSelect={onEdit}>
+              {canMutate ? "Edit details" : "View details"}
+            </DropdownMenuItem>
+            {canMutate && (
+              <>
+                <DropdownMenuItem
+                  onSelect={() => {
+                    setTitle(task.title)
+                    setRenaming(true)
+                  }}
+                >
+                  Rename
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => archive.mutate()}>Archive</DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem variant="destructive" onSelect={() => setConfirmDelete(true)}>
+                  Delete
+                </DropdownMenuItem>
+              </>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
       </span>
 
       {confirmDelete && (

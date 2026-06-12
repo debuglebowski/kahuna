@@ -2,11 +2,17 @@ import {
   ConceptService,
   DashboardService,
   FieldService,
+  TaskPriorityService,
   TaskStatusService,
 } from "@kingsmaker/engine"
 import { Effect } from "effect"
 import { conceptDashboardSeed } from "../use-cases"
-import { type ConceptSpec, defaultTaskStatuses, kingsmakerSpec } from "./spec"
+import {
+  type ConceptSpec,
+  defaultTaskPriorities,
+  defaultTaskStatuses,
+  kingsmakerSpec,
+} from "./spec"
 
 /** Get a concept by name, creating it if absent (idempotent). */
 const ensureConcept = (concepts: ConceptService, spec: ConceptSpec) =>
@@ -33,10 +39,12 @@ export const seedKingsmaker = Effect.gen(function* () {
   const concepts = yield* ConceptService
   const fields = yield* FieldService
   const taskStatuses = yield* TaskStatusService
+  const taskPriorities = yield* TaskPriorityService
   const dashboards = yield* DashboardService
 
-  // Annotation layer: seed the org's default task statuses (idempotent).
+  // Annotation layer: seed the org's default task statuses + priorities (idempotent).
   yield* taskStatuses.ensureDefaults(defaultTaskStatuses)
+  yield* taskPriorities.ensureDefaults(defaultTaskPriorities)
 
   const idByName = new Map<string, string>()
   for (const spec of kingsmakerSpec) {

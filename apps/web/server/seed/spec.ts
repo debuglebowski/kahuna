@@ -1,15 +1,28 @@
-import type { FieldConfig, FieldKind, TaskStatusSpec } from "@kingsmaker/engine"
+import type { FieldConfig, FieldKind, TaskPrioritySpec, TaskStatusSpec } from "@kingsmaker/engine"
 
 /**
  * Default task statuses seeded for every new org (the annotation layer). Editable
  * afterwards in settings. `category` carries completion/grouping semantics so
  * nothing keys off the name; exactly one is `isDefault` (applied to new tasks).
+ * Colors come from the PILL_COLORS palette so the settings picker shows them.
  */
 export const defaultTaskStatuses: ReadonlyArray<TaskStatusSpec> = [
-  { name: "Open", category: "todo", color: "#64748b", isDefault: true },
-  { name: "In progress", category: "active", color: "#2563eb" },
-  { name: "Blocked", category: "active", color: "#dc2626" },
-  { name: "Done", category: "done", color: "#16a34a" },
+  { name: "Inbox", category: "todo", color: "#6b7280", isDefault: true },
+  { name: "Todo", category: "todo", color: "#64748b" },
+  { name: "In progress", category: "active", color: "#3b82f6" },
+  { name: "Review", category: "active", color: "#8b5cf6" },
+  { name: "Done", category: "done", color: "#22c55e" },
+  { name: "Cancelled", category: "cancelled", color: "#78716c" },
+]
+
+/** Default task priorities seeded for every new org (ordered most → least
+ *  urgent; a new task starts with none). Editable afterwards in settings. */
+export const defaultTaskPriorities: ReadonlyArray<TaskPrioritySpec> = [
+  { name: "Urgent", color: "#ef4444" },
+  { name: "High", color: "#f97316" },
+  { name: "Medium", color: "#f59e0b" },
+  { name: "Low", color: "#3b82f6" },
+  { name: "Someday", color: "#6b7280" },
 ]
 
 export interface FieldSpec {

@@ -1,12 +1,12 @@
 import { PgClient } from "@effect/sql-pg"
 import { Effect, Either } from "effect"
+import { isRichText, MAX_RICHTEXT_CHARS, richTextWalk } from "../domain/richtext"
 import {
   type ConceptRef,
   type EngineEvent,
   type Field,
   type Instance,
   type InstanceState,
-  type Item,
   LABELS_KEY,
 } from "../domain/types"
 import {
@@ -49,36 +49,6 @@ const isMoney = (v: unknown): v is { readonly amount: number; readonly currency:
   Number.isFinite((v as { amount: number }).amount) &&
   typeof (v as { currency?: unknown }).currency === "string" &&
   /^[A-Z]{3}$/.test((v as { currency: string }).currency)
-
-/** Serialized-doc ceiling — bounds the per-save event row, not a UX limit. */
-const MAX_RICHTEXT_CHARS = 1_000_000
-
-const isRichText = (
-  v: unknown,
-): v is { readonly doc: Record<string, unknown>; readonly text: string } => {
-  if (typeof v !== "object" || v === null) return false
-  const o = v as { doc?: unknown; text?: unknown }
-  return (
-    typeof o.text === "string" &&
-    typeof o.doc === "object" &&
-    o.doc !== null &&
-    (o.doc as { type?: unknown }).type === "doc"
-  )
-}
-
-/** Collect a ProseMirror doc's text nodes, blocks joined with spaces (mirrors
- *  the web client's `richtext.ts` walk). The stored envelope `text` is ALWAYS
- *  derived here — the client's copy is shape-checked but never persisted, so
- *  filters/previews/labels can't be lied to. */
-const richTextWalk = (node: unknown, out: string[]): void => {
-  if (typeof node !== "object" || node === null) return
-  const o = node as { type?: unknown; text?: unknown; content?: unknown }
-  if (o.type === "text" && typeof o.text === "string") out.push(o.text)
-  else if (Array.isArray(o.content)) {
-    if (out.length > 0) out.push(" ")
-    for (const child of o.content) richTextWalk(child, out)
-  }
-}
 
 /** Validate a single (non-array) value against a field def. */
 const validateScalar = (

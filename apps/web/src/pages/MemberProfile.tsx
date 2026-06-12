@@ -17,6 +17,7 @@ import {
 } from "@/lib/collections"
 import { formatDateValue } from "@/lib/dates"
 import { memberLabel, useMembers } from "@/lib/members"
+import { isSnoozed } from "@/lib/taskGroups"
 import { initialsOf } from "@/lib/utils"
 
 const roleTone = (role: string) => (role === "owner" ? "blue" : role === "admin" ? "amber" : "gray")
@@ -46,17 +47,21 @@ export function MemberProfile() {
     [statusesQ.data],
   )
 
-  // The member's open tasks: assigned to them, not archived, not done —
-  // dated ones first (soonest due on top), then the rest newest-first.
+  // The member's open tasks: assigned to them, not archived, not closed
+  // (done/cancelled), not snoozed — dated ones first, then newest-first.
   const tasks = useMemo(
     () =>
       (tasksQ.data ?? [])
-        .filter(
-          (t) =>
+        .filter((t) => {
+          const category = statusById.get(t.statusId ?? "")?.category
+          return (
             t.assignee === userId &&
             !t.archivedAt &&
-            statusById.get(t.statusId ?? "")?.category !== "done",
-        )
+            category !== "done" &&
+            category !== "cancelled" &&
+            !isSnoozed(t, new Date())
+          )
+        })
         .sort((a, b) => {
           if (a.dueAt && b.dueAt) return a.dueAt.localeCompare(b.dueAt)
           if (a.dueAt || b.dueAt) return a.dueAt ? -1 : 1

@@ -11,6 +11,7 @@ import type {
   Note,
   SidebarView,
   Task,
+  TaskPriority,
   TaskStatus,
 } from "../../rpc/contract"
 import { api } from "./api"
@@ -210,6 +211,16 @@ export const taskStatusesCollection = createCollection(
     queryFn: async (): Promise<TaskStatus[]> => [...(await api.listTaskStatuses())],
     queryClient,
     getKey: (s: TaskStatus) => s.id,
+  }),
+)
+
+/** Org-wide task-priority vocabulary (the picker + settings editor read this). */
+export const taskPrioritiesCollection = createCollection(
+  queryCollectionOptions({
+    queryKey: ["live", "taskPriorities"],
+    queryFn: async (): Promise<TaskPriority[]> => [...(await api.listTaskPriorities())],
+    queryClient,
+    getKey: (p: TaskPriority) => p.id,
   }),
 )
 

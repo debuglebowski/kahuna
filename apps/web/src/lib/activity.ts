@@ -27,6 +27,10 @@ const LABELS: Record<string, string> = {
   TaskUpdated: "edited a task",
   TaskStatusChanged: "changed a task's status",
   TaskAssigned: "reassigned a task",
+  TaskSnoozed: "snoozed a task",
+  TaskUnsnoozed: "unsnoozed a task",
+  TaskBlocked: "marked a task blocked",
+  TaskUnblocked: "unblocked a task",
   TaskArchived: "archived a task",
   TaskRestored: "restored a task",
   TaskPurged: "deleted a task",
@@ -47,6 +51,7 @@ export const eventLabel = (eventType: string): string =>
 export interface ActivityResolvers {
   readonly fieldName?: (id: string) => string | undefined
   readonly statusName?: (id: string) => string | undefined
+  readonly priorityName?: (id: string) => string | undefined
   readonly userName?: (id: string) => string | undefined
 }
 
@@ -141,6 +146,14 @@ export const eventSnippet = (
         typeof id === "string" && id !== "" ? (r.userName?.(id) ?? "former member") : "unassigned"
       return `${who(p.from)} → ${who(p.to)}`
     }
+    case "TaskSnoozed": {
+      const until = fmtDate(p.until)
+      return until ? `until ${until}` : null
+    }
+    case "TaskBlocked": {
+      const reason = str(p.reason)
+      return reason ? clip(reason) : null
+    }
     default:
       return null
   }
@@ -209,11 +222,19 @@ export const eventDetails = (
       if (title) rows.push({ label: "Title", text: title })
       const status = str(p.statusId)
       if (status) rows.push({ label: "Status", text: r.statusName?.(status) ?? "—" })
+      const priority = str(p.priorityId)
+      if (priority) rows.push({ label: "Priority", text: r.priorityName?.(priority) ?? "—" })
       const assignee = str(p.assignee)
       if (assignee)
         rows.push({ label: "Assignee", text: r.userName?.(assignee) ?? "former member" })
       const due = fmtDate(p.dueAt)
       if (due) rows.push({ label: "Due", text: due })
+      if (Array.isArray(p.labelIds) && p.labelIds.length > 0)
+        rows.push({
+          label: "Labels",
+          text: p.labelIds.length === 1 ? "1 label" : `${p.labelIds.length} labels`,
+        })
+      if (p.descriptionChanged === true) rows.push({ label: "Description", text: "updated" })
       return rows
     }
     case "TaskStatusChanged": {
@@ -222,6 +243,14 @@ export const eventDetails = (
     }
     case "TaskAssigned":
       return [{ label: "Assignee", text: eventSnippet(eventType, payload, r) ?? "" }]
+    case "TaskSnoozed": {
+      const until = fmtDate(p.until)
+      return until ? [{ label: "Until", text: until }] : []
+    }
+    case "TaskBlocked": {
+      const reason = str(p.reason)
+      return reason ? [{ label: "Reason", text: reason }] : []
+    }
     default:
       return []
   }

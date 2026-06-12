@@ -13,6 +13,7 @@ const CATEGORY_DOT: Record<string, string> = {
   todo: "#94a3b8",
   active: "#2563eb",
   done: "#16a34a",
+  cancelled: "#78716c",
 }
 
 export function Dot({ status }: { status: TaskStatus }) {

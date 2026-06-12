@@ -1,5 +1,13 @@
 import { useQuery } from "@tanstack/react-query"
-import { Building2, LayoutDashboard, PanelLeft, Shapes, Tags, UserRound } from "lucide-react"
+import {
+  Building2,
+  LayoutDashboard,
+  ListTodo,
+  PanelLeft,
+  Shapes,
+  Tags,
+  UserRound,
+} from "lucide-react"
 import type { ReactNode } from "react"
 import { Navigate, Outlet, useLocation } from "react-router-dom"
 import { Spinner } from "../../components/ui"
@@ -30,6 +38,7 @@ export const SETTINGS_NAV: ReadonlyArray<SettingsGroup> = [
       { to: "organization", label: "Organization", admin: true, icon: <Building2 size={16} /> },
       { to: "concepts", label: "Concepts", admin: false, icon: <Shapes size={16} /> },
       { to: "labels", label: "Labels", admin: false, icon: <Tags size={16} /> },
+      { to: "tasks", label: "Tasks", admin: false, icon: <ListTodo size={16} /> },
       { to: "sidebar", label: "Sidebar", admin: false, icon: <PanelLeft size={16} /> },
       {
         to: "dashboards",
