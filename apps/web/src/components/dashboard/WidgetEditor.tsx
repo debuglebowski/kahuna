@@ -8,6 +8,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { api, type Concept, type DashboardWidget, type RichTextEnvelope } from "@/lib/api"
+import { capitalize } from "@/lib/fieldDisplay"
 import { ConditionList, useFields } from "../ConditionList"
 import { RichTextEditor } from "../editor/RichTextEditor"
 import { MultiCombobox } from "../MultiCombobox"
@@ -41,6 +42,12 @@ export function WidgetEditor({
   const groupableFields = scalarFields.filter((f) => f.kind !== "richtext")
   const numberFields = (fields.data ?? []).filter((f) => f.kind === "number" || f.kind === "money")
   const computedFields = (fields.data ?? []).filter((f) => f.kind === "computed")
+  // Kanban columns: single-valued enums only (a card sits in exactly one column).
+  const enumFields = (fields.data ?? []).filter((f) => f.kind === "enum" && !f.config.multiple)
+  const kanbanOptions =
+    widget.type === "kanban"
+      ? ((fields.data ?? []).find((f) => f.id === widget.groupBy)?.config.options ?? [])
+      : []
 
   const patch = onChange
 
@@ -513,6 +520,94 @@ export function WidgetEditor({
               </Select>
             </FieldRow>
           </div>
+        </>
+      )}
+
+      {widget.type === "kanban" && (
+        <>
+          <div className="grid grid-cols-2 gap-3">
+            <FieldRow label="Group by">
+              <Select
+                value={widget.groupBy || "__none"}
+                // A new column field invalidates the visible-columns subset.
+                onValueChange={(v) => patch({ groupBy: v === "__none" ? "" : v, columns: [] })}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Enum field…" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none">—</SelectItem>
+                  {enumFields.map((f) => (
+                    <SelectItem key={f.id} value={f.id}>
+                      {f.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </FieldRow>
+            <FieldRow label="Card order">
+              <Select
+                value={widget.orderBy || "__none"}
+                onValueChange={(v) => patch({ orderBy: v === "__none" ? null : v })}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Default" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none">Default</SelectItem>
+                  {groupableFields.map((f) => (
+                    <SelectItem key={f.id} value={f.id}>
+                      {f.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </FieldRow>
+          </div>
+          <FieldRow label="Card fields (optional)">
+            <MultiCombobox
+              options={scalarFields.map((f) => ({ id: f.id, label: f.name }))}
+              selectedIds={widget.cardFields ?? []}
+              onChange={(ids) => patch({ cardFields: ids })}
+              placeholder="Name + first two"
+              searchPlaceholder="Search fields…"
+              emptyText="No fields."
+            />
+          </FieldRow>
+          {kanbanOptions.length > 0 && (
+            <FieldRow label="Columns (optional)">
+              <MultiCombobox
+                options={kanbanOptions.map((v) => ({ id: v, label: capitalize(v) }))}
+                selectedIds={widget.columns ?? []}
+                onChange={(ids) => patch({ columns: ids })}
+                placeholder="All values"
+                searchPlaceholder="Search values…"
+                emptyText="No values."
+              />
+            </FieldRow>
+          )}
+          <FieldRow label="Board">
+            <div className="flex flex-wrap gap-1.5">
+              <ToggleChip
+                pressed={widget.dragToUpdate ?? true}
+                onPressedChange={(p) => patch({ dragToUpdate: p })}
+              >
+                Drag to update
+              </ToggleChip>
+              <ToggleChip
+                pressed={widget.showEmptyColumns ?? true}
+                onPressedChange={(p) => patch({ showEmptyColumns: p })}
+              >
+                Empty columns
+              </ToggleChip>
+              <ToggleChip
+                pressed={widget.includeArchived ?? false}
+                onPressedChange={(p) => patch({ includeArchived: p })}
+              >
+                Archived
+              </ToggleChip>
+            </div>
+          </FieldRow>
         </>
       )}
 

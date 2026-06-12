@@ -88,6 +88,29 @@ export const groupBy = (
     .sort((a, b) => b.count - a.count)
 }
 
+/** Bucket matching instances by an enum field's value for the Kanban board.
+ *  Key "" collects unset values (the synthetic "no value" column); a `multiple`
+ *  enum contributes its FIRST value (a card sits in exactly one column).
+ *  Insertion order within a bucket preserves the input order. */
+export const kanbanBuckets = (
+  instances: readonly Instance[],
+  conds: readonly SidebarCondition[],
+  groupKey: string,
+  opts?: MatchOpts,
+): Map<string, Instance[]> => {
+  const buckets = new Map<string, Instance[]>()
+  for (const i of instances) {
+    if (!matchInstance(i, conds, opts)) continue
+    const v = i.state[groupKey]
+    const first = Array.isArray(v) ? v[0] : v
+    const key = first === undefined || first === null || first === "" ? "" : String(first)
+    const list = buckets.get(key)
+    if (list) list.push(i)
+    else buckets.set(key, [i])
+  }
+  return buckets
+}
+
 /** Synthetic state key holding an instance's current computed bands, keyed by
  *  field id (the engine's decay-tick marker; mirror of `LABELS_KEY`). */
 export const BANDS_KEY = "__bands"

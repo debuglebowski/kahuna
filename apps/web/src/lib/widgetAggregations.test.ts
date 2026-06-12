@@ -8,6 +8,7 @@ import {
   bandRollup,
   countInstances,
   groupBy,
+  kanbanBuckets,
   matchInstance,
   metricValue,
   staleInstances,
@@ -176,5 +177,29 @@ describe("timeBucket", () => {
     const to = Date.UTC(2024, 0, 5)
     const out = timeBucket([{ occurredAt: new Date("2024-01-03T12:00:00Z") }], "week", from, to)
     expect(out).toEqual([{ bucket: "2024-01-01", count: 1 }])
+  })
+})
+
+describe("kanbanBuckets", () => {
+  it('buckets by enum value, folding unset into the "" bucket', () => {
+    const a = inst({ stage: "open" })
+    const b = inst({ stage: "won" })
+    const c = inst({ stage: "open" })
+    const d = inst({}) // unset
+    const e = inst({ stage: "" }) // empty string counts as unset too
+    const out = kanbanBuckets([a, b, c, d, e], [], "stage")
+    expect(out.get("open")?.map((i) => i.id)).toEqual([a.id, c.id])
+    expect(out.get("won")?.map((i) => i.id)).toEqual([b.id])
+    expect(out.get("")?.map((i) => i.id)).toEqual([d.id, e.id])
+  })
+
+  it("applies the condition filter and takes the first value of a multi enum", () => {
+    const a = inst({ stage: ["open", "won"], region: "eu" })
+    const b = inst({ stage: "open", region: "us" })
+    const c = inst({ stage: [], region: "eu" }) // empty list = unset
+    const out = kanbanBuckets([a, b, c], [{ field: "region", op: "eq", value: "eu" }], "stage")
+    expect(out.get("open")?.map((i) => i.id)).toEqual([a.id])
+    expect(out.get("")?.map((i) => i.id)).toEqual([c.id])
+    expect(out.has("won")).toBe(false)
   })
 })

@@ -9,6 +9,7 @@ import { widgetLayouts } from "@/lib/dashboards"
 import { ActivityWidget } from "./ActivityWidget"
 import { AttentionWidget } from "./AttentionWidget"
 import { GoalWidget } from "./GoalWidget"
+import { KanbanWidget } from "./KanbanWidget"
 import { ListWidget } from "./ListWidget"
 import { MembersWidget } from "./MembersWidget"
 import { MetricWidget } from "./MetricWidget"
@@ -85,8 +86,9 @@ export function WidgetCanvas({
     if (w.type === "goal") return <GoalWidget widget={w} data={data} concept={concept} />
     if (w.type === "shortcuts") return <ShortcutsWidget widget={w} />
     if (w.type === "note") return <NoteWidget widget={w} />
-    // kanban/calendar/gantt/files are in the contract but their renderers land
-    // in later phases; a tile from a newer body also falls through here.
+    if (w.type === "kanban") return <KanbanWidget widget={w} data={data} />
+    // calendar/gantt/files are in the contract but their renderers land in
+    // later phases; a tile from a newer body also falls through here.
     return (
       <p className="text-sm text-muted-foreground">
         Unsupported widget ({(w as DashboardWidget).type}).
