@@ -1,7 +1,7 @@
 import { useLiveQuery } from "@tanstack/react-db"
 import { useQuery } from "@tanstack/react-query"
 import { X } from "lucide-react"
-import { useMemo } from "react"
+import { useMemo, useState } from "react"
 import {
   Select,
   SelectContent,
@@ -118,8 +118,9 @@ export function WidgetEditor({
       </FieldRow>
 
       {/* Org-global widgets (members/welcome) have no concept to pick; tasks
-          gets its own "Any record" select below (its conceptId is a filter). */}
-      {"conceptId" in widget && widget.type !== "tasks" && (
+          gets its own "Any record" select below (its conceptId is a filter);
+          files picks per scope in its own section. */}
+      {"conceptId" in widget && widget.type !== "tasks" && widget.type !== "files" && (
         <FieldRow label="Concept">
           <Select
             value={conceptId || "__none"}
@@ -1272,6 +1273,134 @@ export function WidgetEditor({
         </>
       )}
 
+      {widget.type === "files" && (
+        <>
+          <FieldRow label="Scope">
+            <Select
+              value={widget.scope}
+              onValueChange={(v) => {
+                const scope = v as "instance" | "concept" | "org"
+                // Clear the other scope's key so a stale ref can't linger; give
+                // instance scope a usable default (the drop-zone on).
+                if (scope === "concept") patch({ scope, instanceId: null })
+                else if (scope === "instance")
+                  patch({ scope, conceptId: null, allowUpload: widget.allowUpload ?? true })
+                else patch({ scope, conceptId: null, instanceId: null })
+              }}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="instance">One record</SelectItem>
+                <SelectItem value="concept">A concept (recent uploads)</SelectItem>
+                <SelectItem value="org">Whole org</SelectItem>
+              </SelectContent>
+            </Select>
+          </FieldRow>
+          {widget.scope === "concept" && (
+            <FieldRow label="Concept">
+              <Select
+                value={conceptId || "__none"}
+                onValueChange={(v) => patch({ conceptId: v === "__none" ? null : v })}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Select a concept…" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none">Select a concept…</SelectItem>
+                  {concepts.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.pluralName || c.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </FieldRow>
+          )}
+          {widget.scope === "instance" && (
+            <FieldRow label="Record">
+              <FilesInstancePicker
+                instanceId={widget.instanceId ?? null}
+                concepts={concepts}
+                onPick={(instanceId) => patch({ instanceId })}
+              />
+            </FieldRow>
+          )}
+          <div className="grid grid-cols-2 gap-3">
+            <FieldRow label="Style">
+              <Select
+                value={widget.variant ?? "list"}
+                onValueChange={(v) => patch({ variant: v as "gallery" | "list" })}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="list">List rows</SelectItem>
+                  <SelectItem value="gallery">Gallery (thumbnails)</SelectItem>
+                </SelectContent>
+              </Select>
+            </FieldRow>
+            <FieldRow label="Sort">
+              <Select
+                value={widget.sort ?? "newest"}
+                onValueChange={(v) => patch({ sort: v as "newest" | "name" | "size" })}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="newest">Newest</SelectItem>
+                  <SelectItem value="name">Name</SelectItem>
+                  <SelectItem value="size">Size</SelectItem>
+                </SelectContent>
+              </Select>
+            </FieldRow>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <FieldRow label="File type">
+              <Select
+                value={widget.fileType ?? "all"}
+                onValueChange={(v) =>
+                  patch({ fileType: v as "all" | "image" | "doc" | "pdf" | "other" })
+                }
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All</SelectItem>
+                  <SelectItem value="image">Images</SelectItem>
+                  <SelectItem value="doc">Documents</SelectItem>
+                  <SelectItem value="pdf">PDFs</SelectItem>
+                  <SelectItem value="other">Other</SelectItem>
+                </SelectContent>
+              </Select>
+            </FieldRow>
+            <FieldRow label="Max files (optional)">
+              <Input
+                type="number"
+                min={1}
+                value={widget.limit ?? ""}
+                onChange={(e) => patch({ limit: e.target.value ? Number(e.target.value) : null })}
+                className="w-28"
+              />
+            </FieldRow>
+          </div>
+          {widget.scope === "instance" && (
+            <FieldRow label="Show">
+              <ToggleChip
+                pressed={widget.allowUpload ?? false}
+                onPressedChange={(p) => patch({ allowUpload: p })}
+              >
+                Upload drop-zone
+              </ToggleChip>
+            </FieldRow>
+          )}
+        </>
+      )}
+
       {conceptId && CONDITION_TYPES.has(widget.type) && (
         <FieldRow label="Filter">
           <ConditionList
@@ -1283,6 +1412,99 @@ export function WidgetEditor({
             onMatchChange={(match) => patch({ match })}
           />
         </FieldRow>
+      )}
+    </div>
+  )
+}
+
+/** The picked record's display label: instance → its item lineage → the
+ *  server-resolved subject ref (instance state keys by field id, so the client
+ *  can't label it alone). A gone record degrades to an honest note. */
+function PickedInstanceLabel({ instanceId }: { instanceId: string }) {
+  const detail = useQuery({
+    queryKey: ["instanceItem", instanceId],
+    queryFn: () => api.getInstance(instanceId),
+    retry: false,
+  })
+  const itemId = detail.data?.instance.itemId
+  const ref = useQuery({
+    queryKey: ["subjectRef", itemId],
+    queryFn: () => api.resolveTaskSubjects(itemId ? [itemId] : []),
+    enabled: !!itemId,
+  })
+  if (detail.error)
+    return <span className="text-muted-foreground">Record unavailable — pick another.</span>
+  return <span className="truncate">{ref.data?.[0]?.label ?? "…"}</span>
+}
+
+/** Concept + search → one instance ref (the Shortcuts picker pattern), with the
+ *  current pick shown as a clearable row. */
+function FilesInstancePicker({
+  instanceId,
+  concepts,
+  onPick,
+}: {
+  instanceId: string | null
+  concepts: readonly Concept[]
+  onPick: (instanceId: string | null) => void
+}) {
+  const [searchConceptId, setSearchConceptId] = useState("")
+  const [query, setQuery] = useState("")
+  const results = useQuery({
+    queryKey: ["search", searchConceptId, query],
+    queryFn: () => api.searchInstances(searchConceptId, query),
+    enabled: !!searchConceptId,
+  })
+
+  if (instanceId)
+    return (
+      <div className="flex items-center gap-2 rounded-md border border-border px-2.5 py-1.5 text-sm">
+        <span className="min-w-0 flex-1 truncate">
+          <PickedInstanceLabel instanceId={instanceId} />
+        </span>
+        <IconButton aria-label="Clear record" onClick={() => onPick(null)}>
+          <X size={14} />
+        </IconButton>
+      </div>
+    )
+
+  return (
+    <div className="space-y-2">
+      <Select
+        value={searchConceptId || "__none"}
+        onValueChange={(v) => setSearchConceptId(v === "__none" ? "" : v)}
+      >
+        <SelectTrigger className="w-full" size="sm">
+          <SelectValue placeholder="Concept…" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="__none">Concept…</SelectItem>
+          {concepts.map((c) => (
+            <SelectItem key={c.id} value={c.id}>
+              {c.pluralName || c.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {searchConceptId && (
+        <>
+          <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search…" />
+          <div className="max-h-36 space-y-0.5 overflow-y-auto">
+            {(results.data ?? []).map((r) => (
+              <button
+                key={r.itemId}
+                type="button"
+                onClick={() => onPick(r.instanceId)}
+                className="flex w-full items-center rounded px-2 py-1 text-left text-sm hover:bg-accent"
+              >
+                {r.label}
+              </button>
+            ))}
+            {results.data?.length === 0 && (
+              <p className="px-2 py-1 text-sm text-muted-foreground">No items match.</p>
+            )}
+          </div>
+        </>
       )}
     </div>
   )

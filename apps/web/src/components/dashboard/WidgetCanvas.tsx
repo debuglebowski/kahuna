@@ -9,6 +9,7 @@ import { widgetLayouts } from "@/lib/dashboards"
 import { ActivityWidget } from "./ActivityWidget"
 import { AttentionWidget } from "./AttentionWidget"
 import { CalendarWidget } from "./CalendarWidget"
+import { FilesWidget } from "./FilesWidget"
 import { GanttWidget } from "./GanttWidget"
 import { GoalWidget } from "./GoalWidget"
 import { KanbanWidget } from "./KanbanWidget"
@@ -95,8 +96,8 @@ export function WidgetCanvas({
     // itself instead of the single-concept `data` scope.
     if (w.type === "calendar") return <CalendarWidget widget={w} instData={instData} />
     if (w.type === "gantt") return <GanttWidget widget={w} data={data} />
-    // files is in the contract but its renderer lands in a later phase; a
-    // tile from a newer body also falls through here.
+    if (w.type === "files") return <FilesWidget widget={w} />
+    // A tile from a newer body (unknown type) falls through here.
     return (
       <p className="text-sm text-muted-foreground">
         Unsupported widget ({(w as DashboardWidget).type}).

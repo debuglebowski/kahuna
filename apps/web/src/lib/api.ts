@@ -303,6 +303,34 @@ export const api = {
   deleteTask: (id: string) => call((c) => c.deleteTask({ id })),
   getActivity: (subjectId: string, limit?: number) =>
     call((c) => c.getActivity({ subjectId, limit })),
+  // ── annotation layer: files ───────────────────────────────────────────────────
+  // Metadata via typed RPCs; the bytes ride plain HTTP (multipart up, binary
+  // down — `uploadFile` / the URL helpers below).
+  listFiles: (filter?: {
+    itemId?: string
+    instanceId?: string
+    conceptId?: string
+    includeArchived?: boolean
+    limit?: number
+  }) => call((c) => c.listFiles(filter ?? {})),
+  archiveFile: (id: string) => call((c) => c.archiveFile({ id })),
+  restoreFile: (id: string) => call((c) => c.restoreFile({ id })),
+  deleteFile: (id: string) => call((c) => c.deleteFile({ id })),
+  /** Multipart upload onto an item lineage. Callers refetch their list — the
+   *  raw JSON body isn't schema-decoded like RPC results, so don't return it. */
+  uploadFile: async (itemId: string, file: File): Promise<void> => {
+    const form = new FormData()
+    form.append("file", file)
+    const res = await fetch(`/api/items/${itemId}/attachments`, { method: "POST", body: form })
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null
+      throw new Error(body?.error ? `Upload failed: ${body.error}` : "Upload failed")
+    }
+  },
+  /** Browser-native save (content-disposition: attachment). */
+  fileDownloadUrl: (id: string) => `/api/attachments/${id}/download`,
+  /** Inline render (img/pdf preview) — same bytes, inline disposition. */
+  fileInlineUrl: (id: string) => `/api/attachments/${id}/download?inline=1`,
   // ── annotation layer: task statuses (admin) ───────────────────────────────────
   listTaskStatuses: (opts?: { includeArchived?: boolean }) =>
     call((c) => c.listTaskStatuses({ includeArchived: opts?.includeArchived })),

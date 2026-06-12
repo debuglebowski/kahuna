@@ -639,9 +639,9 @@ export class AnnotationService extends Effect.Service<AnnotationService>()(
 
       /**
        * The per-item activity feed: a union of (a) the lineage's own instance/item
-       * events and (b) its annotations' note/task events (incl. purge tombstones,
-       * matched via the payload's host id once the row is gone). `subjectId` = the
-       * item lineage id. Newest first.
+       * events and (b) its annotations' note/task/attachment events (incl. purge
+       * tombstones, matched via the payload's host id once the row is gone).
+       * `subjectId` = the item lineage id. Newest first.
        */
       const readActivityForSubject = (
         subjectId: string,
@@ -674,6 +674,12 @@ export class AnnotationService extends Effect.Service<AnnotationService>()(
                 OR (e.subject_kind IN ('note', 'task') AND (
                   e.subject_id IN (
                     SELECT id FROM annotations WHERE org_id = ${orgId} AND subject_id = ${subjectId}
+                  )
+                  OR e.payload->>'subjectId' = ${subjectId}
+                ))
+                OR (e.subject_kind = 'attachment' AND (
+                  e.subject_id IN (
+                    SELECT id FROM attachments WHERE org_id = ${orgId} AND item_id = ${subjectId}
                   )
                   OR e.payload->>'subjectId' = ${subjectId}
                 ))

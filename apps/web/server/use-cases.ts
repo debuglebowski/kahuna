@@ -610,15 +610,29 @@ export const removeRelation = (relationId: string): UC<unknown> =>
   Effect.flatMap(RelationService, (r) => r.remove({ relationId }))
 
 export const uploadAttachment = (
-  instanceId: string,
+  itemId: string,
   filename: string,
   mimeType: string | undefined,
   data: Uint8Array,
 ): UC<Attachment> =>
-  Effect.flatMap(AttachmentService, (a) => a.upload({ instanceId, filename, mimeType, data }))
+  Effect.flatMap(AttachmentService, (a) => a.upload({ itemId, filename, mimeType, data }))
 
-export const listAttachments = (instanceId: string): UC<ReadonlyArray<Attachment>> =>
-  Effect.flatMap(AttachmentService, (a) => a.list(instanceId))
+export const listFiles = (filter: {
+  readonly itemId?: string
+  readonly instanceId?: string
+  readonly conceptId?: string
+  readonly includeArchived?: boolean
+  readonly limit?: number
+}): UC<ReadonlyArray<Attachment>> => Effect.flatMap(AttachmentService, (a) => a.list(filter))
+
+export const archiveFile = (id: string): UC<Attachment> =>
+  Effect.flatMap(AttachmentService, (a) => a.archive(id))
+
+export const restoreFile = (id: string): UC<Attachment> =>
+  Effect.flatMap(AttachmentService, (a) => a.restore(id))
+
+export const deleteFile = (id: string): UC<Attachment> =>
+  Effect.flatMap(AttachmentService, (a) => a.purge(id))
 
 export const downloadAttachment = (
   attachmentId: string,

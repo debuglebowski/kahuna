@@ -33,7 +33,11 @@ export {
   AnnotationFieldService,
 } from "./services/AnnotationFieldService"
 export { AnnotationService, type ListTasksFilter } from "./services/AnnotationService"
-export { AttachmentService, type UploadInput } from "./services/AttachmentService"
+export {
+  AttachmentService,
+  type ListFilesFilter,
+  type UploadInput,
+} from "./services/AttachmentService"
 export { ComputedFields } from "./services/ComputedFields"
 export { ConceptService } from "./services/ConceptService"
 export { DashboardService } from "./services/DashboardService"

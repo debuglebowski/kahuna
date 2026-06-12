@@ -26,7 +26,9 @@ export interface GridItem {
 export const referencedConceptIds = (body: DashboardBody): string[] => {
   const ids = new Set<string>()
   for (const w of body.widgets) {
-    if (w.type === "trend" || w.type === "activity" || w.type === "tasks") continue
+    // Files reads its own RPC (conceptId scopes that call, not instance data).
+    if (w.type === "trend" || w.type === "activity" || w.type === "tasks" || w.type === "files")
+      continue
     // Calendar scopes per-source, not via a single conceptId.
     if (w.type === "calendar") {
       for (const s of w.sources) if (s.conceptId) ids.add(s.conceptId)
@@ -154,8 +156,6 @@ export const newWidget = (body: DashboardBody, type: DashboardWidget["type"]): D
       return { ...base, type: "shortcuts", items: [] }
     case "note":
       return { ...base, type: "note" }
-    // Renderers for the rest land in later phases — the defaults keep the
-    // switch exhaustive (and the add-menu simply doesn't offer them yet).
     case "kanban":
       return { ...scoped, type: "kanban", conditions: [], groupBy: "" }
     case "calendar":

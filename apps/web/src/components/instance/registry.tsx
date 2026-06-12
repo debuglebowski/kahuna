@@ -5,14 +5,16 @@ import {
   History,
   Link2,
   ListChecks,
+  Paperclip,
   Rows3,
   StickyNote,
   Tags,
   Waypoints,
 } from "lucide-react"
-import { notesBySubject, tasksBySubject } from "../../lib/collections"
+import { filesBySubject, notesBySubject, tasksBySubject } from "../../lib/collections"
 import type { ConceptCaps, TileContentKey } from "../../lib/instanceViews"
 import { ActivityFeed } from "../item/ActivityFeed"
+import { FilesPanel } from "../item/FilesPanel"
 import { NotesPanel } from "../item/NotesPanel"
 import { TaskList } from "../item/TaskList"
 import { ConnectedActions, ConnectedBody } from "./ConnectedContent"
@@ -48,6 +50,12 @@ const NotesCount = ({ ctx }: { ctx: InstanceCtx }) => {
 const TasksCount = ({ ctx }: { ctx: InstanceCtx }) => {
   const collection = tasksBySubject(ctx.instance.itemId)
   const q = useLiveQuery((qb) => qb.from({ t: collection }), [collection])
+  return <Count n={(q.data ?? []).filter((x) => !x.archivedAt).length} />
+}
+
+const FilesCount = ({ ctx }: { ctx: InstanceCtx }) => {
+  const collection = filesBySubject(ctx.instance.itemId)
+  const q = useLiveQuery((qb) => qb.from({ f: collection }), [collection])
   return <Count n={(q.data ?? []).filter((x) => !x.archivedAt).length} />
 }
 
@@ -101,6 +109,19 @@ export const TILE_CONTENTS: Record<TileContentKey, TileContent> = {
     Count: TasksCount,
     Body: ({ ctx }) => (
       <TaskList
+        subjectId={ctx.instance.itemId}
+        myUserId={ctx.myUserId}
+        isAdmin={ctx.admin}
+        members={ctx.members}
+      />
+    ),
+  },
+  files: {
+    title: "Files",
+    Icon: Paperclip,
+    Count: FilesCount,
+    Body: ({ ctx }) => (
+      <FilesPanel
         subjectId={ctx.instance.itemId}
         myUserId={ctx.myUserId}
         isAdmin={ctx.admin}

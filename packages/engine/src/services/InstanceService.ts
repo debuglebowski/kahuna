@@ -1,5 +1,6 @@
 import { PgClient } from "@effect/sql-pg"
 import { Effect, Either } from "effect"
+import { BlobStore } from "../blob/BlobStore"
 import { isRichText, MAX_RICHTEXT_CHARS, richTextWalk } from "../domain/richtext"
 import {
   type ConceptRef,
@@ -260,6 +261,23 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
     const fields = yield* FieldService
     const computed = yield* ComputedFields
     const labels = yield* LabelService
+    const blob = yield* BlobStore
+
+    /** Purge an emptied lineage: its files (rows now, blobs after commit — an
+     *  orphan blob is harmless; a dangling row would not be) then the item row
+     *  itself. Returns the blob refs for the post-commit sweep. */
+    const purgeEmptiedItem = (orgId: string, itemId: string) =>
+      Effect.gen(function* () {
+        const refs = yield* sql<{ readonly content_ref: string }>`
+          SELECT content_ref FROM attachments WHERE org_id = ${orgId} AND item_id = ${itemId}`
+        yield* sql`DELETE FROM attachments WHERE org_id = ${orgId} AND item_id = ${itemId}`
+        yield* sql`DELETE FROM items WHERE org_id = ${orgId} AND id = ${itemId}`
+        return refs.map((r) => r.content_ref)
+      })
+
+    /** Best-effort blob removal AFTER the enclosing transaction committed. */
+    const sweepBlobs = (refs: ReadonlyArray<string>) =>
+      Effect.forEach(refs, (r) => blob.del(r).pipe(Effect.ignore), { discard: true })
 
     /** Enforce `config.unique` over a validated payload: no other item of the
      *  concept may hold the same value — archived rows included, so only a
@@ -561,40 +579,48 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
      * payload-scrubbing redaction — never a blind `DELETE FROM events`.)
      */
     const purge = (input: { readonly instanceId: string }) =>
-      sql.withTransaction(
-        Effect.gen(function* () {
-          const { orgId } = yield* OrgContext
-          const instance = yield* loadAny(input.instanceId)
-          const counts = yield* sql<{ readonly count: number | string }>`
+      sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const { orgId } = yield* OrgContext
+            const instance = yield* loadAny(input.instanceId)
+            const counts = yield* sql<{ readonly count: number | string }>`
             SELECT COUNT(*)::int AS count FROM relations
             WHERE org_id = ${orgId} AND archived_at IS NULL
               AND (from_id = ${instance.id} OR to_id = ${instance.id} OR to_version_id = ${instance.id})`
-          const relationCount = Number(counts[0]?.count ?? 0)
-          if (relationCount > 0) {
-            return yield* Effect.fail(new InstanceInUse({ instanceId: instance.id, relationCount }))
-          }
-          const concept = yield* concepts.getById(instance.conceptId)
-          yield* sql`DELETE FROM attachments WHERE org_id = ${orgId} AND instance_id = ${instance.id}`
-          yield* sql`DELETE FROM instances WHERE org_id = ${orgId} AND id = ${instance.id}`
-          // Remove the lineage row when this was its last version — otherwise an
-          // empty `items` row would linger and block the concept's purge via FK.
-          const remaining = yield* sql<{ readonly count: number | string }>`
+            const relationCount = Number(counts[0]?.count ?? 0)
+            if (relationCount > 0) {
+              return yield* Effect.fail(
+                new InstanceInUse({ instanceId: instance.id, relationCount }),
+              )
+            }
+            const concept = yield* concepts.getById(instance.conceptId)
+            yield* sql`DELETE FROM instances WHERE org_id = ${orgId} AND id = ${instance.id}`
+            // Remove the lineage row when this was its last version — otherwise an
+            // empty `items` row would linger and block the concept's purge via FK.
+            // Files hang off the lineage, so they purge with it (not per version).
+            const remaining = yield* sql<{ readonly count: number | string }>`
             SELECT COUNT(*)::int AS count FROM instances
             WHERE org_id = ${orgId} AND item_id = ${instance.itemId}`
-          if (Number(remaining[0]?.count ?? 0) === 0) {
-            yield* sql`DELETE FROM items WHERE org_id = ${orgId} AND id = ${instance.itemId}`
-          }
-          // Tombstone — recorded AFTER the row is gone so the feed shows the delete.
-          yield* events.append({
-            subjectKind: "instance",
-            subjectId: instance.id,
-            eventType: "InstancePurged",
-            payload: { _tag: "InstancePurged" },
-            conceptName: concept.name,
-          })
-          return instance
-        }),
-      )
+            const blobRefs =
+              Number(remaining[0]?.count ?? 0) === 0
+                ? yield* purgeEmptiedItem(orgId, instance.itemId)
+                : []
+            // Tombstone — recorded AFTER the row is gone so the feed shows the delete.
+            yield* events.append({
+              subjectKind: "instance",
+              subjectId: instance.id,
+              eventType: "InstancePurged",
+              payload: { _tag: "InstancePurged" },
+              conceptName: concept.name,
+            })
+            return { instance, blobRefs }
+          }),
+        )
+        .pipe(
+          Effect.tap(({ blobRefs }) => sweepBlobs(blobRefs)),
+          Effect.map(({ instance }) => instance),
+        )
 
     const get = (instanceId: string) =>
       Effect.gen(function* () {
@@ -871,38 +897,44 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
       )
 
     /** Discard an open draft: hard-delete the draft row + its (cloned/added)
-     *  outbound edges + attachments. A draft is never referenceable, so nothing
-     *  inbound can dangle. If this was the item's only version (never published),
-     *  the now-empty lineage row is removed too. */
+     *  outbound edges. A draft is never referenceable, so nothing inbound can
+     *  dangle. Files hang off the lineage and survive the discard — unless this
+     *  was the item's only version (never published), where the now-empty
+     *  lineage row purges with its files. */
     const discardDraft = (input: { readonly instanceId: string }) =>
-      sql.withTransaction(
-        Effect.gen(function* () {
-          const { orgId } = yield* OrgContext
-          const instance = yield* loadAny(input.instanceId)
-          if (instance.versionStatus !== "draft") {
-            return yield* Effect.fail(new VersionFrozen({ instanceId: instance.id }))
-          }
-          const concept = yield* concepts.getById(instance.conceptId)
-          yield* sql`DELETE FROM relations WHERE org_id = ${orgId} AND from_id = ${instance.id}`
-          yield* sql`DELETE FROM attachments WHERE org_id = ${orgId} AND instance_id = ${instance.id}`
-          yield* sql`DELETE FROM instances WHERE org_id = ${orgId} AND id = ${instance.id}`
-          const remaining = yield* sql<{ readonly count: number | string }>`
+      sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const { orgId } = yield* OrgContext
+            const instance = yield* loadAny(input.instanceId)
+            if (instance.versionStatus !== "draft") {
+              return yield* Effect.fail(new VersionFrozen({ instanceId: instance.id }))
+            }
+            const concept = yield* concepts.getById(instance.conceptId)
+            yield* sql`DELETE FROM relations WHERE org_id = ${orgId} AND from_id = ${instance.id}`
+            yield* sql`DELETE FROM instances WHERE org_id = ${orgId} AND id = ${instance.id}`
+            const remaining = yield* sql<{ readonly count: number | string }>`
             SELECT COUNT(*)::int AS count FROM instances
             WHERE org_id = ${orgId} AND item_id = ${instance.itemId}`
-          if (Number(remaining[0]?.count ?? 0) === 0) {
-            yield* sql`DELETE FROM items WHERE org_id = ${orgId} AND id = ${instance.itemId}`
-          }
-          yield* events.append({
-            subjectKind: "instance",
-            subjectId: instance.id,
-            eventType: "InstancePurged",
-            payload: { _tag: "InstancePurged" },
-            conceptId: concept.id,
-            conceptName: concept.name,
-          })
-          return instance
-        }),
-      )
+            const blobRefs =
+              Number(remaining[0]?.count ?? 0) === 0
+                ? yield* purgeEmptiedItem(orgId, instance.itemId)
+                : []
+            yield* events.append({
+              subjectKind: "instance",
+              subjectId: instance.id,
+              eventType: "InstancePurged",
+              payload: { _tag: "InstancePurged" },
+              conceptId: concept.id,
+              conceptName: concept.name,
+            })
+            return { instance, blobRefs }
+          }),
+        )
+        .pipe(
+          Effect.tap(({ blobRefs }) => sweepBlobs(blobRefs)),
+          Effect.map(({ instance }) => instance),
+        )
 
     /** Whole-item (lineage) archive: hides every version from head lists. Distinct
      *  from per-version `archive` (which hides one version). */

@@ -4,6 +4,7 @@ import { type EngineServices, OrgContext, type OrgScope } from "@kingsmaker/engi
 import { Effect, Layer } from "effect"
 import {
   type AnnotationField,
+  type Attachment,
   type Concept,
   type ConceptGraph,
   type Dashboard,
@@ -223,6 +224,26 @@ async function assertCanMutateAnnotation(orgId: string, actor: string, id: strin
   throw new RpcError({
     code: "FORBIDDEN",
     message: "Only the author, assignee, or an admin may modify this",
+    status: 403,
+  })
+}
+
+/** Uploader/admin gate for mutating (or purging) a file — the attachment
+ *  analogue of `assertCanMutateAnnotation` (a missing row passes through so the
+ *  engine surfaces the canonical AttachmentNotFound). */
+async function assertCanMutateAttachment(orgId: string, actor: string, id: string): Promise<void> {
+  const r = await pool.query<{ created_by: string | null }>(
+    "SELECT created_by FROM attachments WHERE id = $1 AND org_id = $2 LIMIT 1",
+    [id, orgId],
+  )
+  const row = r.rows[0]
+  if (!row) return
+  if (row.created_by === actor) return
+  const role = await roleOf(actor, orgId)
+  if (role && can(role, "admin")) return
+  throw new RpcError({
+    code: "FORBIDDEN",
+    message: "Only the uploader or an admin may modify this file",
     status: 403,
   })
 }
@@ -511,6 +532,28 @@ const HandlersLive = ServerRpcs.toLayer({
   deleteTask: ({ id }) =>
     guarded<Task>((orgId, actor) => assertCanMutateAnnotation(orgId, actor, id), uc.deleteTask(id)),
   getActivity: ({ subjectId, limit }) => mapErr(uc.getActivity(subjectId, limit)),
+  // ── annotation layer: files ─────────────────────────────────────────────────────
+  // Reads are open to any member; archive/restore/purge gate on uploader/admin
+  // (upload itself is the plain-HTTP multipart route, open like createNote).
+  listFiles: ({ itemId, instanceId, conceptId, includeArchived, limit }) =>
+    as<ReadonlyArray<Attachment>>(
+      uc.listFiles({ itemId, instanceId, conceptId, includeArchived, limit }),
+    ),
+  archiveFile: ({ id }) =>
+    guarded<Attachment>(
+      (orgId, actor) => assertCanMutateAttachment(orgId, actor, id),
+      uc.archiveFile(id),
+    ),
+  restoreFile: ({ id }) =>
+    guarded<Attachment>(
+      (orgId, actor) => assertCanMutateAttachment(orgId, actor, id),
+      uc.restoreFile(id),
+    ),
+  deleteFile: ({ id }) =>
+    guarded<Attachment>(
+      (orgId, actor) => assertCanMutateAttachment(orgId, actor, id),
+      uc.deleteFile(id),
+    ),
   // ── annotation layer: task statuses + custom-field defs (admin) ────────────────
   listTaskStatuses: ({ includeArchived }) =>
     as<ReadonlyArray<TaskStatus>>(uc.listTaskStatuses(includeArchived)),

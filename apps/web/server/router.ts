@@ -5,7 +5,7 @@ import { db, pool } from "./db"
 import { can } from "./policy"
 import type { UseCaseResult } from "./runtime"
 import { resolveOrg, roleOf, runScoped } from "./session"
-import { downloadAttachment, listAttachments, purgeMemberData, uploadAttachment } from "./use-cases"
+import { downloadAttachment, purgeMemberData, uploadAttachment } from "./use-cases"
 
 const json = (r: UseCaseResult<unknown>) =>
   Response.json(r.ok ? r.data : { error: r.code, detail: r.detail }, { status: r.status })
@@ -22,19 +22,17 @@ export const handleApi = async (req: Request): Promise<Response | null> => {
   const seg = p.split("/").filter(Boolean) // ["api", ...]
   const m = req.method
 
-  // Multipart upload + list of an instance's attachments.
-  if (seg[1] === "instances" && seg[2] && seg[3] === "attachments") {
-    if (m === "GET") return json(await runScoped(req, listAttachments(seg[2])))
-    if (m === "POST") {
-      const form = await req.formData().catch(() => null)
-      const file = form?.get("file")
-      if (!(file instanceof File))
-        return Response.json({ error: "file field required" }, { status: 400 })
-      const data = new Uint8Array(await file.arrayBuffer())
-      return json(
-        await runScoped(req, uploadAttachment(seg[2], file.name, file.type || undefined, data)),
-      )
-    }
+  // Multipart upload of a file onto an item lineage (reads/mutations of the
+  // metadata are typed RPCs — listFiles/archiveFile/restoreFile/deleteFile).
+  if (seg[1] === "items" && seg[2] && seg[3] === "attachments" && m === "POST") {
+    const form = await req.formData().catch(() => null)
+    const file = form?.get("file")
+    if (!(file instanceof File))
+      return Response.json({ error: "file field required" }, { status: 400 })
+    const data = new Uint8Array(await file.arrayBuffer())
+    return json(
+      await runScoped(req, uploadAttachment(seg[2], file.name, file.type || undefined, data)),
+    )
   }
 
   // Team management (admin-only): add an EXISTING user to the active org by email.
@@ -112,7 +110,8 @@ export const handleApi = async (req: Request): Promise<Response | null> => {
     return json(await runScoped(req, purgeMemberData(userId)))
   }
 
-  // Binary download.
+  // Binary download. `?inline=1` serves with an inline disposition so the
+  // browser renders previews natively (img/pdf) instead of saving.
   if (seg[1] === "attachments" && seg[2] && seg[3] === "download" && m === "GET") {
     const result = await runScoped(req, downloadAttachment(seg[2]))
     if (!result.ok) return Response.json({ error: result.code }, { status: result.status })
@@ -120,10 +119,12 @@ export const handleApi = async (req: Request): Promise<Response | null> => {
       attachment: { filename: string; mimeType: string | null }
       data: Uint8Array
     }
+    const disposition = url.searchParams.get("inline") ? "inline" : "attachment"
+    const safeName = attachment.filename.replace(/["\\\r\n]/g, "_")
     return new Response(data as unknown as BodyInit, {
       headers: {
         "content-type": attachment.mimeType ?? "application/octet-stream",
-        "content-disposition": `attachment; filename="${attachment.filename}"`,
+        "content-disposition": `${disposition}; filename="${safeName}"; filename*=UTF-8''${encodeURIComponent(attachment.filename)}`,
       },
     })
   }

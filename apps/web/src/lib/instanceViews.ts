@@ -21,6 +21,7 @@ export const TILE_CONTENT_KEYS = [
   "versions",
   "notes",
   "tasks",
+  "files",
   "activity",
 ] as const
 export type TileContentKey = (typeof TILE_CONTENT_KEYS)[number]
@@ -46,7 +47,7 @@ export interface InstanceViewDef {
   readonly tiles: (caps: ConceptCaps) => ViewTile[]
 }
 
-const ANNOTATIONS: ReadonlyArray<TileContentKey> = ["notes", "tasks", "activity"]
+const ANNOTATIONS: ReadonlyArray<TileContentKey> = ["notes", "tasks", "files", "activity"]
 
 export const INSTANCE_VIEWS: ReadonlyArray<InstanceViewDef> = [
   {

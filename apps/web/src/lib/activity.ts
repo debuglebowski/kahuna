@@ -15,7 +15,10 @@ const LABELS: Record<string, string> = {
   ComputedBandChanged: "status drifted",
   RelationCreated: "added a connection",
   RelationDeleted: "removed a connection",
-  AttachmentAdded: "added an attachment",
+  AttachmentAdded: "uploaded a file",
+  AttachmentArchived: "archived a file",
+  AttachmentRestored: "restored a file",
+  AttachmentPurged: "deleted a file",
   ItemArchived: "archived this item",
   ItemRestored: "restored this item",
   NoteCreated: "added a note",
@@ -127,6 +130,9 @@ export const eventSnippet = (
       return (fieldId && r.fieldName?.(fieldId)) ?? null
     }
     case "AttachmentAdded":
+    case "AttachmentArchived":
+    case "AttachmentRestored":
+    case "AttachmentPurged":
       return str(p.filename)
     case "NoteCreated":
     case "NoteUpdated": {
@@ -210,7 +216,10 @@ export const eventDetails = (
       const name = fieldId ? r.fieldName?.(fieldId) : null
       return name ? [{ label: "Connection", text: name }] : []
     }
-    case "AttachmentAdded": {
+    case "AttachmentAdded":
+    case "AttachmentArchived":
+    case "AttachmentRestored":
+    case "AttachmentPurged": {
       const filename = str(p.filename)
       return filename ? [{ label: "File", text: filename }] : []
     }

@@ -79,4 +79,21 @@ describe("routeEnvelope", () => {
       KEY.changed,
     ])
   })
+
+  it("attachment events nudge mounted files panels, widgets, and activity feeds", () => {
+    // The envelope's subjectId is the attachment id (not the host item), so the
+    // routing fans out to every mounted files surface — incl. the widgets'
+    // shared files:global key — plus the per-item activity feeds.
+    const mounted = [
+      KEY.changed,
+      KEY.files("item1"),
+      KEY.filesGlobal,
+      KEY.activity("item1"),
+      KEY.notes("item1"),
+    ]
+    const keys = new Set(routeEnvelope(env({ kind: "attachment", subjectId: "att1" }), mounted))
+    expect(keys).toEqual(
+      new Set([KEY.changed, KEY.files("item1"), KEY.filesGlobal, KEY.activity("item1")]),
+    )
+  })
 })

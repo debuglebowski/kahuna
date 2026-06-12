@@ -4,6 +4,7 @@ import { useEffect } from "react"
 import type {
   AnnotationField,
   AnnotationType,
+  Attachment,
   Concept,
   FeedItem,
   Instance,
@@ -179,6 +180,29 @@ export const tasksBySubject = (subjectId: string) => {
   if (!c) {
     c = makeTasks(subjectId)
     tasksCollections.set(subjectId, c)
+  }
+  return c
+}
+
+// Archived included: the Files panel's "show archived" toggle filters at read
+// time (one fetch serves both views, like the panel's live/archived counts).
+const filesCollections = new Map<string, ReturnType<typeof makeFiles>>()
+const makeFiles = (subjectId: string) =>
+  createCollection(
+    queryCollectionOptions({
+      queryKey: ["live", "files", subjectId],
+      queryFn: async (): Promise<Attachment[]> => [
+        ...(await api.listFiles({ itemId: subjectId, includeArchived: true })),
+      ],
+      queryClient,
+      getKey: (a: Attachment) => a.id,
+    }),
+  )
+export const filesBySubject = (subjectId: string) => {
+  let c = filesCollections.get(subjectId)
+  if (!c) {
+    c = makeFiles(subjectId)
+    filesCollections.set(subjectId, c)
   }
   return c
 }

@@ -169,13 +169,20 @@ export const Field = Schema.Struct({
 })
 export type Field = typeof Field.Type
 
+/** A file on an item (the binary side of the annotation substrate). Bytes move
+ *  over plain HTTP (multipart up, binary down — see server/router.ts); this is
+ *  the metadata the RPCs list and mutate. `itemId` = the host lineage. */
 export const Attachment = Schema.Struct({
   id: Schema.String,
-  instanceId: Schema.String,
+  itemId: Schema.String,
   filename: Schema.String,
   mimeType: Schema.NullOr(Schema.String),
   sizeBytes: Schema.NullOr(Schema.Number),
+  /** Uploader (bauth_user.id); drives archive/delete rights (uploader or admin). */
+  createdBy: Schema.NullOr(Schema.String),
   createdAt: Schema.Date,
+  /** Archive marker: non-null = archived (hidden from the live list, restorable). */
+  archivedAt: Schema.NullOr(Schema.Date),
 })
 export type Attachment = typeof Attachment.Type
 
@@ -1363,10 +1370,43 @@ export class KingsmakerRpcs extends RpcGroup.make(
     error: RpcError,
   }),
   // Per-item activity: union of the lineage's instance/item events + its
-  // annotations' note/task events. `subjectId` = the item lineage id.
+  // annotations' note/task/attachment events. `subjectId` = the item lineage id.
   Rpc.make("getActivity", {
     payload: { subjectId: Schema.String, limit: Schema.optional(Schema.Number) },
     success: Schema.Array(FeedItem),
+    error: RpcError,
+  }),
+  // ── annotation layer: files ───────────────────────────────────────────────────
+  // Metadata only — the bytes ride plain HTTP (multipart POST /api/items/:id/
+  // attachments, binary GET /api/attachments/:id/download). Exactly one scope:
+  // itemId (or instanceId, resolved to its lineage server-side — the Files
+  // widget stores an instance ref) = one record; conceptId = recent across its
+  // items; none = org-wide recent.
+  Rpc.make("listFiles", {
+    payload: {
+      itemId: Schema.optional(Schema.String),
+      instanceId: Schema.optional(Schema.String),
+      conceptId: Schema.optional(Schema.String),
+      includeArchived: Schema.optional(Schema.Boolean),
+      limit: Schema.optional(Schema.Number),
+    },
+    success: Schema.Array(Attachment),
+    error: RpcError,
+  }),
+  Rpc.make("archiveFile", {
+    payload: { id: Schema.String },
+    success: Attachment,
+    error: RpcError,
+  }),
+  Rpc.make("restoreFile", {
+    payload: { id: Schema.String },
+    success: Attachment,
+    error: RpcError,
+  }),
+  // Hard delete (purge): row + blob gone, the event tombstone stays.
+  Rpc.make("deleteFile", {
+    payload: { id: Schema.String },
+    success: Attachment,
     error: RpcError,
   }),
   // ── annotation layer: task statuses (admin) ───────────────────────────────────

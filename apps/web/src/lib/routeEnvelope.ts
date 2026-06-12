@@ -26,6 +26,7 @@ export interface LiveEnvelope {
     | "taskStatus"
     | "taskPriority"
     | "annotationField"
+    | "attachment"
   readonly subjectId: string
   readonly type: string
   /** Concept id for instance events — routes to the id-keyed instance collection. */
@@ -52,6 +53,10 @@ export const KEY = {
   activity: (subjectId: string) => `activity:${subjectId}`,
   /** Global "My Tasks" view (cross-item). */
   tasksGlobal: "tasks:global",
+  /** Files panel for an item. */
+  files: (subjectId: string) => `files:${subjectId}`,
+  /** Dashboard Files widgets (any scope) — one shared nudge key. */
+  filesGlobal: "files:global",
   /** Org-wide task-status vocabulary. */
   taskStatuses: "taskStatuses",
   /** Org-wide task-priority vocabulary. */
@@ -87,6 +92,10 @@ export const routeEnvelope = (env: LiveEnvelope, mounted: ReadonlyArray<string>)
     for (const k of byPrefix("activity:")) candidates.add(k)
   } else if (env.kind === "task") {
     for (const k of byPrefix("tasks:")) candidates.add(k)
+    for (const k of byPrefix("activity:")) candidates.add(k)
+  } else if (env.kind === "attachment") {
+    // Covers the per-item panels AND the widgets' shared "files:global" key.
+    for (const k of byPrefix("files:")) candidates.add(k)
     for (const k of byPrefix("activity:")) candidates.add(k)
   } else if (env.kind === "taskStatus") {
     candidates.add(KEY.taskStatuses)

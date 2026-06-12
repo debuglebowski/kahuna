@@ -246,7 +246,35 @@ export type EventPayload =
       readonly properties: Record<string, unknown>
     }
   | { readonly _tag: "RelationDeleted"; readonly relationId: Id }
-  | { readonly _tag: "AttachmentAdded"; readonly attachmentId: Id; readonly filename: string }
+  // Attachment events ride their own subject stream (subjectKind "attachment",
+  // subject_id = the attachment id) like notes/tasks; `subjectId` carries the
+  // host item lineage so the per-item feed can match purge tombstones. Legacy
+  // AttachmentAdded events (pre-item era) sit on instance streams without
+  // `subjectId` — the reducer folds them as a no-op.
+  | {
+      readonly _tag: "AttachmentAdded"
+      readonly attachmentId: Id
+      readonly filename: string
+      readonly subjectId?: Id
+    }
+  | {
+      readonly _tag: "AttachmentArchived"
+      readonly attachmentId: Id
+      readonly filename: string
+      readonly subjectId: Id
+    }
+  | {
+      readonly _tag: "AttachmentRestored"
+      readonly attachmentId: Id
+      readonly filename: string
+      readonly subjectId: Id
+    }
+  | {
+      readonly _tag: "AttachmentPurged"
+      readonly attachmentId: Id
+      readonly filename: string
+      readonly subjectId: Id
+    }
   | { readonly _tag: "ConceptCreated"; readonly name: string }
   | {
       readonly _tag: "FieldAdded"
@@ -400,12 +428,16 @@ export type EventPayload =
 export interface Attachment {
   readonly id: Id
   readonly orgId: OrgId
-  readonly instanceId: Id
+  /** Host item lineage (items.id) — files survive re-publishes, like notes. */
+  readonly itemId: Id
   readonly filename: string
   readonly contentRef: string
   readonly mimeType: string | null
   readonly sizeBytes: number | null
+  /** Uploader (= event actor = bauth_user.id); drives mutate rights. */
+  readonly createdBy: string | null
   readonly createdAt: Date
+  readonly archivedAt: Date | null
 }
 
 // ── shared filter conditions ───────────────────────────────────────────────────
@@ -825,6 +857,7 @@ export type SubjectKind =
   | "taskStatus"
   | "taskPriority"
   | "annotationField"
+  | "attachment"
 
 /** The annotation variant. Append-only; "comment" etc. may follow. */
 export type AnnotationType = "note" | "task"

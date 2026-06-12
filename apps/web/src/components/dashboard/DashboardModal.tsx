@@ -246,6 +246,7 @@ export function DashboardModal({
                   <SelectItem value="kanban">Kanban</SelectItem>
                   <SelectItem value="calendar">Calendar</SelectItem>
                   <SelectItem value="gantt">Timeline / Gantt</SelectItem>
+                  <SelectItem value="files">Files</SelectItem>
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">

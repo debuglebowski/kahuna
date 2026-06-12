@@ -247,23 +247,27 @@ export const toRelation = (r: RelationRow): Relation => ({
 export interface AttachmentRow {
   readonly id: string
   readonly org_id: string
-  readonly instance_id: string
+  readonly item_id: string
   readonly filename: string
   readonly content_ref: string
   readonly mime_type: string | null
   readonly size_bytes: number | string | null
+  readonly created_by: string | null
   readonly created_at: Date
+  readonly archived_at: Date | null
 }
 
 export const toAttachment = (r: AttachmentRow): Attachment => ({
   id: r.id,
   orgId: r.org_id,
-  instanceId: r.instance_id,
+  itemId: r.item_id,
   filename: r.filename,
   contentRef: r.content_ref,
   mimeType: r.mime_type,
   sizeBytes: r.size_bytes == null ? null : Number(r.size_bytes),
+  createdBy: r.created_by,
   createdAt: r.created_at,
+  archivedAt: r.archived_at,
 })
 
 export interface SidebarViewRow {

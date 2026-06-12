@@ -379,18 +379,37 @@ export const instanceGraphLayouts = pgTable(
   (t) => [primaryKey({ columns: [t.orgId, t.itemId] })],
 )
 
-export const attachments = pgTable("attachments", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  orgId: text("org_id").notNull(),
-  instanceId: uuid("instance_id")
-    .notNull()
-    .references(() => instances.id),
-  filename: text("filename").notNull(),
-  contentRef: text("content_ref").notNull(),
-  mimeType: text("mime_type"),
-  sizeBytes: bigint("size_bytes", { mode: "number" }),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-})
+/**
+ * Files on items — the binary side of the annotation substrate. Bytes live in
+ * the BlobStore under `content_ref`; this row is the org-scoped metadata.
+ * `item_id` targets the **item lineage** (like `annotations.subject_id`), so a
+ * file survives re-publishes. `created_by` is a logical fk → bauth_user.id
+ * (drives mutate rights at the RPC boundary). Archive hides, purge deletes the
+ * row + blob but keeps the event tombstone.
+ */
+export const attachments = pgTable(
+  "attachments",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: text("org_id").notNull(),
+    itemId: uuid("item_id")
+      .notNull()
+      .references(() => items.id),
+    filename: text("filename").notNull(),
+    contentRef: text("content_ref").notNull(),
+    mimeType: text("mime_type"),
+    sizeBytes: bigint("size_bytes", { mode: "number" }),
+    createdBy: text("created_by"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+  },
+  (t) => [
+    // Per-item Files panel (newest first via id).
+    index("attachments_item_idx").on(t.orgId, t.itemId, t.id),
+    // Concept/org-scope "recent uploads" lists.
+    index("attachments_org_idx").on(t.orgId, t.id),
+  ],
+)
 
 /**
  * The cross-cutting **annotation layer** — notes and tasks that hang off any
