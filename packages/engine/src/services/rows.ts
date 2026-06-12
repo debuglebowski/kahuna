@@ -135,6 +135,13 @@ const KNOWN_WIDGETS = new Set([
   "tasks",
   "members",
   "welcome",
+  "goal",
+  "shortcuts",
+  "note",
+  "kanban",
+  "calendar",
+  "gantt",
+  "files",
 ])
 
 /** Coerce a jsonb body into a well-formed dashboard body (defensive against

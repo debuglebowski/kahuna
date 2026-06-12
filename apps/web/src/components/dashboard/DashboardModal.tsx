@@ -232,6 +232,7 @@ export function DashboardModal({
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="metric">Metric</SelectItem>
+                  <SelectItem value="goal">Goal</SelectItem>
                   <SelectItem value="list">List / Table</SelectItem>
                   <SelectItem value="breakdown">Breakdown</SelectItem>
                   <SelectItem value="attention">Attention</SelectItem>
@@ -240,6 +241,8 @@ export function DashboardModal({
                   <SelectItem value="tasks">Tasks</SelectItem>
                   <SelectItem value="members">Members</SelectItem>
                   <SelectItem value="welcome">Welcome</SelectItem>
+                  <SelectItem value="shortcuts">Shortcuts</SelectItem>
+                  <SelectItem value="note">Note</SelectItem>
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">

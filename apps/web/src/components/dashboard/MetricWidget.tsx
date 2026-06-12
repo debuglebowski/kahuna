@@ -1,14 +1,11 @@
 import type { Concept, DashboardWidget } from "@/lib/api"
 import { useSession } from "@/lib/auth-client"
 import type { ConceptInstanceData } from "@/lib/conceptData"
+import { formatWidgetNumber, heroTextClass } from "@/lib/dashboards"
+import { cn } from "@/lib/utils"
 import { metricValue } from "@/lib/widgetAggregations"
 
 type Metric = Extract<DashboardWidget, { type: "metric" }>
-
-const fmt = (n: number): string =>
-  Number.isInteger(n)
-    ? n.toLocaleString()
-    : n.toLocaleString(undefined, { maximumFractionDigits: 2 })
 
 /** A single big number: count of matching instances, or sum/avg of a field. */
 export function MetricWidget({
@@ -36,8 +33,10 @@ export function MetricWidget({
 
   return (
     <div className="flex h-full flex-col justify-center">
-      <div className="text-3xl font-semibold tabular-nums text-foreground">
-        {value == null ? "—" : fmt(value)}
+      <div
+        className={cn("font-semibold tabular-nums text-foreground", heroTextClass(widget.layout))}
+      >
+        {value == null ? "—" : formatWidgetNumber(value)}
       </div>
       <div className="mt-1 truncate text-xs text-muted-foreground">{sub}</div>
     </div>

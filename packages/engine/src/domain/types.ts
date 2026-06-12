@@ -571,6 +571,104 @@ export interface MembersWidget extends WidgetBase {
 export interface WelcomeWidget extends WidgetBase {
   readonly type: "welcome"
 }
+/** Goal — a metric with a finish line: current value vs a manual target. */
+export interface GoalWidget extends WidgetBase {
+  readonly type: "goal"
+  readonly conceptId?: string | null
+  readonly conditions: ReadonlyArray<SidebarCondition>
+  readonly match?: ConditionMatch
+  readonly agg: "count" | "sum" | "avg"
+  readonly field?: string | null
+  /** Manual target number; null = not configured yet. */
+  readonly target?: number | null
+  /** `reach` = progress toward >= target (quota); `stay` = keep <= target (budget). */
+  readonly direction?: "reach" | "stay"
+  readonly variant?: "bar" | "ring" | "number"
+  readonly showPercent?: boolean
+}
+/** One curated shortcut. `ref` is an instance id, dashboard id, or URL per `kind`. */
+export interface ShortcutItem {
+  readonly id: string
+  readonly kind: "instance" | "dashboard" | "url"
+  readonly ref: string
+  readonly label?: string | null
+  readonly icon?: string | null
+}
+/** Shortcuts — hand-picked jump-off points; fully manual by design (no filters). */
+export interface ShortcutsWidget extends WidgetBase {
+  readonly type: "shortcuts"
+  readonly items: ReadonlyArray<ShortcutItem>
+  readonly variant?: "list" | "grid"
+  /** Open URL targets in a new tab (internal targets always navigate in-app). */
+  readonly newTab?: boolean
+}
+/** Note — free-form rich text on the canvas ({ doc, text } envelope, client-derived). */
+export interface NoteWidget extends WidgetBase {
+  readonly type: "note"
+  readonly content?: { readonly doc: Record<string, unknown>; readonly text: string }
+  readonly appearance?: "plain" | "info" | "warn" | "success"
+  readonly overflow?: "clip" | "scroll"
+}
+/** Kanban — instances as cards in columns keyed by an enum field. */
+export interface KanbanWidget extends WidgetBase {
+  readonly type: "kanban"
+  readonly conceptId?: string | null
+  readonly conditions: ReadonlyArray<SidebarCondition>
+  readonly match?: ConditionMatch
+  /** Enum field id whose values become the columns. */
+  readonly groupBy: string
+  readonly cardFields?: ReadonlyArray<string>
+  readonly dragToUpdate?: boolean
+  readonly columns?: ReadonlyArray<string>
+  readonly showEmptyColumns?: boolean
+  readonly orderBy?: string | null
+  readonly includeArchived?: boolean
+}
+/** One calendar source: a concept's instances plotted by a date field. */
+export interface CalendarSource {
+  readonly conceptId: string
+  readonly dateField: string
+  readonly color?: string | null
+  readonly conditions?: ReadonlyArray<SidebarCondition>
+  readonly match?: ConditionMatch
+  readonly labelField?: string | null
+}
+/** Calendar — instances plotted by date, multi-concept overlay. */
+export interface CalendarWidget extends WidgetBase {
+  readonly type: "calendar"
+  readonly mode: "month" | "week" | "agenda"
+  readonly sources: ReadonlyArray<CalendarSource>
+  readonly includeTasks?: boolean
+  readonly density?: "full" | "dots"
+}
+/** Timeline/Gantt — instances as bars between two date fields. */
+export interface GanttWidget extends WidgetBase {
+  readonly type: "gantt"
+  readonly conceptId?: string | null
+  readonly conditions: ReadonlyArray<SidebarCondition>
+  readonly match?: ConditionMatch
+  readonly scale: "day" | "week" | "month"
+  /** Start date field id; an instance with no end renders a milestone. */
+  readonly startField: string
+  readonly endField?: string | null
+  readonly groupBy?: string | null
+  readonly barLabelField?: string | null
+  readonly progressField?: string | null
+  readonly showTodayLine?: boolean
+  readonly window?: "fit" | "90d" | "quarter"
+}
+/** Files — uploads attached to instances, browsed at a scope. */
+export interface FilesWidget extends WidgetBase {
+  readonly type: "files"
+  readonly conceptId?: string | null
+  readonly scope: "instance" | "concept" | "org"
+  readonly instanceId?: string | null
+  readonly allowUpload?: boolean
+  readonly variant?: "gallery" | "list"
+  readonly sort?: "newest" | "name" | "size"
+  readonly limit?: number | null
+  readonly fileType?: "all" | "image" | "doc" | "pdf" | "other"
+}
 export type DashboardWidget =
   | MetricWidget
   | ListWidget
@@ -581,6 +679,13 @@ export type DashboardWidget =
   | TasksWidget
   | MembersWidget
   | WelcomeWidget
+  | GoalWidget
+  | ShortcutsWidget
+  | NoteWidget
+  | KanbanWidget
+  | CalendarWidget
+  | GanttWidget
+  | FilesWidget
 export interface DashboardBody {
   readonly widgets: ReadonlyArray<DashboardWidget>
   /** Grid columns (default 12) and row height in px. Forward-compat. */

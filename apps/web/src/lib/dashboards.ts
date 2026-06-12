@@ -101,6 +101,13 @@ const DEFAULT_SIZE: Record<DashboardWidget["type"], { w: number; h: number }> = 
   tasks: { w: 6, h: 5 },
   members: { w: 4, h: 5 },
   welcome: { w: 6, h: 2 },
+  goal: { w: 3, h: 2 },
+  shortcuts: { w: 3, h: 4 },
+  note: { w: 4, h: 3 },
+  kanban: { w: 8, h: 5 },
+  calendar: { w: 6, h: 5 },
+  gantt: { w: 8, h: 4 },
+  files: { w: 4, h: 4 },
 }
 
 /** A blank widget of the given type, appended at the bottom of the grid with no
@@ -135,5 +142,40 @@ export const newWidget = (body: DashboardBody, type: DashboardWidget["type"]): D
       return { ...base, type: "members" }
     case "welcome":
       return { ...base, type: "welcome" }
+    case "goal":
+      return { ...scoped, type: "goal", conditions: [], agg: "count", target: null }
+    case "shortcuts":
+      return { ...base, type: "shortcuts", items: [] }
+    case "note":
+      return { ...base, type: "note" }
+    // Renderers for the rest land in later phases — the defaults keep the
+    // switch exhaustive (and the add-menu simply doesn't offer them yet).
+    case "kanban":
+      return { ...scoped, type: "kanban", conditions: [], groupBy: "" }
+    case "calendar":
+      return { ...base, type: "calendar", mode: "month", sources: [] }
+    case "gantt":
+      return { ...scoped, type: "gantt", conditions: [], scale: "week", startField: "" }
+    case "files":
+      return { ...scoped, type: "files", scope: "org" }
   }
 }
+
+/** Format a widget's hero number: integers with thousands separators, else 2dp
+ *  (shared by Metric + Goal). */
+export const formatWidgetNumber = (n: number): string =>
+  Number.isInteger(n)
+    ? n.toLocaleString()
+    : n.toLocaleString(undefined, { maximumFractionDigits: 2 })
+
+export type SizeVariant = "sm" | "md" | "lg"
+
+/** Display variant from a tile's grid size — compact tiles keep small type,
+ *  taller tiles scale their hero element up. Height-driven: width alone never
+ *  grows type (a wide 2-row strip still has only ~150px of height). */
+export const sizeVariant = (layout: { w: number; h: number }): SizeVariant =>
+  layout.h <= 2 ? "sm" : layout.h <= 4 ? "md" : "lg"
+
+/** Tailwind class for a hero number at the tile's size (Metric + Goal). */
+export const heroTextClass = (layout: { w: number; h: number }): string =>
+  ({ sm: "text-3xl", md: "text-4xl", lg: "text-6xl" })[sizeVariant(layout)]

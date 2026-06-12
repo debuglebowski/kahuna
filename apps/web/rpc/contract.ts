@@ -439,6 +439,132 @@ const WelcomeWidget = Schema.Struct({
   ...widgetBase,
   type: Schema.Literal("welcome"),
 })
+// Goal — a metric with a finish line: current value vs a manual target.
+const GoalWidget = Schema.Struct({
+  ...widgetBase,
+  ...ConceptScoped,
+  type: Schema.Literal("goal"),
+  conditions: Schema.Array(SidebarCondition),
+  ...ConditionMatch,
+  agg: Schema.Literal("count", "sum", "avg"),
+  field: Schema.optional(Schema.NullOr(Schema.String)),
+  /** Manual target number; null = not configured yet. */
+  target: Schema.optional(Schema.NullOr(Schema.Number)),
+  /** `reach` = progress toward >= target (quota); `stay` = keep <= target (budget). */
+  direction: Schema.optional(Schema.Literal("reach", "stay")),
+  variant: Schema.optional(Schema.Literal("bar", "ring", "number")),
+  showPercent: Schema.optional(Schema.Boolean),
+})
+/** One curated shortcut. `ref` is an instance id, dashboard id, or URL per `kind`;
+ *  `label` is a display snapshot (dashboards re-resolve to the live name). */
+const ShortcutItem = Schema.Struct({
+  id: Schema.String,
+  kind: Schema.Literal("instance", "dashboard", "url"),
+  ref: Schema.String,
+  label: Schema.optional(Schema.NullOr(Schema.String)),
+  icon: Schema.optional(Schema.NullOr(Schema.String)),
+})
+// Shortcuts — hand-picked jump-off points; fully manual by design (no filters).
+const ShortcutsWidget = Schema.Struct({
+  ...widgetBase,
+  type: Schema.Literal("shortcuts"),
+  items: Schema.Array(ShortcutItem),
+  variant: Schema.optional(Schema.Literal("list", "grid")),
+  /** Open URL targets in a new tab (internal targets always navigate in-app). */
+  newTab: Schema.optional(Schema.Boolean),
+})
+// Note — free-form rich text on the canvas. The content is the same { doc, text }
+// envelope as `RichTextEnvelope` (declared below; inlined here since the body is
+// an opaque client-side document — the server never derives `text` for it).
+const NoteWidget = Schema.Struct({
+  ...widgetBase,
+  type: Schema.Literal("note"),
+  content: Schema.optional(
+    Schema.Struct({
+      doc: Schema.Record({ key: Schema.String, value: Schema.Unknown }),
+      text: Schema.String,
+    }),
+  ),
+  appearance: Schema.optional(Schema.Literal("plain", "info", "warn", "success")),
+  overflow: Schema.optional(Schema.Literal("clip", "scroll")),
+})
+// Kanban — instances as cards in columns keyed by an enum field (renderer: P2).
+const KanbanWidget = Schema.Struct({
+  ...widgetBase,
+  ...ConceptScoped,
+  type: Schema.Literal("kanban"),
+  conditions: Schema.Array(SidebarCondition),
+  ...ConditionMatch,
+  /** Enum field id whose values become the columns. */
+  groupBy: Schema.String,
+  /** Field ids shown on each card; absent = name + first two scalars. */
+  cardFields: Schema.optional(Schema.Array(Schema.String)),
+  /** Off = read-only board (no drag-to-update). */
+  dragToUpdate: Schema.optional(Schema.Boolean),
+  /** Subset + order of enum values shown as columns; absent = all. */
+  columns: Schema.optional(Schema.Array(Schema.String)),
+  showEmptyColumns: Schema.optional(Schema.Boolean),
+  /** Field id ordering cards within a column; absent = default order. */
+  orderBy: Schema.optional(Schema.NullOr(Schema.String)),
+  includeArchived: Schema.optional(Schema.Boolean),
+})
+/** One calendar source: a concept's instances plotted by a date field. */
+const CalendarSource = Schema.Struct({
+  conceptId: Schema.String,
+  /** Date field id supplying each instance's position on the grid. */
+  dateField: Schema.String,
+  color: Schema.optional(Schema.NullOr(Schema.String)),
+  conditions: Schema.optional(Schema.Array(SidebarCondition)),
+  ...ConditionMatch,
+  /** Field id for the event label; absent = the instance's name/label. */
+  labelField: Schema.optional(Schema.NullOr(Schema.String)),
+})
+// Calendar — instances plotted by date, multi-concept overlay (renderer: P3).
+const CalendarWidget = Schema.Struct({
+  ...widgetBase,
+  type: Schema.Literal("calendar"),
+  mode: Schema.Literal("month", "week", "agenda"),
+  sources: Schema.Array(CalendarSource),
+  /** Overlay org tasks by due date as an extra source. */
+  includeTasks: Schema.optional(Schema.Boolean),
+  /** Month-mode cell rendering: full event cells vs dots + count. */
+  density: Schema.optional(Schema.Literal("full", "dots")),
+})
+// Timeline/Gantt — instances as bars between two date fields (renderer: P3).
+const GanttWidget = Schema.Struct({
+  ...widgetBase,
+  ...ConceptScoped,
+  type: Schema.Literal("gantt"),
+  conditions: Schema.Array(SidebarCondition),
+  ...ConditionMatch,
+  scale: Schema.Literal("day", "week", "month"),
+  /** Start date field id; an instance with no end renders a milestone. */
+  startField: Schema.String,
+  endField: Schema.optional(Schema.NullOr(Schema.String)),
+  /** Enum/user field id for swimlane rows; absent = flat. */
+  groupBy: Schema.optional(Schema.NullOr(Schema.String)),
+  barLabelField: Schema.optional(Schema.NullOr(Schema.String)),
+  /** Number field (0–100) filling the bar; absent = plain bars. */
+  progressField: Schema.optional(Schema.NullOr(Schema.String)),
+  showTodayLine: Schema.optional(Schema.Boolean),
+  window: Schema.optional(Schema.Literal("fit", "90d", "quarter")),
+})
+// Files — uploads attached to instances, browsed at a scope (renderer: P4).
+const FilesWidget = Schema.Struct({
+  ...widgetBase,
+  ...ConceptScoped,
+  type: Schema.Literal("files"),
+  /** instance = one record's files; concept = recent across its instances; org = all. */
+  scope: Schema.Literal("instance", "concept", "org"),
+  /** Instance id for `scope: "instance"` on a dashboard (no implicit context). */
+  instanceId: Schema.optional(Schema.NullOr(Schema.String)),
+  /** Off = read-only browse (no drop-zone). */
+  allowUpload: Schema.optional(Schema.Boolean),
+  variant: Schema.optional(Schema.Literal("gallery", "list")),
+  sort: Schema.optional(Schema.Literal("newest", "name", "size")),
+  limit: Schema.optional(Schema.NullOr(Schema.Number)),
+  fileType: Schema.optional(Schema.Literal("all", "image", "doc", "pdf", "other")),
+})
 
 export const DashboardWidget = Schema.Union(
   MetricWidget,
@@ -450,6 +576,13 @@ export const DashboardWidget = Schema.Union(
   TasksWidget,
   MembersWidget,
   WelcomeWidget,
+  GoalWidget,
+  ShortcutsWidget,
+  NoteWidget,
+  KanbanWidget,
+  CalendarWidget,
+  GanttWidget,
+  FilesWidget,
 )
 export type DashboardWidget = typeof DashboardWidget.Type
 

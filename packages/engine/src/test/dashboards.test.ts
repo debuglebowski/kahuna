@@ -78,6 +78,63 @@ describe("dashboards (DashboardService)", () => {
     }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
 
+  it.effect("appended widget types (goal … files) round-trip intact", () =>
+    Effect.gen(function* () {
+      const dash = yield* DashboardService
+      const home = (yield* dash.list())[0]!
+      const layout = { x: 0, y: 0, w: 4, h: 3 }
+      const widgets: DashboardWidget[] = [
+        {
+          type: "goal",
+          id: "g1",
+          title: null,
+          layout,
+          conceptId: "c1",
+          conditions: [],
+          agg: "count",
+          target: 100,
+          direction: "reach",
+        },
+        {
+          type: "shortcuts",
+          id: "s1",
+          title: null,
+          layout,
+          items: [{ id: "i1", kind: "url", ref: "https://example.com", label: "Docs" }],
+        },
+        {
+          type: "note",
+          id: "n1",
+          title: null,
+          layout,
+          content: { doc: { type: "doc", content: [] }, text: "hello" },
+          appearance: "info",
+        },
+        { type: "kanban", id: "k1", title: null, layout, conditions: [], groupBy: "f1" },
+        {
+          type: "calendar",
+          id: "cal1",
+          title: null,
+          layout,
+          mode: "month",
+          sources: [{ conceptId: "c1", dateField: "f2" }],
+        },
+        {
+          type: "gantt",
+          id: "ga1",
+          title: null,
+          layout,
+          conditions: [],
+          scale: "week",
+          startField: "f3",
+        },
+        { type: "files", id: "fi1", title: null, layout, scope: "org" },
+      ]
+      const updated = yield* dash.update({ id: home.id, body: { widgets } })
+      expect(updated.body.widgets).toEqual(widgets)
+    }).pipe(Effect.provide(testLayer(newOrgId()))),
+  )
+
   it.effect("owner scoping: a member never sees another member's personal dashboard", () =>
     Effect.gen(function* () {
       const org = newOrgId()

@@ -8,9 +8,12 @@ import type { ConceptInstanceData } from "@/lib/conceptData"
 import { widgetLayouts } from "@/lib/dashboards"
 import { ActivityWidget } from "./ActivityWidget"
 import { AttentionWidget } from "./AttentionWidget"
+import { GoalWidget } from "./GoalWidget"
 import { ListWidget } from "./ListWidget"
 import { MembersWidget } from "./MembersWidget"
 import { MetricWidget } from "./MetricWidget"
+import { NoteWidget } from "./NoteWidget"
+import { ShortcutsWidget } from "./ShortcutsWidget"
 import { TasksWidget } from "./TasksWidget"
 import { WelcomeWidget } from "./WelcomeWidget"
 
@@ -79,13 +82,25 @@ export function WidgetCanvas({
     if (w.type === "tasks") return <TasksWidget widget={w} />
     if (w.type === "members") return <MembersWidget widget={w} />
     if (w.type === "welcome") return <WelcomeWidget />
-    // All known types handled; a tile from a newer body falls through here.
+    if (w.type === "goal") return <GoalWidget widget={w} data={data} concept={concept} />
+    if (w.type === "shortcuts") return <ShortcutsWidget widget={w} />
+    if (w.type === "note") return <NoteWidget widget={w} />
+    // kanban/calendar/gantt/files are in the contract but their renderers land
+    // in later phases; a tile from a newer body also falls through here.
     return (
       <p className="text-sm text-muted-foreground">
         Unsupported widget ({(w as DashboardWidget).type}).
       </p>
     )
   }
+
+  // A note can be title-less by design — don't fall back to the type name, and
+  // in read-only view drop the header row entirely (edit mode keeps it for the
+  // hover actions).
+  const headerLabel = (w: DashboardWidget): string =>
+    w.title ||
+    ("conceptId" in w && w.conceptId ? (cIndex.get(w.conceptId)?.name ?? "") : "") ||
+    (w.type === "note" ? "" : w.type)
 
   return (
     <MeasuredGrid
@@ -99,33 +114,33 @@ export function WidgetCanvas({
           key={w.id}
           className="group flex flex-col overflow-hidden rounded-xl border bg-card p-3 shadow-sm"
         >
-          <div className="mb-1 flex items-center justify-between gap-2">
-            <span className="truncate text-xs font-medium text-muted-foreground">
-              {w.title ||
-                ("conceptId" in w && w.conceptId ? cIndex.get(w.conceptId)?.name : "") ||
-                w.type}
-            </span>
-            {!readOnly && (
-              <div className="flex shrink-0 items-center gap-0.5">
-                <button
-                  type="button"
-                  aria-label="Edit widget"
-                  className="cancel-drag rounded p-0.5 text-muted-foreground opacity-0 transition hover:bg-muted hover:text-foreground group-hover:opacity-100"
-                  onClick={() => onEdit?.(w.id)}
-                >
-                  <Pencil size={13} />
-                </button>
-                <button
-                  type="button"
-                  aria-label="Remove widget"
-                  className="cancel-drag rounded p-0.5 text-muted-foreground opacity-0 transition hover:bg-muted hover:text-foreground group-hover:opacity-100"
-                  onClick={() => onRemove?.(w.id)}
-                >
-                  <X size={14} />
-                </button>
-              </div>
-            )}
-          </div>
+          {(!readOnly || headerLabel(w) !== "") && (
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <span className="truncate text-xs font-medium text-muted-foreground">
+                {headerLabel(w)}
+              </span>
+              {!readOnly && (
+                <div className="flex shrink-0 items-center gap-0.5">
+                  <button
+                    type="button"
+                    aria-label="Edit widget"
+                    className="cancel-drag rounded p-0.5 text-muted-foreground opacity-0 transition hover:bg-muted hover:text-foreground group-hover:opacity-100"
+                    onClick={() => onEdit?.(w.id)}
+                  >
+                    <Pencil size={13} />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Remove widget"
+                    className="cancel-drag rounded p-0.5 text-muted-foreground opacity-0 transition hover:bg-muted hover:text-foreground group-hover:opacity-100"
+                    onClick={() => onRemove?.(w.id)}
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
           <div className="min-h-0 flex-1">{render(w)}</div>
         </div>
       ))}

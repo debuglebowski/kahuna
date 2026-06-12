@@ -7,10 +7,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { api, type Concept, type DashboardWidget } from "@/lib/api"
+import { api, type Concept, type DashboardWidget, type RichTextEnvelope } from "@/lib/api"
 import { ConditionList, useFields } from "../ConditionList"
+import { RichTextEditor } from "../editor/RichTextEditor"
 import { MultiCombobox } from "../MultiCombobox"
 import { Field as FieldRow, IconButton, Input, ToggleChip } from "../ui"
+import { ShortcutItemsEditor } from "./ShortcutItemsEditor"
 
 /**
  * Configure one dashboard widget — the side panel of the dashboard edit modal's
@@ -338,6 +340,180 @@ export function WidgetEditor({
         <p className="text-xs text-muted-foreground">
           No settings — the greeting rotates on every visit.
         </p>
+      )}
+
+      {widget.type === "goal" && (
+        <>
+          <div className="grid grid-cols-2 gap-3">
+            <FieldRow label="Aggregate">
+              <Select
+                value={widget.agg}
+                onValueChange={(v) => patch({ agg: v as "count" | "sum" | "avg" })}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="count">Count</SelectItem>
+                  <SelectItem value="sum">Sum</SelectItem>
+                  <SelectItem value="avg">Average</SelectItem>
+                </SelectContent>
+              </Select>
+            </FieldRow>
+            {widget.agg !== "count" && (
+              <FieldRow label="Field">
+                <Select
+                  value={widget.field || "__none"}
+                  onValueChange={(v) => patch({ field: v === "__none" ? null : v })}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Number field…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none">—</SelectItem>
+                    {numberFields.map((f) => (
+                      <SelectItem key={f.id} value={f.id}>
+                        {f.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </FieldRow>
+            )}
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <FieldRow label="Target">
+              <Input
+                type="number"
+                value={widget.target ?? ""}
+                placeholder="e.g. 100"
+                onChange={(e) => patch({ target: e.target.value ? Number(e.target.value) : null })}
+              />
+            </FieldRow>
+            <FieldRow label="Direction">
+              <Select
+                value={widget.direction ?? "reach"}
+                onValueChange={(v) => patch({ direction: v as "reach" | "stay" })}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="reach">Reach at least</SelectItem>
+                  <SelectItem value="stay">Stay under</SelectItem>
+                </SelectContent>
+              </Select>
+            </FieldRow>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <FieldRow label="Style">
+              <Select
+                value={widget.variant ?? "bar"}
+                onValueChange={(v) => patch({ variant: v as "bar" | "ring" | "number" })}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="bar">Progress bar</SelectItem>
+                  <SelectItem value="ring">Ring</SelectItem>
+                  <SelectItem value="number">Number</SelectItem>
+                </SelectContent>
+              </Select>
+            </FieldRow>
+            <FieldRow label="Show">
+              <ToggleChip
+                pressed={widget.showPercent ?? true}
+                onPressedChange={(p) => patch({ showPercent: p })}
+              >
+                Percent
+              </ToggleChip>
+            </FieldRow>
+          </div>
+        </>
+      )}
+
+      {widget.type === "shortcuts" && (
+        <>
+          <FieldRow label="Shortcuts">
+            <ShortcutItemsEditor
+              items={widget.items}
+              concepts={concepts}
+              onChange={(items) => patch({ items })}
+            />
+          </FieldRow>
+          <div className="grid grid-cols-2 gap-3">
+            <FieldRow label="Style">
+              <Select
+                value={widget.variant ?? "list"}
+                onValueChange={(v) => patch({ variant: v as "list" | "grid" })}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="list">List</SelectItem>
+                  <SelectItem value="grid">Icon grid</SelectItem>
+                </SelectContent>
+              </Select>
+            </FieldRow>
+            <FieldRow label="URL targets">
+              <ToggleChip
+                pressed={widget.newTab ?? false}
+                onPressedChange={(p) => patch({ newTab: p })}
+              >
+                New tab
+              </ToggleChip>
+            </FieldRow>
+          </div>
+        </>
+      )}
+
+      {widget.type === "note" && (
+        <>
+          <FieldRow label="Content">
+            <RichTextEditor
+              value={widget.content}
+              editable
+              placeholder="Write the note…"
+              onChange={(v) => patch({ content: v as unknown as RichTextEnvelope })}
+            />
+          </FieldRow>
+          <div className="grid grid-cols-2 gap-3">
+            <FieldRow label="Appearance">
+              <Select
+                value={widget.appearance ?? "plain"}
+                onValueChange={(v) =>
+                  patch({ appearance: v as "plain" | "info" | "warn" | "success" })
+                }
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="plain">Plain</SelectItem>
+                  <SelectItem value="info">Info callout</SelectItem>
+                  <SelectItem value="warn">Warning callout</SelectItem>
+                  <SelectItem value="success">Success callout</SelectItem>
+                </SelectContent>
+              </Select>
+            </FieldRow>
+            <FieldRow label="Overflow">
+              <Select
+                value={widget.overflow ?? "clip"}
+                onValueChange={(v) => patch({ overflow: v as "clip" | "scroll" })}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="clip">Clip with fade</SelectItem>
+                  <SelectItem value="scroll">Scroll</SelectItem>
+                </SelectContent>
+              </Select>
+            </FieldRow>
+          </div>
+        </>
       )}
 
       {conceptId && "conditions" in widget && (

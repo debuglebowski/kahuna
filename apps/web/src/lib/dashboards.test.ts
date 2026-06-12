@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest"
 import type { DashboardBody } from "./api"
-import { addWidget, newWidget, referencedConceptIds } from "./dashboards"
+import {
+  addWidget,
+  formatWidgetNumber,
+  newWidget,
+  referencedConceptIds,
+  sizeVariant,
+} from "./dashboards"
 
 const empty: DashboardBody = { widgets: [] }
 
@@ -37,16 +43,48 @@ describe("newWidget shapes", () => {
   })
 
   it("never puts conceptId on org-global widgets (spread bypasses excess checks)", () => {
-    for (const type of ["tasks", "members", "welcome"] as const) {
+    for (const type of ["tasks", "members", "welcome", "shortcuts", "note", "calendar"] as const) {
       expect("conceptId" in newWidget(empty, type)).toBe(false)
     }
   })
 
   it("keeps conceptId (null) on concept-scoped widgets", () => {
-    for (const type of ["metric", "list", "breakdown", "attention", "trend", "activity"] as const) {
+    for (const type of [
+      "metric",
+      "list",
+      "breakdown",
+      "attention",
+      "trend",
+      "activity",
+      "goal",
+      "kanban",
+      "gantt",
+      "files",
+    ] as const) {
       const w = newWidget(empty, type)
       expect("conceptId" in w && w.conceptId).toBeNull()
     }
+  })
+
+  it("starts a goal unconfigured (no target) so the tile prompts honestly", () => {
+    const w = newWidget(empty, "goal")
+    expect(w).toMatchObject({ type: "goal", agg: "count", target: null })
+  })
+})
+
+describe("display helpers (metric + goal)", () => {
+  it("formats integers with separators and decimals at 2dp", () => {
+    expect(formatWidgetNumber(1234567)).toBe((1234567).toLocaleString())
+    expect(formatWidgetNumber(2 / 3)).toBe(
+      (2 / 3).toLocaleString(undefined, { maximumFractionDigits: 2 }),
+    )
+  })
+
+  it("scales the size variant with tile height, not width", () => {
+    expect(sizeVariant({ w: 3, h: 2 })).toBe("sm")
+    expect(sizeVariant({ w: 12, h: 2 })).toBe("sm")
+    expect(sizeVariant({ w: 3, h: 3 })).toBe("md")
+    expect(sizeVariant({ w: 4, h: 5 })).toBe("lg")
   })
 })
 
