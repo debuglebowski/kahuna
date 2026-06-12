@@ -4,6 +4,7 @@ import { LayoutDashboard, Settings } from "lucide-react"
 import { useMemo } from "react"
 import { useNavigate, useParams } from "react-router-dom"
 import { WidgetCanvas } from "@/components/dashboard/WidgetCanvas"
+import { usePageChrome } from "@/components/Layout"
 import { Button, IconButton, Spinner } from "@/components/ui"
 import {
   Select,
@@ -24,6 +25,7 @@ import { referencedConceptIds } from "@/lib/dashboards"
  * Settings → Dashboards; this page just re-reads the `dashboards` query.
  */
 export function Dashboards() {
+  usePageChrome({ fullWidth: true }) // widget canvas uses the whole viewport width
   const navigate = useNavigate()
   const conceptsLive = useLiveQuery((q) => q.from({ c: conceptsCollection }))
   useRegisterCollection(KEY.concepts, conceptsCollection)
