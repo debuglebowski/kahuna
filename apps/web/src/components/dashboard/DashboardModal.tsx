@@ -24,6 +24,7 @@ import {
 } from "@/lib/dashboards"
 import { WidgetCanvas } from "./WidgetCanvas"
 import { WidgetEditor } from "./WidgetEditor"
+import { WidgetGallery } from "./WidgetGallery"
 
 /** True for the optimistic-concurrency RpcError (code DASHBOARD_CONFLICT). The
  *  client surfaces RPC failures as a wrapped error, so match code/message/text. */
@@ -78,6 +79,7 @@ export function DashboardModal({
   }))
   const [dirty, setDirty] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
+  const [galleryOpen, setGalleryOpen] = useState(false)
   const [confirmingClose, setConfirmingClose] = useState(false)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
 
@@ -225,30 +227,14 @@ export function DashboardModal({
 
           <TabsContent value="layout" className="flex min-h-0 flex-1 flex-col">
             <div className="flex shrink-0 items-center justify-between gap-2 border-b px-5 py-2.5">
-              <Select value="" onValueChange={(t) => addOfType(t as DashboardWidget["type"])}>
-                <SelectTrigger className="cancel-drag" size="sm">
-                  <Plus size={14} />
-                  <SelectValue placeholder="Add widget" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="metric">Metric</SelectItem>
-                  <SelectItem value="goal">Goal</SelectItem>
-                  <SelectItem value="list">List / Table</SelectItem>
-                  <SelectItem value="breakdown">Breakdown</SelectItem>
-                  <SelectItem value="attention">Attention</SelectItem>
-                  <SelectItem value="trend">Trend</SelectItem>
-                  <SelectItem value="activity">Activity</SelectItem>
-                  <SelectItem value="tasks">Tasks</SelectItem>
-                  <SelectItem value="members">Members</SelectItem>
-                  <SelectItem value="welcome">Welcome</SelectItem>
-                  <SelectItem value="shortcuts">Shortcuts</SelectItem>
-                  <SelectItem value="note">Note</SelectItem>
-                  <SelectItem value="kanban">Kanban</SelectItem>
-                  <SelectItem value="calendar">Calendar</SelectItem>
-                  <SelectItem value="gantt">Timeline / Gantt</SelectItem>
-                  <SelectItem value="files">Files</SelectItem>
-                </SelectContent>
-              </Select>
+              <Button
+                size="sm"
+                variant="outline"
+                className="cancel-drag"
+                onClick={() => setGalleryOpen(true)}
+              >
+                <Plus size={14} /> Add widget
+              </Button>
               <p className="text-xs text-muted-foreground">
                 Drag to move, pull a corner to resize — saved when you hit Save.
               </p>
@@ -311,6 +297,9 @@ export function DashboardModal({
         </div>
       </DialogContent>
 
+      {galleryOpen && (
+        <WidgetGallery onPick={(t) => addOfType(t)} onClose={() => setGalleryOpen(false)} />
+      )}
       {confirmingClose && (
         <ConfirmDialog
           title="Discard changes?"
