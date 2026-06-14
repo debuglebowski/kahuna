@@ -17,7 +17,7 @@ import { useLiveQuery } from "@tanstack/react-db"
 import { useMutation } from "@tanstack/react-query"
 import { GripVertical, PanelLeft, Pencil, Plus, SlidersHorizontal, Trash2 } from "lucide-react"
 import { useMemo, useState } from "react"
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
+import { Navigate, useNavigate, useParams } from "react-router-dom"
 import {
   Select,
   SelectContent,
@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/select"
 import { Tabs, TabsContent } from "@/components/ui/tabs"
 import { IconPicker } from "../../components/IconPicker"
+import { usePageChrome } from "../../components/Layout"
 import { SectionsEditor } from "../../components/sidebar/SectionsEditor"
 import { ViewNav } from "../../components/sidebar/ViewNav"
 import {
@@ -39,22 +40,24 @@ import {
   IconButton,
   Input,
   Spinner,
-  TabRail,
-  TabRailItem,
+  TabBar,
+  TabBarItem,
   Toolbar,
 } from "../../components/ui"
-import { api, type SidebarSection, type SidebarView } from "../../lib/api"
+import { api, type SidebarSection, type SidebarView as SidebarViewModel } from "../../lib/api"
 import { sidebarViewsCollection } from "../../lib/collections"
 import { ConceptIcon } from "../../lib/icons"
 import { globalsSection, resolveView, useDashboards } from "../../lib/sidebarViews"
+import { useUnsavedGuard } from "../../lib/useUnsavedGuard"
 
 const refetchViews = () => sidebarViewsCollection.utils.refetch()
 
 /** Manage the org's and your personal sidebar Views (the same editor the
  *  in-sidebar edit mode uses, plus scope/visibility/order controls). */
 export function Views() {
+  const navigate = useNavigate()
+  const { id } = useParams()
   const { data: views } = useLiveQuery((q) => q.from({ v: sidebarViewsCollection }))
-  const [editing, setEditing] = useState<SidebarView | null>(null)
   const [filter, setFilter] = useState("")
   const sorted = [...(views ?? [])].sort((a, b) => a.position - b.position)
   // Filtering shows a subset of the position-ordered list, so drag-reorder is
@@ -73,7 +76,7 @@ export function Views() {
       }),
     onSuccess: async (v) => {
       await refetchViews()
-      setEditing(v)
+      navigate(`/settings/sidebar/${v.id}`)
     },
   })
   const reorderMut = useMutation({
@@ -92,6 +95,20 @@ export function Views() {
   }
 
   if (!views) return <Spinner />
+
+  // Detail route (/settings/sidebar/:id) — the full-page editor takes over.
+  if (id) {
+    const view = sorted.find((v) => v.id === id)
+    if (!view) return <Navigate to="/settings/sidebar" replace />
+    return (
+      <SidebarView
+        key={view.id}
+        view={view}
+        // The last shared (Default) view can't be deleted — keep the list non-empty.
+        canDelete={!(view.ownerId === null && sorted.filter((v) => !v.ownerId).length <= 1)}
+      />
+    )
+  }
 
   return (
     <div className="space-y-4">
@@ -112,20 +129,16 @@ export function Views() {
           <SortableContext items={filtered.map((v) => v.id)} strategy={verticalListSortingStrategy}>
             <div className="space-y-1.5">
               {filtered.map((v) => (
-                <ViewRow key={v.id} view={v} sortable={!q} onEdit={() => setEditing(v)} />
+                <ViewRow
+                  key={v.id}
+                  view={v}
+                  sortable={!q}
+                  onEdit={() => navigate(`/settings/sidebar/${v.id}`)}
+                />
               ))}
             </div>
           </SortableContext>
         </DndContext>
-      )}
-
-      {editing && (
-        <ViewEditor
-          view={editing}
-          // The last shared (Default) view can't be deleted — keep the list non-empty.
-          canDelete={!(editing.ownerId === null && sorted.filter((v) => !v.ownerId).length <= 1)}
-          onClose={() => setEditing(null)}
-        />
       )}
     </div>
   )
@@ -136,7 +149,7 @@ function ViewRow({
   sortable,
   onEdit,
 }: {
-  view: SidebarView
+  view: SidebarViewModel
   sortable: boolean
   onEdit: () => void
 }) {
@@ -179,23 +192,22 @@ function ViewRow({
   )
 }
 
-function ViewEditor({
-  view,
-  canDelete,
-  onClose,
-}: {
-  view: SidebarView
-  canDelete: boolean
-  onClose: () => void
-}) {
+/** THE editing surface for a sidebar view — a full-page two-tab editor that
+ *  takes over the settings content area, opened from Settings → Sidebar.
+ *  General: name/icon/scope/visibility/delete. Sections: the section layout
+ *  with a live sidebar preview. Edits a draft; Save persists, Cancel/back
+ *  returns to the list (a discard confirm fires on any nav away while dirty). */
+function SidebarView({ view, canDelete }: { view: SidebarViewModel; canDelete: boolean }) {
+  usePageChrome({ fullWidth: true, fillHeight: true })
+  const navigate = useNavigate()
   const [name, setName] = useState(view.name)
   const [icon, setIcon] = useState<string | null>(view.icon)
   const [scope, setScope] = useState<"personal" | "org">(view.ownerId ? "personal" : "org")
   const [hidden, setHidden] = useState(view.hidden)
   const [sections, setSections] = useState<SidebarSection[]>([...view.body.sections])
   const [dirty, setDirty] = useState(false)
-  const [confirmingClose, setConfirmingClose] = useState(false)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
+  const { blocker, bypass } = useUnsavedGuard(dirty)
 
   // Every edit goes through one of these so the discard confirm only fires
   // when the draft actually diverged.
@@ -224,56 +236,56 @@ function ViewEditor({
       api.updateView({ id: view.id, name: name.trim(), icon, scope, hidden, body: { sections } }),
     onSuccess: async () => {
       await refetchViews()
-      onClose()
+      bypass()
+      navigate("/settings/sidebar")
     },
   })
   const del = useMutation({
     mutationFn: () => api.deleteView(view.id),
     onSuccess: async () => {
       await refetchViews()
-      onClose()
+      bypass()
+      navigate("/settings/sidebar")
     },
   })
 
-  const requestClose = () => (dirty ? setConfirmingClose(true) : onClose())
-
   return (
-    <Dialog open onOpenChange={(open) => !open && requestClose()}>
-      <DialogContent
-        showCloseButton={false}
-        aria-describedby={undefined}
-        className="flex h-[85vh] w-[min(1080px,96vw)] flex-col gap-0 p-0 sm:max-w-none"
-      >
-        <Tabs defaultValue="general" orientation="vertical" className="min-h-0 flex-1 gap-0">
-          <TabRail
-            title={
-              <DialogTitle className="block truncate text-sm font-semibold">
-                {name.trim() || "Edit view"}
-              </DialogTitle>
-            }
-          >
-            <TabRailItem value="general" icon={<SlidersHorizontal size={16} />}>
+    <div className="relative flex h-full min-h-0 flex-col">
+      <div className="flex shrink-0 items-center gap-1.5 pb-3 text-base font-medium text-foreground">
+        <button
+          type="button"
+          onClick={() => navigate("/settings/sidebar")}
+          className="truncate text-muted-foreground hover:text-foreground"
+        >
+          Sidebar
+        </button>
+        <span className="text-muted-foreground/50">/</span>
+        <span className="truncate">{name.trim() || "Untitled view"}</span>
+      </div>
+      <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+        <Tabs defaultValue="general" className="min-h-0 flex-1 gap-0">
+          <TabBar>
+            <TabBarItem value="general" icon={<SlidersHorizontal size={16} />}>
               General
-            </TabRailItem>
-            <TabRailItem value="sections" icon={<PanelLeft size={16} />}>
+            </TabBarItem>
+            <TabBarItem value="sections" icon={<PanelLeft size={16} />}>
               Sections
-            </TabRailItem>
-          </TabRail>
+            </TabBarItem>
+          </TabBar>
 
-          <TabsContent value="general" className="min-h-0 flex-1 overflow-y-auto p-6 pb-24">
+          <TabsContent value="general" className="min-h-0 flex-1 overflow-y-auto pt-4 pb-24">
             <div className="space-y-4">
-              <div className="flex items-end gap-2">
-                <IconPicker value={icon} onChange={edit(setIcon)} />
-                <div className="flex-1">
-                  <Field label="Name (optional)">
-                    <Input
-                      value={name}
-                      onChange={(e) => edit(setName)(e.target.value)}
-                      placeholder="View name…"
-                    />
-                  </Field>
+              <Field label="Name (optional)">
+                <div className="flex items-center gap-2">
+                  <IconPicker value={icon} onChange={edit(setIcon)} />
+                  <Input
+                    value={name}
+                    onChange={(e) => edit(setName)(e.target.value)}
+                    placeholder="View name…"
+                    className="flex-1"
+                  />
                 </div>
-              </div>
+              </Field>
 
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Scope">
@@ -364,7 +376,11 @@ function ViewEditor({
             </p>
           )}
           <div className="pointer-events-auto flex gap-2">
-            <Button variant="outline" className="shadow-lg" onClick={requestClose}>
+            <Button
+              variant="outline"
+              className="shadow-lg"
+              onClick={() => navigate("/settings/sidebar")}
+            >
               Cancel
             </Button>
             <Button className="shadow-lg" onClick={() => save.mutate()} disabled={save.isPending}>
@@ -372,16 +388,16 @@ function ViewEditor({
             </Button>
           </div>
         </div>
-      </DialogContent>
+      </div>
 
-      {confirmingClose && (
+      {blocker.state === "blocked" && (
         <ConfirmDialog
           title="Discard changes?"
           message="Your edits to this view haven't been saved."
           confirmLabel="Discard"
           confirmVariant="danger"
-          onConfirm={onClose}
-          onCancel={() => setConfirmingClose(false)}
+          onConfirm={() => blocker.proceed()}
+          onCancel={() => blocker.reset()}
         />
       )}
       {confirmingDelete && (
@@ -396,6 +412,6 @@ function ViewEditor({
           onCancel={() => setConfirmingDelete(false)}
         />
       )}
-    </Dialog>
+    </div>
   )
 }

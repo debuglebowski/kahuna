@@ -58,11 +58,14 @@ export function App() {
           <Route path="organization" element={<Organization />} />
           <Route path="members" element={<Navigate to="/members" replace />} />
           <Route path="concepts" element={<Concepts />} />
+          <Route path="concepts/:id" element={<Concepts />} />
           <Route path="concepts-graph" element={<Navigate to="/settings/concepts" replace />} />
           <Route path="labels" element={<Labels />} />
           <Route path="tasks" element={<TasksSettings />} />
           <Route path="sidebar" element={<Views />} />
+          <Route path="sidebar/:id" element={<Views />} />
           <Route path="dashboards" element={<DashboardsSettings />} />
+          <Route path="dashboards/:id" element={<DashboardsSettings />} />
         </Route>
         <Route path="/instances/:id" element={<InstanceView />} />
         <Route path="*" element={<Navigate to="/" replace />} />

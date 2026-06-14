@@ -1,4 +1,4 @@
-import { Crown, Search, ServerCrash, X } from "lucide-react"
+import { Crown, Info, Search, ServerCrash, X } from "lucide-react"
 import type { ButtonHTMLAttributes, CSSProperties, ReactNode } from "react"
 import {
   AlertDialog,
@@ -14,7 +14,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
 
 // The plain form primitives are 1:1 shadcn — re-export so existing
@@ -69,9 +69,22 @@ export function Card({ className, children }: { className?: string; children: Re
   )
 }
 
-export function CardHeader({ title, action }: { title: ReactNode; action?: ReactNode }) {
+export function CardHeader({
+  title,
+  action,
+  className,
+}: {
+  title: ReactNode
+  action?: ReactNode
+  className?: string
+}) {
   return (
-    <div className="flex min-h-12 items-center justify-between gap-2 border-b px-6 py-2.5">
+    <div
+      className={cn(
+        "flex min-h-12 items-center justify-between gap-2 border-b px-6 py-2.5",
+        className,
+      )}
+    >
       <h3 className="text-sm leading-none font-semibold text-card-foreground">{title}</h3>
       {action}
     </div>
@@ -138,10 +151,36 @@ export function ToggleChip({
   )
 }
 
-export function Field({ label, children }: { label: string; children: ReactNode }) {
+export function Field({
+  label,
+  hint,
+  children,
+}: {
+  label: string
+  hint?: string
+  children: ReactNode
+}) {
   return (
     <div className="block space-y-2">
-      <span className="block text-sm leading-none font-medium text-foreground">{label}</span>
+      <span className="flex items-center gap-1.5 text-sm leading-none font-medium text-foreground">
+        {label}
+        {hint && (
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  aria-label={`${label} — more info`}
+                  className="text-muted-foreground transition-colors hover:text-foreground focus-visible:text-foreground focus-visible:outline-none"
+                >
+                  <Info size={13} aria-hidden />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent className="max-w-xs">{hint}</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        )}
+      </span>
       {children}
     </div>
   )
@@ -417,25 +456,28 @@ export function Modal({
 }
 
 /**
- * Left-hand vertical tab rail for large editing modals, styled like the app
- * sidebar (sidebar surface + accent-pill active state). Render inside a
- * `<Tabs orientation="vertical">` next to the TabsContent panes; fill it with
- * {@link TabRailItem}s. `title` sits above the items like the sidebar brand —
- * put the modal's DialogTitle there so the dialog keeps its accessible name.
+ * Horizontal top tab bar for full-page editors — a row of underline tabs (the
+ * `line` variant) whose active item carries its own underline (no full-width
+ * rule), sitting above the {@link TabsContent} panes. Render inside a default
+ * (horizontal) `<Tabs>`; fill it with {@link TabBarItem}s. The page breadcrumb
+ * already names the entity, so the bar carries only the tabs. `right` is an
+ * optional slot for a tab-scoped action, aligned to the row's end.
  */
-export function TabRail({ title, children }: { title?: ReactNode; children: ReactNode }) {
+export function TabBar({ children, right }: { children: ReactNode; right?: ReactNode }) {
   return (
-    <div className="flex w-48 shrink-0 flex-col gap-4 overflow-y-auto border-r border-border bg-sidebar p-2">
-      {title && <div className="min-w-0 px-3 pt-2">{title}</div>}
-      <TabsList variant="line" className="w-full flex-col items-stretch gap-1 p-0">
+    <div className="flex shrink-0 items-center">
+      <TabsList variant="line" className="h-auto gap-6 p-0 pt-1.5">
         {children}
       </TabsList>
+      {right && <div className="ml-auto flex items-center gap-2">{right}</div>}
     </div>
   )
 }
 
-/** One rail entry — icon + label, mirroring the sidebar nav-item recipe. */
-export function TabRailItem({
+/** One top-bar tab — icon + label, with an underline active indicator. Carries
+ *  no horizontal padding so the first tab sits flush with the content edge; the
+ *  list's `gap` does the inter-tab spacing instead. */
+export function TabBarItem({
   value,
   icon,
   children,
@@ -445,14 +487,8 @@ export function TabRailItem({
   children: ReactNode
 }) {
   return (
-    <TabsTrigger
-      value={value}
-      // The bg overrides repeat the line-variant group scope — the primitive's
-      // `…variant=line…:bg-transparent` rules out-specify a plain data-[state=active]
-      // class, so an unscoped override silently loses.
-      className="h-auto flex-none justify-start gap-2.5 rounded-md px-3 py-1.5 text-sm text-sidebar-foreground/70 after:hidden hover:bg-sidebar-accent hover:text-sidebar-accent-foreground data-[state=active]:font-medium data-[state=active]:text-sidebar-accent-foreground data-[state=active]:shadow-none group-data-[variant=line]/tabs-list:data-[state=active]:bg-sidebar-accent dark:text-sidebar-foreground/70 dark:hover:text-sidebar-accent-foreground dark:data-[state=active]:border-transparent dark:data-[state=active]:text-sidebar-accent-foreground dark:group-data-[variant=line]/tabs-list:data-[state=active]:bg-sidebar-accent"
-    >
-      {icon && <span className="flex h-5 w-5 shrink-0 items-center justify-center">{icon}</span>}
+    <TabsTrigger value={value} className="flex-none border-0 px-0">
+      {icon && <span className="flex h-4 w-4 shrink-0 items-center justify-center">{icon}</span>}
       <span className="truncate">{children}</span>
     </TabsTrigger>
   )

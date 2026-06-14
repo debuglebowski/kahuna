@@ -166,9 +166,7 @@ export function InstanceView() {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem
-                onSelect={() => navigate(`/settings/concepts?concept=${concept.id}`)}
-              >
+              <DropdownMenuItem onSelect={() => navigate(`/settings/concepts/${concept.id}`)}>
                 <Pencil size={15} />
                 Edit concept
               </DropdownMenuItem>

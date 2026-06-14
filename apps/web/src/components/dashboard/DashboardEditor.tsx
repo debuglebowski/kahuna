@@ -1,9 +1,10 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { LayoutDashboard, Plus, SlidersHorizontal, Trash2 } from "lucide-react"
 import { useMemo, useState } from "react"
+import { useNavigate } from "react-router-dom"
 import { IconPicker } from "@/components/IconPicker"
-import { Button, ConfirmDialog, Field, Input, TabRail, TabRailItem } from "@/components/ui"
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
+import { usePageChrome } from "@/components/Layout"
+import { Button, ConfirmDialog, Field, Input, TabBar, TabBarItem } from "@/components/ui"
 import {
   Select,
   SelectContent,
@@ -22,6 +23,7 @@ import {
   removeWidget,
   updateWidget,
 } from "@/lib/dashboards"
+import { useUnsavedGuard } from "@/lib/useUnsavedGuard"
 import { WidgetCanvas } from "./WidgetCanvas"
 import { WidgetEditor } from "./WidgetEditor"
 import { WidgetGallery } from "./WidgetGallery"
@@ -42,23 +44,24 @@ interface Draft {
   body: Dashboard["body"]
 }
 
+const LIST = "/settings/dashboards"
+
 /**
- * THE editing surface for a dashboard — a large two-tab modal, opened from
- * Settings → Dashboards (the dashboard pages are read-only). General: name,
- * icon, scope, visibility, delete. Layout: add/arrange/configure widgets on a
- * live-data canvas, with the widget config as a side panel. Everything edits a
- * local draft; one Save persists meta + body together (etag-checked against
- * the dashboard as it was when the modal opened), Cancel discards (confirmed
- * when dirty). Delete is the only immediate action.
+ * THE editing surface for a dashboard — a full-page two-tab editor that takes
+ * over the settings content area, opened from Settings → Dashboards (the
+ * dashboard pages are read-only). General: name, icon, scope, visibility,
+ * delete. Layout: add/arrange/configure widgets on a live-data canvas, with the
+ * widget config as a side panel. Everything edits a local draft; one Save
+ * persists meta + body together (etag-checked against the dashboard as it was
+ * when the editor opened), Cancel/back returns to the list (a discard confirm
+ * fires on any navigation away while dirty). Delete is the only immediate action.
  */
-export function DashboardModal({
+export function DashboardEditor({
   dash,
   canDelete,
   concepts,
   cIndex,
   conceptsLoaded,
-  onClose,
-  onDeleted,
 }: {
   dash: Dashboard
   /** False for the last org-shared dashboard — it keeps the home non-empty. */
@@ -66,9 +69,9 @@ export function DashboardModal({
   concepts: readonly Concept[]
   cIndex: Map<string, Concept>
   conceptsLoaded: boolean
-  onClose: () => void
-  onDeleted: () => void
 }) {
+  usePageChrome({ fullWidth: true, fillHeight: true })
+  const navigate = useNavigate()
   const qc = useQueryClient()
   const [draft, setDraft] = useState<Draft>(() => ({
     name: dash.name,
@@ -78,10 +81,11 @@ export function DashboardModal({
     body: dash.body,
   }))
   const [dirty, setDirty] = useState(false)
+  const [tab, setTab] = useState("general")
   const [editingId, setEditingId] = useState<string | null>(null)
   const [galleryOpen, setGalleryOpen] = useState(false)
-  const [confirmingClose, setConfirmingClose] = useState(false)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
+  const { blocker, bypass } = useUnsavedGuard(dirty)
 
   const patch = (p: Partial<Draft>) => {
     setDraft((d) => ({ ...d, ...p }))
@@ -112,18 +116,18 @@ export function DashboardModal({
       }),
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ["dashboards"] })
-      onClose()
+      bypass()
+      navigate(LIST)
     },
   })
   const del = useMutation({
     mutationFn: () => api.deleteDashboard(dash.id),
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ["dashboards"] })
-      onDeleted()
+      bypass()
+      navigate(LIST)
     },
   })
-
-  const requestClose = () => (dirty ? setConfirmingClose(true) : onClose())
 
   const addOfType = (type: DashboardWidget["type"]) => {
     const w = newWidget(draft.body, type)
@@ -139,42 +143,51 @@ export function DashboardModal({
     : null
 
   return (
-    <Dialog open onOpenChange={(open) => !open && requestClose()}>
-      <DialogContent
-        showCloseButton={false}
-        className="flex h-[88vh] w-[min(1280px,96vw)] flex-col gap-0 p-0 sm:max-w-none"
-      >
+    <div className="relative flex h-full min-h-0 flex-col">
+      <div className="flex shrink-0 items-center gap-1.5 pb-3 text-base font-medium text-foreground">
+        <button
+          type="button"
+          onClick={() => navigate(LIST)}
+          className="truncate text-muted-foreground hover:text-foreground"
+        >
+          Dashboards
+        </button>
+        <span className="text-muted-foreground/50">/</span>
+        <span className="truncate">{draft.name.trim() || "Untitled dashboard"}</span>
+      </div>
+      <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
         {loaders}
-        <Tabs defaultValue="general" orientation="vertical" className="min-h-0 flex-1 gap-0">
-          <TabRail
-            title={
-              <DialogTitle className="block truncate text-sm font-semibold">
-                {draft.name.trim() || "Edit dashboard"}
-              </DialogTitle>
+        <Tabs value={tab} onValueChange={setTab} className="min-h-0 flex-1 gap-0">
+          <TabBar
+            right={
+              tab === "layout" && (
+                <Button size="sm" variant="outline" onClick={() => setGalleryOpen(true)}>
+                  <Plus size={14} /> Add widget
+                </Button>
+              )
             }
           >
-            <TabRailItem value="general" icon={<SlidersHorizontal size={16} />}>
+            <TabBarItem value="general" icon={<SlidersHorizontal size={16} />}>
               General
-            </TabRailItem>
-            <TabRailItem value="layout" icon={<LayoutDashboard size={16} />}>
+            </TabBarItem>
+            <TabBarItem value="layout" icon={<LayoutDashboard size={16} />}>
               Layout
-            </TabRailItem>
-          </TabRail>
+            </TabBarItem>
+          </TabBar>
 
-          <TabsContent value="general" className="min-h-0 flex-1 overflow-y-auto p-6 pb-24">
+          <TabsContent value="general" className="min-h-0 flex-1 overflow-y-auto pt-4 pb-24">
             <div className="space-y-4">
-              <div className="flex items-end gap-2">
-                <IconPicker value={draft.icon} onChange={(icon) => patch({ icon })} />
-                <div className="flex-1">
-                  <Field label="Name">
-                    <Input
-                      value={draft.name}
-                      onChange={(e) => patch({ name: e.target.value })}
-                      placeholder="Dashboard name…"
-                    />
-                  </Field>
+              <Field label="Name">
+                <div className="flex items-center gap-2">
+                  <IconPicker value={draft.icon} onChange={(icon) => patch({ icon })} />
+                  <Input
+                    value={draft.name}
+                    onChange={(e) => patch({ name: e.target.value })}
+                    placeholder="Dashboard name…"
+                    className="flex-1"
+                  />
                 </div>
-              </div>
+              </Field>
 
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Scope">
@@ -225,33 +238,19 @@ export function DashboardModal({
             </div>
           </TabsContent>
 
-          <TabsContent value="layout" className="flex min-h-0 flex-1 flex-col">
-            <div className="flex shrink-0 items-center justify-between gap-2 border-b px-5 py-2.5">
-              <Button
-                size="sm"
-                variant="outline"
-                className="cancel-drag"
-                onClick={() => setGalleryOpen(true)}
-              >
-                <Plus size={14} /> Add widget
-              </Button>
-              <p className="text-xs text-muted-foreground">
-                Drag to move, pull a corner to resize — saved when you hit Save.
-              </p>
-            </div>
-
-            <div className="flex min-h-0 flex-1">
-              <div className="min-w-0 flex-1 overflow-y-auto p-4 pb-24">
-                {draft.body.widgets.length === 0 ? (
-                  <div className="flex h-full min-h-[280px] flex-col items-center justify-center rounded-xl border border-dashed p-12 text-center">
-                    <div className="mb-4 flex size-10 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-                      <LayoutDashboard size={20} />
-                    </div>
-                    <p className="max-w-sm text-sm text-balance text-muted-foreground">
-                      Add a metric or list to start.
-                    </p>
+          <TabsContent value="layout" className="flex min-h-0 flex-1">
+            <div className="min-w-0 flex-1 overflow-y-auto pt-4">
+              {draft.body.widgets.length === 0 ? (
+                <div className="flex h-full min-h-[280px] flex-col items-center justify-center rounded-xl border border-dashed p-12 text-center">
+                  <div className="mb-4 flex size-10 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+                    <LayoutDashboard size={20} />
                   </div>
-                ) : (
+                  <p className="max-w-sm text-sm text-balance text-muted-foreground">
+                    Add a metric or list to start.
+                  </p>
+                </div>
+              ) : (
+                <div className="rounded-xl border border-border p-3">
                   <WidgetCanvas
                     body={draft.body}
                     instData={instData}
@@ -264,19 +263,19 @@ export function DashboardModal({
                       if (id === editingId) setEditingId(null)
                     }}
                   />
-                )}
-              </div>
-              {editing && (
-                <aside className="w-[360px] shrink-0 overflow-y-auto border-l p-4 pb-24">
-                  <WidgetEditor
-                    widget={editing}
-                    concepts={concepts}
-                    onChange={(p) => patchBody((b) => updateWidget(b, editing.id, p))}
-                    onClose={() => setEditingId(null)}
-                  />
-                </aside>
+                </div>
               )}
             </div>
+            {editing && (
+              <aside className="w-[360px] shrink-0 overflow-y-auto border-l p-4 pb-24">
+                <WidgetEditor
+                  widget={editing}
+                  concepts={concepts}
+                  onChange={(p) => patchBody((b) => updateWidget(b, editing.id, p))}
+                  onClose={() => setEditingId(null)}
+                />
+              </aside>
+            )}
           </TabsContent>
         </Tabs>
 
@@ -287,7 +286,7 @@ export function DashboardModal({
             </p>
           )}
           <div className="pointer-events-auto flex gap-2">
-            <Button variant="outline" className="shadow-lg" onClick={requestClose}>
+            <Button variant="outline" className="shadow-lg" onClick={() => navigate(LIST)}>
               Cancel
             </Button>
             <Button className="shadow-lg" onClick={() => save.mutate()} disabled={save.isPending}>
@@ -295,19 +294,19 @@ export function DashboardModal({
             </Button>
           </div>
         </div>
-      </DialogContent>
+      </div>
 
       {galleryOpen && (
         <WidgetGallery onPick={(t) => addOfType(t)} onClose={() => setGalleryOpen(false)} />
       )}
-      {confirmingClose && (
+      {blocker.state === "blocked" && (
         <ConfirmDialog
           title="Discard changes?"
           message="Your edits to this dashboard haven't been saved."
           confirmLabel="Discard"
           confirmVariant="danger"
-          onConfirm={onClose}
-          onCancel={() => setConfirmingClose(false)}
+          onConfirm={() => blocker.proceed()}
+          onCancel={() => blocker.reset()}
         />
       )}
       {confirmingDelete && (
@@ -322,6 +321,6 @@ export function DashboardModal({
           onCancel={() => setConfirmingDelete(false)}
         />
       )}
-    </Dialog>
+    </div>
   )
 }

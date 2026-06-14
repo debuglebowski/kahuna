@@ -1,7 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { ArchiveRestore, Plus, Trash2, X } from "lucide-react"
 import { useState } from "react"
-import { useOutletContext, useSearchParams } from "react-router-dom"
+import {
+  Navigate,
+  useNavigate,
+  useOutletContext,
+  useParams,
+  useSearchParams,
+} from "react-router-dom"
 import {
   Button,
   Card,
@@ -17,13 +23,17 @@ import {
 } from "../../components/ui"
 import { api } from "../../lib/api"
 import { ConceptIcon, DEFAULT_CONCEPT_ICON } from "../../lib/icons"
+import { ConceptEditor, msgOf } from "./ConceptEditor"
 import { ConceptGraphCanvas } from "./ConceptGraphCanvas"
-import { ConceptModal, msgOf } from "./ConceptModal"
 
-/** Which destructive confirm dialog is open (null = none). They live at the
- *  page level (not in {@link ConceptModal}) because the archived-concepts list
- *  triggers them too. */
-type Dialog = { kind: "archiveConcept" } | { kind: "deleteConcept" } | null
+/** Which destructive confirm dialog is open (null = none), and on which concept.
+ *  They live at the page level (not in {@link ConceptEditor}) because both the
+ *  archived-concepts list (list route) and the editor (detail route) trigger
+ *  them — the target id keeps them route-independent. */
+type Dialog =
+  | { kind: "archiveConcept"; conceptId: string }
+  | { kind: "deleteConcept"; conceptId: string }
+  | null
 
 export function Concepts() {
   const { admin } = useOutletContext<{ admin: boolean }>()
@@ -35,16 +45,18 @@ export function Concepts() {
     queryFn: () => api.listConcepts({ includeArchived: true, withCounts: true }),
   })
   const archivedConcepts = concepts.data?.filter((c) => c.archivedAt) ?? []
-  // Deep link (?concept=<id>) — e.g. the item view's "Edit concept" action.
+  const navigate = useNavigate()
+  // The editor is a route: /settings/concepts/:id (full-page, takes over).
+  const { id } = useParams()
   const [searchParams] = useSearchParams()
-  const [selectedId, setSelectedId] = useState<string | null>(searchParams.get("concept"))
   const [creatingConcept, setCreatingConcept] = useState(false)
   const [newName, setNewName] = useState("")
   const [showArchived, setShowArchived] = useState(false)
   const [filter, setFilter] = useState("")
   const [dialog, setDialog] = useState<Dialog>(null)
 
-  const selected = concepts.data?.find((c) => c.id === selectedId) ?? null
+  // The concept a confirm dialog targets (archived-list row or the open editor).
+  const target = concepts.data?.find((c) => c.id === dialog?.conceptId) ?? null
 
   const refetchConcepts = () => qc.invalidateQueries({ queryKey: ["concepts"] })
   // Concept names + relation fields drive the graph, so refresh it after every edit.
@@ -65,7 +77,7 @@ export function Concepts() {
       setNewName("")
       refetchConcepts()
       refetchGraph()
-      setSelectedId(c.id)
+      navigate(`/settings/concepts/${c.id}`)
     },
   })
   const submitNewConcept = () => {
@@ -89,10 +101,12 @@ export function Concepts() {
     },
   })
   const delConcept = useMutation({
-    mutationFn: (id: string) => api.deleteConcept(id),
+    mutationFn: (cid: string) => api.deleteConcept(cid),
     onSuccess: () => {
+      // No explicit navigate: once the concept leaves the refetched list, the
+      // detail branch below misses it and <Navigate>s back to the graph — which
+      // unmounts the editor (and its unsaved-guard) before the redirect fires.
       setDialog(null)
-      setSelectedId(null)
       refetchConcepts()
       refetchGraph()
     },
@@ -100,9 +114,89 @@ export function Concepts() {
 
   if (concepts.isPending) return <Spinner />
 
+  // ?concept=<id> deep link (e.g. the item view's "Edit concept") → route form.
+  const deepLink = searchParams.get("concept")
+  if (deepLink && !id) return <Navigate to={`/settings/concepts/${deepLink}`} replace />
+
   // The find-filter narrows the archived list too (the canvas dims live ones).
   const q = filter.trim().toLowerCase()
   const archivedShown = archivedConcepts.filter((c) => c.name.toLowerCase().includes(q))
+
+  // Archive/delete confirms — shared by the archived list (list route) and the
+  // editor (detail route), so rendered alongside both.
+  const conceptDialogs = (
+    <>
+      {dialog?.kind === "archiveConcept" && target && (
+        <ConfirmDialog
+          title="Archive concept"
+          message={
+            <>
+              Archive <strong>{target.name}</strong>? It's hidden from the sidebar and lists, but
+              its fields
+              {target.itemCount
+                ? ` and ${target.itemCount} item${target.itemCount === 1 ? "" : "s"}`
+                : ""}{" "}
+              are kept — you can restore it anytime.
+            </>
+          }
+          confirmLabel="Archive"
+          pending={archiveConcept.isPending}
+          error={archiveConcept.error ? msgOf(archiveConcept.error) : undefined}
+          onConfirm={() => archiveConcept.mutate(target.id)}
+          onCancel={() => setDialog(null)}
+        />
+      )}
+      {dialog?.kind === "deleteConcept" && target && (
+        <ConfirmDialog
+          title="Delete concept"
+          message={
+            target.itemCount ? (
+              <>
+                <strong>{target.name}</strong> still has {target.itemCount} item
+                {target.itemCount === 1 ? "" : "s"}, so it can't be deleted. Archive it (its items
+                come back on restore), or delete its items first.
+              </>
+            ) : (
+              <>
+                Permanently delete <strong>{target.name}</strong> and its fields? This can't be
+                undone.
+              </>
+            )
+          }
+          confirmLabel="Delete"
+          confirmVariant="danger"
+          secondaryLabel={target.archivedAt ? undefined : "Archive instead"}
+          onSecondary={target.archivedAt ? undefined : () => archiveConcept.mutate(target.id)}
+          pending={delConcept.isPending || archiveConcept.isPending}
+          error={delConcept.error ? msgOf(delConcept.error) : undefined}
+          onConfirm={() => delConcept.mutate(target.id)}
+          onCancel={() => setDialog(null)}
+        />
+      )}
+    </>
+  )
+
+  // Detail route (/settings/concepts/:id) — the full-page editor takes over.
+  if (id) {
+    const sel = concepts.data?.find((c) => c.id === id) ?? null
+    if (!sel) return <Navigate to="/settings/concepts" replace />
+    return (
+      <>
+        <ConceptEditor
+          key={sel.id}
+          concept={sel}
+          admin={admin}
+          concepts={concepts.data ?? []}
+          onRequestArchive={() => setDialog({ kind: "archiveConcept", conceptId: sel.id })}
+          onRequestDelete={() => setDialog({ kind: "deleteConcept", conceptId: sel.id })}
+          onRestore={() => restoreConcept.mutate(sel.id)}
+          restorePending={restoreConcept.isPending}
+          restoreError={restoreConcept.error ? msgOf(restoreConcept.error) : undefined}
+        />
+        {conceptDialogs}
+      </>
+    )
+  }
 
   return (
     <div className="space-y-3">
@@ -120,7 +214,11 @@ export function Concepts() {
         )}
       </Toolbar>
 
-      <ConceptGraphCanvas selectedId={selectedId} onSelect={setSelectedId} filter={filter} />
+      <ConceptGraphCanvas
+        selectedId={null}
+        onSelect={(cid) => navigate(`/settings/concepts/${cid}`)}
+        filter={filter}
+      />
 
       {showArchived && archivedShown.length > 0 && (
         <Card>
@@ -133,7 +231,7 @@ export function Concepts() {
                 </span>
                 <button
                   type="button"
-                  onClick={() => setSelectedId(c.id)}
+                  onClick={() => navigate(`/settings/concepts/${c.id}`)}
                   className="truncate text-left text-sm font-medium text-muted-foreground hover:text-foreground"
                 >
                   {c.name}
@@ -153,10 +251,7 @@ export function Concepts() {
                     <IconButton
                       variant="danger"
                       aria-label={`Delete ${c.name}`}
-                      onClick={() => {
-                        setSelectedId(c.id)
-                        setDialog({ kind: "deleteConcept" })
-                      }}
+                      onClick={() => setDialog({ kind: "deleteConcept", conceptId: c.id })}
                     >
                       <Trash2 size={15} />
                     </IconButton>
@@ -200,68 +295,7 @@ export function Concepts() {
         </Modal>
       )}
 
-      {selected && (
-        <ConceptModal
-          key={selected.id}
-          concept={selected}
-          admin={admin}
-          concepts={concepts.data ?? []}
-          onClose={() => setSelectedId(null)}
-          onRequestArchive={() => setDialog({ kind: "archiveConcept" })}
-          onRequestDelete={() => setDialog({ kind: "deleteConcept" })}
-          onRestore={() => restoreConcept.mutate(selected.id)}
-          restorePending={restoreConcept.isPending}
-          restoreError={restoreConcept.error ? msgOf(restoreConcept.error) : undefined}
-        />
-      )}
-
-      {dialog?.kind === "archiveConcept" && selected && (
-        <ConfirmDialog
-          title="Archive concept"
-          message={
-            <>
-              Archive <strong>{selected.name}</strong>? It's hidden from the sidebar and lists, but
-              its fields
-              {selected.itemCount
-                ? ` and ${selected.itemCount} item${selected.itemCount === 1 ? "" : "s"}`
-                : ""}{" "}
-              are kept — you can restore it anytime.
-            </>
-          }
-          confirmLabel="Archive"
-          pending={archiveConcept.isPending}
-          error={archiveConcept.error ? msgOf(archiveConcept.error) : undefined}
-          onConfirm={() => archiveConcept.mutate(selected.id)}
-          onCancel={() => setDialog(null)}
-        />
-      )}
-      {dialog?.kind === "deleteConcept" && selected && (
-        <ConfirmDialog
-          title="Delete concept"
-          message={
-            selected.itemCount ? (
-              <>
-                <strong>{selected.name}</strong> still has {selected.itemCount} item
-                {selected.itemCount === 1 ? "" : "s"}, so it can't be deleted. Archive it (its items
-                come back on restore), or delete its items first.
-              </>
-            ) : (
-              <>
-                Permanently delete <strong>{selected.name}</strong> and its fields? This can't be
-                undone.
-              </>
-            )
-          }
-          confirmLabel="Delete"
-          confirmVariant="danger"
-          secondaryLabel={selected.archivedAt ? undefined : "Archive instead"}
-          onSecondary={selected.archivedAt ? undefined : () => archiveConcept.mutate(selected.id)}
-          pending={delConcept.isPending || archiveConcept.isPending}
-          error={delConcept.error ? msgOf(delConcept.error) : undefined}
-          onConfirm={() => delConcept.mutate(selected.id)}
-          onCancel={() => setDialog(null)}
-        />
-      )}
+      {conceptDialogs}
     </div>
   )
 }

@@ -17,8 +17,8 @@ import { useLiveQuery } from "@tanstack/react-db"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { ArrowUpRight, GripVertical, Pencil, Plus } from "lucide-react"
 import { useMemo, useState } from "react"
-import { useNavigate } from "react-router-dom"
-import { DashboardModal } from "@/components/dashboard/DashboardModal"
+import { Navigate, useNavigate, useParams } from "react-router-dom"
+import { DashboardEditor } from "@/components/dashboard/DashboardEditor"
 import { conceptsCollection, KEY, useRegisterCollection } from "@/lib/collections"
 import { conceptIndex } from "@/lib/conceptData"
 import { Badge, Button, Card, IconButton, Spinner, Toolbar } from "../../components/ui"
@@ -27,16 +27,18 @@ import { ConceptIcon } from "../../lib/icons"
 
 /** THE management surface for dashboards: create, reorder (`position` drives the
  *  switcher order and the default landing), and edit — a row's pencil opens the
- *  {@link DashboardModal} (name/icon/scope/visibility/delete + the widget
- *  layout). The dashboard pages themselves are read-only. */
+ *  full-page {@link DashboardEditor} (name/icon/scope/visibility/delete + the
+ *  widget layout) at /settings/dashboards/:id. The dashboard pages themselves
+ *  are read-only. */
 export function Dashboards() {
   const qc = useQueryClient()
   const navigate = useNavigate()
+  const { id } = useParams()
   const { data: dashboards } = useQuery({
     queryKey: ["dashboards"],
     queryFn: () => api.listDashboards(),
   })
-  // The edit modal's Layout tab renders the real widget canvas — it needs the
+  // The editor's Layout tab renders the real widget canvas — it needs the
   // concept collection just like the dashboard pages do.
   const conceptsLive = useLiveQuery((q) => q.from({ c: conceptsCollection }))
   useRegisterCollection(KEY.concepts, conceptsCollection)
@@ -44,7 +46,6 @@ export function Dashboards() {
   const conceptsLoaded = !!conceptsLive.data
   const cIndex = useMemo(() => conceptIndex(concepts), [concepts])
 
-  const [editing, setEditing] = useState<Dashboard | null>(null)
   const [filter, setFilter] = useState("")
   const sorted = [...(dashboards ?? [])].sort((a, b) => a.position - b.position)
   const q = filter.trim().toLowerCase()
@@ -56,7 +57,7 @@ export function Dashboards() {
       api.createDashboard({ name: "New dashboard", scope: "personal", body: { widgets: [] } }),
     onSuccess: async (d) => {
       await qc.invalidateQueries({ queryKey: ["dashboards"] })
-      setEditing(d) // name it first — the modal opens on General
+      navigate(`/settings/dashboards/${d.id}`) // name it first — opens on General
     },
   })
   const reorderMut = useMutation({
@@ -75,6 +76,23 @@ export function Dashboards() {
   }
 
   if (!dashboards) return <Spinner />
+
+  // Detail route (/settings/dashboards/:id) — the full-page editor takes over.
+  if (id) {
+    const dash = dashboards.find((d) => d.id === id)
+    if (!dash) return <Navigate to="/settings/dashboards" replace />
+    return (
+      <DashboardEditor
+        key={dash.id}
+        dash={dash}
+        // The last shared dashboard can't be deleted — keep the home non-empty.
+        canDelete={!(dash.ownerId === null && sorted.filter((d) => !d.ownerId).length <= 1)}
+        concepts={concepts}
+        cIndex={cIndex}
+        conceptsLoaded={conceptsLoaded}
+      />
+    )
+  }
 
   return (
     <div className="space-y-4">
@@ -100,26 +118,12 @@ export function Dashboards() {
                   dash={d}
                   sortable={!q}
                   onOpen={() => navigate(`/dashboards/${d.id}`)}
-                  onEdit={() => setEditing(d)}
+                  onEdit={() => navigate(`/settings/dashboards/${d.id}`)}
                 />
               ))}
             </div>
           </SortableContext>
         </DndContext>
-      )}
-
-      {editing && (
-        <DashboardModal
-          key={editing.id}
-          dash={editing}
-          // The last shared dashboard can't be deleted — keep the home non-empty.
-          canDelete={!(editing.ownerId === null && sorted.filter((d) => !d.ownerId).length <= 1)}
-          concepts={concepts}
-          cIndex={cIndex}
-          conceptsLoaded={conceptsLoaded}
-          onClose={() => setEditing(null)}
-          onDeleted={() => setEditing(null)}
-        />
       )}
     </div>
   )

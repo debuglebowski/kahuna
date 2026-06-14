@@ -27,14 +27,14 @@ import {
   Trash2,
 } from "lucide-react"
 import { useState } from "react"
-import { Link } from "react-router-dom"
+import { Link, useNavigate } from "react-router-dom"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Tabs, TabsContent } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { IconPicker } from "../../components/IconPicker"
 import { LabelMultiSelect } from "../../components/LabelMultiSelect"
+import { usePageChrome } from "../../components/Layout"
 import {
   Badge,
   Button,
@@ -48,11 +48,12 @@ import {
   Modal,
   PILL_COLORS,
   Spinner,
-  TabRail,
-  TabRailItem,
+  TabBar,
+  TabBarItem,
 } from "../../components/ui"
 import { api, type Concept, type Field, type Instance, type Label } from "../../lib/api"
 import { ConceptIcon, DEFAULT_CONCEPT_ICON, DEFAULT_FIELD_ICON } from "../../lib/icons"
+import { useUnsavedGuard } from "../../lib/useUnsavedGuard"
 import { showValue } from "../../lib/utils"
 import { FieldForm, type FieldFormValue, fieldKindLabel } from "./FieldForm"
 
@@ -175,22 +176,23 @@ type ModalDialog =
   | null
 
 /**
- * THE editing surface for a concept — a large tabbed modal, opened by selecting
- * a node on the settings graph canvas. General: identity (name, plural, icon,
- * color, description), versioning, danger zone. Labels: static/default label
- * wiring. Fields: the schema. Archived items: restore/purge.
+ * THE editing surface for a concept — a full-page tabbed editor that takes over
+ * the settings content area, opened by selecting a node on the settings graph
+ * canvas. General: identity (name, plural, icon, color, description),
+ * versioning, danger zone. Labels: static/default label wiring. Fields: the
+ * schema. Archived items: restore/purge.
  *
  * Identity, labels and versioning edit a local draft; one Save persists them
- * together (everything is a single `updateConcept`), Cancel discards (confirmed
- * when dirty). Field and archived-item operations are row-level APIs of their
- * own and apply immediately. Concept archive/restore/delete confirm at the page
- * level — the archived-concepts list shares those dialogs.
+ * together (everything is a single `updateConcept`), Cancel/back returns to the
+ * concept graph (a discard confirm fires on any nav away while dirty). Field and
+ * archived-item operations are row-level APIs of their own and apply
+ * immediately. Concept archive/restore/delete confirm at the page level — the
+ * archived-concepts list shares those dialogs.
  */
-export function ConceptModal({
+export function ConceptEditor({
   concept,
   admin,
   concepts,
-  onClose,
   onRequestArchive,
   onRequestDelete,
   onRestore,
@@ -201,13 +203,14 @@ export function ConceptModal({
   admin: boolean
   /** Every concept incl. archived — resolves relation targets and taken colors. */
   concepts: readonly Concept[]
-  onClose: () => void
   onRequestArchive: () => void
   onRequestDelete: () => void
   onRestore: () => void
   restorePending: boolean
   restoreError?: string
 }) {
+  usePageChrome({ fullWidth: true, fillHeight: true })
+  const navigate = useNavigate()
   const qc = useQueryClient()
   const [draft, setDraft] = useState<Draft>(() => ({
     name: concept.name,
@@ -220,7 +223,7 @@ export function ConceptModal({
     versioningEnabled: concept.versioningEnabled,
   }))
   const [dirty, setDirty] = useState(false)
-  const [confirmingClose, setConfirmingClose] = useState(false)
+  const { blocker, bypass } = useUnsavedGuard(dirty)
   const [tab, setTab] = useState("general")
   const [colorOpen, setColorOpen] = useState(false)
   const [showArchivedFields, setShowArchivedFields] = useState(false)
@@ -267,7 +270,8 @@ export function ConceptModal({
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["concepts"] })
       refetchGraph()
-      onClose()
+      bypass()
+      navigate("/settings/concepts")
     },
   })
   const saveError = save.error
@@ -462,57 +466,45 @@ export function ConceptModal({
     </li>
   )
 
-  const requestClose = () => (dirty ? setConfirmingClose(true) : onClose())
-
   const archivedCount = archivedItems.data?.length ?? 0
   // The items tab disappears with its last row (restore/purge) — fall back.
   const activeTab = tab === "items" && archivedCount === 0 ? "general" : tab
 
   return (
-    <Dialog open onOpenChange={(open) => !open && requestClose()}>
-      <DialogContent
-        showCloseButton={false}
-        aria-describedby={undefined}
-        className="flex h-[85vh] w-[min(960px,95vw)] flex-col gap-0 p-0 sm:max-w-none"
-      >
-        <Tabs
-          value={activeTab}
-          onValueChange={setTab}
-          orientation="vertical"
-          className="min-h-0 flex-1 gap-0"
+    <div className="relative flex h-full min-h-0 flex-col">
+      <div className="flex shrink-0 items-center gap-1.5 pb-3 text-base font-medium text-foreground">
+        <button
+          type="button"
+          onClick={() => navigate("/settings/concepts")}
+          className="truncate text-muted-foreground hover:text-foreground"
         >
-          <TabRail
-            title={
-              <>
-                <DialogTitle className="flex min-w-0 items-center gap-2 text-sm font-semibold">
-                  <ConceptIcon value={draft.icon || DEFAULT_CONCEPT_ICON} size={16} />
-                  <span className="truncate">{draft.name.trim() || "Edit concept"}</span>
-                </DialogTitle>
-                {concept.archivedAt && (
-                  <div className="mt-1.5">
-                    <Badge tone="amber">Archived</Badge>
-                  </div>
-                )}
-              </>
-            }
-          >
-            <TabRailItem value="general" icon={<SlidersHorizontal size={16} />}>
+          Concepts
+        </button>
+        <span className="text-muted-foreground/50">/</span>
+        <ConceptIcon value={draft.icon || DEFAULT_CONCEPT_ICON} size={16} />
+        <span className="truncate">{draft.name.trim() || "Untitled concept"}</span>
+        {concept.archivedAt && <Badge tone="amber">Archived</Badge>}
+      </div>
+      <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+        <Tabs value={activeTab} onValueChange={setTab} className="min-h-0 flex-1 gap-0">
+          <TabBar>
+            <TabBarItem value="general" icon={<SlidersHorizontal size={16} />}>
               General
-            </TabRailItem>
-            <TabRailItem value="labels" icon={<Tags size={16} />}>
+            </TabBarItem>
+            <TabBarItem value="labels" icon={<Tags size={16} />}>
               Labels
-            </TabRailItem>
-            <TabRailItem value="fields" icon={<Columns3 size={16} />}>
+            </TabBarItem>
+            <TabBarItem value="fields" icon={<Columns3 size={16} />}>
               Fields
-            </TabRailItem>
+            </TabBarItem>
             {archivedCount > 0 && (
-              <TabRailItem value="items" icon={<Archive size={16} />}>
+              <TabBarItem value="items" icon={<Archive size={16} />}>
                 Archived items ({archivedCount})
-              </TabRailItem>
+              </TabBarItem>
             )}
-          </TabRail>
+          </TabBar>
 
-          <TabsContent value="general" className="min-h-0 flex-1 overflow-y-auto p-6 pb-24">
+          <TabsContent value="general" className="min-h-0 flex-1 overflow-y-auto pt-4 pb-24">
             <div className="space-y-4">
               <div className="space-y-1.5">
                 <span className="block text-sm leading-none font-medium text-foreground">Name</span>
@@ -697,7 +689,7 @@ export function ConceptModal({
             </div>
           </TabsContent>
 
-          <TabsContent value="labels" className="min-h-0 flex-1 overflow-y-auto p-6 pb-24">
+          <TabsContent value="labels" className="min-h-0 flex-1 overflow-y-auto pt-4 pb-24">
             <div className="space-y-4">
               <div className="space-y-1.5">
                 <span className="text-xs font-medium text-muted-foreground">
@@ -813,7 +805,7 @@ export function ConceptModal({
           </TabsContent>
 
           {archivedCount > 0 && (
-            <TabsContent value="items" className="min-h-0 flex-1 overflow-y-auto p-6 pb-24">
+            <TabsContent value="items" className="min-h-0 flex-1 overflow-y-auto pt-4 pb-24">
               <ul className="divide-y divide-border">
                 {archivedItems.data!.map((r) => (
                   <li key={r.id} className="flex items-center gap-2 py-2 opacity-80">
@@ -855,7 +847,11 @@ export function ConceptModal({
           <div className="pointer-events-auto flex gap-2">
             {admin ? (
               <>
-                <Button variant="outline" className="shadow-lg" onClick={requestClose}>
+                <Button
+                  variant="outline"
+                  className="shadow-lg"
+                  onClick={() => navigate("/settings/concepts")}
+                >
                   Cancel
                 </Button>
                 <Button
@@ -867,13 +863,17 @@ export function ConceptModal({
                 </Button>
               </>
             ) : (
-              <Button variant="outline" className="shadow-lg" onClick={onClose}>
+              <Button
+                variant="outline"
+                className="shadow-lg"
+                onClick={() => navigate("/settings/concepts")}
+              >
                 Close
               </Button>
             )}
           </div>
         </div>
-      </DialogContent>
+      </div>
 
       {fieldModal && (
         <Modal
@@ -904,14 +904,14 @@ export function ConceptModal({
         </Modal>
       )}
 
-      {confirmingClose && (
+      {blocker.state === "blocked" && (
         <ConfirmDialog
           title="Discard changes?"
           message="Your edits to this concept haven't been saved."
           confirmLabel="Discard"
           confirmVariant="danger"
-          onConfirm={onClose}
-          onCancel={() => setConfirmingClose(false)}
+          onConfirm={() => blocker.proceed()}
+          onCancel={() => blocker.reset()}
         />
       )}
       {dialog?.kind === "archiveField" && (
@@ -968,6 +968,6 @@ export function ConceptModal({
           onCancel={() => setDialog(null)}
         />
       )}
-    </Dialog>
+    </div>
   )
 }

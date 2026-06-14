@@ -84,9 +84,15 @@ export function SettingsLayout() {
   if (isPending) return <Spinner />
 
   // Soft-guard direct navigation to an admin section by a non-admin member.
-  const seg = loc.pathname.split("/")[2] ?? ""
+  const parts = loc.pathname.split("/")
+  const seg = parts[2] ?? ""
   const item = ALL_ITEMS.find((t) => t.to === seg)
   if (item?.admin && !admin) return <Navigate to="/settings/profile" replace />
+
+  // Detail routes (e.g. /settings/dashboards/:id) are full-page editors that
+  // own their chrome + breadcrumb — render the Outlet bare so it can fill the
+  // height (the section <h2> wrapper would duplicate the heading and break it).
+  if (parts.length > 3 && parts[3]) return <Outlet context={{ admin }} />
 
   return (
     <div className="space-y-5">
