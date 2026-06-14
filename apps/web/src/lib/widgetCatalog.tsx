@@ -24,28 +24,29 @@ import { cn } from "./utils"
 /**
  * Catalog of every dashboard widget type — the single source of truth for the
  * Add-widget gallery (label, blurb, search keywords, icon, a static preview
- * illustration, and which section it falls under for each of the three
- * groupings). The previews are pure CSS mockups (no data, no live widget) that
- * sketch each widget's shape, so the gallery stays fast and renders before any
- * concept is picked.
+ * illustration, and the category it falls under). The previews are pure CSS
+ * mockups (no data, no live widget) that sketch each widget's shape, so the
+ * gallery stays fast and renders before any concept is picked.
  */
 
-export type GroupBy = "intent" | "source" | "scope"
+export type WidgetCategory =
+  | "Numbers & goals"
+  | "Charts"
+  | "Lists & tables"
+  | "Boards & timelines"
+  | "Workspace"
+  | "Page content"
 
-/** The group-by choices, in dropdown order. */
-export const GROUP_BY_OPTIONS: ReadonlyArray<{ key: GroupBy; label: string }> = [
-  { key: "intent", label: "By intent" },
-  { key: "source", label: "By source" },
-  { key: "scope", label: "By scope" },
+/** Categories in display order — drives both the gallery's filter chips and the
+ *  order its sections render in (empty sections are skipped). */
+export const WIDGET_CATEGORIES: readonly WidgetCategory[] = [
+  "Numbers & goals",
+  "Charts",
+  "Lists & tables",
+  "Boards & timelines",
+  "Workspace",
+  "Page content",
 ]
-
-/** Ordered section headers per grouping (the gallery renders sections in this
- *  order, skipping any that end up empty). */
-export const GROUP_SECTIONS: Record<GroupBy, readonly string[]> = {
-  intent: ["Numbers & goals", "Collections", "Workspace", "Page content"],
-  source: ["Concept data", "Event log", "Workspace (org-wide)", "Static content"],
-  scope: ["Concept-scoped", "Workspace & page"],
-}
 
 export interface WidgetMeta {
   type: DashboardWidget["type"]
@@ -54,8 +55,8 @@ export interface WidgetMeta {
   /** Extra synonyms / use-cases matched by the gallery search box. */
   keywords: readonly string[]
   icon: LucideIcon
-  /** Section this widget belongs to under each grouping (keys match GROUP_SECTIONS). */
-  groups: Record<GroupBy, string>
+  /** The single category this widget belongs to (a gallery section + filter chip). */
+  category: WidgetCategory
   Preview: () => ReactNode
 }
 
@@ -409,7 +410,7 @@ export const WIDGET_CATALOG: ReadonlyArray<WidgetMeta> = [
     description: "A single headline number from your data.",
     keywords: ["number", "count", "sum", "stat", "kpi", "total", "aggregate", "average", "figure"],
     icon: Gauge,
-    groups: { intent: "Numbers & goals", source: "Concept data", scope: "Concept-scoped" },
+    category: "Numbers & goals",
     Preview: MetricPreview,
   },
   {
@@ -427,7 +428,7 @@ export const WIDGET_CATALOG: ReadonlyArray<WidgetMeta> = [
       "milestone",
     ],
     icon: Target,
-    groups: { intent: "Numbers & goals", source: "Concept data", scope: "Concept-scoped" },
+    category: "Numbers & goals",
     Preview: GoalPreview,
   },
   {
@@ -436,7 +437,7 @@ export const WIDGET_CATALOG: ReadonlyArray<WidgetMeta> = [
     description: "A table of matching items.",
     keywords: ["table", "rows", "records", "grid", "spreadsheet", "items", "data"],
     icon: Table,
-    groups: { intent: "Collections", source: "Concept data", scope: "Concept-scoped" },
+    category: "Lists & tables",
     Preview: ListPreview,
   },
   {
@@ -455,7 +456,7 @@ export const WIDGET_CATALOG: ReadonlyArray<WidgetMeta> = [
       "counts",
     ],
     icon: BarChart3,
-    groups: { intent: "Numbers & goals", source: "Concept data", scope: "Concept-scoped" },
+    category: "Charts",
     Preview: BreakdownPreview,
   },
   {
@@ -464,7 +465,7 @@ export const WIDGET_CATALOG: ReadonlyArray<WidgetMeta> = [
     description: "Items that need a look — stale or flagged.",
     keywords: ["stale", "flagged", "review", "overdue", "alert", "warning", "follow up", "triage"],
     icon: TriangleAlert,
-    groups: { intent: "Collections", source: "Concept data", scope: "Concept-scoped" },
+    category: "Lists & tables",
     Preview: AttentionPreview,
   },
   {
@@ -473,7 +474,7 @@ export const WIDGET_CATALOG: ReadonlyArray<WidgetMeta> = [
     description: "A value over time from the event log.",
     keywords: ["time", "line", "history", "growth", "series", "over time", "timeseries", "chart"],
     icon: TrendingUp,
-    groups: { intent: "Numbers & goals", source: "Event log", scope: "Concept-scoped" },
+    category: "Charts",
     Preview: TrendPreview,
   },
   {
@@ -492,7 +493,7 @@ export const WIDGET_CATALOG: ReadonlyArray<WidgetMeta> = [
       "log",
     ],
     icon: Activity,
-    groups: { intent: "Workspace", source: "Event log", scope: "Concept-scoped" },
+    category: "Workspace",
     Preview: ActivityPreview,
   },
   {
@@ -501,7 +502,7 @@ export const WIDGET_CATALOG: ReadonlyArray<WidgetMeta> = [
     description: "Your tasks across the workspace.",
     keywords: ["todo", "checklist", "assignments", "work", "issues", "to-do", "my tasks"],
     icon: ListChecks,
-    groups: { intent: "Workspace", source: "Workspace (org-wide)", scope: "Workspace & page" },
+    category: "Workspace",
     Preview: TasksPreview,
   },
   {
@@ -510,7 +511,7 @@ export const WIDGET_CATALOG: ReadonlyArray<WidgetMeta> = [
     description: "People in this workspace.",
     keywords: ["people", "users", "team", "directory", "staff", "roster", "members"],
     icon: Users,
-    groups: { intent: "Workspace", source: "Workspace (org-wide)", scope: "Workspace & page" },
+    category: "Workspace",
     Preview: MembersPreview,
   },
   {
@@ -519,7 +520,7 @@ export const WIDGET_CATALOG: ReadonlyArray<WidgetMeta> = [
     description: "A banner to greet the team.",
     keywords: ["banner", "greeting", "intro", "hero", "header", "message", "announcement"],
     icon: Megaphone,
-    groups: { intent: "Page content", source: "Workspace (org-wide)", scope: "Workspace & page" },
+    category: "Page content",
     Preview: WelcomePreview,
   },
   {
@@ -528,7 +529,7 @@ export const WIDGET_CATALOG: ReadonlyArray<WidgetMeta> = [
     description: "Quick links to anywhere.",
     keywords: ["links", "quick links", "bookmarks", "navigation", "nav", "urls", "buttons"],
     icon: Link2,
-    groups: { intent: "Page content", source: "Static content", scope: "Workspace & page" },
+    category: "Page content",
     Preview: ShortcutsPreview,
   },
   {
@@ -537,7 +538,7 @@ export const WIDGET_CATALOG: ReadonlyArray<WidgetMeta> = [
     description: "Freeform rich text.",
     keywords: ["text", "rich text", "markdown", "document", "memo", "freeform", "notes"],
     icon: StickyNote,
-    groups: { intent: "Page content", source: "Static content", scope: "Workspace & page" },
+    category: "Page content",
     Preview: NotePreview,
   },
   {
@@ -546,7 +547,7 @@ export const WIDGET_CATALOG: ReadonlyArray<WidgetMeta> = [
     description: "A board grouped by an enum field.",
     keywords: ["board", "columns", "swimlanes", "status", "pipeline", "cards", "drag"],
     icon: SquareKanban,
-    groups: { intent: "Collections", source: "Concept data", scope: "Concept-scoped" },
+    category: "Boards & timelines",
     Preview: KanbanPreview,
   },
   {
@@ -555,7 +556,7 @@ export const WIDGET_CATALOG: ReadonlyArray<WidgetMeta> = [
     description: "Items placed on a month or week.",
     keywords: ["month", "week", "dates", "schedule", "agenda", "events", "date"],
     icon: CalendarDays,
-    groups: { intent: "Collections", source: "Concept data", scope: "Concept-scoped" },
+    category: "Boards & timelines",
     Preview: CalendarPreview,
   },
   {
@@ -573,7 +574,7 @@ export const WIDGET_CATALOG: ReadonlyArray<WidgetMeta> = [
       "ranges",
     ],
     icon: GanttChart,
-    groups: { intent: "Collections", source: "Concept data", scope: "Concept-scoped" },
+    category: "Boards & timelines",
     Preview: GanttPreview,
   },
   {
@@ -582,7 +583,7 @@ export const WIDGET_CATALOG: ReadonlyArray<WidgetMeta> = [
     description: "Attachments across items.",
     keywords: ["attachments", "documents", "uploads", "media", "downloads", "assets", "docs"],
     icon: Files,
-    groups: { intent: "Collections", source: "Concept data", scope: "Concept-scoped" },
+    category: "Lists & tables",
     Preview: FilesPreview,
   },
 ]
