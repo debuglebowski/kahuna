@@ -674,3 +674,136 @@ export const linearAuditLog = pgTable(
   (table) => [index("linear_audit_log_org_idx").on(table.orgId, table.createdAt)],
 )
 
+/**
+ * Slack integration — an OAuth connector built on the same scaffold, but unlike
+ * the key-based PostHog/Linear ones it uses Slack OAuth v2: a workspace admin
+ * installs the app and we exchange the code for a bot token (xoxb). The token is
+ * stored ENCRYPTED, one connection per ORG (the chosen default — a single
+ * workspace per org), with `team_id` recorded so inbound Events API / slash /
+ * interactivity POSTs (which carry a team id, not an org) route back here. The
+ * OAuth handshake mirrors `google_oauth_state`. Tables follow the
+ * `posthog_*`/`linear_*` conventions. KM automation/instance wiring is DEFERRED.
+ */
+export const slackConnection = pgTable(
+  "slack_connection",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: text("org_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    // The user who installed the app — kept for audit/attribution; the
+    // connection is org-scoped (uniqueness is on org_id alone).
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    // Slack workspace id (T...) — routes inbound events back to this org.
+    teamId: text("team_id").notNull(),
+    teamName: text("team_name"),
+    // Enterprise Grid org id, if the install is on an enterprise workspace.
+    enterpriseId: text("enterprise_id"),
+    appId: text("app_id"),
+    // The bot's own user id (U...) so its own messages can be ignored.
+    botUserId: text("bot_user_id"),
+    // The installing Slack user (authed_user.id).
+    authedUserId: text("authed_user_id"),
+    // Bot OAuth token (xoxb-...), encrypted at rest (nulled on disconnect).
+    botToken: text("bot_token"),
+    scopes: text("scopes").notNull().default(""),
+    status: text("status").notNull().default("connected"),
+    lastSyncAt: timestamp("last_sync_at", { withTimezone: true }),
+    lastError: text("last_error"),
+    connectedAt: timestamp("connected_at", { withTimezone: true }).defaultNow().notNull(),
+    disconnectedAt: timestamp("disconnected_at", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .$onUpdate(() => /* @__PURE__ */ new Date())
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("slack_connection_org_uq").on(table.orgId),
+    // A Slack workspace maps to exactly one org so inbound POSTs route unambiguously.
+    uniqueIndex("slack_connection_team_uq").on(table.teamId),
+    index("slack_connection_status_idx").on(table.status),
+  ],
+)
+
+/** OAuth-state handshake rows for the connect→callback redirect (mirrors google). */
+export const slackOAuthState = pgTable(
+  "slack_oauth_state",
+  {
+    state: text("state").primaryKey(),
+    orgId: text("org_id").notNull(),
+    userId: text("user_id").notNull(),
+    returnTo: text("return_to").notNull().default("/settings/integrations"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    index("slack_oauth_state_exp_idx").on(table.expiresAt),
+    index("slack_oauth_state_user_idx").on(table.orgId, table.userId),
+  ],
+)
+
+/** Cached workspace channels (from conversations.list) for pickers/automations. */
+export const slackChannel = pgTable(
+  "slack_channel",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    connectionId: uuid("connection_id")
+      .notNull()
+      .references(() => slackConnection.id, { onDelete: "cascade" }),
+    orgId: text("org_id").notNull(),
+    channelId: text("channel_id").notNull(),
+    name: text("name"),
+    isPrivate: boolean("is_private").notNull().default(false),
+    isArchived: boolean("is_archived").notNull().default(false),
+    raw: jsonb("raw").notNull().default({}),
+    syncedAt: timestamp("synced_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("slack_channel_conn_channel_uq").on(table.connectionId, table.channelId),
+    index("slack_channel_org_name_idx").on(table.orgId, table.name),
+  ],
+)
+
+/**
+ * Inbound Events API dedup + log, keyed by Slack's `event_id`. Slack retries
+ * deliveries it doesn't get a 2xx for within 3s, so the same event_id can arrive
+ * multiple times — the unique key makes reprocessing idempotent. Mirrors the
+ * `linear_webhook_event`/`posthog_webhook_event` shape.
+ */
+export const slackEvent = pgTable(
+  "slack_event",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: text("org_id"),
+    connectionId: uuid("connection_id"),
+    dedupeKey: text("dedupe_key").notNull(),
+    teamId: text("team_id"),
+    eventType: text("event_type"),
+    payload: jsonb("payload").notNull().default({}),
+    receivedAt: timestamp("received_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("slack_event_dedupe_uq").on(table.dedupeKey),
+    index("slack_event_org_idx").on(table.orgId, table.receivedAt),
+  ],
+)
+
+export const slackAuditLog = pgTable(
+  "slack_audit_log",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    orgId: text("org_id").notNull(),
+    userId: text("user_id").notNull(),
+    connectionId: uuid("connection_id"),
+    action: text("action").notNull(),
+    status: text("status").notNull().default("ok"),
+    subjectKind: text("subject_kind"),
+    subjectId: text("subject_id"),
+    detail: jsonb("detail").notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [index("slack_audit_log_org_idx").on(table.orgId, table.createdAt)],
+)
+

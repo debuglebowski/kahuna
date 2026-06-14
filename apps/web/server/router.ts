@@ -37,6 +37,18 @@ import {
 } from "./posthog"
 import type { UseCaseResult } from "./runtime"
 import { resolveOrg, roleOf, runScoped } from "./session"
+import {
+  disconnectSlack,
+  handleInteractivity,
+  handleSlackCallback,
+  handleSlackConnect,
+  handleSlackEvents,
+  handleSlashCommand,
+  listSlackChannels,
+  postSlackMessageForRequest,
+  slackStatus,
+  syncSlackForRequest,
+} from "./slack"
 import { downloadAttachment, purgeMemberData, uploadAttachment } from "./use-cases"
 
 const json = (r: UseCaseResult<unknown>) =>
@@ -93,6 +105,19 @@ export const handleApi = async (req: Request): Promise<Response | null> => {
       return closeLinearIssueForRequest(req, seg[4])
     if (seg[3] === "issues" && seg[4] && !seg[5] && m === "POST")
       return updateLinearIssueForRequest(req, seg[4])
+  }
+
+  if (seg[1] === "integrations" && seg[2] === "slack") {
+    if (seg[3] === "connect" && m === "GET") return handleSlackConnect(req)
+    if (seg[3] === "callback" && m === "GET") return handleSlackCallback(req)
+    if (seg[3] === "status" && m === "GET") return slackStatus(req)
+    if (seg[3] === "disconnect" && m === "POST") return disconnectSlack(req)
+    if (seg[3] === "sync" && m === "POST") return syncSlackForRequest(req)
+    if (seg[3] === "channels" && m === "GET") return listSlackChannels(req)
+    if (seg[3] === "post" && m === "POST") return postSlackMessageForRequest(req)
+    if (seg[3] === "events" && m === "POST") return handleSlackEvents(req)
+    if (seg[3] === "commands" && m === "POST") return handleSlashCommand(req)
+    if (seg[3] === "interactivity" && m === "POST") return handleInteractivity(req)
   }
 
   // Multipart upload of a file onto an item lineage (reads/mutations of the
