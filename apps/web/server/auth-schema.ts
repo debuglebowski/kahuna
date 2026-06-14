@@ -437,3 +437,116 @@ export const invitationRelations = relations(invitation, ({ one }) => ({
   }),
 }))
 
+/**
+ * PostHog integration — the first non-Google connector and the template the
+ * later key-based integrations (Linear/Slack/Apollo/Clay) inherit. Unlike
+ * Google (per-(org,user) OAuth), PostHog auth is a project API key stored
+ * ENCRYPTED at the ORG level: one connection per org. Tables mirror the
+ * `google_*` conventions (snake_case SQL names, withTimezone timestamps,
+ * `$onUpdate` updatedAt, jsonb raw payloads).
+ */
+export const posthogConnection = pgTable(
+  "posthog_connection",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: text("org_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    // The user who connected — kept for audit/attribution; the connection is
+    // org-scoped (uniqueness is on org_id alone).
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    // Full API base URL, e.g. https://us.posthog.com — region presets resolve
+    // to a host, self-host allows any https origin.
+    host: text("host").notNull(),
+    region: text("region").notNull().default("us"),
+    projectId: text("project_id").notNull(),
+    projectName: text("project_name"),
+    apiKey: text("api_key"),
+    // Per-connection secret for the inbound webhook receiver (so PostHog's
+    // unauthenticated POSTs can be mapped back to an org).
+    webhookToken: text("webhook_token"),
+    status: text("status").notNull().default("connected"),
+    lastSyncAt: timestamp("last_sync_at", { withTimezone: true }),
+    lastError: text("last_error"),
+    connectedAt: timestamp("connected_at", { withTimezone: true }).defaultNow().notNull(),
+    disconnectedAt: timestamp("disconnected_at", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .$onUpdate(() => /* @__PURE__ */ new Date())
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("posthog_connection_org_uq").on(table.orgId),
+    uniqueIndex("posthog_connection_webhook_token_uq").on(table.webhookToken),
+    index("posthog_connection_status_idx").on(table.status),
+  ],
+)
+
+/**
+ * Synced per-person product-usage metrics, keyed by (org, distinct_id). One row
+ * per PostHog person; `email` is denormalized so callers can match a person to
+ * a Kingsmaker instance by email OR distinct_id without re-parsing properties.
+ */
+export const posthogPersonMetric = pgTable(
+  "posthog_person_metric",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    connectionId: uuid("connection_id")
+      .notNull()
+      .references(() => posthogConnection.id, { onDelete: "cascade" }),
+    orgId: text("org_id").notNull(),
+    distinctId: text("distinct_id").notNull(),
+    personId: text("person_id"),
+    email: text("email"),
+    name: text("name"),
+    properties: jsonb("properties").notNull().default({}),
+    eventCount: integer("event_count").notNull().default(0),
+    firstSeenAt: timestamp("first_seen_at", { withTimezone: true }),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+    raw: jsonb("raw").notNull().default({}),
+    syncedAt: timestamp("synced_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("posthog_person_metric_org_distinct_uq").on(table.orgId, table.distinctId),
+    index("posthog_person_metric_email_idx").on(table.orgId, table.email),
+  ],
+)
+
+/** Dedupe + audit trail for the inbound webhook receiver. */
+export const posthogWebhookEvent = pgTable(
+  "posthog_webhook_event",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: text("org_id"),
+    connectionId: uuid("connection_id"),
+    dedupeKey: text("dedupe_key").notNull(),
+    eventName: text("event_name"),
+    distinctId: text("distinct_id"),
+    payload: jsonb("payload").notNull().default({}),
+    receivedAt: timestamp("received_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("posthog_webhook_event_dedupe_uq").on(table.dedupeKey),
+    index("posthog_webhook_event_org_idx").on(table.orgId, table.receivedAt),
+  ],
+)
+
+export const posthogAuditLog = pgTable(
+  "posthog_audit_log",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    orgId: text("org_id").notNull(),
+    userId: text("user_id").notNull(),
+    connectionId: uuid("connection_id"),
+    action: text("action").notNull(),
+    status: text("status").notNull().default("ok"),
+    subjectKind: text("subject_kind"),
+    subjectId: text("subject_id"),
+    detail: jsonb("detail").notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [index("posthog_audit_log_org_idx").on(table.orgId, table.createdAt)],
+)
+

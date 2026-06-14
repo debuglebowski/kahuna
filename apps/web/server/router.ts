@@ -17,6 +17,14 @@ import {
   upsertGoogleCalendarEvent,
 } from "./google"
 import { can } from "./policy"
+import {
+  connectPosthog,
+  disconnectPosthog,
+  handlePosthogWebhook,
+  listPosthogPersons,
+  posthogStatus,
+  syncPosthogForRequest,
+} from "./posthog"
 import type { UseCaseResult } from "./runtime"
 import { resolveOrg, roleOf, runScoped } from "./session"
 import { downloadAttachment, purgeMemberData, uploadAttachment } from "./use-cases"
@@ -53,6 +61,15 @@ export const handleApi = async (req: Request): Promise<Response | null> => {
     if (seg[3] === "gmail" && seg[4] === "threads" && seg[5] && m === "GET")
       return getGoogleThread(req, seg[5])
     if (seg[3] === "gmail" && seg[4] === "send" && m === "POST") return sendGoogleMail(req)
+  }
+
+  if (seg[1] === "integrations" && seg[2] === "posthog") {
+    if (seg[3] === "connect" && m === "POST") return connectPosthog(req)
+    if (seg[3] === "status" && m === "GET") return posthogStatus(req)
+    if (seg[3] === "disconnect" && m === "POST") return disconnectPosthog(req)
+    if (seg[3] === "sync" && m === "POST") return syncPosthogForRequest(req)
+    if (seg[3] === "persons" && m === "GET") return listPosthogPersons(req)
+    if (seg[3] === "webhook" && m === "POST") return handlePosthogWebhook(req)
   }
 
   // Multipart upload of a file onto an item lineage (reads/mutations of the

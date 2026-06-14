@@ -15,6 +15,13 @@
       "when": 1781384917541,
       "tag": "0001_square_randall",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1781392430721,
+      "tag": "0002_careless_living_mummy",
+      "breakpoints": true
     }
   ]
 }
