@@ -16,6 +16,16 @@ import {
   syncGoogleForRequest,
   upsertGoogleCalendarEvent,
 } from "./google"
+import {
+  closeLinearIssueForRequest,
+  connectLinear,
+  disconnectLinear,
+  handleLinearWebhook,
+  linearStatus,
+  listLinearIssues,
+  syncLinearForRequest,
+  updateLinearIssueForRequest,
+} from "./linear"
 import { can } from "./policy"
 import {
   connectPosthog,
@@ -70,6 +80,19 @@ export const handleApi = async (req: Request): Promise<Response | null> => {
     if (seg[3] === "sync" && m === "POST") return syncPosthogForRequest(req)
     if (seg[3] === "persons" && m === "GET") return listPosthogPersons(req)
     if (seg[3] === "webhook" && m === "POST") return handlePosthogWebhook(req)
+  }
+
+  if (seg[1] === "integrations" && seg[2] === "linear") {
+    if (seg[3] === "connect" && m === "POST") return connectLinear(req)
+    if (seg[3] === "status" && m === "GET") return linearStatus(req)
+    if (seg[3] === "disconnect" && m === "POST") return disconnectLinear(req)
+    if (seg[3] === "sync" && m === "POST") return syncLinearForRequest(req)
+    if (seg[3] === "webhook" && m === "POST") return handleLinearWebhook(req)
+    if (seg[3] === "issues" && !seg[4] && m === "GET") return listLinearIssues(req)
+    if (seg[3] === "issues" && seg[4] && seg[5] === "close" && m === "POST")
+      return closeLinearIssueForRequest(req, seg[4])
+    if (seg[3] === "issues" && seg[4] && !seg[5] && m === "POST")
+      return updateLinearIssueForRequest(req, seg[4])
   }
 
   // Multipart upload of a file onto an item lineage (reads/mutations of the

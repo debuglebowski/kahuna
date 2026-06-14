@@ -550,3 +550,127 @@ export const posthogAuditLog = pgTable(
   (table) => [index("posthog_audit_log_org_idx").on(table.orgId, table.createdAt)],
 )
 
+/**
+ * Linear integration — a key-based connector built on the PostHog template.
+ * Auth is a Linear personal API key stored ENCRYPTED at the ORG level (one
+ * connection per org). `webhook_token` routes inbound webhook POSTs back to an
+ * org (like PostHog), while `webhook_secret` (also encrypted) is the shared
+ * secret Linear signs each delivery with — verified as an HMAC-SHA256 over the
+ * raw body. Tables follow the `posthog_*` conventions.
+ */
+export const linearConnection = pgTable(
+  "linear_connection",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: text("org_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    // The user who connected — kept for audit/attribution; the connection is
+    // org-scoped (uniqueness is on org_id alone).
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    // Linear personal API key, encrypted at rest (nulled on disconnect).
+    token: text("token"),
+    // Per-connection routing token embedded in the webhook URL so Linear's
+    // POSTs can be mapped back to this org before signature verification.
+    webhookToken: text("webhook_token"),
+    // Shared signing secret for inbound webhook HMAC verification, encrypted.
+    webhookSecret: text("webhook_secret"),
+    // The Linear user the key authenticates as (from the `viewer` query).
+    viewerId: text("viewer_id"),
+    viewerName: text("viewer_name"),
+    status: text("status").notNull().default("connected"),
+    lastSyncAt: timestamp("last_sync_at", { withTimezone: true }),
+    lastError: text("last_error"),
+    connectedAt: timestamp("connected_at", { withTimezone: true }).defaultNow().notNull(),
+    disconnectedAt: timestamp("disconnected_at", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .$onUpdate(() => /* @__PURE__ */ new Date())
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("linear_connection_org_uq").on(table.orgId),
+    uniqueIndex("linear_connection_webhook_token_uq").on(table.webhookToken),
+    index("linear_connection_status_idx").on(table.status),
+  ],
+)
+
+/**
+ * Synced Linear issues, keyed by (org, linear_id). One row per issue; common
+ * generic attributes (identifier/title/state/assignee/team/priority) are
+ * denormalized for cheap querying, with the full node preserved in `raw`. No
+ * Kingsmaker concept/field mapping happens here — that is deferred.
+ */
+export const linearIssue = pgTable(
+  "linear_issue",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    connectionId: uuid("connection_id")
+      .notNull()
+      .references(() => linearConnection.id, { onDelete: "cascade" }),
+    orgId: text("org_id").notNull(),
+    // Linear's global issue id (a uuid); `identifier` is the human key, e.g. ENG-123.
+    linearId: text("linear_id").notNull(),
+    identifier: text("identifier"),
+    title: text("title"),
+    // Workflow state name + its category type (backlog/unstarted/started/
+    // completed/canceled) — the type drives later status mapping, generically.
+    state: text("state"),
+    stateType: text("state_type"),
+    assigneeId: text("assignee_id"),
+    assigneeName: text("assignee_name"),
+    teamId: text("team_id"),
+    teamKey: text("team_key"),
+    priority: integer("priority"),
+    url: text("url"),
+    // Linear-side last-updated timestamp (NOT row-managed).
+    updatedAt: timestamp("updated_at", { withTimezone: true }),
+    raw: jsonb("raw").notNull().default({}),
+    syncedAt: timestamp("synced_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("linear_issue_org_linear_uq").on(table.orgId, table.linearId),
+    index("linear_issue_org_identifier_idx").on(table.orgId, table.identifier),
+    index("linear_issue_org_state_idx").on(table.orgId, table.state),
+  ],
+)
+
+/** Dedupe + audit trail for the inbound webhook receiver. */
+export const linearWebhookEvent = pgTable(
+  "linear_webhook_event",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: text("org_id"),
+    connectionId: uuid("connection_id"),
+    dedupeKey: text("dedupe_key").notNull(),
+    action: text("action"),
+    entityType: text("entity_type"),
+    entityId: text("entity_id"),
+    payload: jsonb("payload").notNull().default({}),
+    receivedAt: timestamp("received_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("linear_webhook_event_dedupe_uq").on(table.dedupeKey),
+    index("linear_webhook_event_org_idx").on(table.orgId, table.receivedAt),
+  ],
+)
+
+export const linearAuditLog = pgTable(
+  "linear_audit_log",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    orgId: text("org_id").notNull(),
+    userId: text("user_id").notNull(),
+    connectionId: uuid("connection_id"),
+    action: text("action").notNull(),
+    status: text("status").notNull().default("ok"),
+    subjectKind: text("subject_kind"),
+    subjectId: text("subject_id"),
+    detail: jsonb("detail").notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [index("linear_audit_log_org_idx").on(table.orgId, table.createdAt)],
+)
+
