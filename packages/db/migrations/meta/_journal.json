@@ -197,6 +197,20 @@
       "when": 1781297638462,
       "tag": "0027_previous_martin_li",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1781471344397,
+      "tag": "0028_third_mentallo",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1781474152322,
+      "tag": "0029_yielding_sway",
+      "breakpoints": true
     }
   ]
 }

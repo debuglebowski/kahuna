@@ -232,8 +232,18 @@ export class AnnotationFieldConfigInvalid extends Schema.TaggedError<AnnotationF
   { annotationType: Schema.String, name: Schema.String, reason: Schema.String },
 ) {}
 
+/** A connector-managed concept (Linear ticket, Gmail email, …) owns its own
+ *  schema + instances via integration sync; user-initiated mutations (rename,
+ *  add/remove field, create/edit/delete instance) are rejected. The sync path
+ *  itself doesn't go through the guarded use-cases, so it's unaffected. */
+export class ManagedConceptReadonly extends Schema.TaggedError<ManagedConceptReadonly>()(
+  "ManagedConceptReadonly",
+  { concept: Schema.String, managedBy: Schema.String },
+) {}
+
 export type EngineError =
   | VersionConflict
+  | ManagedConceptReadonly
   | InstanceNotFound
   | ConceptNotFound
   | ConceptNameConflict

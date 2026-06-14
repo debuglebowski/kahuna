@@ -1,0 +1,1 @@
+ALTER TABLE "concepts" ADD COLUMN "managed_by" text;

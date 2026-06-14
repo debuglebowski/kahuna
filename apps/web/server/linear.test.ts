@@ -3,7 +3,7 @@ import { and, eq } from "drizzle-orm"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { auth } from "./auth"
 import { linearConnection, linearIssue } from "./auth-schema"
-import { db } from "./db"
+import { db, pool } from "./db"
 import { decryptToken, encryptToken } from "./integrations/crypto"
 import {
   closeLinearIssue,
@@ -410,5 +410,124 @@ describe("Linear integration", () => {
 
     await closeLinearIssue(connection, "issue-4")
     expect(updateVars?.input?.stateId).toBe("state-completed")
+  })
+})
+
+describe("Linear → Kingsmaker concept mirror (Phase 1)", () => {
+  const oldEnv = { ...process.env }
+
+  beforeEach(() => {
+    process.env.INTEGRATION_TOKEN_ENCRYPTION_KEY =
+      "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+    process.env.LINEAR_SYNC_ENABLED = "0"
+  })
+
+  afterEach(() => {
+    setLinearFetchForTest(fetch)
+    process.env = { ...oldEnv }
+  })
+
+  // Two issues; `title` is parameterized so a re-sync can change a value.
+  const mockIssues = (title: string) =>
+    setLinearFetchForTest(async (_input, init) => {
+      const { query } = queryOf(init)
+      if (query.includes("issues(first")) {
+        return okData({
+          issues: {
+            pageInfo: { hasNextPage: false, endCursor: null },
+            nodes: [
+              {
+                id: "i1",
+                identifier: "ENG-1",
+                title,
+                url: "https://linear.app/x/issue/ENG-1",
+                priority: 2,
+                updatedAt: "2026-06-10T00:00:00Z",
+                state: { name: "In Progress", type: "started" },
+                assignee: { id: "u1", name: "Ada" },
+                team: { id: "t1", key: "ENG" },
+              },
+              {
+                id: "i2",
+                identifier: "ENG-2",
+                title: "Second",
+                state: { name: "Done", type: "completed" },
+                team: { id: "t1", key: "ENG" },
+              },
+            ],
+          },
+        })
+      }
+      return new Response("unexpected", { status: 500 })
+    })
+
+  const instanceStates = (orgId: string, conceptId: string) =>
+    pool
+      .query<{ state: Record<string, unknown> }>(
+        `SELECT state FROM instances WHERE org_id = $1 AND concept_id = $2 AND archived_at IS NULL`,
+        [orgId, conceptId],
+      )
+      .then((r) => r.rows.map((row) => row.state))
+
+  it("mirrors synced issues into a Ticket concept and re-syncs idempotently", async () => {
+    const actor = await signUpAndOrg()
+    const [connection] = await db
+      .insert(linearConnection)
+      .values({
+        orgId: actor.orgId,
+        userId: actor.userId,
+        token: encryptToken("lin_k"),
+        webhookToken: randomUUID(),
+      })
+      .returning()
+    if (!connection) throw new Error("missing connection")
+
+    mockIssues("First title")
+    await syncLinearConnection(connection.id)
+
+    // The connector provisioned a Ticket concept and stored its ids on the row.
+    const [conn1] = await db
+      .select()
+      .from(linearConnection)
+      .where(eq(linearConnection.id, connection.id))
+      .limit(1)
+    expect(conn1?.conceptId).toBeTruthy()
+    const conceptId = conn1?.conceptId as string
+    const fieldMap = (conn1?.fieldMap ?? {}) as Record<string, string>
+    expect(fieldMap.identifier).toBeTruthy()
+
+    const concept = await pool.query<{ name: string }>(
+      `SELECT name FROM concepts WHERE org_id = $1 AND id = $2`,
+      [actor.orgId, conceptId],
+    )
+    expect(concept.rows[0]?.name).toBe("Linear Ticket")
+
+    const fId = fieldMap.identifier as string
+    const fTitle = fieldMap.title as string
+    const fStatus = fieldMap.status as string
+    const fAssignee = fieldMap.assignee as string
+    const fTeam = fieldMap.team as string
+    const fPriority = fieldMap.priority as string
+
+    const states = await instanceStates(actor.orgId, conceptId)
+    expect(states).toHaveLength(2)
+    const eng1 = states.find((s) => s[fId] === "ENG-1")
+    if (!eng1) throw new Error("ENG-1 instance missing")
+    expect(eng1[fTitle]).toBe("First title")
+    expect(eng1[fStatus]).toBe("started") // mapped from Linear state.type
+    expect(eng1[fAssignee]).toBe("Ada")
+    expect(eng1[fTeam]).toBe("ENG")
+    expect(eng1[fPriority]).toBe(2)
+    // Raw payload is NOT written into instance fields (only typed columns).
+    expect(Object.keys(eng1).every((k) => Object.values(fieldMap).includes(k))).toBe(true)
+
+    // Second sync with a changed title: same instance count, updated in place.
+    mockIssues("Renamed title")
+    await syncLinearConnection(connection.id)
+
+    const states2 = await instanceStates(actor.orgId, conceptId)
+    expect(states2).toHaveLength(2)
+    const eng1b = states2.find((s) => s[fId] === "ENG-1")
+    expect(eng1b?.[fTitle]).toBe("Renamed title")
   })
 })

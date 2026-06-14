@@ -43,6 +43,7 @@ export type UseCaseResult<A> =
     }
 
 export const ERROR_MAP: Record<string, { status: number; code: string }> = {
+  ManagedConceptReadonly: { status: 403, code: "MANAGED_READONLY" },
   FieldValidationError: { status: 422, code: "VALIDATION" },
   IllegalTransition: { status: 422, code: "ILLEGAL_TRANSITION" },
   RelationTargetMismatch: { status: 422, code: "RELATION_TARGET_MISMATCH" },

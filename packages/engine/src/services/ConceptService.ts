@@ -1,5 +1,6 @@
 import { PgClient } from "@effect/sql-pg"
 import { Effect } from "effect"
+import type { InstanceViewLayout } from "../domain/types"
 import {
   ConceptInUse,
   ConceptNameConflict,
@@ -91,6 +92,9 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
       readonly description?: string
       readonly icon?: string | null
       readonly color?: string | null
+      // Connector-owned "managed concept" kind (e.g. "linear", "google.gmail");
+      // null/omitted for a normal user concept. Set only by integration sync.
+      readonly managedBy?: string | null
     }) =>
       sql.withTransaction(
         Effect.gen(function* () {
@@ -109,8 +113,8 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
           let slug = base
           for (let n = 2; used.has(slug); n++) slug = `${base}_${n}`
           const rows = yield* sql<ConceptRow>`
-            INSERT INTO concepts (org_id, slug, name, plural_name, description, icon, color)
-            VALUES (${orgId}, ${slug}, ${input.name}, ${input.pluralName?.trim() || null}, ${input.description ?? null}, ${input.icon ?? null}, ${input.color ?? null})
+            INSERT INTO concepts (org_id, slug, name, plural_name, description, icon, color, managed_by)
+            VALUES (${orgId}, ${slug}, ${input.name}, ${input.pluralName?.trim() || null}, ${input.description ?? null}, ${input.icon ?? null}, ${input.color ?? null}, ${input.managedBy ?? null})
             RETURNING *`
           const concept = toConcept(rows[0]!)
           yield* events.append({
@@ -231,6 +235,27 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
         }),
       )
 
+    /** Set (or clear) this concept's org-wide default instance-detail layout.
+     *  `null` clears the column → instances render the built-in default preset.
+     *  Presentational config (like graph layouts), so it emits no event. Not
+     *  admin-gated at the RPC boundary — any member may shape the layout. */
+    const setInstanceView = (id: string, layout: InstanceViewLayout | null) =>
+      sql.withTransaction(
+        Effect.gen(function* () {
+          const { orgId } = yield* OrgContext
+          yield* getById(id) // 404 if missing / cross-org
+          // sql.json serialises a top-level array as a Postgres array literal, but
+          // the body is an object, so JSON.stringify + ::jsonb is safe here.
+          const json = layout ? JSON.stringify(layout) : null
+          const rows = yield* sql<ConceptRow>`
+            UPDATE concepts SET instance_view = ${json}::jsonb
+            WHERE org_id = ${orgId} AND id = ${id} RETURNING *`
+          const row = rows[0]
+          if (!row) return yield* Effect.fail(new ConceptNotFound({ concept: id }))
+          return toConcept(row)
+        }),
+      )
+
     /** Archive a concept (soft, restorable): hides it from the live list but keeps
      *  the row and its fields/instances intact. Idempotent on an archived concept. */
     const archive = (id: string) =>
@@ -312,6 +337,7 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
       getBySlug,
       list,
       update,
+      setInstanceView,
       archive,
       restore,
       purge,

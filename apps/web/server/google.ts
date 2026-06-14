@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto"
+import type { OrgScope } from "@kingsmaker/engine"
 import { and, eq } from "drizzle-orm"
 import {
   googleAuditLog,
@@ -13,6 +14,12 @@ import {
 } from "./auth-schema"
 import { db, pool } from "./db"
 import { decryptToken, encryptToken } from "./integrations/crypto"
+import {
+  type ProvisionConceptSpec,
+  type ProvisionedConcept,
+  provisionConcept,
+  upsertInstanceByExternalId,
+} from "./integrations/instances"
 import { resolveOrg } from "./session"
 
 // Token crypto now lives in the shared integrations helper; re-export it so
@@ -46,7 +53,10 @@ const BASE_SCOPES = [
   GOOGLE_SCOPES.gmailSend,
 ]
 
-type GoogleFetch = (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => Promise<Response>
+type GoogleFetch = (
+  input: Parameters<typeof fetch>[0],
+  init?: Parameters<typeof fetch>[1],
+) => Promise<Response>
 let googleFetch: GoogleFetch = fetch
 
 export const setGoogleFetchForTest = (next: GoogleFetch) => {
@@ -199,7 +209,12 @@ async function refreshAccessToken(row: typeof googleConnection.$inferSelect): Pr
     .update(googleConnection)
     .set({ accessToken: encryptToken(data.access_token), accessTokenExpiresAt: expiresAt })
     .where(eq(googleConnection.id, row.id))
-  await audit({ orgId: row.orgId, userId: row.userId, connectionId: row.id, action: "token.refresh" })
+  await audit({
+    orgId: row.orgId,
+    userId: row.userId,
+    connectionId: row.id,
+    action: "token.refresh",
+  })
   return data.access_token
 }
 
@@ -349,7 +364,10 @@ async function hydrateGoogleProfile(connectionId: string) {
   if (!row) return
   await db
     .update(googleConnection)
-    .set({ email: profile.emailAddress ?? row.email, googleAccountId: profile.emailAddress ?? null })
+    .set({
+      email: profile.emailAddress ?? row.email,
+      googleAccountId: profile.emailAddress ?? null,
+    })
     .where(eq(googleConnection.id, connectionId))
   await db
     .insert(googleGmailSync)
@@ -466,6 +484,86 @@ type CalendarEvent = {
   attendees?: unknown[]
 }
 
+/**
+ * The org-local concept synced Calendar events mirror into, so the generic
+ * Calendar/List widgets render them. Typed columns only — never the raw payload
+ * or attendee PII. `externalId` (= Google event id) is the unique upsert key;
+ * field display names are decorative (everything keys off field ids).
+ */
+const EVENT_CONCEPT: ProvisionConceptSpec = {
+  name: "Google Calendar Event",
+  pluralName: "Google Calendar Events",
+  description: "Events synced from Google Calendar.",
+  icon: "lucide:CalendarDays",
+  color: "#0ea5e9",
+  managedBy: "google.calendar",
+  fields: [
+    { key: "externalId", name: "Event ID", kind: "text", config: { unique: true }, icon: "🔖" },
+    { key: "title", name: "Title", kind: "text" },
+    { key: "startsAt", name: "Starts", kind: "date", icon: "📅" },
+    { key: "endsAt", name: "Ends", kind: "date" },
+    { key: "location", name: "Location", kind: "text", icon: "📍" },
+  ],
+}
+
+const googleScopeOf = (conn: typeof googleConnection.$inferSelect): OrgScope => ({
+  orgId: conn.orgId,
+  actor: conn.userId,
+})
+
+/** Ensure the org's Event concept exists; reuse the ids stored on the connection
+ *  when present (so a later concept/field rename never re-provisions), else
+ *  provision once and persist `{ conceptId, fieldMap }` back onto the row. */
+async function ensureEventConcept(
+  conn: typeof googleConnection.$inferSelect,
+): Promise<ProvisionedConcept> {
+  if (conn.conceptId && conn.fieldMap && Object.keys(conn.fieldMap).length > 0) {
+    return { conceptId: conn.conceptId, fieldMap: conn.fieldMap }
+  }
+  const provisioned = await provisionConcept(googleScopeOf(conn), EVENT_CONCEPT)
+  await db
+    .update(googleConnection)
+    .set({ conceptId: provisioned.conceptId, fieldMap: provisioned.fieldMap })
+    .where(eq(googleConnection.id, conn.id))
+  return provisioned
+}
+
+/** Map a Google event to an instance patch keyed by field id — typed columns
+ *  only, never the raw payload or attendees (PII minimization). */
+const eventFieldsFor = (
+  event: CalendarEvent,
+  fieldMap: Record<string, string>,
+): Record<string, unknown> => {
+  const out: Record<string, unknown> = {}
+  const set = (key: string, value: unknown) => {
+    const id = fieldMap[key]
+    if (id && value !== undefined && value !== null && value !== "") out[id] = value
+  }
+  set("externalId", event.id)
+  set("title", event.summary)
+  set("startsAt", event.start?.dateTime ?? event.start?.date)
+  set("endsAt", event.end?.dateTime ?? event.end?.date)
+  set("location", event.location)
+  return out
+}
+
+/** Mirror one event into the org's Event concept (idempotent, keyed by event id).
+ *  Skips cancelled events and those without an id. */
+async function upsertEventInstance(
+  conn: typeof googleConnection.$inferSelect,
+  eventConcept: ProvisionedConcept,
+  event: CalendarEvent,
+) {
+  const externalFieldId = eventConcept.fieldMap.externalId
+  if (!externalFieldId || !event.id || event.status === "cancelled") return
+  await upsertInstanceByExternalId(googleScopeOf(conn), {
+    conceptId: eventConcept.conceptId,
+    externalFieldId,
+    externalValue: event.id,
+    fields: eventFieldsFor(event, eventConcept.fieldMap),
+  })
+}
+
 async function syncCalendar(connectionId: string, calendarId = "primary") {
   const [connection] = await db
     .select()
@@ -473,19 +571,28 @@ async function syncCalendar(connectionId: string, calendarId = "primary") {
     .where(eq(googleConnection.id, connectionId))
     .limit(1)
   if (!connection) return
+  const eventConcept = await ensureEventConcept(connection)
   const [sync] = await db
     .select()
     .from(googleCalendarSync)
-    .where(and(eq(googleCalendarSync.connectionId, connectionId), eq(googleCalendarSync.calendarId, calendarId)))
+    .where(
+      and(
+        eq(googleCalendarSync.connectionId, connectionId),
+        eq(googleCalendarSync.calendarId, calendarId),
+      ),
+    )
     .limit(1)
   let syncToken = sync?.syncToken ?? null
   const fetchPage = async (pageToken?: string) => {
-    const u = new URL(`${GOOGLE_API}/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`)
+    const u = new URL(
+      `${GOOGLE_API}/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`,
+    )
     u.searchParams.set("singleEvents", "true")
     u.searchParams.set("showDeleted", "true")
     u.searchParams.set("maxResults", "250")
     if (syncToken) u.searchParams.set("syncToken", syncToken)
-    else u.searchParams.set("timeMin", new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString())
+    else
+      u.searchParams.set("timeMin", new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString())
     if (pageToken) u.searchParams.set("pageToken", pageToken)
     return googleRequest<{
       items?: CalendarEvent[]
@@ -497,7 +604,10 @@ async function syncCalendar(connectionId: string, calendarId = "primary") {
   try {
     do {
       const page = await fetchPage(pageToken)
-      for (const event of page.items ?? []) await upsertCalendarEvent(connection, calendarId, event)
+      for (const event of page.items ?? []) {
+        await upsertCalendarEvent(connection, calendarId, event)
+        await upsertEventInstance(connection, eventConcept, event)
+      }
       pageToken = page.nextPageToken
       if (page.nextSyncToken) syncToken = page.nextSyncToken
     } while (pageToken)
@@ -598,11 +708,102 @@ type GmailMessage = {
   labelIds?: string[]
   snippet?: string
   internalDate?: string
-  payload?: { headers?: Array<{ name: string; value: string }>; body?: { data?: string }; parts?: unknown[] }
+  payload?: {
+    headers?: Array<{ name: string; value: string }>
+    body?: { data?: string }
+    parts?: unknown[]
+  }
 }
 
 const header = (msg: GmailMessage, name: string) =>
   msg.payload?.headers?.find((h) => h.name.toLowerCase() === name.toLowerCase())?.value ?? null
+
+/**
+ * The org-local concept synced Gmail threads mirror into, so the generic
+ * List/Calendar widgets render them. METADATA ONLY — subject, sender, and last-
+ * message time; never message bodies or snippets (PII minimization). `externalId`
+ * (= Gmail thread id) is the unique upsert key; field names are decorative.
+ */
+const EMAIL_CONCEPT: ProvisionConceptSpec = {
+  name: "Gmail Email",
+  pluralName: "Gmail Emails",
+  description: "Email threads synced from Gmail (metadata only).",
+  icon: "lucide:Mail",
+  color: "#ef4444",
+  managedBy: "google.gmail",
+  fields: [
+    { key: "externalId", name: "Thread ID", kind: "text", config: { unique: true }, icon: "🔖" },
+    { key: "subject", name: "Subject", kind: "text" },
+    { key: "from", name: "From", kind: "text", icon: "👤" },
+    { key: "lastMessageAt", name: "Last message", kind: "date", icon: "📅" },
+  ],
+}
+
+/** Ensure the org's Email concept exists; reuse the ids on the connection's gmail
+ *  columns when present, else provision once and persist them back. */
+async function ensureEmailConcept(
+  conn: typeof googleConnection.$inferSelect,
+): Promise<ProvisionedConcept> {
+  if (conn.gmailConceptId && conn.gmailFieldMap && Object.keys(conn.gmailFieldMap).length > 0) {
+    return { conceptId: conn.gmailConceptId, fieldMap: conn.gmailFieldMap }
+  }
+  const provisioned = await provisionConcept(googleScopeOf(conn), EMAIL_CONCEPT)
+  await db
+    .update(googleConnection)
+    .set({ gmailConceptId: provisioned.conceptId, gmailFieldMap: provisioned.fieldMap })
+    .where(eq(googleConnection.id, conn.id))
+  return provisioned
+}
+
+/** One synced Gmail thread's metadata row (from `google_gmail_thread`). */
+type GmailThreadRow = {
+  thread_id: string
+  subject: string | null
+  from_email: string | null
+  last_message_at: Date | null
+}
+
+/** Map a thread's metadata to an instance patch keyed by field id — subject,
+ *  sender, and last-message time only; never bodies or snippets. */
+const emailFieldsFor = (
+  t: GmailThreadRow,
+  fieldMap: Record<string, string>,
+): Record<string, unknown> => {
+  const out: Record<string, unknown> = {}
+  const set = (key: string, value: unknown) => {
+    const id = fieldMap[key]
+    if (id && value !== undefined && value !== null && value !== "") out[id] = value
+  }
+  set("externalId", t.thread_id)
+  set("subject", t.subject)
+  set("from", t.from_email)
+  set("lastMessageAt", t.last_message_at ? t.last_message_at.toISOString() : null)
+  return out
+}
+
+/** Mirror this connection's already-synced Gmail threads into the org's Email
+ *  concept (idempotent, keyed by thread id). Reads stored thread metadata only —
+ *  never re-fetches or stores message bodies. */
+async function mirrorGmailThreads(conn: typeof googleConnection.$inferSelect) {
+  const emailConcept = await ensureEmailConcept(conn)
+  const externalFieldId = emailConcept.fieldMap.externalId
+  if (!externalFieldId) return
+  const rows = await pool.query<GmailThreadRow>(
+    `SELECT thread_id, subject, from_email, last_message_at
+       FROM google_gmail_thread
+      WHERE connection_id = $1 AND deleted_at IS NULL`,
+    [conn.id],
+  )
+  for (const t of rows.rows) {
+    if (!t.thread_id) continue
+    await upsertInstanceByExternalId(googleScopeOf(conn), {
+      conceptId: emailConcept.conceptId,
+      externalFieldId,
+      externalValue: t.thread_id,
+      fields: emailFieldsFor(t, emailConcept.fieldMap),
+    })
+  }
+}
 
 async function syncGmail(connectionId: string) {
   const [connection] = await db
@@ -623,12 +824,14 @@ async function syncGmail(connectionId: string) {
   if (sync?.historyId && sync.lastFullSyncAt) {
     try {
       await syncGmailHistory(connection, sync.historyId)
+      await mirrorGmailThreads(connection)
       return
     } catch (error) {
       if ((error as Error & { status?: number }).status !== 404) throw error
     }
   }
   await fullSyncGmail(connection)
+  await mirrorGmailThreads(connection)
 }
 
 async function fullSyncGmail(connection: typeof googleConnection.$inferSelect) {
@@ -924,9 +1127,13 @@ export async function sendGoogleMail(req: Request) {
   } | null
   if (!body?.to || !body.subject || !body.text) return json({ error: "INVALID_MAIL" }, 400)
   const raw = Buffer.from(
-    [`To: ${body.to}`, `Subject: ${body.subject}`, "Content-Type: text/plain; charset=utf-8", "", body.text].join(
-      "\r\n",
-    ),
+    [
+      `To: ${body.to}`,
+      `Subject: ${body.subject}`,
+      "Content-Type: text/plain; charset=utf-8",
+      "",
+      body.text,
+    ].join("\r\n"),
   ).toString("base64url")
   const sent = await googleRequest<{ id: string; threadId?: string }>(
     connection.id,
@@ -989,10 +1196,7 @@ export async function handleGmailPush(req: Request) {
     : null
   const email = decoded?.emailAddress
   if (typeof email !== "string") return json({ error: "BAD_GMAIL_PUSH" }, 400)
-  const rows = await db
-    .select()
-    .from(googleConnection)
-    .where(eq(googleConnection.email, email))
+  const rows = await db.select().from(googleConnection).where(eq(googleConnection.email, email))
   for (const row of rows) await syncGmail(row.id).catch(() => undefined)
   return json({ ok: true })
 }
@@ -1011,7 +1215,8 @@ export async function handleCalendarPush(req: Request) {
     .where(eq(googleCalendarSync.watchChannelId, channelId))
     .limit(1)
   if (!sync || sync.watchToken !== channelToken) return json({ error: "BAD_CHANNEL" }, 403)
-  if (state !== "sync") await syncCalendar(sync.connectionId, sync.calendarId).catch(() => undefined)
+  if (state !== "sync")
+    await syncCalendar(sync.connectionId, sync.calendarId).catch(() => undefined)
   return json({ ok: true })
 }
 

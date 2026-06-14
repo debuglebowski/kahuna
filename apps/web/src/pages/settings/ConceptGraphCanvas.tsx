@@ -54,14 +54,17 @@ const DIR_HANDLES: Record<LayoutDir, [Position, Position]> = {
 }
 
 /** Concept box. Click selects it for editing; the active concept is highlighted,
- *  and nodes missed by the toolbar's find-filter render dimmed. */
+ *  and nodes missed by the toolbar's find-filter render dimmed. Connector-managed
+ *  ("integration") concepts get a thicker dashed border + a blue-tinted fill and a
+ *  bold-italic title so they read as read-only, sync-owned records. */
 function ConceptNode({ data }: NodeProps) {
-  const { label, selected, direction, icon, dimmed } = data as {
+  const { label, selected, direction, icon, dimmed, managedBy } = data as {
     label: string
     selected?: boolean
     direction?: LayoutDir
     icon?: string | null
     dimmed?: boolean
+    managedBy?: string | null
   }
   const [targetPos, sourcePos] = DIR_HANDLES[direction ?? "TB"]
   return (
@@ -69,7 +72,7 @@ function ConceptNode({ data }: NodeProps) {
       className={
         (selected
           ? "cursor-pointer rounded-lg border-2 border-primary bg-background px-4 py-2 text-center text-sm font-medium text-foreground shadow"
-          : "cursor-pointer rounded-lg border border-input bg-background px-4 py-2 text-center text-sm font-medium text-foreground shadow-sm hover:border-ring") +
+          : `cursor-pointer rounded-lg px-4 py-2 text-center text-sm font-medium text-foreground shadow-sm hover:border-ring ${managedBy ? "border-2 border-dashed border-info/40 bg-[oklch(0.95_0.03_264)]" : "border border-input bg-background"}`) +
         (dimmed ? " opacity-30" : "")
       }
     >
@@ -78,7 +81,9 @@ function ConceptNode({ data }: NodeProps) {
         position={targetPos}
         className="!h-2 !w-2 !border-0 !bg-muted-foreground/50"
       />
-      <span className="inline-flex items-center justify-center gap-1.5">
+      <span
+        className={`inline-flex items-center justify-center gap-1.5${managedBy ? " font-bold italic" : ""}`}
+      >
         <ConceptIcon value={icon || DEFAULT_CONCEPT_ICON} size={15} />
         {label}
       </span>
@@ -141,7 +146,7 @@ function buildFlow(graph: ConceptGraph, saved: GraphLayout): { nodes: Node[]; ed
     id: n.id,
     type: "concept",
     position: saved[n.id] ?? fallback.get(n.id) ?? { x: 0, y: 0 },
-    data: { label: n.name, selected: false, direction: "TB", icon: n.icon },
+    data: { label: n.name, selected: false, direction: "TB", icon: n.icon, managedBy: n.managedBy },
   }))
 
   return { nodes, edges }

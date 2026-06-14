@@ -8,7 +8,7 @@ import {
   googleConnection,
   googleOAuthState,
 } from "./auth-schema"
-import { db } from "./db"
+import { db, pool } from "./db"
 import {
   decryptToken,
   encryptToken,
@@ -45,6 +45,17 @@ const signUpAndOrg = async () => {
 
 const okJson = (body: unknown) =>
   new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } })
+
+const instanceStates = async (
+  orgId: string,
+  conceptId: string,
+): Promise<Record<string, unknown>[]> => {
+  const r = await pool.query<{ state: Record<string, unknown> }>(
+    `SELECT state FROM instances WHERE org_id = $1 AND concept_id = $2 AND archived_at IS NULL`,
+    [orgId, conceptId],
+  )
+  return r.rows.map((row) => row.state)
+}
 
 describe("Google integration", () => {
   const oldEnv = { ...process.env }
@@ -100,7 +111,9 @@ describe("Google integration", () => {
     const [connection] = await db
       .select()
       .from(googleConnection)
-      .where(and(eq(googleConnection.orgId, actor.orgId), eq(googleConnection.userId, actor.userId)))
+      .where(
+        and(eq(googleConnection.orgId, actor.orgId), eq(googleConnection.userId, actor.userId)),
+      )
       .limit(1)
     expect(connection?.email).toBe("tester@gmail.com")
     expect(connection?.accessToken).not.toBe("access-1")
@@ -172,6 +185,163 @@ describe("Google integration", () => {
     expect(sync?.syncToken).toBe("sync-1")
   })
 
+  it("mirrors Calendar events into an Event concept (idempotent)", async () => {
+    const actor = await signUpAndOrg()
+    const [connection] = await db
+      .insert(googleConnection)
+      .values({
+        orgId: actor.orgId,
+        userId: actor.userId,
+        scopes: GOOGLE_SCOPES.calendarEvents,
+        accessToken: encryptToken("access"),
+        accessTokenExpiresAt: new Date(Date.now() + 5 * 60_000),
+      })
+      .returning()
+    if (!connection) throw new Error("missing connection")
+
+    let title = "Planning"
+    setGoogleFetchForTest(async (input) => {
+      const url = String(input)
+      if (url.includes("/calendar/v3/calendars/primary/events")) {
+        return okJson({
+          items: [
+            {
+              id: "event-1",
+              summary: title,
+              status: "confirmed",
+              location: "Room A",
+              start: { dateTime: "2026-06-13T10:00:00Z" },
+              end: { dateTime: "2026-06-13T11:00:00Z" },
+              attendees: [{ email: "a@test.dev" }],
+              updated: "2026-06-13T09:00:00Z",
+            },
+          ],
+          nextSyncToken: "sync-1",
+        })
+      }
+      return new Response("unexpected", { status: 500 })
+    })
+
+    await syncGoogleConnection(connection.id)
+
+    const [conn1] = await db
+      .select()
+      .from(googleConnection)
+      .where(eq(googleConnection.id, connection.id))
+      .limit(1)
+    expect(conn1?.conceptId).toBeTruthy()
+    const conceptId = conn1?.conceptId as string
+    const fieldMap = (conn1?.fieldMap ?? {}) as Record<string, string>
+    expect(fieldMap.externalId).toBeTruthy()
+
+    const concept = await pool.query<{ name: string }>(
+      `SELECT name FROM concepts WHERE org_id = $1 AND id = $2`,
+      [actor.orgId, conceptId],
+    )
+    expect(concept.rows[0]?.name).toBe("Google Calendar Event")
+
+    const fId = fieldMap.externalId as string
+    const fTitle = fieldMap.title as string
+    const fStarts = fieldMap.startsAt as string
+    const fLocation = fieldMap.location as string
+
+    const states1 = await instanceStates(actor.orgId, conceptId)
+    expect(states1).toHaveLength(1)
+    const ev = states1.find((s) => s[fId] === "event-1")
+    if (!ev) throw new Error("event-1 instance missing")
+    expect(ev[fTitle]).toBe("Planning")
+    expect(ev[fLocation]).toBe("Room A")
+    expect(ev[fStarts]).toBeTruthy()
+    // Raw payload / attendees are NOT written into instance fields (only typed columns).
+    expect(Object.keys(ev).every((k) => Object.values(fieldMap).includes(k))).toBe(true)
+
+    // Second sync with a changed title: same instance count, updated in place.
+    title = "Replanning"
+    await syncGoogleConnection(connection.id)
+    const states2 = await instanceStates(actor.orgId, conceptId)
+    expect(states2).toHaveLength(1)
+    const ev2 = states2.find((s) => s[fId] === "event-1")
+    expect(ev2?.[fTitle]).toBe("Replanning")
+  })
+
+  it("mirrors Gmail threads into an Email concept (metadata only, idempotent)", async () => {
+    const actor = await signUpAndOrg()
+    const [connection] = await db
+      .insert(googleConnection)
+      .values({
+        orgId: actor.orgId,
+        userId: actor.userId,
+        scopes: GOOGLE_SCOPES.gmailMetadata,
+        accessToken: encryptToken("access"),
+        accessTokenExpiresAt: new Date(Date.now() + 5 * 60_000),
+      })
+      .returning()
+    if (!connection) throw new Error("missing connection")
+
+    let subject = "Welcome"
+    setGoogleFetchForTest(async (input) => {
+      const url = String(input)
+      // Single-message fetch (note: no historyId, so sync stays on the full path).
+      if (url.includes("/gmail/v1/users/me/messages/")) {
+        return okJson({
+          id: "m1",
+          threadId: "t1",
+          internalDate: "1718200000000",
+          labelIds: ["INBOX"],
+          payload: {
+            headers: [
+              { name: "Subject", value: subject },
+              { name: "From", value: "Ada <ada@test.dev>" },
+            ],
+          },
+        })
+      }
+      if (url.includes("/gmail/v1/users/me/messages")) {
+        return okJson({ messages: [{ id: "m1" }] })
+      }
+      return new Response("unexpected", { status: 500 })
+    })
+
+    await syncGoogleConnection(connection.id)
+
+    const [conn1] = await db
+      .select()
+      .from(googleConnection)
+      .where(eq(googleConnection.id, connection.id))
+      .limit(1)
+    expect(conn1?.gmailConceptId).toBeTruthy()
+    const conceptId = conn1?.gmailConceptId as string
+    const fieldMap = (conn1?.gmailFieldMap ?? {}) as Record<string, string>
+    expect(fieldMap.externalId).toBeTruthy()
+
+    const concept = await pool.query<{ name: string }>(
+      `SELECT name FROM concepts WHERE org_id = $1 AND id = $2`,
+      [actor.orgId, conceptId],
+    )
+    expect(concept.rows[0]?.name).toBe("Gmail Email")
+
+    const fId = fieldMap.externalId as string
+    const fSubject = fieldMap.subject as string
+    const fFrom = fieldMap.from as string
+
+    const states1 = await instanceStates(actor.orgId, conceptId)
+    expect(states1).toHaveLength(1)
+    const em = states1.find((s) => s[fId] === "t1")
+    if (!em) throw new Error("thread t1 instance missing")
+    expect(em[fSubject]).toBe("Welcome")
+    expect(em[fFrom]).toBe("Ada <ada@test.dev>")
+    // Metadata only — no body/snippet field is written (only mapped columns).
+    expect(Object.keys(em).every((k) => Object.values(fieldMap).includes(k))).toBe(true)
+
+    // Second sync with a changed subject: same instance count, updated in place.
+    subject = "Re: Welcome"
+    await syncGoogleConnection(connection.id)
+    const states2 = await instanceStates(actor.orgId, conceptId)
+    expect(states2).toHaveLength(1)
+    const em2 = states2.find((s) => s[fId] === "t1")
+    expect(em2?.[fSubject]).toBe("Re: Welcome")
+  })
+
   it("dedupes Calendar push notifications", async () => {
     const actor = await signUpAndOrg()
     const [connection] = await db
@@ -208,7 +378,9 @@ describe("Google integration", () => {
       "x-goog-resource-state": "exists",
     })
 
-    const first = await handleCalendarPush(new Request("http://localhost/push", { method: "POST", headers }))
+    const first = await handleCalendarPush(
+      new Request("http://localhost/push", { method: "POST", headers }),
+    )
     const second = await handleCalendarPush(
       new Request("http://localhost/push", { method: "POST", headers }),
     )

@@ -1,7 +1,7 @@
 import { useLiveQuery } from "@tanstack/react-db"
 import { useMutation, useQuery } from "@tanstack/react-query"
 import { Archive, EllipsisVertical, Pencil, Trash2 } from "lucide-react"
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import { useNavigate, useParams } from "react-router-dom"
 import {
   DropdownMenu,
@@ -10,21 +10,14 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { InstanceViewCanvas } from "../components/instance/InstanceViewCanvas"
-import { InstanceViewEditor } from "../components/instance/InstanceViewEditor"
-import { capsOf } from "../components/instance/registry"
+import { ManagedInstanceView } from "../components/instance/ManagedInstanceView"
 import type { InstanceCtx } from "../components/instance/types"
-import { ViewSwitcher } from "../components/instance/ViewSwitcher"
 import { usePageChrome } from "../components/Layout"
 import { Badge, Button, ConfirmDialog, Spinner } from "../components/ui"
 import { api, type Field } from "../lib/api"
 import { useSession } from "../lib/auth-client"
 import { instanceDetail, KEY, useRegisterCollection } from "../lib/collections"
-import {
-  CUSTOM_VIEW_KEY,
-  resolveView,
-  useInstanceViewPrefs,
-  type ViewTile,
-} from "../lib/instanceViews"
+import { conceptInstanceView } from "../lib/instanceViews"
 import { isRichTextEmpty, richTextPreview } from "../lib/richtext"
 import { isAdminRole, useFullOrg } from "./settings/SettingsLayout"
 
@@ -40,7 +33,7 @@ const labelOf = (state: Record<string, unknown>, fields: ReadonlyArray<Field>): 
 }
 
 /** Single-instance detail: all of its own data plus everything connected to it,
- *  rendered through the user's chosen view (preset tile layouts). */
+ *  rendered through the concept's default layout (set in concept settings). */
 export function InstanceView() {
   usePageChrome({ fullWidth: true, fillHeight: true }) // tile grid fills the viewport
   const { id = "" } = useParams()
@@ -60,14 +53,9 @@ export function InstanceView() {
   const myRole = org.data?.members?.find((m) => m.userId === session?.user.id)?.role
   const admin = isAdminRole(myRole)
   const [dialog, setDialog] = useState<"archive" | "delete" | null>(null)
-  const [editingLayout, setEditingLayout] = useState(false)
-  // Navigating to another instance exits edit mode — the editor seeds from the
-  // view it was opened on and must not carry tiles across concepts.
-  useEffect(() => setEditingLayout(false), [id])
 
   // All concepts — to resolve relation targets' versioningEnabled in the picker.
   const allConcepts = useQuery({ queryKey: ["concepts"], queryFn: () => api.listConcepts() })
-  const prefs = useInstanceViewPrefs()
 
   // The item leaves the live view on success — land on the dashboards home
   // (concepts have no page of their own).
@@ -98,9 +86,7 @@ export function InstanceView() {
       backToConcept()
     },
   })
-  // Wait for prefs too — rendering the default view and snapping to the chosen
-  // one a beat later reads as a layout glitch.
-  if (detailQ.isLoading || !detail || !prefs.loaded) return <Spinner />
+  if (detailQ.isLoading || !detail) return <Spinner />
 
   const { instance, concept, fields, inboundRelationFields, related, staticLabels, labels } = detail
   // Fields and relations are editable on a draft (versioned) or any
@@ -108,18 +94,9 @@ export function InstanceView() {
   const relationFields = fields.filter((f) => f.kind === "relation")
   const editable = concept.versioningEnabled ? instance.versionStatus === "draft" : true
 
-  const view = resolveView(prefs.body, concept.id)
-  // Saving the editor's result makes it this concept's custom layout and
-  // switches the concept override to it in the same write.
-  const saveCustomLayout = (tiles: ViewTile[]) =>
-    prefs.update.mutate(
-      {
-        ...prefs.body,
-        byConcept: { ...prefs.body.byConcept, [concept.id]: CUSTOM_VIEW_KEY },
-        customByConcept: { ...prefs.body.customByConcept, [concept.id]: { tiles } },
-      },
-      { onSuccess: () => setEditingLayout(false) },
-    )
+  // Layout is owned by the concept (set in concept settings → Layout); every
+  // instance renders it, falling back to the built-in default preset.
+  const view = conceptInstanceView(concept)
   const ctx: InstanceCtx = {
     instance,
     concept,
@@ -156,9 +133,6 @@ export function InstanceView() {
             ))}
         </h2>
         <div className="flex items-center gap-2">
-          {!editingLayout && (
-            <ViewSwitcher conceptId={concept.id} onEditLayout={() => setEditingLayout(true)} />
-          )}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="icon" className="shrink-0" aria-label="Item actions">
@@ -185,14 +159,8 @@ export function InstanceView() {
         </div>
       </div>
 
-      {editingLayout ? (
-        <InstanceViewEditor
-          initial={view.tiles(capsOf(ctx))}
-          ctx={ctx}
-          onSave={saveCustomLayout}
-          onCancel={() => setEditingLayout(false)}
-          saving={prefs.update.isPending}
-        />
+      {concept.managedBy ? (
+        <ManagedInstanceView ctx={ctx} />
       ) : (
         <InstanceViewCanvas view={view} ctx={ctx} />
       )}

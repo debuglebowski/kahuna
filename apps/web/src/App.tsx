@@ -5,8 +5,6 @@ import { ErrorScreen, Spinner } from "./components/ui"
 import { useSession } from "./lib/auth-client"
 import { AuthPage } from "./pages/AuthPage"
 import { Dashboards } from "./pages/Dashboards"
-import { GoogleCalendar } from "./pages/GoogleCalendar"
-import { GoogleMail } from "./pages/GoogleMail"
 import { InstanceView } from "./pages/InstanceView"
 import { MemberProfile } from "./pages/MemberProfile"
 import { MembersDirectory } from "./pages/MembersDirectory"
@@ -43,8 +41,6 @@ export function App() {
         <Route path="/tasks" element={<Tasks />} />
         <Route path="/dashboards" element={<Dashboards />} />
         <Route path="/dashboards/:id" element={<Dashboards />} />
-        <Route path="/google/calendar" element={<GoogleCalendar />} />
-        <Route path="/google/mail" element={<GoogleMail />} />
         <Route path="/members" element={<MembersDirectory />} />
         <Route path="/members/:userId" element={<MemberProfile />} />
         <Route path="/automations" element={<Placeholder title="Automations" />} />

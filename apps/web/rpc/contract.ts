@@ -67,6 +67,25 @@ export const InstancePick = Schema.Struct({
 })
 export type InstancePick = typeof InstancePick.Type
 
+// A tile on the 12-col instance-detail grid: one or more content keys (rendered
+// as tabs when >1; opaque strings here — the client drops ones it doesn't know)
+// plus grid coords. Shared by a concept's default layout (`Concept.instanceView`)
+// and the per-user view-prefs custom layouts.
+export const InstanceViewTile = Schema.Struct({
+  id: Schema.String,
+  contents: Schema.Array(Schema.String),
+  x: Schema.Number,
+  y: Schema.Number,
+  w: Schema.Number,
+  h: Schema.Number,
+})
+export type InstanceViewTile = typeof InstanceViewTile.Type
+
+export const InstanceViewLayout = Schema.Struct({
+  tiles: Schema.Array(InstanceViewTile),
+})
+export type InstanceViewLayout = typeof InstanceViewLayout.Type
+
 export const Concept = Schema.Struct({
   id: Schema.String,
   slug: Schema.String,
@@ -80,12 +99,19 @@ export const Concept = Schema.Struct({
   /** Optional display color (hex, same pill palette as labels) used to tint the
    *  concept wherever instances are visualised; null renders neutral. */
   color: Schema.NullOr(Schema.String),
+  /** Connector-owned "managed concept" kind (e.g. `"linear"`, `"google.gmail"`)
+   *  when an integration sync owns this concept's schema + instances, else null.
+   *  Drives read-only guards + the opinionated instance detail view. */
+  managedBy: Schema.NullOr(Schema.String),
   /** Label ids inherited by every instance (static); and snapshotted onto new
    *  instances (default). Both drawn from the org-wide label vocabulary. */
   staticLabelIds: Schema.Array(Schema.String),
   defaultLabelIds: Schema.Array(Schema.String),
   /** Opt-in per-concept versioning (draft→published versions + pinned references). */
   versioningEnabled: Schema.Boolean,
+  /** Org-wide default instance-detail layout (a 12-col tile grid); null = the
+   *  built-in default preset. Set in concept settings → Layout. */
+  instanceView: Schema.NullOr(InstanceViewLayout),
   /** Archive marker: non-null = archived (hidden from the live list, restorable). */
   archivedAt: Schema.NullOr(Schema.Date),
   /** Total items (live + archived) — present only on a `withCounts` list. */
@@ -250,6 +276,10 @@ export const ConceptGraphNode = Schema.Struct({
   slug: Schema.String,
   /** Display glyph: literal emoji or `lucide:Name` (see `Concept.icon`). */
   icon: Schema.NullOr(Schema.String),
+  /** Connector-managed kind (e.g. `"linear"`, `"google.gmail"`) when this concept
+   *  is owned by an integration sync, else null — drives the graph's "integration
+   *  concept" marker. */
+  managedBy: Schema.NullOr(Schema.String),
 })
 export type ConceptGraphNode = typeof ConceptGraphNode.Type
 
@@ -795,26 +825,12 @@ export type TaskSubjectRef = typeof TaskSubjectRef.Type
 // Deactivation is the member analogue of archive — a restorable marker that
 // blocks org access and hides the user from pickers.
 
-// A member's instance-detail layout prefs: which preset view to render, as a
-// global default plus per-concept overrides keyed by concept id. View keys
-// name client-defined presets (resolved client-side; unknown keys fall back).
-// A concept override may also be "custom", backed by a user-edited tile
-// layout in `customByConcept` — same grid coords as presets; content keys are
-// opaque strings here (the client drops ones it doesn't know).
-export const InstanceViewTile = Schema.Struct({
-  id: Schema.String,
-  contents: Schema.Array(Schema.String),
-  x: Schema.Number,
-  y: Schema.Number,
-  w: Schema.Number,
-  h: Schema.Number,
-})
-export type InstanceViewTile = typeof InstanceViewTile.Type
-
-export const InstanceViewLayout = Schema.Struct({
-  tiles: Schema.Array(InstanceViewTile),
-})
-export type InstanceViewLayout = typeof InstanceViewLayout.Type
+// A member's instance-detail layout prefs (`InstanceViewTile`/`InstanceViewLayout`
+// are defined above, by `Concept.instanceView`): which preset view to render, as
+// a global default plus per-concept overrides keyed by concept id. View keys name
+// client-defined presets (resolved client-side; unknown keys fall back). A concept
+// override may also be "custom", backed by a user-edited tile layout in
+// `customByConcept` — content keys are opaque strings (the client drops unknowns).
 
 // Traversal + render settings for the relationship-graph tile content. Stored
 // opaquely like the rest of the prefs body; the client clamps/falls back on
@@ -895,6 +911,14 @@ export class KingsmakerRpcs extends RpcGroup.make(
       staticLabelIds: Schema.optional(Schema.Array(Schema.String)),
       defaultLabelIds: Schema.optional(Schema.Array(Schema.String)),
     },
+    success: Concept,
+    error: RpcError,
+  }),
+  // Set (or clear with null) a concept's org-wide default instance-detail layout.
+  // NOT admin-gated — any member may shape the layout (unlike the identity/
+  // versioning edits in updateConcept).
+  Rpc.make("setConceptInstanceView", {
+    payload: { id: Schema.String, instanceView: Schema.NullOr(InstanceViewLayout) },
     success: Concept,
     error: RpcError,
   }),

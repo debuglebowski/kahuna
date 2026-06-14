@@ -44,9 +44,12 @@ export interface ConceptRow {
   readonly description: string | null
   readonly icon: string | null
   readonly color: string | null
+  readonly managed_by: string | null
   readonly static_label_ids: unknown
   readonly default_label_ids: unknown
   readonly versioning_enabled: boolean
+  /** Org-wide default instance-detail layout (`{ tiles }`); null = built-in preset. */
+  readonly instance_view: unknown
   readonly created_at: Date
   readonly archived_at: Date | null
   /** Present only when ConceptService.list is called withCounts. */
@@ -178,9 +181,11 @@ export const toConcept = (r: ConceptRow): Concept => ({
   description: r.description,
   icon: r.icon,
   color: r.color,
+  managedBy: r.managed_by,
   staticLabelIds: toIdArray(r.static_label_ids),
   defaultLabelIds: toIdArray(r.default_label_ids),
   versioningEnabled: r.versioning_enabled ?? false,
+  instanceView: toInstanceViewLayout(r.instance_view),
   createdAt: r.created_at,
   archivedAt: r.archived_at,
   ...(r.item_count == null ? {} : { itemCount: Number(r.item_count) }),

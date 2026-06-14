@@ -18,11 +18,13 @@ import {
   GraphLayoutService,
   type Instance,
   InstanceService,
+  type InstanceViewLayout,
   type InstanceViewPrefsBody,
   LABELS_KEY,
   type Label,
   LabelService,
   type ListTasksFilter,
+  ManagedConceptReadonly,
   MemberService,
   type Note,
   type OrgContext,
@@ -42,6 +44,40 @@ import { Effect } from "effect"
 
 /** All use-cases return engine effects (R = OrgContext | EngineServices) for runScoped. */
 type UC<A, E = unknown> = Effect.Effect<A, E, OrgContext | EngineServices>
+
+// ── managed-concept guard ─────────────────────────────────────────────────────
+// A connector-managed concept's schema + instances are owned by an integration
+// sync; reject user-initiated mutations here at the use-case boundary. The sync
+// path calls the engine services directly (runEngineOrThrow), never through these
+// use-cases, so it stays free to write. Discriminated by the typed `managedBy`
+// kind on the concept — never by concept name.
+
+const ensureUnmanagedConcept = (conceptId: string): UC<void> =>
+  Effect.flatMap(ConceptService, (c) => c.getById(conceptId)).pipe(
+    Effect.flatMap((concept) =>
+      concept.managedBy
+        ? Effect.fail(
+            new ManagedConceptReadonly({ concept: concept.name, managedBy: concept.managedBy }),
+          )
+        : Effect.void,
+    ),
+  )
+
+const ensureUnmanagedInstance = (instanceId: string): UC<void> =>
+  Effect.flatMap(InstanceService, (i) => i.get(instanceId)).pipe(
+    Effect.flatMap((inst) => ensureUnmanagedConcept(inst.conceptId)),
+    // get() is live-only; if the instance is archived/gone, skip the guard and let
+    // the real mutation surface the proper InstanceNotFound. Live managed instances
+    // (the case that matters) are still covered by create/update/archive guards.
+    Effect.catchAll((e) =>
+      (e as { _tag?: string })?._tag === "InstanceNotFound" ? Effect.void : Effect.fail(e),
+    ),
+  )
+
+const ensureUnmanagedField = (fieldId: string): UC<void> =>
+  Effect.flatMap(FieldService, (f) => f.getById(fieldId)).pipe(
+    Effect.flatMap((field) => ensureUnmanagedConcept(field.conceptId)),
+  )
 
 // ── reads ───────────────────────────────────────────────────────────────────
 
@@ -255,28 +291,40 @@ export const updateConcept = (
     readonly defaultLabelIds?: ReadonlyArray<string>
   },
 ): UC<unknown> =>
-  Effect.flatMap(ConceptService, (c) =>
-    c.update({
-      id,
-      name: patch.name,
-      pluralName: patch.pluralName,
-      description: patch.description,
-      icon: patch.icon,
-      color: patch.color,
-      versioningEnabled: patch.versioningEnabled,
-      staticLabelIds: patch.staticLabelIds,
-      defaultLabelIds: patch.defaultLabelIds,
-    }),
-  )
+  Effect.gen(function* () {
+    yield* ensureUnmanagedConcept(id)
+    return yield* Effect.flatMap(ConceptService, (c) =>
+      c.update({
+        id,
+        name: patch.name,
+        pluralName: patch.pluralName,
+        description: patch.description,
+        icon: patch.icon,
+        color: patch.color,
+        versioningEnabled: patch.versioningEnabled,
+        staticLabelIds: patch.staticLabelIds,
+        defaultLabelIds: patch.defaultLabelIds,
+      }),
+    )
+  })
+
+export const setConceptInstanceView = (
+  id: string,
+  instanceView: InstanceViewLayout | null,
+): UC<unknown> => Effect.flatMap(ConceptService, (c) => c.setInstanceView(id, instanceView))
 
 export const archiveConcept = (id: string): UC<unknown> =>
-  Effect.flatMap(ConceptService, (c) => c.archive(id))
+  ensureUnmanagedConcept(id).pipe(
+    Effect.zipRight(Effect.flatMap(ConceptService, (c) => c.archive(id))),
+  )
 
 export const restoreConcept = (id: string): UC<unknown> =>
   Effect.flatMap(ConceptService, (c) => c.restore(id))
 
 export const deleteConcept = (id: string): UC<unknown> =>
-  Effect.flatMap(ConceptService, (c) => c.purge(id))
+  ensureUnmanagedConcept(id).pipe(
+    Effect.zipRight(Effect.flatMap(ConceptService, (c) => c.purge(id))),
+  )
 
 // ── labels (org-wide vocabulary) ───────────────────────────────────────────────
 
@@ -415,7 +463,13 @@ export const getConceptGraph: UC<unknown> = Effect.gen(function* () {
   const fieldsPerConcept = yield* Effect.forEach(concepts, (c) => fields.listFields(c.id))
   const ids = new Set(concepts.map((c) => c.id))
   return {
-    nodes: concepts.map((c) => ({ id: c.id, name: c.name, slug: c.slug, icon: c.icon })),
+    nodes: concepts.map((c) => ({
+      id: c.id,
+      name: c.name,
+      slug: c.slug,
+      icon: c.icon,
+      managedBy: c.managedBy,
+    })),
     edges: fieldsPerConcept
       .flat()
       .filter((f) => f.kind === "relation" && !!f.config.target && ids.has(f.config.target))
@@ -439,7 +493,10 @@ export const addField = (input: {
   readonly config?: FieldConfig
   readonly formula?: string
   readonly icon?: string | null
-}): UC<unknown> => Effect.flatMap(FieldService, (f) => f.addField(input))
+}): UC<unknown> =>
+  ensureUnmanagedConcept(input.conceptId).pipe(
+    Effect.zipRight(Effect.flatMap(FieldService, (f) => f.addField(input))),
+  )
 
 export const updateField = (input: {
   readonly id: string
@@ -447,21 +504,27 @@ export const updateField = (input: {
   readonly config?: FieldConfig
   readonly formula?: string | null
   readonly icon?: string | null
-}): UC<unknown> => Effect.flatMap(FieldService, (f) => f.update(input))
+}): UC<unknown> =>
+  ensureUnmanagedField(input.id).pipe(
+    Effect.zipRight(Effect.flatMap(FieldService, (f) => f.update(input))),
+  )
 
 export const archiveField = (id: string): UC<unknown> =>
-  Effect.flatMap(FieldService, (f) => f.archive(id))
+  ensureUnmanagedField(id).pipe(Effect.zipRight(Effect.flatMap(FieldService, (f) => f.archive(id))))
 
 export const restoreField = (id: string): UC<unknown> =>
   Effect.flatMap(FieldService, (f) => f.restore(id))
 
 export const deleteField = (id: string): UC<unknown> =>
-  Effect.flatMap(FieldService, (f) => f.purge(id))
+  ensureUnmanagedField(id).pipe(Effect.zipRight(Effect.flatMap(FieldService, (f) => f.purge(id))))
 
 export const reorderFields = (
   conceptId: string,
   orders: ReadonlyArray<{ readonly id: string; readonly position: number }>,
-): UC<unknown> => Effect.flatMap(FieldService, (f) => f.reorder(conceptId, orders))
+): UC<unknown> =>
+  ensureUnmanagedConcept(conceptId).pipe(
+    Effect.zipRight(Effect.flatMap(FieldService, (f) => f.reorder(conceptId, orders))),
+  )
 
 export interface FeedItem {
   readonly id: number
@@ -520,14 +583,20 @@ export const listEvents = (input: {
 // ── commands ──────────────────────────────────────────────────────────────────
 
 export const createInstance = (conceptId: string, fields: Record<string, unknown>): UC<Instance> =>
-  Effect.flatMap(InstanceService, (i) => i.create({ conceptId, fields }))
+  ensureUnmanagedConcept(conceptId).pipe(
+    Effect.zipRight(Effect.flatMap(InstanceService, (i) => i.create({ conceptId, fields }))),
+  )
 
 export const updateInstance = (
   id: string,
   expectedVersion: number,
   patch: Record<string, unknown>,
 ): UC<Instance> =>
-  Effect.flatMap(InstanceService, (i) => i.update({ instanceId: id, expectedVersion, patch }))
+  ensureUnmanagedInstance(id).pipe(
+    Effect.zipRight(
+      Effect.flatMap(InstanceService, (i) => i.update({ instanceId: id, expectedVersion, patch })),
+    ),
+  )
 
 export const transitionInstance = (
   id: string,
@@ -535,18 +604,31 @@ export const transitionInstance = (
   field: string,
   to: string,
 ): UC<Instance> =>
-  Effect.flatMap(InstanceService, (i) =>
-    i.transition({ instanceId: id, expectedVersion, field, to }),
-  )
+  Effect.gen(function* () {
+    yield* ensureUnmanagedInstance(id)
+    return yield* Effect.flatMap(InstanceService, (i) =>
+      i.transition({ instanceId: id, expectedVersion, field, to }),
+    )
+  })
 
 export const archiveInstance = (id: string, expectedVersion: number): UC<Instance> =>
-  Effect.flatMap(InstanceService, (i) => i.archive({ instanceId: id, expectedVersion }))
+  ensureUnmanagedInstance(id).pipe(
+    Effect.zipRight(
+      Effect.flatMap(InstanceService, (i) => i.archive({ instanceId: id, expectedVersion })),
+    ),
+  )
 
 export const restoreInstance = (id: string, expectedVersion: number): UC<Instance> =>
-  Effect.flatMap(InstanceService, (i) => i.restore({ instanceId: id, expectedVersion }))
+  ensureUnmanagedInstance(id).pipe(
+    Effect.zipRight(
+      Effect.flatMap(InstanceService, (i) => i.restore({ instanceId: id, expectedVersion })),
+    ),
+  )
 
 export const deleteInstance = (id: string): UC<Instance> =>
-  Effect.flatMap(InstanceService, (i) => i.purge({ instanceId: id }))
+  ensureUnmanagedInstance(id).pipe(
+    Effect.zipRight(Effect.flatMap(InstanceService, (i) => i.purge({ instanceId: id }))),
+  )
 
 export const linkRelation = (
   fieldId: string,

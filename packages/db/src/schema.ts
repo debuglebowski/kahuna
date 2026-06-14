@@ -44,6 +44,12 @@ export const concepts = pgTable(
     // Optional display color (hex, from the same pill palette as labels); used
     // to tint the concept wherever instances are visualised. Null = neutral.
     color: text("color"),
+    // Connector-owned "managed concept" marker: a typed integration kind (e.g.
+    // "linear", "google.gmail", "google.calendar") when this concept's schema +
+    // instances are owned by an integration sync, else null for a normal user
+    // concept. Drives read-only guards (at the RPC boundary) and an opinionated
+    // instance detail view. Keyed by this kind, never by the concept name.
+    managedBy: text("managed_by"),
     // Label-id arrays drawn from the org-wide `labels` vocabulary. `static` =
     // inherited by every instance (read-time, never written per item); `default`
     // = snapshotted onto each new instance's `state.__labels` at creation time.
@@ -55,6 +61,12 @@ export const concepts = pgTable(
     // lineage), and references may pin a specific published version. When false
     // (default) the concept behaves exactly as the plain 1-instance-per-item model.
     versioningEnabled: boolean("versioning_enabled").notNull().default(false),
+    // Org-wide default detail layout for this concept's instances: a 12-col grid
+    // of tiles (`{ tiles: [...] }`), the same shape as the view-prefs custom
+    // layouts. Null = render the built-in default preset. Set in concept
+    // settings → Layout; every instance of the concept renders it (there is no
+    // per-user layout switch).
+    instanceView: jsonb("instance_view"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     // Archive marker (mirrors `fields`/`labels`): a non-null value hides the
     // concept from the live list but keeps the row (restorable). A true *delete*

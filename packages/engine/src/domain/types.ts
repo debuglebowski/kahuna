@@ -98,6 +98,11 @@ export interface Concept {
   /** Optional display color (hex, same pill palette as labels) used to tint the
    *  concept wherever instances are visualised; null renders neutral. */
   readonly color: string | null
+  /** Connector-owned "managed concept" marker: a typed integration kind (e.g.
+   *  `"linear"`, `"google.gmail"`) when an integration sync owns this concept's
+   *  schema + instances, else null. Drives read-only guards + opinionated detail
+   *  views. Keyed by kind, never by concept name. */
+  readonly managedBy: string | null
   /** Label ids inherited by every instance of this concept (read-time, never
    *  written per item — so they can't be removed on an individual item). */
   readonly staticLabelIds: ReadonlyArray<Id>
@@ -108,6 +113,10 @@ export interface Concept {
    *  published versions and references may pin a specific version. Default false
    *  ⇒ the plain 1-instance-per-item model (every item is a published seq-1 row). */
   readonly versioningEnabled: boolean
+  /** Org-wide default instance-detail layout for this concept (a 12-col tile
+   *  grid, same shape as a view-prefs custom layout); null = render the built-in
+   *  default preset. Set in concept settings; every instance renders it. */
+  readonly instanceView: InstanceViewLayout | null
   readonly createdAt: Date
   /** Archive marker (mirrors `Field`/`Label`/`Instance`): non-null = archived
    *  (hidden from the live list but restorable). A true delete removes the row. */

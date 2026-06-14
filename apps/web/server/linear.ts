@@ -1,8 +1,15 @@
 import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto"
+import type { OrgScope } from "@kingsmaker/engine"
 import { and, eq } from "drizzle-orm"
 import { linearAuditLog, linearConnection, linearIssue, linearWebhookEvent } from "./auth-schema"
 import { db, pool } from "./db"
 import { decryptToken, encryptToken } from "./integrations/crypto"
+import {
+  type ProvisionConceptSpec,
+  type ProvisionedConcept,
+  provisionConcept,
+  upsertInstanceByExternalId,
+} from "./integrations/instances"
 import { resolveOrg } from "./session"
 
 /**
@@ -331,6 +338,105 @@ async function statusPayload(req: Request) {
 
 export const linearStatus = (req: Request) => statusPayload(req)
 
+// ── Kingsmaker concept mirror (Phase 1) ────────────────────────────────────────
+
+/** Linear's stable workflow-state taxonomy — a closed set, so it maps cleanly
+ *  onto a KM `enum` field (which a Kanban widget groups into columns). Issue
+ *  state NAMES are team-defined and open-ended, so we mirror the `type`. */
+const LINEAR_STATE_TYPES = ["backlog", "unstarted", "started", "completed", "canceled"] as const
+const KNOWN_STATE_TYPES = new Set<string>(LINEAR_STATE_TYPES)
+
+/**
+ * The org-local concept synced issues mirror into, so the generic List/Kanban/
+ * Calendar widgets can render them. Generic data fields only — never the raw
+ * payload (PII minimization). `identifier` is the unique external key the upsert
+ * dedupes on. Field display names are decorative; everything keys off field ids.
+ */
+const TICKET_CONCEPT: ProvisionConceptSpec = {
+  name: "Linear Ticket",
+  pluralName: "Linear Tickets",
+  description: "Issues synced from Linear.",
+  icon: "lucide:Triangle",
+  color: "#8b5cf6",
+  managedBy: "linear",
+  fields: [
+    { key: "identifier", name: "Identifier", kind: "text", config: { unique: true }, icon: "🔖" },
+    { key: "title", name: "Title", kind: "text" },
+    { key: "status", name: "Status", kind: "enum", config: { options: [...LINEAR_STATE_TYPES] } },
+    { key: "assignee", name: "Assignee", kind: "text", icon: "👤" },
+    { key: "team", name: "Team", kind: "text" },
+    { key: "priority", name: "Priority", kind: "number" },
+    { key: "url", name: "URL", kind: "text" },
+    { key: "updatedAt", name: "Updated", kind: "date", icon: "📅" },
+  ],
+}
+
+const scopeOf = (conn: typeof linearConnection.$inferSelect): OrgScope => ({
+  orgId: conn.orgId,
+  actor: conn.userId,
+})
+
+/**
+ * Ensure the org's Ticket concept exists and return `{ conceptId, fieldMap }`.
+ * Reuses the ids already stored on the connection when present (so a later
+ * concept/field rename never re-provisions); otherwise provisions once and
+ * persists the ids back onto the connection row.
+ */
+async function ensureTicketConcept(
+  conn: typeof linearConnection.$inferSelect,
+): Promise<ProvisionedConcept> {
+  if (conn.conceptId && conn.fieldMap && Object.keys(conn.fieldMap).length > 0) {
+    return { conceptId: conn.conceptId, fieldMap: conn.fieldMap }
+  }
+  const provisioned = await provisionConcept(scopeOf(conn), TICKET_CONCEPT)
+  await db
+    .update(linearConnection)
+    .set({ conceptId: provisioned.conceptId, fieldMap: provisioned.fieldMap })
+    .where(eq(linearConnection.id, conn.id))
+  return provisioned
+}
+
+/** Map a Linear issue node to a KM instance patch keyed by field id, via the
+ *  stored field map. Only typed columns — never the raw payload. */
+const ticketFieldsFor = (
+  node: LinearIssueNode,
+  fieldMap: Record<string, string>,
+): Record<string, unknown> => {
+  const out: Record<string, unknown> = {}
+  const set = (key: string, value: unknown) => {
+    const id = fieldMap[key]
+    if (id && value !== undefined && value !== null && value !== "") out[id] = value
+  }
+  set("identifier", node.identifier)
+  set("title", node.title)
+  const stateType = node.state?.type
+  if (stateType && KNOWN_STATE_TYPES.has(stateType)) set("status", stateType)
+  set("assignee", node.assignee?.name)
+  set("team", node.team?.key)
+  if (typeof node.priority === "number") set("priority", node.priority)
+  set("url", node.url)
+  set("updatedAt", node.updatedAt)
+  return out
+}
+
+/** Mirror one issue into the org's Ticket concept (idempotent, keyed by
+ *  `identifier`). No-ops if the issue has no identifier to key on. */
+async function upsertTicketInstance(
+  conn: typeof linearConnection.$inferSelect,
+  ticket: ProvisionedConcept,
+  node: LinearIssueNode,
+) {
+  const identifierFieldId = ticket.fieldMap.identifier
+  const identifier = node.identifier
+  if (!identifierFieldId || !identifier) return
+  await upsertInstanceByExternalId(scopeOf(conn), {
+    conceptId: ticket.conceptId,
+    externalFieldId: identifierFieldId,
+    externalValue: identifier,
+    fields: ticketFieldsFor(node, ticket.fieldMap),
+  })
+}
+
 // ── sync ──────────────────────────────────────────────────────────────────────
 
 export async function syncLinearForRequest(req: Request) {
@@ -351,6 +457,9 @@ export async function syncLinearConnection(connectionId: string) {
   if (connection?.status !== "connected") return
   const token = tokenFor(connection)
   try {
+    // Provision (or reuse) the org's Ticket concept BEFORE the first upsert, so
+    // synced issues land as instances the generic widgets can render.
+    const ticket = await ensureTicketConcept(connection)
     let after: string | null = null
     let pages = 0
     do {
@@ -360,7 +469,10 @@ export async function syncLinearConnection(connectionId: string) {
           nodes?: LinearIssueNode[]
         }
       } = await linearGraphQL(token, ISSUES_QUERY, { after })
-      for (const node of data.issues?.nodes ?? []) await upsertIssue(connection, node)
+      for (const node of data.issues?.nodes ?? []) {
+        await upsertIssue(connection, node)
+        await upsertTicketInstance(connection, ticket, node)
+      }
       after = data.issues?.pageInfo?.hasNextPage ? (data.issues.pageInfo.endCursor ?? null) : null
       pages += 1
     } while (after && pages < 100)
