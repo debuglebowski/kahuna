@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query"
-import { Pencil, Plus } from "lucide-react"
+import { Lock, LockOpen, Plus } from "lucide-react"
 import { useMemo, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { InstanceTable } from "@/components/InstanceTable"
@@ -105,23 +105,36 @@ export function ListWidget({
 
   if (!widget.conceptId) return <p className="text-sm text-muted-foreground">Pick a concept.</p>
 
+  // List renders its own title (the chrome header is suppressed for lists) so it
+  // sits on the same row as the toolbar actions.
+  const heading = widget.title?.trim() || concept?.name || ""
+
   return (
     // cancel-drag: clicks/edits inside the table must never start a tile drag.
     <div className="cancel-drag flex h-full flex-col">
-      <div className="flex shrink-0 items-center justify-end gap-0.5 pb-1">
-        <IconButton
-          aria-label="Quick edit"
-          className={cn(quickEdit && "text-primary ring-1 ring-primary/40")}
-          onClick={() => toggleQuickEdit(!quickEdit)}
-        >
-          <Pencil size={13} />
-        </IconButton>
-        <IconButton
-          aria-label={`New ${concept?.name ?? "instance"}`}
-          onClick={() => setAdding(true)}
-        >
-          <Plus size={14} />
-        </IconButton>
+      <div className="flex shrink-0 items-center justify-between gap-2 pb-1">
+        <span className="min-w-0 truncate text-xs font-medium text-muted-foreground">
+          {heading}
+        </span>
+        <div className="flex shrink-0 items-center gap-0.5">
+          <IconButton
+            aria-label={quickEdit ? "Lock editing" : "Unlock editing"}
+            className={cn(quickEdit && "text-primary ring-1 ring-primary/40")}
+            onClick={() => toggleQuickEdit(!quickEdit)}
+          >
+            {quickEdit ? (
+              <LockOpen size={13} fill="currentColor" fillOpacity={0.2} />
+            ) : (
+              <Lock size={13} fill="currentColor" fillOpacity={0.2} />
+            )}
+          </IconButton>
+          <IconButton
+            aria-label={`New ${concept?.name ?? "instance"}`}
+            onClick={() => setAdding(true)}
+          >
+            <Plus size={14} />
+          </IconButton>
+        </div>
       </div>
       <div className="-mx-1 min-h-0 flex-1 overflow-auto">
         {rows.length === 0 ? (

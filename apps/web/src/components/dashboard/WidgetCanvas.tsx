@@ -114,15 +114,20 @@ export function WidgetCanvas({
 
   // A note can be title-less by design — don't fall back to the type name. A
   // metric is the same: its body already names the concept (the sub line), so a
-  // concept-name header just duplicates it — title-only, no fallback. Tasks'
-  // conceptId is a filter, not the tile's subject — its header stays the type
-  // name.
-  const headerLabel = (w: DashboardWidget): string =>
-    w.title ||
-    ("conceptId" in w && w.conceptId && w.type !== "tasks" && w.type !== "metric"
-      ? (cIndex.get(w.conceptId)?.name ?? "")
-      : "") ||
-    (w.type === "note" || w.type === "metric" ? "" : w.type)
+  // concept-name header just duplicates it — title-only, no fallback. A list
+  // renders its own title inline with its toolbar, so it gets no chrome header
+  // at all. Tasks' conceptId is a filter, not the tile's subject — its header
+  // stays the type name.
+  const headerLabel = (w: DashboardWidget): string => {
+    if (w.type === "list") return ""
+    return (
+      w.title ||
+      ("conceptId" in w && w.conceptId && w.type !== "tasks" && w.type !== "metric"
+        ? (cIndex.get(w.conceptId)?.name ?? "")
+        : "") ||
+      (w.type === "note" || w.type === "metric" ? "" : w.type)
+    )
+  }
 
   return (
     <MeasuredGrid
