@@ -2,15 +2,19 @@ import { createHmac, randomUUID } from "node:crypto"
 import { eq } from "drizzle-orm"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { auth } from "./auth"
-import { slackConnection, slackEvent, slackOAuthState } from "./auth-schema"
+import { slackConnection, slackEvent, slackOAuthState, slackUserConnection } from "./auth-schema"
 import { db } from "./db"
 import { decryptToken, encryptToken } from "./integrations/crypto"
 import {
+  disconnectSlack,
+  disconnectSlackUser,
   handleInteractivity,
   handleSlackCallback,
   handleSlackEvents,
+  handleSlackUserConnect,
   handleSlashCommand,
   postMessage,
+  postSlackMessageAsMeForRequest,
   setSlackFetchForTest,
   slackApiRequest,
   slackStatus,
@@ -374,5 +378,251 @@ describe("Slack integration", () => {
     expect(payload.scopes).toEqual(["chat:write", "commands"])
     expect(String(payload.eventsUrl)).toContain("/api/integrations/slack/events")
     expect(String(payload.commandsUrl)).toContain("/api/integrations/slack/commands")
+  })
+
+  // ── per-user (xoxp user-token) auth ──────────────────────────────────────────
+
+  // Each test gets a distinct team id by default — slack_connection.team_id is
+  // UNIQUE and the test DB is not reset between cases within this file.
+  const seedBot = (orgId: string, userId: string, teamId = `T-${randomUUID().slice(0, 8)}`) =>
+    db.insert(slackConnection).values({
+      orgId,
+      userId,
+      teamId,
+      botUserId: "U-BOT",
+      botToken: encryptToken("xoxb-bot"),
+      scopes: "chat:write",
+    })
+
+  it("user connect requires the org bot to be installed first", async () => {
+    const actor = await signUpAndOrg()
+    const res = await handleSlackUserConnect(
+      new Request("http://localhost/api/integrations/slack/user/connect", {
+        headers: actor.headers,
+      }),
+    )
+    expect(res.status).toBe(404)
+    const payload = (await res.json()) as { error?: string }
+    expect(payload.error).toBe("NO_SLACK_CONNECTION")
+  })
+
+  it("user connect redirects to Slack requesting user_scope and stores a kind='user' state", async () => {
+    const actor = await signUpAndOrg()
+    await seedBot(actor.orgId, actor.userId)
+    const res = await handleSlackUserConnect(
+      new Request("http://localhost/api/integrations/slack/user/connect", {
+        headers: actor.headers,
+      }),
+    )
+    expect(res.status).toBe(302)
+    const location = new URL(res.headers.get("location") ?? "")
+    expect(location.origin + location.pathname).toBe("https://slack.com/oauth/v2/authorize")
+    expect(location.searchParams.get("user_scope")).toContain("chat:write")
+    expect(location.searchParams.get("scope")).toBeNull()
+    const state = location.searchParams.get("state") ?? ""
+    const [row] = await db
+      .select()
+      .from(slackOAuthState)
+      .where(eq(slackOAuthState.state, state))
+      .limit(1)
+    expect(row?.kind).toBe("user")
+  })
+
+  it("user callback stores the xoxp token per (org,user), validated via auth.test", async () => {
+    const actor = await signUpAndOrg()
+    await seedBot(actor.orgId, actor.userId, "T-UCB")
+    await db.insert(slackOAuthState).values({
+      state: "slack-user-state",
+      orgId: actor.orgId,
+      userId: actor.userId,
+      kind: "user",
+      returnTo: "/settings/integrations",
+      expiresAt: new Date(Date.now() + 60_000),
+    })
+    setSlackFetchForTest(async (input) => {
+      const u = String(input)
+      if (u.endsWith("/oauth.v2.access"))
+        return okJson({
+          ok: true,
+          authed_user: { id: "U-ME", access_token: "xoxp-me", scope: "chat:write,search:read" },
+          team: { id: "T-UCB" },
+        })
+      if (u.endsWith("/auth.test"))
+        return okJson({ ok: true, user_id: "U-ME", user: "me", team_id: "T-UCB" })
+      return new Response("unexpected", { status: 500 })
+    })
+
+    const res = await handleSlackCallback(
+      new Request(
+        "http://localhost/api/integrations/slack/callback?code=c&state=slack-user-state",
+        { headers: actor.headers },
+      ),
+    )
+    expect(res.status).toBe(302)
+    const [row] = await db
+      .select()
+      .from(slackUserConnection)
+      .where(eq(slackUserConnection.orgId, actor.orgId))
+      .limit(1)
+    expect(row?.status).toBe("connected")
+    expect(row?.slackUserId).toBe("U-ME")
+    expect(row?.slackUserName).toBe("me")
+    expect(row?.scopes).toBe("chat:write,search:read")
+    expect(row?.userToken).not.toBe("xoxp-me")
+    expect(decryptToken(row?.userToken)).toBe("xoxp-me")
+  })
+
+  it("user callback rejects a token from a different workspace than the org bot", async () => {
+    const actor = await signUpAndOrg()
+    await seedBot(actor.orgId, actor.userId, "T-MMB")
+    await db.insert(slackOAuthState).values({
+      state: "slack-user-mismatch",
+      orgId: actor.orgId,
+      userId: actor.userId,
+      kind: "user",
+      returnTo: "/settings/integrations",
+      expiresAt: new Date(Date.now() + 60_000),
+    })
+    setSlackFetchForTest(async (input) => {
+      const u = String(input)
+      if (u.endsWith("/oauth.v2.access"))
+        return okJson({
+          ok: true,
+          authed_user: { id: "U-ME", access_token: "xoxp-me", scope: "chat:write" },
+          team: { id: "T-OTHER" },
+        })
+      if (u.endsWith("/auth.test"))
+        return okJson({ ok: true, user_id: "U-ME", user: "me", team_id: "T-OTHER" })
+      return new Response("unexpected", { status: 500 })
+    })
+    const res = await handleSlackCallback(
+      new Request(
+        "http://localhost/api/integrations/slack/callback?code=c&state=slack-user-mismatch",
+        { headers: actor.headers },
+      ),
+    )
+    expect(res.status).toBe(403)
+    const payload = (await res.json()) as { error?: string }
+    expect(payload.error).toBe("TEAM_MISMATCH")
+    const rows = await db
+      .select()
+      .from(slackUserConnection)
+      .where(eq(slackUserConnection.orgId, actor.orgId))
+    expect(rows).toHaveLength(0)
+  })
+
+  it("post-as-me posts with the user token and returns the ts", async () => {
+    const actor = await signUpAndOrg()
+    await db.insert(slackUserConnection).values({
+      orgId: actor.orgId,
+      userId: actor.userId,
+      teamId: "T-WS",
+      slackUserId: "U-ME",
+      slackUserName: "me",
+      userToken: encryptToken("xoxp-me"),
+      scopes: "chat:write",
+    })
+    let seenAuth = ""
+    setSlackFetchForTest(async (input, init) => {
+      expect(String(input)).toBe("https://slack.com/api/chat.postMessage")
+      seenAuth = new Headers(init?.headers).get("authorization") ?? ""
+      return okJson({ ok: true, ts: "1700000000.000200", channel: "C-9" })
+    })
+    const res = await postSlackMessageAsMeForRequest(
+      new Request("http://localhost/api/integrations/slack/post-as-me", {
+        method: "POST",
+        headers: actor.headers,
+        body: JSON.stringify({ channel: "C-9", text: "as me" }),
+      }),
+    )
+    expect(res.status).toBe(200)
+    expect(seenAuth).toBe("Bearer xoxp-me")
+    const payload = (await res.json()) as { ts?: string | null }
+    expect(payload.ts).toBe("1700000000.000200")
+  })
+
+  it("status surfaces the per-user connection block", async () => {
+    const actor = await signUpAndOrg()
+    await seedBot(actor.orgId, actor.userId)
+    await db.insert(slackUserConnection).values({
+      orgId: actor.orgId,
+      userId: actor.userId,
+      teamId: "T-WS",
+      slackUserId: "U-ME",
+      slackUserName: "me",
+      userToken: encryptToken("xoxp-me"),
+      scopes: "chat:write,search:read",
+    })
+    const res = await slackStatus(
+      new Request("http://localhost/api/integrations/slack/status", { headers: actor.headers }),
+    )
+    const payload = (await res.json()) as {
+      user?: { connected?: boolean; slackUserName?: string; scopes?: string[] }
+    }
+    expect(payload.user?.connected).toBe(true)
+    expect(payload.user?.slackUserName).toBe("me")
+    expect(payload.user?.scopes).toEqual(["chat:write", "search:read"])
+  })
+
+  it("disconnecting a user nulls its token and revokes it", async () => {
+    const actor = await signUpAndOrg()
+    await db.insert(slackUserConnection).values({
+      orgId: actor.orgId,
+      userId: actor.userId,
+      teamId: "T-WS",
+      slackUserId: "U-ME",
+      userToken: encryptToken("xoxp-me"),
+      scopes: "chat:write",
+    })
+    let revoked = false
+    setSlackFetchForTest(async (input) => {
+      if (String(input).endsWith("/auth.revoke")) {
+        revoked = true
+        return okJson({ ok: true, revoked: true })
+      }
+      return new Response("unexpected", { status: 500 })
+    })
+    const res = await disconnectSlackUser(
+      new Request("http://localhost/api/integrations/slack/user/disconnect", {
+        method: "POST",
+        headers: actor.headers,
+      }),
+    )
+    expect(res.status).toBe(200)
+    expect(revoked).toBe(true)
+    const [row] = await db
+      .select()
+      .from(slackUserConnection)
+      .where(eq(slackUserConnection.orgId, actor.orgId))
+      .limit(1)
+    expect(row?.status).toBe("disconnected")
+    expect(row?.userToken).toBeNull()
+  })
+
+  it("disconnecting the org bot sweeps per-user tokens", async () => {
+    const actor = await signUpAndOrg()
+    await seedBot(actor.orgId, actor.userId)
+    await db.insert(slackUserConnection).values({
+      orgId: actor.orgId,
+      userId: actor.userId,
+      teamId: "T-WS",
+      slackUserId: "U-ME",
+      userToken: encryptToken("xoxp-me"),
+      scopes: "chat:write",
+    })
+    const res = await disconnectSlack(
+      new Request("http://localhost/api/integrations/slack/disconnect", {
+        method: "POST",
+        headers: actor.headers,
+      }),
+    )
+    expect(res.status).toBe(200)
+    const [row] = await db
+      .select()
+      .from(slackUserConnection)
+      .where(eq(slackUserConnection.orgId, actor.orgId))
+      .limit(1)
+    expect(row?.status).toBe("disconnected")
+    expect(row?.userToken).toBeNull()
   })
 })

@@ -54,12 +54,15 @@ import type { UseCaseResult } from "./runtime"
 import { resolveOrg, roleOf, runScoped } from "./session"
 import {
   disconnectSlack,
+  disconnectSlackUser,
   handleInteractivity,
   handleSlackCallback,
   handleSlackConnect,
   handleSlackEvents,
+  handleSlackUserConnect,
   handleSlashCommand,
   listSlackChannels,
+  postSlackMessageAsMeForRequest,
   postSlackMessageForRequest,
   slackStatus,
   syncSlackForRequest,
@@ -127,9 +130,13 @@ export const handleApi = async (req: Request): Promise<Response | null> => {
     if (seg[3] === "callback" && m === "GET") return handleSlackCallback(req)
     if (seg[3] === "status" && m === "GET") return slackStatus(req)
     if (seg[3] === "disconnect" && m === "POST") return disconnectSlack(req)
+    if (seg[3] === "user" && seg[4] === "connect" && m === "GET") return handleSlackUserConnect(req)
+    if (seg[3] === "user" && seg[4] === "disconnect" && m === "POST")
+      return disconnectSlackUser(req)
     if (seg[3] === "sync" && m === "POST") return syncSlackForRequest(req)
     if (seg[3] === "channels" && m === "GET") return listSlackChannels(req)
     if (seg[3] === "post" && m === "POST") return postSlackMessageForRequest(req)
+    if (seg[3] === "post-as-me" && m === "POST") return postSlackMessageAsMeForRequest(req)
     if (seg[3] === "events" && m === "POST") return handleSlackEvents(req)
     if (seg[3] === "commands" && m === "POST") return handleSlashCommand(req)
     if (seg[3] === "interactivity" && m === "POST") return handleInteractivity(req)

@@ -166,6 +166,14 @@ export const googleConnection = pgTable(
     status: text("status").notNull().default("connected"),
     lastSyncAt: timestamp("last_sync_at", { withTimezone: true }),
     lastError: text("last_error"),
+    // Display-widget concept mappings (synced data → instances). `concept_id`/
+    // `field_map` hold the Calendar→Event mapping; `gmail_*` hold the Gmail→Email
+    // mapping. Each stores `{ logicalKey -> field id }`; provisioned once on first
+    // sync and reused (so concept/field renames never re-trigger creation).
+    conceptId: text("concept_id"),
+    fieldMap: jsonb("field_map").$type<Record<string, string>>().notNull().default({}),
+    gmailConceptId: text("gmail_concept_id"),
+    gmailFieldMap: jsonb("gmail_field_map").$type<Record<string, string>>().notNull().default({}),
     connectedAt: timestamp("connected_at", { withTimezone: true }).defaultNow().notNull(),
     disconnectedAt: timestamp("disconnected_at", { withTimezone: true }),
     updatedAt: timestamp("updated_at", { withTimezone: true })
@@ -580,6 +588,11 @@ export const linearConnection = pgTable(
     // The Linear user the key authenticates as (from the `viewer` query).
     viewerId: text("viewer_id"),
     viewerName: text("viewer_name"),
+    // Phase-1 KM mapping: the org-local "Ticket" concept synced issues mirror
+    // into, plus a {logicalKey -> field id} map. Concepts/fields are renameable
+    // and keyed by id, so we pin ids (never names). Provisioned on first sync.
+    conceptId: text("concept_id"),
+    fieldMap: jsonb("field_map").$type<Record<string, string>>().notNull().default({}),
     status: text("status").notNull().default("connected"),
     lastSyncAt: timestamp("last_sync_at", { withTimezone: true }),
     lastError: text("last_error"),
@@ -727,6 +740,49 @@ export const slackConnection = pgTable(
   ],
 )
 
+/**
+ * Per-user Slack tokens, LAYERED on top of the org bot install above. The org bot
+ * (`slack_connection`) handles inbound-event routing and app-authored posts; this
+ * table holds each member's OAuth `user_scope` token (xoxp), so KM can act AS the
+ * person (post/search/status/reminders) rather than as the bot. Keyed per
+ * (org, user) like `google_connection` — NOT tied to a workspace `team_id`
+ * uniqueness, and intentionally NOT FK'd to `slack_connection.id` (the bot row
+ * persists on disconnect, only its token is nulled). The same human can link a
+ * different Slack identity per org.
+ */
+export const slackUserConnection = pgTable(
+  "slack_user_connection",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: text("org_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    // Slack workspace the token belongs to — verified against the org bot's team.
+    teamId: text("team_id").notNull(),
+    // The Slack user this token authenticates as (from auth.test / authed_user.id).
+    slackUserId: text("slack_user_id"),
+    slackUserName: text("slack_user_name"),
+    // User OAuth token (xoxp-...), encrypted at rest (nulled on disconnect).
+    userToken: text("user_token"),
+    scopes: text("scopes").notNull().default(""),
+    status: text("status").notNull().default("connected"),
+    lastError: text("last_error"),
+    connectedAt: timestamp("connected_at", { withTimezone: true }).defaultNow().notNull(),
+    disconnectedAt: timestamp("disconnected_at", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .$onUpdate(() => /* @__PURE__ */ new Date())
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("slack_user_connection_org_user_uq").on(table.orgId, table.userId),
+    index("slack_user_connection_status_idx").on(table.status),
+  ],
+)
+
 /** OAuth-state handshake rows for the connect→callback redirect (mirrors google). */
 export const slackOAuthState = pgTable(
   "slack_oauth_state",
@@ -734,6 +790,9 @@ export const slackOAuthState = pgTable(
     state: text("state").primaryKey(),
     orgId: text("org_id").notNull(),
     userId: text("user_id").notNull(),
+    // Which flow this handshake belongs to: 'install' (org bot, default) or
+    // 'user' (per-user xoxp token) — the callback branches on this.
+    kind: text("kind").notNull().default("install"),
     returnTo: text("return_to").notNull().default("/settings/integrations"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),

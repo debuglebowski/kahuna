@@ -212,6 +212,13 @@ export interface SlackStatus {
   readonly eventsUrl?: string | null
   readonly commandsUrl?: string | null
   readonly interactivityUrl?: string | null
+  /** The current user's per-user (xoxp) token state — layered on the org bot. */
+  readonly user?: {
+    readonly connected: boolean
+    readonly slackUserId?: string | null
+    readonly slackUserName?: string | null
+    readonly scopes?: ReadonlyArray<string>
+  }
 }
 
 export interface SlackChannel {
@@ -687,6 +694,10 @@ export const api = {
     const res = await fetch("/api/integrations/slack/disconnect", { method: "POST" })
     if (!res.ok) throw new Error("Failed to disconnect Slack")
   },
+  disconnectSlackUser: async (): Promise<void> => {
+    const res = await fetch("/api/integrations/slack/user/disconnect", { method: "POST" })
+    if (!res.ok) throw new Error("Failed to disconnect Slack account")
+  },
   syncSlack: async (): Promise<void> => {
     const res = await fetch("/api/integrations/slack/sync", { method: "POST" })
     if (!res.ok) throw new Error("Failed to sync Slack")
@@ -704,6 +715,24 @@ export const api = {
     threadTs?: string
   }): Promise<{ ok: boolean; ts: string | null; channel: string }> => {
     const res = await fetch("/api/integrations/slack/post", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    })
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null
+      throw new Error(body?.error ?? "Failed to post Slack message")
+    }
+    return (await res.json()) as { ok: boolean; ts: string | null; channel: string }
+  },
+  /** Post a message AS the current user (xoxp token), not the bot. */
+  postSlackMessageAsMe: async (input: {
+    channel: string
+    text?: string
+    blocks?: unknown[]
+    threadTs?: string
+  }): Promise<{ ok: boolean; ts: string | null; channel: string }> => {
+    const res = await fetch("/api/integrations/slack/post-as-me", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(input),

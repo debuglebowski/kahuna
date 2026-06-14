@@ -318,6 +318,13 @@ const slackConnectUrl = () => {
   return u.pathname + u.search
 }
 
+/** Per-user (xoxp) connect URL — grants a user token layered on the org bot. */
+const slackUserConnectUrl = () => {
+  const u = new URL("/api/integrations/slack/user/connect", window.location.origin)
+  u.searchParams.set("returnTo", `${window.location.origin}/settings/integrations`)
+  return u.pathname + u.search
+}
+
 /**
  * Reusable connector card shell — the scaffold every non-Google integration
  * (PostHog, and later Linear/Slack/Apollo/Clay) renders into. Shows the
@@ -710,6 +717,10 @@ function SlackCard() {
     mutationFn: api.syncSlack,
     onSuccess: () => qc.invalidateQueries({ queryKey: ["slackStatus"] }),
   })
+  const disconnectUser = useMutation({
+    mutationFn: api.disconnectSlackUser,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["slackStatus"] }),
+  })
 
   if (status.isPending) return <Spinner />
   if (status.error) return <p className="text-sm text-destructive">{status.error.message}</p>
@@ -717,6 +728,7 @@ function SlackCard() {
   const data = status.data
   const configured = data.configured
   const connected = data.connected
+  const userConnected = Boolean(data.user?.connected)
 
   return (
     <IntegrationCard
@@ -781,7 +793,40 @@ function SlackCard() {
             </div>
           )}
           {data.lastError && <p className="text-destructive">{data.lastError}</p>}
-          <Feedback error={disconnect.error ?? sync.error} />
+          <div className="flex flex-wrap items-center gap-2 border-t border-border pt-3">
+            {userConnected ? (
+              <>
+                <span className="text-foreground">
+                  Acting as your account
+                  {data.user?.slackUserName ? ` · @${data.user.slackUserName}` : ""}
+                </span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => disconnectUser.mutate()}
+                  disabled={disconnectUser.isPending}
+                >
+                  <Unplug size={14} />
+                  Disconnect my account
+                </Button>
+              </>
+            ) : (
+              <>
+                <span>Connect your own Slack account to let Kingsmaker act as you.</span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => (window.location.href = slackUserConnectUrl())}
+                >
+                  <PlugZap size={14} />
+                  Connect my account
+                </Button>
+              </>
+            )}
+          </div>
+          <Feedback error={disconnect.error ?? sync.error ?? disconnectUser.error} />
         </div>
       ) : (
         <div className="p-6">

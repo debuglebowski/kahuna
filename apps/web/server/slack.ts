@@ -6,6 +6,7 @@ import {
   slackConnection,
   slackEvent,
   slackOAuthState,
+  slackUserConnection,
 } from "./auth-schema"
 import { db } from "./db"
 import { decryptToken, encryptToken } from "./integrations/crypto"
@@ -45,6 +46,17 @@ const DEFAULT_SCOPES = [
   "team:read",
 ]
 
+/**
+ * Default USER scopes (xoxp), requested in the per-user connect flow so KM can
+ * act AS the person; overridable via `SLACK_USER_SCOPES`. These must also be
+ * added under "User Token Scopes" in the Slack app config + the workspace
+ * re-authorized once before they're grantable.
+ */
+const DEFAULT_USER_SCOPES = ["chat:write", "search:read", "users.profile:write", "reminders:write"]
+
+const splitScopes = (raw: string | undefined): string[] =>
+  (raw ?? "").split(/[\s,]+/).filter(Boolean)
+
 const config = () => ({
   clientId: process.env.SLACK_CLIENT_ID ?? "",
   clientSecret: process.env.SLACK_CLIENT_SECRET ?? "",
@@ -52,9 +64,12 @@ const config = () => ({
   redirectUri:
     process.env.SLACK_REDIRECT_URI ??
     `${process.env.BETTER_AUTH_URL ?? "http://localhost:3000"}/api/integrations/slack/callback`,
-  scopes: (process.env.SLACK_SCOPES ?? "").split(/[\s,]+/).filter(Boolean).length
-    ? (process.env.SLACK_SCOPES ?? "").split(/[\s,]+/).filter(Boolean)
+  scopes: splitScopes(process.env.SLACK_SCOPES).length
+    ? splitScopes(process.env.SLACK_SCOPES)
     : DEFAULT_SCOPES,
+  userScopes: splitScopes(process.env.SLACK_USER_SCOPES).length
+    ? splitScopes(process.env.SLACK_USER_SCOPES)
+    : DEFAULT_USER_SCOPES,
 })
 
 const requireConfig = () => {
@@ -149,6 +164,21 @@ const tokenFor = (conn: typeof slackConnection.$inferSelect): string => {
   return token
 }
 
+const userConnectionFor = async (orgId: string, userId: string) => {
+  const [row] = await db
+    .select()
+    .from(slackUserConnection)
+    .where(and(eq(slackUserConnection.orgId, orgId), eq(slackUserConnection.userId, userId)))
+    .limit(1)
+  return row ?? null
+}
+
+const userTokenFor = (conn: typeof slackUserConnection.$inferSelect): string => {
+  const token = decryptToken(conn.userToken)
+  if (!token) throw new Error("Slack user connection has no token")
+  return token
+}
+
 // ── Slack Web API ─────────────────────────────────────────────────────────────
 
 type SlackApiResult = { ok: boolean; error?: string } & Record<string, unknown>
@@ -218,6 +248,25 @@ export async function postMessage(
   )
 }
 
+/** Post a message AS the user (xoxp user token) — the message is authored by the person, not the bot. */
+export async function postMessageAsUser(
+  conn: typeof slackUserConnection.$inferSelect,
+  channel: string,
+  message: { text?: string; blocks?: unknown[]; threadTs?: string },
+): Promise<{ ok: boolean; ts?: string; channel?: string }> {
+  const token = userTokenFor(conn)
+  return slackApiRequest<{ ok: boolean; ts?: string; channel?: string }>(
+    token,
+    "chat.postMessage",
+    {
+      channel,
+      text: message.text,
+      blocks: message.blocks,
+      thread_ts: message.threadTs,
+    },
+  )
+}
+
 // ── signature verification ────────────────────────────────────────────────────
 
 const FIVE_MINUTES = 60 * 5
@@ -266,6 +315,39 @@ export async function handleSlackConnect(req: Request) {
   return redirect(authUrl.toString())
 }
 
+/**
+ * Per-user connect — requests only `user_scope` (no bot `scope`) so Slack shows a
+ * user-consent screen for the already-installed app and returns an xoxp user
+ * token. Requires the org bot to be installed first (the app must exist in the
+ * workspace). Funnels through the SAME `/callback` redirect URI as the install
+ * flow; the `kind:'user'` state row is what tells the callback to expect a user
+ * token rather than a bot token.
+ */
+export async function handleSlackUserConnect(req: Request) {
+  const org = await resolveOrg(req)
+  if (!org.ok) return json({ error: org.code }, org.status)
+  const c = requireConfig()
+  const bot = await connectionForOrg(org.orgId)
+  if (bot?.status !== "connected") return json({ error: "NO_SLACK_CONNECTION" }, 404)
+  const url = new URL(req.url)
+  const state = randomUUID()
+  const returnTo = url.searchParams.get("returnTo") || "/settings/integrations"
+  await db.insert(slackOAuthState).values({
+    state,
+    orgId: org.orgId,
+    userId: org.actor,
+    kind: "user",
+    returnTo,
+    expiresAt: new Date(Date.now() + 10 * 60_000),
+  })
+  const authUrl = new URL(SLACK_AUTHORIZE_URL)
+  authUrl.searchParams.set("client_id", c.clientId)
+  authUrl.searchParams.set("user_scope", c.userScopes.join(","))
+  authUrl.searchParams.set("redirect_uri", c.redirectUri)
+  authUrl.searchParams.set("state", state)
+  return redirect(authUrl.toString())
+}
+
 type OAuthAccessResponse = {
   ok?: boolean
   error?: string
@@ -275,7 +357,7 @@ type OAuthAccessResponse = {
   bot_user_id?: string
   app_id?: string
   team?: { id?: string; name?: string }
-  authed_user?: { id?: string }
+  authed_user?: { id?: string; access_token?: string; scope?: string; token_type?: string }
   enterprise?: { id?: string } | null
 }
 
@@ -311,6 +393,67 @@ export async function handleSlackCallback(req: Request) {
     }),
   })
   const data = (await tokenRes.json().catch(() => null)) as OAuthAccessResponse | null
+
+  // Per-user (xoxp) flow: the user token lives in `authed_user.access_token`, NOT
+  // the top-level bot `access_token`. Validate it via auth.test, ensure it's the
+  // same workspace as the org bot, then upsert per (org, user) like google.
+  if (stored.kind === "user") {
+    const userToken = data?.authed_user?.access_token
+    if (!tokenRes.ok || !data?.ok || !userToken) {
+      return json({ error: data?.error ?? "USER_TOKEN_EXCHANGE_FAILED" }, 400)
+    }
+    const bot = await connectionForOrg(org.orgId)
+    if (bot?.status !== "connected") return json({ error: "NO_SLACK_CONNECTION" }, 404)
+    let test: { ok: boolean; user_id?: string; user?: string; team_id?: string }
+    try {
+      test = await slackApiRequest(userToken, "auth.test")
+    } catch (error) {
+      return json({ error: "USER_TOKEN_INVALID", detail: String(error) }, 400)
+    }
+    if (test.team_id && test.team_id !== bot.teamId) {
+      await audit({
+        orgId: org.orgId,
+        userId: org.actor,
+        connectionId: bot.id,
+        action: "user.connect",
+        status: "error",
+        detail: { reason: "team_mismatch", tokenTeam: test.team_id, botTeam: bot.teamId },
+      })
+      return json({ error: "TEAM_MISMATCH" }, 403)
+    }
+    const existingUser = await userConnectionFor(org.orgId, org.actor)
+    const userValues = {
+      orgId: org.orgId,
+      userId: org.actor,
+      teamId: test.team_id ?? bot.teamId,
+      slackUserId: test.user_id ?? data.authed_user?.id ?? null,
+      slackUserName: test.user ?? null,
+      userToken: encryptToken(userToken),
+      scopes: data.authed_user?.scope ?? "",
+      status: "connected",
+      disconnectedAt: null,
+      lastError: null,
+    }
+    const [userConn] = existingUser
+      ? await db
+          .update(slackUserConnection)
+          .set(userValues)
+          .where(eq(slackUserConnection.id, existingUser.id))
+          .returning()
+      : await db.insert(slackUserConnection).values(userValues).returning()
+    if (!userConn) return json({ error: "USER_CONNECTION_WRITE_FAILED" }, 500)
+    await audit({
+      orgId: org.orgId,
+      userId: org.actor,
+      connectionId: bot.id,
+      action: "user.connect",
+      subjectKind: "slack_user",
+      subjectId: userConn.slackUserId,
+      detail: { scope: data.authed_user?.scope },
+    })
+    return redirect(safeReturnTo(stored.returnTo))
+  }
+
   if (!tokenRes.ok || !data?.ok || !data.access_token || !data.team?.id) {
     return json({ error: data?.error ?? "TOKEN_EXCHANGE_FAILED" }, 400)
   }
@@ -370,11 +513,41 @@ export async function disconnectSlack(req: Request) {
     .update(slackConnection)
     .set({ status: "disconnected", botToken: null, disconnectedAt: new Date() })
     .where(eq(slackConnection.id, connection.id))
+  // "Slack is connected" is an org-level contract — disconnecting the bot also
+  // disconnects every per-user token so no live xoxp tokens are left orphaned.
+  await db
+    .update(slackUserConnection)
+    .set({ status: "disconnected", userToken: null, disconnectedAt: new Date() })
+    .where(eq(slackUserConnection.orgId, org.orgId))
   await audit({
     orgId: org.orgId,
     userId: org.actor,
     connectionId: connection.id,
     action: "disconnect",
+  })
+  return json({ ok: true })
+}
+
+export async function disconnectSlackUser(req: Request) {
+  const org = await resolveOrg(req)
+  if (!org.ok) return json({ error: org.code }, org.status)
+  const connection = await userConnectionFor(org.orgId, org.actor)
+  if (!connection) return json({ ok: true })
+  // Best-effort revoke at Slack before nulling — a revoked token is dead anyway.
+  if (connection.userToken) {
+    await slackApiRequest(decryptToken(connection.userToken) ?? "", "auth.revoke").catch(
+      () => undefined,
+    )
+  }
+  await db
+    .update(slackUserConnection)
+    .set({ status: "disconnected", userToken: null, disconnectedAt: new Date() })
+    .where(eq(slackUserConnection.id, connection.id))
+  await audit({
+    orgId: org.orgId,
+    userId: org.actor,
+    connectionId: connection.id,
+    action: "user.disconnect",
   })
   return json({ ok: true })
 }
@@ -394,8 +567,20 @@ export async function slackStatus(req: Request) {
   const c = config()
   const configured = Boolean(c.clientId && c.clientSecret && c.signingSecret)
   const connection = await connectionForOrg(org.orgId)
+  // Per-user token state for the current actor — surfaced regardless of bot state
+  // so the UI can show "Connect my account" once the org bot is connected.
+  const userConn = await userConnectionFor(org.orgId, org.actor)
+  const user =
+    userConn?.status === "connected"
+      ? {
+          connected: true as const,
+          slackUserId: userConn.slackUserId,
+          slackUserName: userConn.slackUserName,
+          scopes: splitScopes(userConn.scopes),
+        }
+      : { connected: false as const }
   if (connection?.status !== "connected") {
-    return json({ configured, connected: false })
+    return json({ configured, connected: false, user })
   }
   return json({
     configured,
@@ -409,6 +594,7 @@ export async function slackStatus(req: Request) {
     eventsUrl: inboundUrlFor("events"),
     commandsUrl: inboundUrlFor("commands"),
     interactivityUrl: inboundUrlFor("interactivity"),
+    user,
   })
 }
 
@@ -548,6 +734,52 @@ export async function postSlackMessageForRequest(req: Request) {
     return json({ ok: true, ts: result.ts ?? null, channel: result.channel ?? channel })
   } catch (error) {
     return json({ error: "POST_FAILED", detail: String(error) }, 502)
+  }
+}
+
+/**
+ * Post a message AS the current user (xoxp token) — the message is authored by
+ * the person, not the bot. Demonstrates the per-user token end-to-end; a revoked
+ * token flips the connection to `revoked` so the UI can prompt a reconnect.
+ */
+export async function postSlackMessageAsMeForRequest(req: Request) {
+  const org = await resolveOrg(req)
+  if (!org.ok) return json({ error: org.code }, org.status)
+  const connection = await userConnectionFor(org.orgId, org.actor)
+  if (connection?.status !== "connected") return json({ error: "NO_SLACK_USER_CONNECTION" }, 404)
+  const body = (await req.json().catch(() => null)) as {
+    channel?: string
+    text?: string
+    blocks?: unknown[]
+    threadTs?: string
+  } | null
+  const channel = body?.channel?.trim()
+  if (!channel) return json({ error: "CHANNEL_REQUIRED" }, 400)
+  if (!body?.text && !body?.blocks) return json({ error: "TEXT_OR_BLOCKS_REQUIRED" }, 400)
+  try {
+    const result = await postMessageAsUser(connection, channel, {
+      text: body.text,
+      blocks: body.blocks,
+      threadTs: body.threadTs,
+    })
+    await audit({
+      orgId: org.orgId,
+      userId: org.actor,
+      connectionId: connection.id,
+      action: "post_message.user",
+      subjectKind: "channel",
+      subjectId: channel,
+    })
+    return json({ ok: true, ts: result.ts ?? null, channel: result.channel ?? channel })
+  } catch (error) {
+    const message = String(error)
+    if (message.includes("token_revoked") || message.includes("invalid_auth")) {
+      await db
+        .update(slackUserConnection)
+        .set({ status: "revoked", lastError: message })
+        .where(eq(slackUserConnection.id, connection.id))
+    }
+    return json({ error: "POST_FAILED", detail: message }, 502)
   }
 }
 
