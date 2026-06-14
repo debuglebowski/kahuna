@@ -42,7 +42,7 @@ export const referencedConceptIds = (body: DashboardBody): string[] => {
 
 /** RGL layout array derived from the widgets (coords live inline on each). */
 export const widgetLayouts = (body: DashboardBody): GridItem[] =>
-  body.widgets.map((w) => ({ i: w.id, ...w.layout, minW: 2, minH: 2 }))
+  body.widgets.map((w) => ({ i: w.id, ...w.layout, minW: 2, minH: 1 }))
 
 /** Fold an RGL layout change back onto the body (match by widget id). Returns
  *  the same `body` reference when nothing actually moved — RGL fires its stop
@@ -171,6 +171,40 @@ export const newWidget = (body: DashboardBody, type: DashboardWidget["type"]): D
     case "files":
       return { ...scoped, type: "files", scope: "org" }
   }
+}
+
+/** Swap one widget for an entirely new object (same id). Unlike
+ *  {@link updateWidget}, this replaces rather than merges — the type switcher
+ *  needs the old type's config gone, not folded under the new discriminant. */
+export const replaceWidget = (
+  body: DashboardBody,
+  id: string,
+  widget: DashboardWidget,
+): DashboardBody => ({
+  ...body,
+  widgets: body.widgets.map((w) => (w.id === id ? widget : w)),
+})
+
+/** Recast a widget to a different type, keeping its id, layout, and title — and
+ *  carrying the concept over when both the old and new types are concept-scoped.
+ *  Every other type-specific field resets to the new type's defaults; a partial
+ *  merge would strand incompatible config under the new discriminant. */
+export const retypeWidget = (
+  existing: DashboardWidget,
+  type: DashboardWidget["type"],
+): DashboardWidget => {
+  // newWidget reads `body` only to pick a free slot — we keep the existing
+  // layout, so the slot it computes is discarded.
+  const fresh = newWidget({ widgets: [] }, type)
+  const carryConcept =
+    "conceptId" in existing && "conceptId" in fresh ? { conceptId: existing.conceptId } : null
+  return {
+    ...fresh,
+    id: existing.id,
+    layout: existing.layout,
+    title: existing.title,
+    ...carryConcept,
+  } as DashboardWidget
 }
 
 /** Format a widget's hero number: integers with thousands separators, else 2dp

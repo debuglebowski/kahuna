@@ -62,10 +62,12 @@ export function MetricWidget({
   const opts = { match: widget.match, me: session?.user.id ?? null }
   const value = metricValue(instances, widget.agg, widget.conditions, widget.field, opts)
   const field = widget.field ? data?.fields.find((f) => f.id === widget.field) : undefined
+  // A custom caption wins; otherwise auto-derive it from the aggregate.
   const sub =
-    widget.agg === "count"
+    widget.label?.trim() ||
+    (widget.agg === "count"
       ? concept.pluralName || concept.name
-      : `${widget.agg} of ${field?.name ?? "—"}`
+      : `${widget.agg} of ${field?.name ?? "—"}`)
 
   const format = widget.format ?? "plain"
   const currency = format === "currency" ? sniffCurrency(instances, widget.field) : undefined
@@ -130,10 +132,9 @@ export function MetricWidget({
       >
         {hero}
       </div>
-      <div className="mt-1 flex items-baseline gap-2">
-        <span className="min-w-0 truncate text-xs text-muted-foreground">{sub}</span>
-        {delta}
-      </div>
+      {/* Label and delta each on their own line, stacked under the number. */}
+      <div className="mt-1 min-w-0 truncate text-xs text-muted-foreground">{sub}</div>
+      {delta && <div className="mt-0.5">{delta}</div>}
     </div>
   )
 }

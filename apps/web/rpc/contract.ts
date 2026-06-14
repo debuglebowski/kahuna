@@ -396,6 +396,8 @@ const MetricWidget = Schema.Struct({
   ...ConditionMatch,
   agg: Schema.Literal("count", "sum", "avg"),
   field: Schema.optional(Schema.NullOr(Schema.String)),
+  /** Caption under the hero number; absent/empty = auto ("Deals" / "sum of X"). */
+  label: Schema.optional(Schema.NullOr(Schema.String)),
   /** `auto` renders the wide stat bar on short, wide tiles. */
   variant: Schema.optional(Schema.Literal("auto", "tile", "bar")),
   format: Schema.optional(Schema.Literal("plain", "compact", "currency", "percent")),

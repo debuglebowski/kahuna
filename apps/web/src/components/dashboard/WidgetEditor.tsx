@@ -13,6 +13,7 @@ import { KNOWN_EVENT_TYPES } from "@/lib/activity"
 import { api, type Concept, type DashboardWidget, type RichTextEnvelope } from "@/lib/api"
 import { taskStatusesCollection } from "@/lib/collections"
 import { capitalize } from "@/lib/fieldDisplay"
+import { WIDGET_CATALOG } from "@/lib/widgetCatalog"
 import { ConditionList, useFields } from "../ConditionList"
 import { RichTextEditor } from "../editor/RichTextEditor"
 import { MultiCombobox } from "../MultiCombobox"
@@ -51,19 +52,23 @@ const toggleIn = <T,>(
 
 /**
  * Configure one dashboard widget — the side panel of the dashboard edit modal's
- * Layout tab. Type is fixed at add-time. Controlled: every change patches the
- * parent's draft body immediately, so the canvas previews live (the draft only
- * persists when the modal saves). Filters reuse the shared `ConditionList`.
+ * Layout tab. The type dropdown up top recasts the widget in place (id, layout,
+ * title and concept survive; other config resets to the new type's defaults).
+ * Controlled: every change patches the parent's draft body immediately, so the
+ * canvas previews live (the draft only persists when the modal saves). Filters
+ * reuse the shared `ConditionList`.
  */
 export function WidgetEditor({
   widget,
   concepts,
   onChange,
+  onChangeType,
   onRemove,
 }: {
   widget: DashboardWidget
   concepts: readonly Concept[]
   onChange: (patch: Partial<DashboardWidget>) => void
+  onChangeType: (type: DashboardWidget["type"]) => void
   onRemove: () => void
 }) {
   const labelsQ = useQuery({ queryKey: ["labels"], queryFn: () => api.listLabels() })
@@ -102,7 +107,24 @@ export function WidgetEditor({
 
   return (
     <div className="space-y-4">
-      <h3 className="text-sm font-medium text-foreground capitalize">{widget.type} widget</h3>
+      <FieldRow label="Type">
+        <Select
+          value={widget.type}
+          onValueChange={(v) => onChangeType(v as DashboardWidget["type"])}
+        >
+          <SelectTrigger className="w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {WIDGET_CATALOG.map((m) => (
+              <SelectItem key={m.type} value={m.type}>
+                <m.icon size={14} />
+                {m.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </FieldRow>
 
       <FieldRow label="Title (optional)">
         <Input
@@ -175,6 +197,13 @@ export function WidgetEditor({
               </FieldRow>
             )}
           </div>
+          <FieldRow label="Label (optional)">
+            <Input
+              value={widget.label ?? ""}
+              placeholder="Auto from the aggregate"
+              onChange={(e) => patch({ label: e.target.value || null })}
+            />
+          </FieldRow>
           <div className="grid grid-cols-2 gap-3">
             <FieldRow label="Style">
               <Select

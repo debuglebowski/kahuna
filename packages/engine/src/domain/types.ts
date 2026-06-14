@@ -537,6 +537,8 @@ export interface MetricWidget extends WidgetBase {
   readonly agg: "count" | "sum" | "avg"
   /** Field id to sum/avg (ignored for count). */
   readonly field?: string | null
+  /** Caption under the hero number; absent/empty = auto ("Deals" / "sum of X"). */
+  readonly label?: string | null
   /** `auto` renders the wide stat bar on short, wide tiles. */
   readonly variant?: "auto" | "tile" | "bar"
   readonly format?: "plain" | "compact" | "currency" | "percent"

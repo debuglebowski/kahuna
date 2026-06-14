@@ -22,6 +22,8 @@ import {
   newWidget,
   referencedConceptIds,
   removeWidget,
+  replaceWidget,
+  retypeWidget,
   updateWidget,
 } from "@/lib/dashboards"
 import { useUnsavedGuard } from "@/lib/useUnsavedGuard"
@@ -405,6 +407,9 @@ export function DashboardEditor({
                     widget={editing}
                     concepts={concepts}
                     onChange={(p) => patchBody((b) => updateWidget(b, editing.id, p))}
+                    onChangeType={(type) =>
+                      patchBody((b) => replaceWidget(b, editing.id, retypeWidget(editing, type)))
+                    }
                     onRemove={() => {
                       patchBody((b) => removeWidget(b, editing.id))
                       setEditingId(null)

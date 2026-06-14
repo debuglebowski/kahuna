@@ -112,16 +112,17 @@ export function WidgetCanvas({
     )
   }
 
-  // A note can be title-less by design — don't fall back to the type name, and
-  // in read-only view drop the header row entirely (edit mode keeps it for the
-  // hover actions). Tasks' conceptId is a filter, not the tile's subject —
-  // its header stays the type name.
+  // A note can be title-less by design — don't fall back to the type name. A
+  // metric is the same: its body already names the concept (the sub line), so a
+  // concept-name header just duplicates it — title-only, no fallback. Tasks'
+  // conceptId is a filter, not the tile's subject — its header stays the type
+  // name.
   const headerLabel = (w: DashboardWidget): string =>
     w.title ||
-    ("conceptId" in w && w.conceptId && w.type !== "tasks"
+    ("conceptId" in w && w.conceptId && w.type !== "tasks" && w.type !== "metric"
       ? (cIndex.get(w.conceptId)?.name ?? "")
       : "") ||
-    (w.type === "note" ? "" : w.type)
+    (w.type === "note" || w.type === "metric" ? "" : w.type)
 
   return (
     <MeasuredGrid
