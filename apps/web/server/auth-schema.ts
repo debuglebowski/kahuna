@@ -887,3 +887,132 @@ export const apolloAuditLog = pgTable(
   (table) => [index("apollo_audit_log_org_idx").on(table.orgId, table.createdAt)],
 )
 
+/**
+ * Clay integration — an ASYNC, webhook/table-centric connector (the distinctive
+ * one of the five). Clay is not request/response: KM pushes a row into a Clay
+ * table via an inbound webhook URL, Clay enriches it, then Clay POSTs the
+ * enriched result back to a KM callback endpoint. Auth is therefore split:
+ *   - `tableWebhookUrl` — Clay-hosted inbound URL KM writes rows to (a secret in
+ *     itself; anyone holding it can write the table) → stored ENCRYPTED.
+ *   - `apiKey` — optional Clay REST key for future pull/list use → ENCRYPTED.
+ *   - `callbackSecret` — KM-generated bearer secret Clay must echo on callbacks;
+ *     verified timing-safe → stored ENCRYPTED, surfaced (decrypted) in the
+ *     callback URL the operator pastes into Clay.
+ * Net-new rows (Clay rows with no matching KM job) optionally auto-create
+ * instances onto `newRowConceptId` via `newRowMapping` ({clayColumn → fieldId});
+ * when unconfigured they are logged for review (see the open question in
+ * `clay.ts`). Tables follow the `apollo_*`/`linear_*` conventions. GENERIC: all
+ * mapping is by field id — no concept/field-name hardcoding.
+ */
+export const clayConnection = pgTable(
+  "clay_connection",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: text("org_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    // The user who connected — kept for audit/attribution and used as the actor
+    // for engine writes during session-less callbacks. Connection is org-scoped.
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    // Clay inbound table-webhook URL KM POSTs rows to, encrypted (nulled on disconnect).
+    tableWebhookUrl: text("table_webhook_url"),
+    // Optional Clay REST API key, encrypted (nulled on disconnect).
+    apiKey: text("api_key"),
+    // KM-generated secret Clay must present on callbacks, encrypted; the
+    // decrypted value is embedded in the callback URL shown to the operator.
+    callbackSecret: text("callback_secret"),
+    // Net-new row auto-create target (optional): a concept + {clayColumn → fieldId}.
+    newRowConceptId: text("new_row_concept_id"),
+    newRowMapping: jsonb("new_row_mapping").notNull().default({}),
+    status: text("status").notNull().default("connected"),
+    lastValidatedAt: timestamp("last_validated_at", { withTimezone: true }),
+    lastError: text("last_error"),
+    connectedAt: timestamp("connected_at", { withTimezone: true }).defaultNow().notNull(),
+    disconnectedAt: timestamp("disconnected_at", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .$onUpdate(() => /* @__PURE__ */ new Date())
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("clay_connection_org_uq").on(table.orgId),
+    index("clay_connection_status_idx").on(table.status),
+  ],
+)
+
+/**
+ * Correlation table for the async round-trip. `pushRow` inserts one row per
+ * outbound write; its `id` is the correlation id KM embeds in the Clay row and
+ * Clay echoes back on callback. `instanceId` is the KM instance being enriched
+ * (null for create-jobs); `mapping` is {clayColumn → fieldId} used to project
+ * the callback's enriched columns back onto instance fields.
+ */
+export const clayJob = pgTable(
+  "clay_job",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: text("org_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    connectionId: uuid("connection_id")
+      .notNull()
+      .references(() => clayConnection.id, { onDelete: "cascade" }),
+    // KM instance being enriched (null for a net-new create job).
+    instanceId: text("instance_id"),
+    // Target concept (the instance's concept for enrich; the create target otherwise).
+    conceptId: text("concept_id"),
+    mapping: jsonb("mapping").notNull().default({}),
+    direction: text("direction").notNull().default("enrich"),
+    status: text("status").notNull().default("pending"),
+    lastError: text("last_error"),
+    pushedAt: timestamp("pushed_at", { withTimezone: true }).defaultNow().notNull(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+  },
+  (table) => [
+    index("clay_job_org_idx").on(table.orgId, table.pushedAt),
+    index("clay_job_status_idx").on(table.status),
+    index("clay_job_instance_idx").on(table.instanceId),
+  ],
+)
+
+/**
+ * Inbound callback dedup + log, keyed by a per-connection delivery key (Clay's
+ * delivery id when present, else a sha of the raw body). Clay may re-deliver, so
+ * the unique key makes write-back idempotent. Mirrors `slack_event`.
+ */
+export const clayNotification = pgTable(
+  "clay_notification",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: text("org_id"),
+    connectionId: uuid("connection_id"),
+    dedupeKey: text("dedupe_key").notNull(),
+    jobId: text("job_id"),
+    kind: text("kind"),
+    payload: jsonb("payload").notNull().default({}),
+    receivedAt: timestamp("received_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("clay_notification_dedupe_uq").on(table.dedupeKey),
+    index("clay_notification_org_idx").on(table.orgId, table.receivedAt),
+  ],
+)
+
+export const clayAuditLog = pgTable(
+  "clay_audit_log",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    orgId: text("org_id").notNull(),
+    userId: text("user_id").notNull(),
+    connectionId: uuid("connection_id"),
+    action: text("action").notNull(),
+    status: text("status").notNull().default("ok"),
+    subjectKind: text("subject_kind"),
+    subjectId: text("subject_id"),
+    detail: jsonb("detail").notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [index("clay_audit_log_org_idx").on(table.orgId, table.createdAt)],
+)

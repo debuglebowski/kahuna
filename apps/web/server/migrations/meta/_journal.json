@@ -43,6 +43,13 @@
       "when": 1781395856119,
       "tag": "0005_long_wong",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1781396998189,
+      "tag": "0006_slippery_psynapse",
+      "breakpoints": true
     }
   ]
 }

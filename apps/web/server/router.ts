@@ -9,6 +9,13 @@ import {
 } from "./apollo"
 import { auth } from "./auth"
 import { member, user } from "./auth-schema"
+import {
+  clayStatus,
+  connectClay,
+  disconnectClay,
+  enrichForRequest as enrichClayForRequest,
+  handleClayCallback,
+} from "./clay"
 import { db, pool } from "./db"
 import {
   disconnectGoogle,
@@ -135,6 +142,18 @@ export const handleApi = async (req: Request): Promise<Response | null> => {
     if (seg[3] === "enrich" && m === "POST") return enrichInstanceForRequest(req)
     if (seg[3] === "search" && m === "POST") return searchForRequest(req)
     if (seg[3] === "import" && m === "POST") return importForRequest(req)
+  }
+
+  if (seg[1] === "integrations" && seg[2] === "clay") {
+    if (seg[3] === "connect" && m === "POST") return connectClay(req)
+    if (seg[3] === "status" && m === "GET") return clayStatus(req)
+    if (seg[3] === "disconnect" && m === "POST") return disconnectClay(req)
+    // Push an instance into the Clay table (async round-trip; enriched data
+    // returns via the callback below).
+    if (seg[3] === "enrich" && m === "POST") return enrichClayForRequest(req)
+    // Clay → KM enriched callback. No session: routed by ?cid= and verified by
+    // the shared callback secret (see handleClayCallback).
+    if (seg[3] === "callback" && m === "POST") return handleClayCallback(req)
   }
 
   // Multipart upload of a file onto an item lineage (reads/mutations of the
