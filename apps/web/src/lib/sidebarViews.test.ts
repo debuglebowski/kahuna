@@ -72,6 +72,8 @@ describe("globalsSection", () => {
     expect(s.entryIds).toEqual([
       "global:overview",
       "global:tasks",
+      "global:google-mail",
+      "global:google-calendar",
       "global:members",
       "global:automations",
       "global:settings",

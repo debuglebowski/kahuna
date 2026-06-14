@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query"
-import { Home, ListTodo, Settings, Users, Workflow } from "lucide-react"
+import { CalendarDays, Home, ListTodo, Mail, Settings, Users, Workflow } from "lucide-react"
 import { type ReactNode, useMemo } from "react"
 import {
   api,
@@ -28,6 +28,13 @@ export const GLOBAL_NAV: ReadonlyArray<{
 }> = [
   { key: "overview", label: "Overview", to: "/", icon: <Home size={16} /> },
   { key: "tasks", label: "Tasks", to: "/tasks", icon: <ListTodo size={16} /> },
+  { key: "google-mail", label: "Google Mail", to: "/google/mail", icon: <Mail size={16} /> },
+  {
+    key: "google-calendar",
+    label: "Google Calendar",
+    to: "/google/calendar",
+    icon: <CalendarDays size={16} />,
+  },
   { key: "members", label: "Members", to: "/members", icon: <Users size={16} /> },
   { key: "automations", label: "Automations", to: "/automations", icon: <Workflow size={16} /> },
   { key: "settings", label: "Settings", to: "/settings", icon: <Settings size={16} /> },

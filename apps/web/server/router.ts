@@ -2,6 +2,20 @@ import { and, eq, ilike } from "drizzle-orm"
 import { auth } from "./auth"
 import { member, user } from "./auth-schema"
 import { db, pool } from "./db"
+import {
+  disconnectGoogle,
+  getGoogleThread,
+  googleStatus,
+  handleCalendarPush,
+  handleGmailPush,
+  handleGoogleCallback,
+  handleGoogleConnect,
+  listGoogleCalendar,
+  listGoogleThreads,
+  sendGoogleMail,
+  syncGoogleForRequest,
+  upsertGoogleCalendarEvent,
+} from "./google"
 import { can } from "./policy"
 import type { UseCaseResult } from "./runtime"
 import { resolveOrg, roleOf, runScoped } from "./session"
@@ -21,6 +35,25 @@ export const handleApi = async (req: Request): Promise<Response | null> => {
   if (!p.startsWith("/api/")) return null
   const seg = p.split("/").filter(Boolean) // ["api", ...]
   const m = req.method
+
+  if (seg[1] === "integrations" && seg[2] === "google") {
+    if (seg[3] === "connect" && m === "GET") return handleGoogleConnect(req)
+    if (seg[3] === "callback" && m === "GET") return handleGoogleCallback(req)
+    if (seg[3] === "status" && m === "GET") return googleStatus(req)
+    if (seg[3] === "disconnect" && m === "POST") return disconnectGoogle(req)
+    if (seg[3] === "sync" && m === "POST") return syncGoogleForRequest(req)
+    if (seg[3] === "calendar" && seg[4] === "push" && m === "POST") return handleCalendarPush(req)
+    if (seg[3] === "calendar" && !seg[4] && m === "GET") return listGoogleCalendar(req)
+    if (seg[3] === "calendar" && !seg[4] && m === "POST") return upsertGoogleCalendarEvent(req)
+    if (seg[3] === "calendar" && seg[4] && m === "PATCH")
+      return upsertGoogleCalendarEvent(req, seg[4])
+    if (seg[3] === "gmail" && seg[4] === "push" && m === "POST") return handleGmailPush(req)
+    if (seg[3] === "gmail" && seg[4] === "threads" && !seg[5] && m === "GET")
+      return listGoogleThreads(req)
+    if (seg[3] === "gmail" && seg[4] === "threads" && seg[5] && m === "GET")
+      return getGoogleThread(req, seg[5])
+    if (seg[3] === "gmail" && seg[4] === "send" && m === "POST") return sendGoogleMail(req)
+  }
 
   // Multipart upload of a file onto an item lineage (reads/mutations of the
   // metadata are typed RPCs — listFiles/archiveFile/restoreFile/deleteFile).

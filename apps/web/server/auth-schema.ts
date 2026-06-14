@@ -1,5 +1,16 @@
 import { relations } from "drizzle-orm"
-import { boolean, index, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core"
+import {
+  bigserial,
+  boolean,
+  index,
+  integer,
+  jsonb,
+  pgTable,
+  text,
+  timestamp,
+  uniqueIndex,
+  uuid,
+} from "drizzle-orm/pg-core"
 
 /**
  * BetterAuth identity tables. The SQL table names are `bauth_`-prefixed so they
@@ -136,6 +147,248 @@ export const invitation = pgTable(
   ],
 )
 
+export const googleConnection = pgTable(
+  "google_connection",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: text("org_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    googleAccountId: text("google_account_id"),
+    email: text("email"),
+    scopes: text("scopes").notNull().default(""),
+    accessToken: text("access_token"),
+    refreshToken: text("refresh_token"),
+    accessTokenExpiresAt: timestamp("access_token_expires_at", { withTimezone: true }),
+    status: text("status").notNull().default("connected"),
+    lastSyncAt: timestamp("last_sync_at", { withTimezone: true }),
+    lastError: text("last_error"),
+    connectedAt: timestamp("connected_at", { withTimezone: true }).defaultNow().notNull(),
+    disconnectedAt: timestamp("disconnected_at", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .$onUpdate(() => /* @__PURE__ */ new Date())
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("google_connection_org_user_uq").on(table.orgId, table.userId),
+    index("google_connection_status_idx").on(table.status),
+  ],
+)
+
+export const googleOAuthState = pgTable(
+  "google_oauth_state",
+  {
+    state: text("state").primaryKey(),
+    orgId: text("org_id").notNull(),
+    userId: text("user_id").notNull(),
+    scopes: text("scopes").notNull(),
+    returnTo: text("return_to").notNull().default("/settings/integrations"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    index("google_oauth_state_exp_idx").on(table.expiresAt),
+    index("google_oauth_state_user_idx").on(table.orgId, table.userId),
+  ],
+)
+
+export const googleCalendarSync = pgTable(
+  "google_calendar_sync",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    connectionId: uuid("connection_id")
+      .notNull()
+      .references(() => googleConnection.id, { onDelete: "cascade" }),
+    calendarId: text("calendar_id").notNull().default("primary"),
+    syncToken: text("sync_token"),
+    watchChannelId: text("watch_channel_id"),
+    watchResourceId: text("watch_resource_id"),
+    watchToken: text("watch_token"),
+    watchExpiresAt: timestamp("watch_expires_at", { withTimezone: true }),
+    lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
+    lastError: text("last_error"),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .$onUpdate(() => /* @__PURE__ */ new Date())
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("google_calendar_sync_conn_calendar_uq").on(table.connectionId, table.calendarId),
+    index("google_calendar_watch_exp_idx").on(table.watchExpiresAt),
+  ],
+)
+
+export const googleCalendarEvent = pgTable(
+  "google_calendar_event",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    connectionId: uuid("connection_id")
+      .notNull()
+      .references(() => googleConnection.id, { onDelete: "cascade" }),
+    orgId: text("org_id").notNull(),
+    userId: text("user_id").notNull(),
+    calendarId: text("calendar_id").notNull().default("primary"),
+    googleEventId: text("google_event_id").notNull(),
+    etag: text("etag"),
+    status: text("status"),
+    summary: text("summary"),
+    description: text("description"),
+    location: text("location"),
+    htmlLink: text("html_link"),
+    startAt: timestamp("start_at", { withTimezone: true }),
+    endAt: timestamp("end_at", { withTimezone: true }),
+    allDay: boolean("all_day").notNull().default(false),
+    attendees: jsonb("attendees").notNull().default([]),
+    raw: jsonb("raw").notNull().default({}),
+    googleUpdatedAt: timestamp("google_updated_at", { withTimezone: true }),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    syncedAt: timestamp("synced_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("google_calendar_event_provider_uq").on(
+      table.connectionId,
+      table.calendarId,
+      table.googleEventId,
+    ),
+    index("google_calendar_event_list_idx").on(table.orgId, table.userId, table.startAt),
+  ],
+)
+
+export const googleGmailSync = pgTable(
+  "google_gmail_sync",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    connectionId: uuid("connection_id")
+      .notNull()
+      .references(() => googleConnection.id, { onDelete: "cascade" }),
+    historyId: text("history_id"),
+    watchExpiration: timestamp("watch_expiration", { withTimezone: true }),
+    lastFullSyncAt: timestamp("last_full_sync_at", { withTimezone: true }),
+    lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
+    lastError: text("last_error"),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .$onUpdate(() => /* @__PURE__ */ new Date())
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("google_gmail_sync_conn_uq").on(table.connectionId),
+    index("google_gmail_watch_exp_idx").on(table.watchExpiration),
+  ],
+)
+
+export const googleGmailThread = pgTable(
+  "google_gmail_thread",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    connectionId: uuid("connection_id")
+      .notNull()
+      .references(() => googleConnection.id, { onDelete: "cascade" }),
+    orgId: text("org_id").notNull(),
+    userId: text("user_id").notNull(),
+    threadId: text("thread_id").notNull(),
+    historyId: text("history_id"),
+    subject: text("subject"),
+    snippet: text("snippet"),
+    fromEmail: text("from_email"),
+    lastMessageAt: timestamp("last_message_at", { withTimezone: true }),
+    labelIds: jsonb("label_ids").notNull().default([]),
+    raw: jsonb("raw").notNull().default({}),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    syncedAt: timestamp("synced_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("google_gmail_thread_provider_uq").on(table.connectionId, table.threadId),
+    index("google_gmail_thread_list_idx").on(table.orgId, table.userId, table.lastMessageAt),
+  ],
+)
+
+export const googleGmailMessage = pgTable(
+  "google_gmail_message",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    connectionId: uuid("connection_id")
+      .notNull()
+      .references(() => googleConnection.id, { onDelete: "cascade" }),
+    orgId: text("org_id").notNull(),
+    userId: text("user_id").notNull(),
+    messageId: text("message_id").notNull(),
+    threadId: text("thread_id").notNull(),
+    historyId: text("history_id"),
+    subject: text("subject"),
+    fromEmail: text("from_email"),
+    toEmail: text("to_email"),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    snippet: text("snippet"),
+    labelIds: jsonb("label_ids").notNull().default([]),
+    payload: jsonb("payload").notNull().default({}),
+    bodyText: text("body_text"),
+    bodyHtml: text("body_html"),
+    raw: jsonb("raw").notNull().default({}),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    syncedAt: timestamp("synced_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("google_gmail_message_provider_uq").on(table.connectionId, table.messageId),
+    index("google_gmail_message_thread_idx").on(table.connectionId, table.threadId),
+  ],
+)
+
+export const googleObjectLink = pgTable(
+  "google_object_link",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: text("org_id").notNull(),
+    userId: text("user_id").notNull(),
+    providerKind: text("provider_kind").notNull(),
+    providerId: text("provider_id").notNull(),
+    itemId: text("item_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("google_object_link_uq").on(
+      table.orgId,
+      table.userId,
+      table.providerKind,
+      table.providerId,
+      table.itemId,
+    ),
+    index("google_object_link_item_idx").on(table.orgId, table.itemId),
+  ],
+)
+
+export const googleNotification = pgTable(
+  "google_notification",
+  {
+    key: text("key").primaryKey(),
+    kind: text("kind").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [index("google_notification_exp_idx").on(table.expiresAt)],
+)
+
+export const googleAuditLog = pgTable(
+  "google_audit_log",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    orgId: text("org_id").notNull(),
+    userId: text("user_id").notNull(),
+    connectionId: uuid("connection_id"),
+    action: text("action").notNull(),
+    status: text("status").notNull().default("ok"),
+    subjectKind: text("subject_kind"),
+    subjectId: text("subject_id"),
+    detail: jsonb("detail").notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [index("google_audit_log_org_idx").on(table.orgId, table.createdAt)],
+)
+
 export const userRelations = relations(user, ({ many }) => ({
   sessions: many(session),
   accounts: many(account),
@@ -183,3 +436,4 @@ export const invitationRelations = relations(invitation, ({ one }) => ({
     references: [user.id],
   }),
 }))
+

@@ -3,6 +3,7 @@ import path from "node:path"
 import { healthCheck } from "@kingsmaker/engine"
 import { auth } from "./auth"
 import { startDecayTick } from "./decay-tick"
+import { startGoogleWatchRenewal } from "./google"
 import { handleApi } from "./router"
 import { rpcHandler } from "./rpc"
 import { AppRuntime } from "./runtime"
@@ -16,6 +17,7 @@ const DIST = path.resolve(import.meta.dirname, "../dist")
 // and the periodic decay tick that turns time-based band crossings into events.
 startHub()
 startDecayTick()
+startGoogleWatchRenewal()
 
 const server = Bun.serve({
   port,

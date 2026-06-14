@@ -84,6 +84,208 @@ const call = <A, E>(f: (client: Client) => Effect.Effect<A, E>): Promise<A> =>
 
 type Fields = Record<string, unknown>
 
+export interface GoogleStatus {
+  /** Server-side OAuth credentials present — false means the integration is disabled. */
+  readonly configured: boolean
+  readonly connected: boolean
+  readonly email?: string | null
+  readonly scopes?: ReadonlyArray<string>
+  readonly lastSyncAt?: string | null
+  readonly lastError?: string | null
+  readonly calendarWatchExpiresAt?: string | null
+  readonly gmailWatchExpiresAt?: string | null
+}
+
+export interface GoogleCalendarEvent {
+  readonly id: string
+  readonly summary: string | null
+  readonly description: string | null
+  readonly location: string | null
+  readonly start_at: string | null
+  readonly end_at: string | null
+  readonly all_day: boolean
+  readonly attendees: unknown
+  readonly html_link: string | null
+  readonly status: string | null
+}
+
+export interface GoogleThread {
+  readonly id: string
+  readonly subject: string | null
+  readonly snippet: string | null
+  readonly from_email: string | null
+  readonly last_message_at: string | null
+  readonly label_ids: ReadonlyArray<string>
+}
+
+export interface GoogleMessage {
+  readonly id: string
+  readonly subject: string | null
+  readonly from_email: string | null
+  readonly to_email: string | null
+  readonly sent_at: string | null
+  readonly snippet: string | null
+  readonly body_text: string | null
+  readonly body_html: string | null
+  readonly label_ids: ReadonlyArray<string>
+}
+
+export type PosthogRegion = "us" | "eu" | "custom"
+
+export interface PosthogStatus {
+  /** PostHog is key-based (no server OAuth creds), so this is always true. */
+  readonly configured: boolean
+  readonly connected: boolean
+  readonly host?: string
+  readonly region?: PosthogRegion
+  readonly projectId?: string
+  readonly projectName?: string | null
+  readonly lastSyncAt?: string | null
+  readonly lastError?: string | null
+  readonly webhookUrl?: string | null
+}
+
+export interface PosthogConnectInput {
+  readonly apiKey: string
+  readonly region: PosthogRegion
+  /** Required when region is "custom" (a self-hosted https origin). */
+  readonly host?: string
+  /** Optional — if omitted the first accessible project is bound. */
+  readonly projectId?: string
+}
+
+export interface PosthogPerson {
+  readonly distinct_id: string
+  readonly person_id: string | null
+  readonly email: string | null
+  readonly name: string | null
+  readonly event_count: number
+  readonly first_seen_at: string | null
+  readonly last_seen_at: string | null
+  readonly synced_at: string | null
+}
+
+export interface LinearStatus {
+  /** Linear is key-based (no server OAuth creds), so this is always true. */
+  readonly configured: boolean
+  readonly connected: boolean
+  readonly viewerId?: string | null
+  readonly viewerName?: string | null
+  readonly lastSyncAt?: string | null
+  readonly lastError?: string | null
+  readonly webhookUrl?: string | null
+  /** Whether a webhook signing secret is stored (required to accept webhooks). */
+  readonly webhookConfigured?: boolean
+}
+
+export interface LinearConnectInput {
+  readonly apiKey: string
+  /** Optional Linear webhook signing secret (enables the inbound receiver). */
+  readonly webhookSecret?: string
+}
+
+export interface LinearIssue {
+  readonly linear_id: string
+  readonly identifier: string | null
+  readonly title: string | null
+  readonly state: string | null
+  readonly state_type: string | null
+  readonly assignee_name: string | null
+  readonly team_key: string | null
+  readonly priority: number | null
+  readonly url: string | null
+  readonly updated_at: string | null
+  readonly synced_at: string | null
+}
+
+export interface SlackStatus {
+  /** Slack is OAuth-based: reflects SLACK_CLIENT_ID/SECRET + SIGNING_SECRET env. */
+  readonly configured: boolean
+  readonly connected: boolean
+  readonly teamId?: string
+  readonly teamName?: string | null
+  readonly botUserId?: string | null
+  readonly scopes?: ReadonlyArray<string>
+  readonly lastSyncAt?: string | null
+  readonly lastError?: string | null
+  /** Inbound URLs to paste into the Slack app config (events/slash/interactivity). */
+  readonly eventsUrl?: string | null
+  readonly commandsUrl?: string | null
+  readonly interactivityUrl?: string | null
+}
+
+export interface SlackChannel {
+  readonly channelId: string
+  readonly name: string | null
+  readonly isPrivate: boolean
+  readonly isArchived: boolean
+}
+
+export interface ApolloEnrichmentField {
+  readonly key: string
+  readonly label: string
+}
+
+export interface ApolloStatus {
+  /** Apollo is key-based (no server OAuth creds), so this is always true. */
+  readonly configured: boolean
+  readonly connected: boolean
+  readonly lastValidatedAt?: string | null
+  readonly lastError?: string | null
+  /** Catalog of Apollo enrichment keys the operator can map to KM field ids. */
+  readonly enrichmentFields?: ReadonlyArray<ApolloEnrichmentField>
+}
+
+/** A normalized Apollo person — a flat map of enrichment key → value. */
+export type ApolloPerson = Readonly<Record<string, string | number | null>>
+
+export interface ApolloEnrichResult {
+  readonly ok: boolean
+  readonly matched: boolean
+  readonly updated: boolean
+  readonly cached?: boolean
+  readonly fields: ReadonlyArray<string>
+  readonly enrichment?: ApolloPerson
+}
+
+export interface ApolloSearchResult {
+  readonly people: ReadonlyArray<ApolloPerson>
+  readonly pagination: {
+    page?: number
+    perPage?: number
+    totalEntries?: number
+    totalPages?: number
+  } | null
+}
+
+export interface ApolloImportResult {
+  readonly ok: boolean
+  readonly created: ReadonlyArray<string>
+  readonly skipped: number
+  readonly errors: ReadonlyArray<{ index: number; code: string }>
+}
+
+export interface ClayStatus {
+  /** Clay is webhook/key-based (no server OAuth creds), so this is always true. */
+  readonly configured: boolean
+  readonly connected: boolean
+  /** Callback URL (incl. routing id + secret token) to paste into Clay. */
+  readonly callbackUrl?: string
+  readonly hasTableWebhook?: boolean
+  readonly hasApiKey?: boolean
+  readonly newRowConceptId?: string | null
+  readonly newRowAutoCreate?: boolean
+  readonly lastValidatedAt?: string | null
+  readonly lastError?: string | null
+}
+
+/** Result of pushing an instance into Clay (async — enriched data returns later). */
+export interface ClayEnrichResult {
+  readonly ok: boolean
+  /** Correlation id KM embeds in the row and Clay echoes on callback. */
+  readonly jobId: string
+}
+
 /** Typed, end-to-end client — replaces the old hand-written fetch wrappers. */
 export const api = {
   listConcepts: (opts?: { includeArchived?: boolean; withCounts?: boolean }) =>
@@ -331,6 +533,311 @@ export const api = {
   fileDownloadUrl: (id: string) => `/api/attachments/${id}/download`,
   /** Inline render (img/pdf preview) — same bytes, inline disposition. */
   fileInlineUrl: (id: string) => `/api/attachments/${id}/download?inline=1`,
+  // ── Google integration ──────────────────────────────────────────────────────
+  getGoogleStatus: async (): Promise<GoogleStatus> => {
+    const res = await fetch("/api/integrations/google/status")
+    if (!res.ok) throw new Error("Failed to load Google status")
+    return (await res.json()) as GoogleStatus
+  },
+  disconnectGoogle: async (): Promise<void> => {
+    const res = await fetch("/api/integrations/google/disconnect", { method: "POST" })
+    if (!res.ok) throw new Error("Failed to disconnect Google")
+  },
+  syncGoogle: async (): Promise<void> => {
+    const res = await fetch("/api/integrations/google/sync", { method: "POST" })
+    if (!res.ok) throw new Error("Failed to sync Google")
+  },
+  listGoogleCalendarEvents: async (): Promise<ReadonlyArray<GoogleCalendarEvent>> => {
+    const res = await fetch("/api/integrations/google/calendar")
+    if (!res.ok) throw new Error("Failed to load Google Calendar")
+    const body = (await res.json()) as { events: ReadonlyArray<GoogleCalendarEvent> }
+    return body.events
+  },
+  listGoogleThreads: async (): Promise<ReadonlyArray<GoogleThread>> => {
+    const res = await fetch("/api/integrations/google/gmail/threads")
+    if (!res.ok) throw new Error("Failed to load Gmail threads")
+    const body = (await res.json()) as { threads: ReadonlyArray<GoogleThread> }
+    return body.threads
+  },
+  getGoogleThread: async (threadId: string): Promise<ReadonlyArray<GoogleMessage>> => {
+    const res = await fetch(`/api/integrations/google/gmail/threads/${encodeURIComponent(threadId)}`)
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null
+      if (body?.error === "GMAIL_READ_SCOPE_REQUIRED") throw new Error("GMAIL_READ_SCOPE_REQUIRED")
+      throw new Error("Failed to load Gmail thread")
+    }
+    const body = (await res.json()) as { messages: ReadonlyArray<GoogleMessage> }
+    return body.messages
+  },
+  sendGoogleMessage: async (input: {
+    to: string
+    subject: string
+    text: string
+    threadId?: string
+  }): Promise<{ id: string; threadId: string | null }> => {
+    const res = await fetch("/api/integrations/google/gmail/send", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    })
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null
+      if (body?.error === "GMAIL_SEND_SCOPE_REQUIRED") throw new Error("GMAIL_SEND_SCOPE_REQUIRED")
+      throw new Error("Failed to send Gmail message")
+    }
+    return (await res.json()) as { id: string; threadId: string | null }
+  },
+  // ── PostHog integration ──────────────────────────────────────────────────────
+  getPosthogStatus: async (): Promise<PosthogStatus> => {
+    const res = await fetch("/api/integrations/posthog/status")
+    if (!res.ok) throw new Error("Failed to load PostHog status")
+    return (await res.json()) as PosthogStatus
+  },
+  connectPosthog: async (input: PosthogConnectInput): Promise<PosthogStatus> => {
+    const res = await fetch("/api/integrations/posthog/connect", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    })
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null
+      throw new Error(body?.error ?? "Failed to connect PostHog")
+    }
+    return (await res.json()) as PosthogStatus
+  },
+  disconnectPosthog: async (): Promise<void> => {
+    const res = await fetch("/api/integrations/posthog/disconnect", { method: "POST" })
+    if (!res.ok) throw new Error("Failed to disconnect PostHog")
+  },
+  syncPosthog: async (): Promise<void> => {
+    const res = await fetch("/api/integrations/posthog/sync", { method: "POST" })
+    if (!res.ok) throw new Error("Failed to sync PostHog")
+  },
+  listPosthogPersons: async (): Promise<ReadonlyArray<PosthogPerson>> => {
+    const res = await fetch("/api/integrations/posthog/persons")
+    if (!res.ok) throw new Error("Failed to load PostHog persons")
+    const body = (await res.json()) as { persons: ReadonlyArray<PosthogPerson> }
+    return body.persons
+  },
+  // ── Linear integration ─────────────────────────────────────────────────────────
+  getLinearStatus: async (): Promise<LinearStatus> => {
+    const res = await fetch("/api/integrations/linear/status")
+    if (!res.ok) throw new Error("Failed to load Linear status")
+    return (await res.json()) as LinearStatus
+  },
+  connectLinear: async (input: LinearConnectInput): Promise<LinearStatus> => {
+    const res = await fetch("/api/integrations/linear/connect", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    })
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null
+      throw new Error(body?.error ?? "Failed to connect Linear")
+    }
+    return (await res.json()) as LinearStatus
+  },
+  disconnectLinear: async (): Promise<void> => {
+    const res = await fetch("/api/integrations/linear/disconnect", { method: "POST" })
+    if (!res.ok) throw new Error("Failed to disconnect Linear")
+  },
+  syncLinear: async (): Promise<void> => {
+    const res = await fetch("/api/integrations/linear/sync", { method: "POST" })
+    if (!res.ok) throw new Error("Failed to sync Linear")
+  },
+  listLinearIssues: async (): Promise<ReadonlyArray<LinearIssue>> => {
+    const res = await fetch("/api/integrations/linear/issues")
+    if (!res.ok) throw new Error("Failed to load Linear issues")
+    const body = (await res.json()) as { issues: ReadonlyArray<LinearIssue> }
+    return body.issues
+  },
+  updateLinearIssue: async (
+    issueId: string,
+    input: Record<string, unknown>,
+  ): Promise<{ issue: LinearIssue | null }> => {
+    const res = await fetch(`/api/integrations/linear/issues/${encodeURIComponent(issueId)}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ input }),
+    })
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null
+      throw new Error(body?.error ?? "Failed to update Linear issue")
+    }
+    return (await res.json()) as { issue: LinearIssue | null }
+  },
+  closeLinearIssue: async (issueId: string): Promise<{ issue: LinearIssue | null }> => {
+    const res = await fetch(
+      `/api/integrations/linear/issues/${encodeURIComponent(issueId)}/close`,
+      { method: "POST" },
+    )
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null
+      throw new Error(body?.error ?? "Failed to close Linear issue")
+    }
+    return (await res.json()) as { issue: LinearIssue | null }
+  },
+  // ── Slack integration ────────────────────────────────────────────────────────
+  getSlackStatus: async (): Promise<SlackStatus> => {
+    const res = await fetch("/api/integrations/slack/status")
+    if (!res.ok) throw new Error("Failed to load Slack status")
+    return (await res.json()) as SlackStatus
+  },
+  disconnectSlack: async (): Promise<void> => {
+    const res = await fetch("/api/integrations/slack/disconnect", { method: "POST" })
+    if (!res.ok) throw new Error("Failed to disconnect Slack")
+  },
+  syncSlack: async (): Promise<void> => {
+    const res = await fetch("/api/integrations/slack/sync", { method: "POST" })
+    if (!res.ok) throw new Error("Failed to sync Slack")
+  },
+  listSlackChannels: async (): Promise<ReadonlyArray<SlackChannel>> => {
+    const res = await fetch("/api/integrations/slack/channels")
+    if (!res.ok) throw new Error("Failed to load Slack channels")
+    const body = (await res.json()) as { channels: ReadonlyArray<SlackChannel> }
+    return body.channels
+  },
+  postSlackMessage: async (input: {
+    channel: string
+    text?: string
+    blocks?: unknown[]
+    threadTs?: string
+  }): Promise<{ ok: boolean; ts: string | null; channel: string }> => {
+    const res = await fetch("/api/integrations/slack/post", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    })
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null
+      throw new Error(body?.error ?? "Failed to post Slack message")
+    }
+    return (await res.json()) as { ok: boolean; ts: string | null; channel: string }
+  },
+  // ── Apollo integration ─────────────────────────────────────────────────────────
+  getApolloStatus: async (): Promise<ApolloStatus> => {
+    const res = await fetch("/api/integrations/apollo/status")
+    if (!res.ok) throw new Error("Failed to load Apollo status")
+    return (await res.json()) as ApolloStatus
+  },
+  connectApollo: async (apiKey: string): Promise<ApolloStatus> => {
+    const res = await fetch("/api/integrations/apollo/connect", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ apiKey }),
+    })
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null
+      throw new Error(body?.error ?? "Failed to connect Apollo")
+    }
+    return (await res.json()) as ApolloStatus
+  },
+  disconnectApollo: async (): Promise<void> => {
+    const res = await fetch("/api/integrations/apollo/disconnect", { method: "POST" })
+    if (!res.ok) throw new Error("Failed to disconnect Apollo")
+  },
+  /** Enrich an instance's fields from Apollo via an {apolloKey → fieldId} mapping. */
+  enrichApolloInstance: async (input: {
+    instanceId: string
+    mapping: Record<string, string>
+    query?: Record<string, string>
+    overwrite?: boolean
+  }): Promise<ApolloEnrichResult> => {
+    const res = await fetch("/api/integrations/apollo/enrich", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    })
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null
+      throw new Error(body?.error ?? "Failed to enrich with Apollo")
+    }
+    return (await res.json()) as ApolloEnrichResult
+  },
+  searchApollo: async (params: {
+    q?: string
+    titles?: string[]
+    domains?: string[]
+    locations?: string[]
+    page?: number
+    perPage?: number
+  }): Promise<ApolloSearchResult> => {
+    const res = await fetch("/api/integrations/apollo/search", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(params),
+    })
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null
+      throw new Error(body?.error ?? "Failed to search Apollo")
+    }
+    return (await res.json()) as ApolloSearchResult
+  },
+  /** Bulk-import search results as new instances onto a concept via a mapping. */
+  importApollo: async (input: {
+    conceptId: string
+    mapping: Record<string, string>
+    people: ReadonlyArray<ApolloPerson>
+  }): Promise<ApolloImportResult> => {
+    const res = await fetch("/api/integrations/apollo/import", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    })
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null
+      throw new Error(body?.error ?? "Failed to import Apollo results")
+    }
+    return (await res.json()) as ApolloImportResult
+  },
+  // ── Clay integration ────────────────────────────────────────────────────────────
+  getClayStatus: async (): Promise<ClayStatus> => {
+    const res = await fetch("/api/integrations/clay/status")
+    if (!res.ok) throw new Error("Failed to load Clay status")
+    return (await res.json()) as ClayStatus
+  },
+  connectClay: async (input: {
+    tableWebhookUrl: string
+    apiKey?: string
+    newRowConceptId?: string
+    newRowMapping?: Record<string, string>
+  }): Promise<ClayStatus> => {
+    const res = await fetch("/api/integrations/clay/connect", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    })
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null
+      throw new Error(body?.error ?? "Failed to connect Clay")
+    }
+    return (await res.json()) as ClayStatus
+  },
+  disconnectClay: async (): Promise<void> => {
+    const res = await fetch("/api/integrations/clay/disconnect", { method: "POST" })
+    if (!res.ok) throw new Error("Failed to disconnect Clay")
+  },
+  /**
+   * Push an instance into the Clay table via a {clayColumn → fieldId} mapping.
+   * Async: enriched data returns later through the Clay callback. (The Details-tile
+   * "Send to Clay" button + mapping picker is a deferred follow-up.)
+   */
+  sendInstanceToClay: async (input: {
+    instanceId: string
+    mapping: Record<string, string>
+    extra?: Record<string, unknown>
+  }): Promise<ClayEnrichResult> => {
+    const res = await fetch("/api/integrations/clay/enrich", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    })
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null
+      throw new Error(body?.error ?? "Failed to send to Clay")
+    }
+    return (await res.json()) as ClayEnrichResult
+  },
   // ── annotation layer: task statuses (admin) ───────────────────────────────────
   listTaskStatuses: (opts?: { includeArchived?: boolean }) =>
     call((c) => c.listTaskStatuses({ includeArchived: opts?.includeArchived })),

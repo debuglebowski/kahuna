@@ -4,6 +4,7 @@ import {
   LayoutDashboard,
   ListTodo,
   PanelLeft,
+  Plug,
   Shapes,
   Tags,
   UserRound,
@@ -39,6 +40,7 @@ export const SETTINGS_NAV: ReadonlyArray<SettingsGroup> = [
       { to: "concepts", label: "Concepts", admin: false, icon: <Shapes size={16} /> },
       { to: "labels", label: "Labels", admin: false, icon: <Tags size={16} /> },
       { to: "tasks", label: "Tasks", admin: false, icon: <ListTodo size={16} /> },
+      { to: "integrations", label: "Integrations", admin: false, icon: <Plug size={16} /> },
       { to: "sidebar", label: "Sidebar", admin: false, icon: <PanelLeft size={16} /> },
       {
         to: "dashboards",

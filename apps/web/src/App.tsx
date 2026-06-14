@@ -5,6 +5,8 @@ import { ErrorScreen, Spinner } from "./components/ui"
 import { useSession } from "./lib/auth-client"
 import { AuthPage } from "./pages/AuthPage"
 import { Dashboards } from "./pages/Dashboards"
+import { GoogleCalendar } from "./pages/GoogleCalendar"
+import { GoogleMail } from "./pages/GoogleMail"
 import { InstanceView } from "./pages/InstanceView"
 import { MemberProfile } from "./pages/MemberProfile"
 import { MembersDirectory } from "./pages/MembersDirectory"
@@ -12,6 +14,7 @@ import { Overview } from "./pages/Overview"
 import { Placeholder } from "./pages/Placeholder"
 import { Concepts } from "./pages/settings/Concepts"
 import { Dashboards as DashboardsSettings } from "./pages/settings/Dashboards"
+import { Integrations } from "./pages/settings/Integrations"
 import { Labels } from "./pages/settings/Labels"
 import { Organization } from "./pages/settings/Organization"
 import { Profile } from "./pages/settings/Profile"
@@ -40,6 +43,8 @@ export function App() {
         <Route path="/tasks" element={<Tasks />} />
         <Route path="/dashboards" element={<Dashboards />} />
         <Route path="/dashboards/:id" element={<Dashboards />} />
+        <Route path="/google/calendar" element={<GoogleCalendar />} />
+        <Route path="/google/mail" element={<GoogleMail />} />
         <Route path="/members" element={<MembersDirectory />} />
         <Route path="/members/:userId" element={<MemberProfile />} />
         <Route path="/automations" element={<Placeholder title="Automations" />} />
@@ -62,6 +67,7 @@ export function App() {
           <Route path="concepts-graph" element={<Navigate to="/settings/concepts" replace />} />
           <Route path="labels" element={<Labels />} />
           <Route path="tasks" element={<TasksSettings />} />
+          <Route path="integrations" element={<Integrations />} />
           <Route path="sidebar" element={<Views />} />
           <Route path="sidebar/:id" element={<Views />} />
           <Route path="dashboards" element={<DashboardsSettings />} />
