@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query"
-import type { InstanceViewPrefsBody, InstanceViewTile } from "../../rpc/contract"
+import type { Concept, InstanceViewPrefsBody, InstanceViewTile } from "../../rpc/contract"
 import { api } from "./api"
 import { queryClient } from "./queryClient"
 
@@ -151,18 +151,13 @@ export const INSTANCE_VIEWS: ReadonlyArray<InstanceViewDef> = [
   },
 ]
 
-export const DEFAULT_VIEW_KEY = INSTANCE_VIEWS[0]!.key
-
-/** A per-concept override may name a user-edited layout instead of a preset. */
-export const CUSTOM_VIEW_KEY = "custom"
-
-const known = (k: string | null | undefined): string | null =>
-  k && INSTANCE_VIEWS.some((v) => v.key === k) ? k : null
+/** The built-in default layout, used when a concept defines no layout of its own. */
+export const DEFAULT_VIEW: InstanceViewDef = INSTANCE_VIEWS[0]!
 
 const contentKeys = new Set<string>(TILE_CONTENT_KEYS)
 
-/** A stored custom tile, made renderable: unknown content keys (from a newer
- *  build) are dropped, coords clamped to the 12-col grid, empty tiles removed. */
+/** A stored tile, made renderable: unknown content keys (from a newer build)
+ *  are dropped, coords clamped to the 12-col grid, empty tiles removed. */
 export const sanitizeTiles = (tiles: ReadonlyArray<InstanceViewTile>): ViewTile[] =>
   tiles
     .map((t) => {
@@ -178,28 +173,14 @@ export const sanitizeTiles = (tiles: ReadonlyArray<InstanceViewTile>): ViewTile[
     })
     .filter((t) => t.contents.length > 0)
 
-export const customTiles = (body: InstanceViewPrefsBody, conceptId: string): ViewTile[] =>
-  sanitizeTiles(body.customByConcept[conceptId]?.tiles ?? [])
-
-/** Per-concept override (preset or a saved custom layout) → my default →
- *  built-in. Unknown keys and empty custom layouts fall through, not break. */
-export const resolveViewKey = (body: InstanceViewPrefsBody, conceptId: string): string => {
-  const override = body.byConcept[conceptId]
-  if (override === CUSTOM_VIEW_KEY && customTiles(body, conceptId).length > 0)
-    return CUSTOM_VIEW_KEY
-  return known(override) ?? known(body.defaultView) ?? DEFAULT_VIEW_KEY
-}
-
-export const viewByKey = (key: string): InstanceViewDef =>
-  INSTANCE_VIEWS.find((v) => v.key === key) ?? INSTANCE_VIEWS[0]!
-
-export const resolveView = (body: InstanceViewPrefsBody, conceptId: string): InstanceViewDef => {
-  const key = resolveViewKey(body, conceptId)
-  if (key === CUSTOM_VIEW_KEY) {
-    const tiles = customTiles(body, conceptId)
-    return { key, name: "Custom", tiles: () => tiles }
-  }
-  return viewByKey(key)
+/** The layout to render for this concept's instances: its org-wide default
+ *  layout (set in concept settings) if any tiles survive sanitizing, else the
+ *  built-in default preset. The canvas still prunes contents the concept can't
+ *  show (e.g. versions when versioning is off), so a stale saved layout reflows
+ *  rather than leaves holes. */
+export const conceptInstanceView = (concept: Concept): InstanceViewDef => {
+  const tiles = sanitizeTiles(concept.instanceView?.tiles ?? [])
+  return tiles.length > 0 ? { key: "concept", name: "Layout", tiles: () => tiles } : DEFAULT_VIEW
 }
 
 const EMPTY_PREFS: InstanceViewPrefsBody = { defaultView: null, byConcept: {}, customByConcept: {} }

@@ -24,9 +24,10 @@ function useIsWide() {
  */
 export function InstanceViewCanvas({ view, ctx }: { view: InstanceViewDef; ctx: InstanceCtx }) {
   const wide = useIsWide()
+  const caps = capsOf(ctx)
   const tiles = view
-    .tiles(capsOf(ctx))
-    .map((t) => ({ ...t, contents: availableContents(t.contents, ctx) }))
+    .tiles(caps)
+    .map((t) => ({ ...t, contents: availableContents(t.contents, caps) }))
     .filter((t) => t.contents.length > 0)
 
   if (!wide)

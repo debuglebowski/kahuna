@@ -1,70 +1,44 @@
 import { describe, expect, it } from "vitest"
-import type { InstanceViewPrefsBody } from "../../rpc/contract"
-import {
-  CUSTOM_VIEW_KEY,
-  DEFAULT_VIEW_KEY,
-  INSTANCE_VIEWS,
-  resolveView,
-  resolveViewKey,
-  sanitizeTiles,
-} from "./instanceViews"
+import type { Concept, InstanceViewLayout } from "../../rpc/contract"
+import { conceptInstanceView, DEFAULT_VIEW, INSTANCE_VIEWS, sanitizeTiles } from "./instanceViews"
 
-const body = (over: Partial<InstanceViewPrefsBody>): InstanceViewPrefsBody => ({
-  defaultView: null,
-  byConcept: {},
-  customByConcept: {},
-  ...over,
-})
+const concept = (instanceView: InstanceViewLayout | null): Concept =>
+  ({
+    id: "c1",
+    slug: "c1",
+    name: "Account",
+    pluralName: null,
+    description: null,
+    icon: null,
+    color: null,
+    managedBy: null,
+    staticLabelIds: [],
+    defaultLabelIds: [],
+    versioningEnabled: false,
+    instanceView,
+    archivedAt: null,
+  }) as Concept
 
-describe("resolveViewKey", () => {
-  it("falls through concept override → default → built-in", () => {
-    expect(resolveViewKey(body({}), "c1")).toBe(DEFAULT_VIEW_KEY)
-    expect(resolveViewKey(body({ defaultView: "document" }), "c1")).toBe("document")
-    expect(
-      resolveViewKey(body({ defaultView: "document", byConcept: { c1: "three-pane" } }), "c1"),
-    ).toBe("three-pane")
+describe("conceptInstanceView", () => {
+  it("falls back to the built-in default when no layout is stored", () => {
+    expect(conceptInstanceView(concept(null)).key).toBe(DEFAULT_VIEW.key)
   })
 
-  it("ignores unknown keys (a removed preset surviving in saved prefs)", () => {
-    expect(
-      resolveViewKey(body({ byConcept: { c1: "gone" }, defaultView: "also-gone" }), "c1"),
-    ).toBe(DEFAULT_VIEW_KEY)
-  })
-
-  it("resolves custom only when a non-empty layout is stored", () => {
-    const tiles = [{ id: "a", contents: ["details"], x: 0, y: 0, w: 6, h: 4 }]
-    expect(
-      resolveViewKey(
-        body({ byConcept: { c1: CUSTOM_VIEW_KEY }, customByConcept: { c1: { tiles } } }),
-        "c1",
-      ),
-    ).toBe(CUSTOM_VIEW_KEY)
-    // Dangling "custom" override with no layout falls back.
-    expect(resolveViewKey(body({ byConcept: { c1: CUSTOM_VIEW_KEY } }), "c1")).toBe(
-      DEFAULT_VIEW_KEY,
-    )
-    // A layout whose tiles all sanitize away counts as empty.
-    const junk = [{ id: "a", contents: ["from-the-future"], x: 0, y: 0, w: 6, h: 4 }]
-    expect(
-      resolveViewKey(
-        body({ byConcept: { c1: CUSTOM_VIEW_KEY }, customByConcept: { c1: { tiles: junk } } }),
-        "c1",
-      ),
-    ).toBe(DEFAULT_VIEW_KEY)
-  })
-})
-
-describe("resolveView", () => {
-  it("returns the custom layout's tiles regardless of concept caps", () => {
+  it("uses the concept's stored layout when tiles survive sanitizing", () => {
     const tiles = [{ id: "a", contents: ["details", "notes"], x: 0, y: 0, w: 8, h: 4 }]
-    const view = resolveView(
-      body({ byConcept: { c1: CUSTOM_VIEW_KEY }, customByConcept: { c1: { tiles } } }),
-      "c1",
-    )
-    expect(view.key).toBe(CUSTOM_VIEW_KEY)
+    const view = conceptInstanceView(concept({ tiles }))
+    expect(view.key).toBe("concept")
+    // A stored layout is fixed — caps don't re-flow it (the canvas prunes contents).
     expect(view.tiles({ versioned: false, hasDocuments: false })).toEqual(tiles)
   })
 
+  it("falls back when the stored layout sanitizes away (all-unknown contents)", () => {
+    const junk = [{ id: "a", contents: ["from-the-future"], x: 0, y: 0, w: 6, h: 4 }]
+    expect(conceptInstanceView(concept({ tiles: junk })).key).toBe(DEFAULT_VIEW.key)
+  })
+})
+
+describe("presets (templates)", () => {
   it("every preset yields tiles with and without versioning", () => {
     for (const v of INSTANCE_VIEWS) {
       expect(v.tiles({ versioned: true, hasDocuments: false }).length).toBeGreaterThan(0)

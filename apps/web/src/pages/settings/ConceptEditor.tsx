@@ -20,19 +20,20 @@ import {
   ChevronDown,
   Columns3,
   GripVertical,
+  LayoutDashboard,
   Pencil,
   Plus,
   SlidersHorizontal,
-  Tags,
   Trash2,
 } from "lucide-react"
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import { Link, useNavigate } from "react-router-dom"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Tabs, TabsContent } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { IconPicker } from "../../components/IconPicker"
+import { ConceptViewEditor } from "../../components/instance/ConceptViewEditor"
 import { LabelMultiSelect } from "../../components/LabelMultiSelect"
 import { usePageChrome } from "../../components/Layout"
 import {
@@ -43,6 +44,7 @@ import {
   ColorSwatchPicker,
   ConfirmDialog,
   IconButton,
+  InfoHint,
   Input,
   LabelChip,
   Modal,
@@ -51,8 +53,21 @@ import {
   TabBar,
   TabBarItem,
 } from "../../components/ui"
-import { api, type Concept, type Field, type Instance, type Label } from "../../lib/api"
+import {
+  api,
+  type Concept,
+  type Field,
+  type Instance,
+  type InstanceViewLayout,
+  type Label,
+} from "../../lib/api"
 import { ConceptIcon, DEFAULT_CONCEPT_ICON, DEFAULT_FIELD_ICON } from "../../lib/icons"
+import {
+  type ConceptCaps,
+  DEFAULT_VIEW,
+  sanitizeTiles,
+  type ViewTile,
+} from "../../lib/instanceViews"
 import { useUnsavedGuard } from "../../lib/useUnsavedGuard"
 import { showValue } from "../../lib/utils"
 import { FieldForm, type FieldFormValue, fieldKindLabel } from "./FieldForm"
@@ -223,7 +238,10 @@ export function ConceptEditor({
     versioningEnabled: concept.versioningEnabled,
   }))
   const [dirty, setDirty] = useState(false)
-  const { blocker, bypass } = useUnsavedGuard(dirty)
+  // The Layout tab keeps its own draft (saved via a separate, non-admin RPC), so
+  // its unsaved edits must also arm the navigation guard.
+  const [layoutDirty, setLayoutDirty] = useState(false)
+  const { blocker, bypass } = useUnsavedGuard(dirty || layoutDirty)
   const [tab, setTab] = useState("general")
   const [colorOpen, setColorOpen] = useState(false)
   const [showArchivedFields, setShowArchivedFields] = useState(false)
@@ -290,6 +308,36 @@ export function ConceptEditor({
   })
   const liveFields = fields.data?.filter((f) => !f.archivedAt) ?? []
   const archivedFields = fields.data?.filter((f) => f.archivedAt) ?? []
+
+  // Layout tab: the concept's default instance layout. Capabilities are read
+  // from the SAVED concept (not the unsaved General-tab draft), so tile
+  // availability tracks what instances actually show.
+  const hasDocuments = liveFields.some((f) => f.kind === "richtext")
+  const caps: ConceptCaps = useMemo(
+    () => ({ versioned: concept.versioningEnabled, hasDocuments }),
+    [concept.versioningEnabled, hasDocuments],
+  )
+  const savedTiles = useMemo(
+    () => sanitizeTiles(concept.instanceView?.tiles ?? []),
+    [concept.instanceView],
+  )
+  // No stored layout → seed the editor from the built-in default preset so it
+  // opens on the effective layout rather than a blank canvas.
+  const initialTiles: ViewTile[] = useMemo(
+    () => (savedTiles.length > 0 ? savedTiles : DEFAULT_VIEW.tiles(caps)),
+    [savedTiles, caps],
+  )
+  // Remount the editor whenever the stored layout changes (save / reset) so its
+  // baseline always reflects what's persisted.
+  const layoutKey = JSON.stringify(concept.instanceView ?? null)
+  const saveLayout = useMutation({
+    mutationFn: (layout: InstanceViewLayout | null) =>
+      api.setConceptInstanceView(concept.id, layout),
+    onSuccess: () => {
+      setLayoutDirty(false)
+      qc.invalidateQueries({ queryKey: ["concepts"] })
+    },
+  })
 
   const refetchFields = () => {
     qc.invalidateQueries({ queryKey: ["fields", concept.id, "withArchived"] })
@@ -491,12 +539,16 @@ export function ConceptEditor({
             <TabBarItem value="general" icon={<SlidersHorizontal size={16} />}>
               General
             </TabBarItem>
-            <TabBarItem value="labels" icon={<Tags size={16} />}>
-              Labels
-            </TabBarItem>
             <TabBarItem value="fields" icon={<Columns3 size={16} />}>
               Fields
             </TabBarItem>
+            {/* Managed concepts render the integration's own detail view, so a
+                custom layout would never show — hide the tab for them. */}
+            {!concept.managedBy && (
+              <TabBarItem value="layout" icon={<LayoutDashboard size={16} />}>
+                Layout
+              </TabBarItem>
+            )}
             {archivedCount > 0 && (
               <TabBarItem value="items" icon={<Archive size={16} />}>
                 Archived items ({archivedCount})
@@ -506,39 +558,50 @@ export function ConceptEditor({
 
           <TabsContent value="general" className="min-h-0 flex-1 overflow-y-auto pt-4 pb-24">
             <div className="space-y-4">
-              <div className="space-y-1.5">
-                <span className="block text-sm leading-none font-medium text-foreground">Name</span>
-                <div className="flex items-center gap-2">
+              <div className="flex items-start gap-3">
+                <div className="flex-1 space-y-1.5">
+                  <span className="block text-sm leading-none font-medium text-foreground">
+                    Name
+                  </span>
+                  <Input
+                    value={draft.name}
+                    onChange={(e) => patch({ name: e.target.value })}
+                    disabled={!admin}
+                  />
+                </div>
+                <div className="flex-1 space-y-1.5">
+                  <span className="flex items-center gap-1.5 text-sm leading-none font-medium text-foreground">
+                    Plural name
+                    <InfoHint
+                      text="Shown in the sidebar; falls back to the singular name when blank."
+                      label="Plural name — more info"
+                    />
+                  </span>
+                  <Input
+                    value={draft.pluralName}
+                    onChange={(e) => patch({ pluralName: e.target.value })}
+                    disabled={!admin}
+                    placeholder={draft.name ? `${draft.name}s` : "Plural name…"}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <span className="block text-sm leading-none font-medium text-foreground">
+                    Icon
+                  </span>
                   <IconPicker
                     value={draft.icon}
                     onChange={(icon) => patch({ icon })}
                     disabled={!admin}
                   />
-                  <Input
-                    value={draft.name}
-                    onChange={(e) => patch({ name: e.target.value })}
-                    disabled={!admin}
-                    className="flex-1"
-                  />
                 </div>
               </div>
               <div className="space-y-1.5">
-                <span className="block text-sm leading-none font-medium text-foreground">
-                  Plural name
-                </span>
-                <Input
-                  value={draft.pluralName}
-                  onChange={(e) => patch({ pluralName: e.target.value })}
-                  disabled={!admin}
-                  placeholder={draft.name ? `${draft.name}s` : "Plural name…"}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Shown in the sidebar; falls back to the singular name when blank.
-                </p>
-              </div>
-              <div className="space-y-1.5">
-                <span className="block text-sm leading-none font-medium text-foreground">
+                <span className="flex items-center gap-1.5 text-sm leading-none font-medium text-foreground">
                   Color
+                  <InfoHint
+                    text="Tints this concept's items in the relationship graph; none renders neutral."
+                    label="Color — more info"
+                  />
                 </span>
                 <Popover open={colorOpen} onOpenChange={setColorOpen}>
                   <PopoverTrigger asChild>
@@ -574,9 +637,6 @@ export function ConceptEditor({
                     </Button>
                   </PopoverContent>
                 </Popover>
-                <p className="text-xs text-muted-foreground">
-                  Tints this concept's items in the relationship graph; none renders neutral.
-                </p>
               </div>
               <div className="space-y-1.5">
                 <span className="block text-sm leading-none font-medium text-foreground">
@@ -590,27 +650,74 @@ export function ConceptEditor({
                 />
               </div>
 
-              <div className="border-t border-border pt-4">
-                <label htmlFor="versioning-toggle" className="flex items-start gap-3">
-                  <Checkbox
-                    id="versioning-toggle"
-                    checked={draft.versioningEnabled}
-                    disabled={!admin}
-                    onCheckedChange={(v) => patch({ versioningEnabled: v === true })}
-                    className="mt-0.5"
-                  />
-                  <span className="space-y-1">
-                    <span className="block text-sm font-medium text-foreground">
-                      Enable versioning
-                    </span>
-                    <span className="block text-xs text-muted-foreground">
-                      Items hold multiple draft → published versions. New items start as a draft and
-                      aren't shown or referenceable until published; lists show only the latest
-                      published version. Other items can reference "Latest" or pin a specific
-                      version.
-                    </span>
-                  </span>
+              <div className="flex items-center gap-3 border-t border-border pt-4">
+                <Checkbox
+                  id="versioning-toggle"
+                  checked={draft.versioningEnabled}
+                  disabled={!admin}
+                  onCheckedChange={(v) => patch({ versioningEnabled: v === true })}
+                />
+                <label htmlFor="versioning-toggle" className="text-sm font-medium text-foreground">
+                  Enable versioning
                 </label>
+                <InfoHint
+                  text={`Items hold multiple draft → published versions. New items start as a draft and aren't shown or referenceable until published; lists show only the latest published version. Other items can reference "Latest" or pin a specific version.`}
+                  label="Enable versioning — more info"
+                />
+              </div>
+
+              <div className="space-y-3 border-t border-border pt-4">
+                <span className="block text-sm leading-none font-medium text-foreground">
+                  Labels
+                </span>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5 rounded-md border border-border p-3">
+                    <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                      Always applied (static)
+                      <InfoHint
+                        text="Inherited by every item of this concept; can't be removed per item."
+                        label="Always applied labels — more info"
+                      />
+                    </span>
+                    {admin ? (
+                      <LabelMultiSelect
+                        all={labelVocab.data ?? []}
+                        selectedIds={draft.staticLabelIds}
+                        onChange={(ids) => patch({ staticLabelIds: ids })}
+                      />
+                    ) : (
+                      <ReadOnlyLabels ids={concept.staticLabelIds} vocab={labelVocab.data ?? []} />
+                    )}
+                  </div>
+                  <div className="space-y-1.5 rounded-md border border-border p-3">
+                    <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                      Default on new items
+                      <InfoHint
+                        text="Pre-applied when an item is created; editable per item afterward."
+                        label="Default labels — more info"
+                      />
+                    </span>
+                    {admin ? (
+                      <LabelMultiSelect
+                        all={labelVocab.data ?? []}
+                        selectedIds={draft.defaultLabelIds}
+                        onChange={(ids) => patch({ defaultLabelIds: ids })}
+                        excludeIds={draft.staticLabelIds}
+                      />
+                    ) : (
+                      <ReadOnlyLabels ids={concept.defaultLabelIds} vocab={labelVocab.data ?? []} />
+                    )}
+                  </div>
+                </div>
+                {admin && (labelVocab.data?.length ?? 0) === 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    No labels yet — create some in{" "}
+                    <Link to="/settings/labels" className="underline">
+                      Labels
+                    </Link>
+                    .
+                  </p>
+                )}
               </div>
 
               {admin && (
@@ -689,55 +796,6 @@ export function ConceptEditor({
             </div>
           </TabsContent>
 
-          <TabsContent value="labels" className="min-h-0 flex-1 overflow-y-auto pt-4 pb-24">
-            <div className="space-y-4">
-              <div className="space-y-1.5">
-                <span className="text-xs font-medium text-muted-foreground">
-                  Always applied (static)
-                </span>
-                <p className="text-xs text-muted-foreground">
-                  Inherited by every item of this concept; can't be removed per item.
-                </p>
-                {admin ? (
-                  <LabelMultiSelect
-                    all={labelVocab.data ?? []}
-                    selectedIds={draft.staticLabelIds}
-                    onChange={(ids) => patch({ staticLabelIds: ids })}
-                  />
-                ) : (
-                  <ReadOnlyLabels ids={concept.staticLabelIds} vocab={labelVocab.data ?? []} />
-                )}
-              </div>
-              <div className="space-y-1.5">
-                <span className="text-xs font-medium text-muted-foreground">
-                  Default on new items
-                </span>
-                <p className="text-xs text-muted-foreground">
-                  Pre-applied when an item is created; editable per item afterward.
-                </p>
-                {admin ? (
-                  <LabelMultiSelect
-                    all={labelVocab.data ?? []}
-                    selectedIds={draft.defaultLabelIds}
-                    onChange={(ids) => patch({ defaultLabelIds: ids })}
-                    excludeIds={draft.staticLabelIds}
-                  />
-                ) : (
-                  <ReadOnlyLabels ids={concept.defaultLabelIds} vocab={labelVocab.data ?? []} />
-                )}
-              </div>
-              {admin && (labelVocab.data?.length ?? 0) === 0 && (
-                <p className="text-xs text-muted-foreground">
-                  No labels yet — create some in{" "}
-                  <Link to="/settings/labels" className="underline">
-                    Labels
-                  </Link>
-                  .
-                </p>
-              )}
-            </div>
-          </TabsContent>
-
           <TabsContent value="fields" className="flex min-h-0 flex-1 flex-col">
             {admin && (
               <div className="flex shrink-0 items-center justify-between gap-2 border-b px-5 py-2.5">
@@ -803,6 +861,28 @@ export function ConceptEditor({
               )}
             </div>
           </TabsContent>
+
+          {!concept.managedBy && (
+            <TabsContent value="layout" className="flex min-h-0 flex-1 flex-col pt-4">
+              <p className="shrink-0 pb-3 text-xs text-muted-foreground">
+                The default detail layout for every {concept.name} item. Drag, resize and configure
+                tiles; a tile with more than one content shows them as tabs.
+              </p>
+              <ConceptViewEditor
+                key={layoutKey}
+                initialTiles={initialTiles}
+                caps={caps}
+                isDefault={concept.instanceView == null}
+                onSave={(tiles) => saveLayout.mutate({ tiles })}
+                onResetDefault={() => saveLayout.mutate(null)}
+                saving={saveLayout.isPending}
+                onDirtyChange={setLayoutDirty}
+              />
+              {saveLayout.error && (
+                <p className="shrink-0 pt-2 text-sm text-destructive">{msgOf(saveLayout.error)}</p>
+              )}
+            </TabsContent>
+          )}
 
           {archivedCount > 0 && (
             <TabsContent value="items" className="min-h-0 flex-1 overflow-y-auto pt-4 pb-24">

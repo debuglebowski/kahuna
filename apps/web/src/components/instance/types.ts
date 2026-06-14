@@ -1,6 +1,7 @@
 import type { LucideIcon } from "lucide-react"
 import type { FC } from "react"
 import type { Concept, Field, Instance, Label, RelatedInstance } from "../../lib/api"
+import type { ConceptCaps } from "../../lib/instanceViews"
 import type { OrgMember } from "../item/AssigneePicker"
 
 /** Everything a tile content may need, assembled once by the instance page.
@@ -28,8 +29,10 @@ export interface InstanceCtx {
 export interface TileContent {
   readonly title: string
   readonly Icon: LucideIcon
-  /** Pruned when unmet (e.g. versions on a non-versioned concept). */
-  readonly available?: (ctx: InstanceCtx) => boolean
+  /** Pruned when unmet (e.g. versions on a non-versioned concept). Keyed on
+   *  concept capabilities so it can be evaluated without a live instance (the
+   *  concept-settings layout editor has no instance to bind). */
+  readonly available?: (caps: ConceptCaps) => boolean
   /** Small count next to the title / tab label. */
   readonly Count?: FC<{ ctx: InstanceCtx }>
   /** Header-row actions (shown for the active tab on tabbed tiles). */

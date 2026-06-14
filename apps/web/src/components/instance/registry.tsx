@@ -67,7 +67,7 @@ export const TILE_CONTENTS: Record<TileContentKey, TileContent> = {
   document: {
     title: "Document",
     Icon: FileText,
-    available: hasRichText,
+    available: (caps) => caps.hasDocuments,
     Body: DocumentBody,
   },
   connected: {
@@ -87,7 +87,7 @@ export const TILE_CONTENTS: Record<TileContentKey, TileContent> = {
   versions: {
     title: "Versions",
     Icon: GitBranch,
-    available: (ctx) => ctx.concept.versioningEnabled,
+    available: (caps) => caps.versioned,
     Body: VersionsBody,
   },
   notes: {
@@ -138,5 +138,5 @@ export const TILE_CONTENTS: Record<TileContentKey, TileContent> = {
 
 export const availableContents = (
   contents: ReadonlyArray<TileContentKey>,
-  ctx: InstanceCtx,
-): TileContentKey[] => contents.filter((k) => TILE_CONTENTS[k].available?.(ctx) ?? true)
+  caps: ConceptCaps,
+): TileContentKey[] => contents.filter((k) => TILE_CONTENTS[k].available?.(caps) ?? true)

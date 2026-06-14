@@ -334,6 +334,9 @@ const HandlersLive = ServerRpcs.toLayer({
         defaultLabelIds,
       }),
     ),
+  // Not admin-gated: any member may shape a concept's default instance layout.
+  setConceptInstanceView: ({ id, instanceView }) =>
+    as<Concept>(uc.setConceptInstanceView(id, instanceView)),
   archiveConcept: ({ id }) => admin<Concept>(uc.archiveConcept(id)),
   restoreConcept: ({ id }) => admin<Concept>(uc.restoreConcept(id)),
   deleteConcept: ({ id }) => admin<Concept>(uc.deleteConcept(id)),
