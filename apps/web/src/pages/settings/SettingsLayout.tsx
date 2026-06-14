@@ -38,16 +38,16 @@ export const SETTINGS_NAV: ReadonlyArray<SettingsGroup> = [
     items: [
       { to: "organization", label: "Organization", admin: true, icon: <Building2 size={16} /> },
       { to: "concepts", label: "Concepts", admin: false, icon: <Shapes size={16} /> },
-      { to: "labels", label: "Labels", admin: false, icon: <Tags size={16} /> },
-      { to: "tasks", label: "Tasks", admin: false, icon: <ListTodo size={16} /> },
-      { to: "integrations", label: "Integrations", admin: false, icon: <Plug size={16} /> },
-      { to: "sidebar", label: "Sidebar", admin: false, icon: <PanelLeft size={16} /> },
       {
         to: "dashboards",
         label: "Dashboards",
         admin: false,
         icon: <LayoutDashboard size={16} />,
       },
+      { to: "sidebar", label: "Sidebar", admin: false, icon: <PanelLeft size={16} /> },
+      { to: "tasks", label: "Tasks", admin: false, icon: <ListTodo size={16} /> },
+      { to: "labels", label: "Labels", admin: false, icon: <Tags size={16} /> },
+      { to: "integrations", label: "Integrations", admin: false, icon: <Plug size={16} /> },
     ],
   },
 ]
