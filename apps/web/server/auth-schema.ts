@@ -807,3 +807,83 @@ export const slackAuditLog = pgTable(
   (table) => [index("slack_audit_log_org_idx").on(table.orgId, table.createdAt)],
 )
 
+/**
+ * Apollo.io integration — a key-based connector on the PostHog/Linear template.
+ * Auth is an Apollo API key stored ENCRYPTED at the ORG level (one connection
+ * per org). Unlike PostHog/Linear there is no synced object mirror: Apollo is
+ * used on-demand (enrich an instance, search people, bulk-import results). Only
+ * the encrypted key + an optional, purgeable enrichment cache are persisted —
+ * see the compliance note in `apollo.ts`. Tables follow the `posthog_*`/
+ * `linear_*` conventions.
+ */
+export const apolloConnection = pgTable(
+  "apollo_connection",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: text("org_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    // The user who connected — kept for audit/attribution; the connection is
+    // org-scoped (uniqueness is on org_id alone).
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    // Apollo API key, encrypted at rest (nulled on disconnect).
+    apiKey: text("api_key"),
+    status: text("status").notNull().default("connected"),
+    // When the key last passed the /auth/health validation.
+    lastValidatedAt: timestamp("last_validated_at", { withTimezone: true }),
+    lastError: text("last_error"),
+    connectedAt: timestamp("connected_at", { withTimezone: true }).defaultNow().notNull(),
+    disconnectedAt: timestamp("disconnected_at", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .$onUpdate(() => /* @__PURE__ */ new Date())
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("apollo_connection_org_uq").on(table.orgId),
+    index("apollo_connection_status_idx").on(table.status),
+  ],
+)
+
+/**
+ * Optional, credit-conserving enrichment cache: a normalized Apollo person keyed
+ * by (org, lookup key). Read-through with a TTL (see `apollo.ts`); purged on
+ * disconnect for data minimization. Disable with APOLLO_ENRICH_CACHE_ENABLED=0.
+ */
+export const apolloEnrichmentCache = pgTable(
+  "apollo_enrichment_cache",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: text("org_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    // Deterministic, order-independent key derived from the match query.
+    lookupKey: text("lookup_key").notNull(),
+    person: jsonb("person").notNull().default({}),
+    fetchedAt: timestamp("fetched_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("apollo_enrichment_cache_org_key_uq").on(table.orgId, table.lookupKey),
+    index("apollo_enrichment_cache_fetched_idx").on(table.orgId, table.fetchedAt),
+  ],
+)
+
+export const apolloAuditLog = pgTable(
+  "apollo_audit_log",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    orgId: text("org_id").notNull(),
+    userId: text("user_id").notNull(),
+    connectionId: uuid("connection_id"),
+    action: text("action").notNull(),
+    status: text("status").notNull().default("ok"),
+    subjectKind: text("subject_kind"),
+    subjectId: text("subject_id"),
+    detail: jsonb("detail").notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [index("apollo_audit_log_org_idx").on(table.orgId, table.createdAt)],
+)
+

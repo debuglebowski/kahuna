@@ -1,4 +1,12 @@
 import { and, eq, ilike } from "drizzle-orm"
+import {
+  apolloStatus,
+  connectApollo,
+  disconnectApollo,
+  enrichInstanceForRequest,
+  importForRequest,
+  searchForRequest,
+} from "./apollo"
 import { auth } from "./auth"
 import { member, user } from "./auth-schema"
 import { db, pool } from "./db"
@@ -118,6 +126,15 @@ export const handleApi = async (req: Request): Promise<Response | null> => {
     if (seg[3] === "events" && m === "POST") return handleSlackEvents(req)
     if (seg[3] === "commands" && m === "POST") return handleSlashCommand(req)
     if (seg[3] === "interactivity" && m === "POST") return handleInteractivity(req)
+  }
+
+  if (seg[1] === "integrations" && seg[2] === "apollo") {
+    if (seg[3] === "connect" && m === "POST") return connectApollo(req)
+    if (seg[3] === "status" && m === "GET") return apolloStatus(req)
+    if (seg[3] === "disconnect" && m === "POST") return disconnectApollo(req)
+    if (seg[3] === "enrich" && m === "POST") return enrichInstanceForRequest(req)
+    if (seg[3] === "search" && m === "POST") return searchForRequest(req)
+    if (seg[3] === "import" && m === "POST") return importForRequest(req)
   }
 
   // Multipart upload of a file onto an item lineage (reads/mutations of the
