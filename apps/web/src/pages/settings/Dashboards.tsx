@@ -15,18 +15,18 @@ import {
 import { CSS } from "@dnd-kit/utilities"
 import { useLiveQuery } from "@tanstack/react-db"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { ArrowUpRight, GripVertical, Pencil, Plus } from "lucide-react"
+import { GripVertical, Plus } from "lucide-react"
 import { useMemo, useState } from "react"
 import { Navigate, useNavigate, useParams } from "react-router-dom"
 import { DashboardEditor } from "@/components/dashboard/DashboardEditor"
 import { conceptsCollection, KEY, useRegisterCollection } from "@/lib/collections"
 import { conceptIndex } from "@/lib/conceptData"
-import { Badge, Button, Card, IconButton, Spinner, Toolbar } from "../../components/ui"
+import { Badge, Button, Card, Spinner, Toolbar } from "../../components/ui"
 import { api, type Concept, type Dashboard } from "../../lib/api"
 import { ConceptIcon } from "../../lib/icons"
 
 /** THE management surface for dashboards: create, reorder (`position` drives the
- *  switcher order and the default landing), and edit — a row's pencil opens the
+ *  switcher order and the default landing), and edit — clicking a row opens the
  *  full-page {@link DashboardEditor} (name/icon/scope/visibility/delete + the
  *  widget layout) at /settings/dashboards/:id. The dashboard pages themselves
  *  are read-only. */
@@ -117,8 +117,7 @@ export function Dashboards() {
                   key={d.id}
                   dash={d}
                   sortable={!q}
-                  onOpen={() => navigate(`/dashboards/${d.id}`)}
-                  onEdit={() => navigate(`/settings/dashboards/${d.id}`)}
+                  onOpen={() => navigate(`/settings/dashboards/${d.id}`)}
                 />
               ))}
             </div>
@@ -133,22 +132,24 @@ function DashboardRow({
   dash,
   sortable,
   onOpen,
-  onEdit,
 }: {
   dash: Dashboard
   sortable: boolean
   onOpen: () => void
-  onEdit: () => void
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: dash.id,
     disabled: !sortable,
   })
+  // The grip and the rest of the row are sibling buttons: the grip drags, the
+  // content button opens the editor. Clicking the grip can never navigate, and
+  // dragging is bound only to the grip — so the "whole row except the handle"
+  // is the click target.
   return (
     <div
       ref={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition }}
-      className={`flex items-center gap-2 rounded-md border border-border bg-background px-3 py-2 ${
+      className={`flex items-center gap-2 rounded-md border border-border bg-background px-3 py-2 hover:bg-accent ${
         isDragging ? "opacity-60 shadow" : ""
       }`}
     >
@@ -166,18 +167,18 @@ function DashboardRow({
       >
         <GripVertical size={16} />
       </button>
-      <ConceptIcon value={dash.icon || "lucide:LayoutDashboard"} size={16} />
-      <span className="flex-1 truncate text-sm font-medium text-foreground">
-        {dash.name || <span className="text-muted-foreground">(untitled dashboard)</span>}
-      </span>
-      <Badge tone={dash.ownerId ? "gray" : "blue"}>{dash.ownerId ? "Personal" : "Org"}</Badge>
-      {dash.hidden && <Badge tone="amber">Hidden</Badge>}
-      <IconButton aria-label="Open dashboard" onClick={onOpen}>
-        <ArrowUpRight size={15} />
-      </IconButton>
-      <IconButton aria-label="Edit dashboard" onClick={onEdit}>
-        <Pencil size={15} />
-      </IconButton>
+      <button
+        type="button"
+        onClick={onOpen}
+        className="-my-2 flex flex-1 items-center gap-2 py-2 text-left"
+      >
+        <ConceptIcon value={dash.icon || "lucide:LayoutDashboard"} size={16} />
+        <span className="flex-1 truncate text-sm font-medium text-foreground">
+          {dash.name || <span className="text-muted-foreground">(untitled dashboard)</span>}
+        </span>
+        <Badge tone={dash.ownerId ? "gray" : "blue"}>{dash.ownerId ? "Personal" : "Org"}</Badge>
+        {dash.hidden && <Badge tone="amber">Hidden</Badge>}
+      </button>
     </div>
   )
 }
