@@ -934,10 +934,6 @@ function ApolloCard() {
               autoComplete="off"
             />
           </Field>
-          <p className="text-xs text-muted-foreground">
-            Requires an API-enabled Apollo plan. The key is stored encrypted and used only for
-            on-demand enrichment, search, and import.
-          </p>
           <div className="flex items-center gap-3">
             <Feedback error={connect.error} />
             <div className="ml-auto flex items-center gap-2">

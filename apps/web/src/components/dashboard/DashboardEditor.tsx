@@ -275,17 +275,18 @@ export function DashboardEditor({
 
           <TabsContent value="general" className="min-h-0 flex-1 overflow-y-auto pt-4 pb-6">
             <div className="space-y-4">
-              <Field label="Name">
-                <div className="flex items-center gap-2">
-                  <IconPicker value={draft.icon} onChange={(icon) => patch({ icon })} />
+              <div className="flex items-start gap-3">
+                <Field label="Name" className="flex-1">
                   <Input
                     value={draft.name}
                     onChange={(e) => patch({ name: e.target.value })}
                     placeholder="Dashboard name…"
-                    className="flex-1"
                   />
-                </div>
-              </Field>
+                </Field>
+                <Field label="Icon">
+                  <IconPicker value={draft.icon} onChange={(icon) => patch({ icon })} />
+                </Field>
+              </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Scope">

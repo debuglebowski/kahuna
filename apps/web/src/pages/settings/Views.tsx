@@ -275,17 +275,18 @@ function SidebarView({ view, canDelete }: { view: SidebarViewModel; canDelete: b
 
           <TabsContent value="general" className="min-h-0 flex-1 overflow-y-auto pt-4 pb-24">
             <div className="space-y-4">
-              <Field label="Name (optional)">
-                <div className="flex items-center gap-2">
-                  <IconPicker value={icon} onChange={edit(setIcon)} />
+              <div className="flex items-start gap-3">
+                <Field label="Name (optional)" className="flex-1">
                   <Input
                     value={name}
                     onChange={(e) => edit(setName)(e.target.value)}
                     placeholder="View name…"
-                    className="flex-1"
                   />
-                </div>
-              </Field>
+                </Field>
+                <Field label="Icon">
+                  <IconPicker value={icon} onChange={edit(setIcon)} />
+                </Field>
+              </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Scope">

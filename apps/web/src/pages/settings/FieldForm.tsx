@@ -201,12 +201,14 @@ export function FieldForm({
 
   return (
     <div className="space-y-4">
-      <Field label="Name">
-        <div className="flex items-center gap-2">
+      <div className="flex items-start gap-3">
+        <Field label="Name" className="flex-1">
+          <Input value={name} onChange={(e) => setName(e.target.value)} />
+        </Field>
+        <Field label="Icon">
           <IconPicker value={icon} onChange={setIcon} />
-          <Input value={name} onChange={(e) => setName(e.target.value)} className="flex-1" />
-        </div>
-      </Field>
+        </Field>
+      </div>
 
       <div className="grid grid-cols-2 gap-3">
         <Field label="Kind">

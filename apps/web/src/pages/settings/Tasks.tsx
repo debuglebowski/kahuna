@@ -32,6 +32,7 @@ import {
   ColorSwatchPicker,
   ConfirmDialog,
   IconButton,
+  InfoHint,
   Input,
   Modal,
   randomPillColor,
@@ -190,7 +191,13 @@ function StatusFields({
         />
       </div>
       <div className="space-y-1.5">
-        <span className="block text-sm leading-none font-medium text-foreground">Category</span>
+        <span className="flex items-center gap-1.5 text-sm leading-none font-medium text-foreground">
+          Category
+          <InfoHint
+            text="Determines grouping and what the done checkbox does — the name is just a label. Done marks tasks completed; Cancelled closes them without completing."
+            label="Category — more info"
+          />
+        </span>
         <Select
           value={category}
           onValueChange={(v) => setCategory(v as TaskStatusCategory)}
@@ -207,10 +214,6 @@ function StatusFields({
             ))}
           </SelectContent>
         </Select>
-        <p className="text-xs text-muted-foreground">
-          Determines grouping and what the done checkbox does — the name is just a label. Done marks
-          tasks completed; Cancelled closes them without completing.
-        </p>
       </div>
       <div className="space-y-1.5">
         <span className="block text-sm leading-none font-medium text-foreground">Color</span>

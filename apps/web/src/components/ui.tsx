@@ -151,35 +151,46 @@ export function ToggleChip({
   )
 }
 
+/**
+ * Small info icon that reveals `text` in a tooltip on hover/focus. Use next to a
+ * setting's label in place of an always-visible helper paragraph. `label` names
+ * the trigger for screen readers (defaults to "More info").
+ */
+export function InfoHint({ text, label }: { text: ReactNode; label?: string }) {
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            aria-label={label ?? "More info"}
+            className="text-muted-foreground transition-colors hover:text-foreground focus-visible:text-foreground focus-visible:outline-none"
+          >
+            <Info size={13} aria-hidden />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-xs">{text}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  )
+}
+
 export function Field({
   label,
   hint,
+  className,
   children,
 }: {
   label: string
   hint?: string
+  className?: string
   children: ReactNode
 }) {
   return (
-    <div className="block space-y-2">
+    <div className={cn("block space-y-2", className)}>
       <span className="flex items-center gap-1.5 text-sm leading-none font-medium text-foreground">
         {label}
-        {hint && (
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  aria-label={`${label} — more info`}
-                  className="text-muted-foreground transition-colors hover:text-foreground focus-visible:text-foreground focus-visible:outline-none"
-                >
-                  <Info size={13} aria-hidden />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent className="max-w-xs">{hint}</TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-        )}
+        {hint && <InfoHint text={hint} label={`${label} — more info`} />}
       </span>
       {children}
     </div>
