@@ -6,13 +6,6 @@ import { useNavigate, useParams } from "react-router-dom"
 import { WidgetCanvas } from "@/components/dashboard/WidgetCanvas"
 import { usePageChrome } from "@/components/Layout"
 import { Button, IconButton, Spinner } from "@/components/ui"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 import { api, type Concept } from "@/lib/api"
 import { conceptsCollection, KEY, useRegisterCollection } from "@/lib/collections"
 import { conceptIndex, useConceptData } from "@/lib/conceptData"
@@ -20,9 +13,9 @@ import { referencedConceptIds } from "@/lib/dashboards"
 
 /**
  * The dashboard canvas (`/dashboards`) — a READ-ONLY render of the selected
- * dashboard, with a switcher across the org's + your dashboards. ALL management
- * (create, reorder, and the edit modal — meta and layout alike) lives in
- * Settings → Dashboards; this page just re-reads the `dashboards` query.
+ * dashboard (chosen via the URL `:id`). ALL management (create, reorder, and
+ * the edit modal — meta and layout alike) lives in Settings → Dashboards; this
+ * page just re-reads the `dashboards` query.
  */
 export function Dashboards() {
   usePageChrome({ fullWidth: true }) // widget canvas uses the whole viewport width
@@ -68,21 +61,15 @@ export function Dashboards() {
     <div className="flex flex-col gap-4">
       {loaders}
       <header className="flex items-center justify-between gap-2">
-        <Select value={selected.id} onValueChange={(v) => navigate(`/dashboards/${v}`)}>
-          <SelectTrigger className="cancel-drag border-0 px-0 text-xl font-semibold shadow-none focus-visible:ring-0">
-            <SelectValue placeholder="Dashboard" />
-          </SelectTrigger>
-          <SelectContent>
-            {(dashboards ?? []).map((d) => (
-              <SelectItem key={d.id} value={d.id}>
-                {d.name}
-                {d.ownerId ? " · personal" : ""}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <h1 className="cancel-drag text-xl font-semibold">
+          {selected.name}
+          {selected.ownerId ? " · personal" : ""}
+        </h1>
 
-        <IconButton aria-label="Manage dashboards" onClick={() => navigate("/settings/dashboards")}>
+        <IconButton
+          aria-label="Dashboard settings"
+          onClick={() => navigate(`/settings/dashboards/${selected.id}?tab=layout`)}
+        >
           <Settings size={15} />
         </IconButton>
       </header>
@@ -94,10 +81,14 @@ export function Dashboards() {
           </div>
           <h2 className="mb-1 text-lg font-medium text-foreground">An empty canvas</h2>
           <p className="mb-4 max-w-sm text-sm text-balance text-muted-foreground">
-            This dashboard has no widgets yet — add some from Settings → Dashboards.
+            This dashboard has no widgets yet — add some from its settings.
           </p>
-          <Button size="sm" variant="outline" onClick={() => navigate("/settings/dashboards")}>
-            <Settings size={14} /> Manage dashboards
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => navigate(`/settings/dashboards/${selected.id}?tab=layout`)}
+          >
+            <Settings size={14} /> Dashboard settings
           </Button>
         </div>
       ) : (

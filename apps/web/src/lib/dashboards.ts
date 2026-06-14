@@ -44,16 +44,22 @@ export const referencedConceptIds = (body: DashboardBody): string[] => {
 export const widgetLayouts = (body: DashboardBody): GridItem[] =>
   body.widgets.map((w) => ({ i: w.id, ...w.layout, minW: 2, minH: 2 }))
 
-/** Fold an RGL layout change back onto the body (match by widget id). */
+/** Fold an RGL layout change back onto the body (match by widget id). Returns
+ *  the same `body` reference when nothing actually moved — RGL fires its stop
+ *  callback even for a no-move click (which we use to select a tile), so this
+ *  lets callers skip a spurious "dirty" edit. */
 export const applyLayouts = (body: DashboardBody, layout: readonly GridItem[]): DashboardBody => {
   const byId = new Map(layout.map((l) => [l.i, l] as const))
-  return {
-    ...body,
-    widgets: body.widgets.map((w) => {
-      const l = byId.get(w.id)
-      return l ? { ...w, layout: { x: l.x, y: l.y, w: l.w, h: l.h } } : w
-    }),
-  }
+  let changed = false
+  const widgets = body.widgets.map((w) => {
+    const l = byId.get(w.id)
+    if (!l) return w
+    const cur = w.layout
+    if (cur.x === l.x && cur.y === l.y && cur.w === l.w && cur.h === l.h) return w
+    changed = true
+    return { ...w, layout: { x: l.x, y: l.y, w: l.w, h: l.h } }
+  })
+  return changed ? { ...body, widgets } : body
 }
 
 const overlaps = (

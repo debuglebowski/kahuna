@@ -1,4 +1,3 @@
-import { Pencil, X } from "lucide-react"
 import { lazy, Suspense } from "react"
 import type { Layout } from "react-grid-layout"
 import { MeasuredGrid } from "@/components/MeasuredGrid"
@@ -6,6 +5,7 @@ import { Spinner } from "@/components/ui"
 import type { Concept, DashboardBody, DashboardWidget } from "@/lib/api"
 import type { ConceptInstanceData } from "@/lib/conceptData"
 import { widgetLayouts } from "@/lib/dashboards"
+import { cn } from "@/lib/utils"
 import { ActivityWidget } from "./ActivityWidget"
 import { AttentionWidget } from "./AttentionWidget"
 import { CalendarWidget } from "./CalendarWidget"
@@ -31,8 +31,10 @@ const TrendWidget = lazy(() => import("./TrendWidget").then((m) => ({ default: m
  * The widget grid shared by every canvas surface (dashboards, member pages):
  * tiles + per-widget chrome + the widget renderers. The PARENT owns the body
  * (and its persistence), the live data (`useConceptData`), and any editor modal
- * — this only renders and reports interactions. `readOnly` freezes the grid and
- * hides the tile actions (a member page viewed by a non-owner).
+ * — this only renders and reports interactions. `readOnly` (the live dashboard)
+ * renders interactive widget content and freezes the grid. In edit mode the
+ * content is inert (pointer-events off) and a tile click selects it for the
+ * config panel — you arrange and configure widgets, never operate them.
  */
 export function WidgetCanvas({
   body,
@@ -40,9 +42,10 @@ export function WidgetCanvas({
   cIndex,
   conceptsLoaded = true,
   readOnly = false,
+  minHeight,
+  selectedId,
   onStop,
-  onEdit,
-  onRemove,
+  onSelect,
 }: {
   body: DashboardBody
   instData: Record<string, ConceptInstanceData>
@@ -51,9 +54,13 @@ export function WidgetCanvas({
    *  "concept unavailable" tile so it never flashes on first paint. */
   conceptsLoaded?: boolean
   readOnly?: boolean
+  /** Fills the grid to at least this height (px) — see {@link MeasuredGrid}. */
+  minHeight?: number | null
+  /** Edit mode only: the tile to highlight as selected for configuration. */
+  selectedId?: string | null
   onStop?: (layout: Layout[]) => void
-  onEdit?: (id: string) => void
-  onRemove?: (id: string) => void
+  /** Edit mode only: clicking a tile selects it for the config panel. */
+  onSelect?: (id: string) => void
 }) {
   const render = (w: DashboardWidget) => {
     // Tasks' conceptId is a task FILTER (resolved via subject refs), not an
@@ -121,41 +128,47 @@ export function WidgetCanvas({
       layout={widgetLayouts(body)}
       isDraggable={!readOnly}
       isResizable={!readOnly}
+      minHeight={minHeight}
       onStop={onStop}
+      onDragStart={readOnly ? undefined : onSelect}
     >
       {body.widgets.map((w) => (
+        // biome-ignore lint/a11y/noStaticElementInteractions: interactive in edit mode (role/tabIndex/keydown set together); readOnly tiles are inert. The conditional role defeats static analysis.
         <div
           key={w.id}
-          className="group flex flex-col overflow-hidden rounded-xl border bg-card p-3 shadow-sm"
+          role={readOnly ? undefined : "button"}
+          tabIndex={readOnly ? undefined : 0}
+          // Mouse selection rides RGL's onDragStart (fires on press) — see
+          // MeasuredGrid; here we only add keyboard parity for focused tiles.
+          onKeyDown={
+            readOnly
+              ? undefined
+              : (e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault()
+                    onSelect?.(w.id)
+                  }
+                }
+          }
+          className={cn(
+            "flex flex-col overflow-hidden rounded-xl border bg-card p-3 shadow-sm",
+            !readOnly &&
+              "cursor-pointer transition-shadow hover:border-foreground/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+            !readOnly && selectedId === w.id && "ring-2 ring-primary",
+          )}
         >
-          {(!readOnly || headerLabel(w) !== "") && (
-            <div className="mb-1 flex items-center justify-between gap-2">
+          {headerLabel(w) !== "" && (
+            <div className="mb-1 flex items-center gap-2">
               <span className="truncate text-xs font-medium text-muted-foreground">
                 {headerLabel(w)}
               </span>
-              {!readOnly && (
-                <div className="flex shrink-0 items-center gap-0.5">
-                  <button
-                    type="button"
-                    aria-label="Edit widget"
-                    className="cancel-drag rounded p-0.5 text-muted-foreground opacity-0 transition hover:bg-muted hover:text-foreground group-hover:opacity-100"
-                    onClick={() => onEdit?.(w.id)}
-                  >
-                    <Pencil size={13} />
-                  </button>
-                  <button
-                    type="button"
-                    aria-label="Remove widget"
-                    className="cancel-drag rounded p-0.5 text-muted-foreground opacity-0 transition hover:bg-muted hover:text-foreground group-hover:opacity-100"
-                    onClick={() => onRemove?.(w.id)}
-                  >
-                    <X size={14} />
-                  </button>
-                </div>
-              )}
             </div>
           )}
-          <div className="min-h-0 flex-1">{render(w)}</div>
+          {/* Edit mode: content is inert so the tile reads as a single
+              click-to-select surface — you configure widgets, never use them. */}
+          <div className={cn("min-h-0 flex-1", !readOnly && "pointer-events-none")}>
+            {render(w)}
+          </div>
         </div>
       ))}
     </MeasuredGrid>

@@ -1,6 +1,6 @@
 import { useLiveQuery } from "@tanstack/react-db"
 import { useQuery } from "@tanstack/react-query"
-import { X } from "lucide-react"
+import { Trash2, X } from "lucide-react"
 import { useMemo, useState } from "react"
 import {
   Select,
@@ -16,7 +16,7 @@ import { capitalize } from "@/lib/fieldDisplay"
 import { ConditionList, useFields } from "../ConditionList"
 import { RichTextEditor } from "../editor/RichTextEditor"
 import { MultiCombobox } from "../MultiCombobox"
-import { Field as FieldRow, IconButton, Input, ToggleChip } from "../ui"
+import { Button, Field as FieldRow, IconButton, Input, ToggleChip } from "../ui"
 import { CalendarSourcesEditor } from "./CalendarSourcesEditor"
 import { ShortcutItemsEditor } from "./ShortcutItemsEditor"
 
@@ -59,12 +59,12 @@ export function WidgetEditor({
   widget,
   concepts,
   onChange,
-  onClose,
+  onRemove,
 }: {
   widget: DashboardWidget
   concepts: readonly Concept[]
   onChange: (patch: Partial<DashboardWidget>) => void
-  onClose: () => void
+  onRemove: () => void
 }) {
   const labelsQ = useQuery({ queryKey: ["labels"], queryFn: () => api.listLabels() })
   const labels = labelsQ.data ?? []
@@ -102,12 +102,7 @@ export function WidgetEditor({
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-2">
-        <h3 className="text-sm font-medium text-foreground capitalize">{widget.type} widget</h3>
-        <IconButton aria-label="Close widget settings" onClick={onClose}>
-          <X size={15} />
-        </IconButton>
-      </div>
+      <h3 className="text-sm font-medium text-foreground capitalize">{widget.type} widget</h3>
 
       <FieldRow label="Title (optional)">
         <Input
@@ -1413,6 +1408,12 @@ export function WidgetEditor({
           />
         </FieldRow>
       )}
+
+      <div className="border-t border-border pt-3">
+        <Button variant="destructive" onClick={onRemove}>
+          <Trash2 size={15} /> Remove widget
+        </Button>
+      </div>
     </div>
   )
 }

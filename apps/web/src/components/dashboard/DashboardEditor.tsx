@@ -1,9 +1,10 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { LayoutDashboard, Plus, SlidersHorizontal, Trash2 } from "lucide-react"
-import { useMemo, useState } from "react"
-import { useNavigate } from "react-router-dom"
+import { useEffect, useMemo, useRef, useState } from "react"
+import { useNavigate, useSearchParams } from "react-router-dom"
 import { IconPicker } from "@/components/IconPicker"
 import { usePageChrome } from "@/components/Layout"
+import { useFillHeight } from "@/components/MeasuredGrid"
 import { Button, ConfirmDialog, Field, Input, TabBar, TabBarItem } from "@/components/ui"
 import {
   Select,
@@ -46,6 +47,12 @@ interface Draft {
 
 const LIST = "/settings/dashboards"
 
+// The widget inspector is resizable; its width is clamped and remembered.
+const INSPECTOR_MIN = 280
+const INSPECTOR_MAX = 560
+const INSPECTOR_KEY = "dashboard.inspectorWidth"
+const clampInspector = (w: number) => Math.min(INSPECTOR_MAX, Math.max(INSPECTOR_MIN, w))
+
 /**
  * THE editing surface for a dashboard — a full-page two-tab editor that takes
  * over the settings content area, opened from Settings → Dashboards (the
@@ -72,20 +79,54 @@ export function DashboardEditor({
 }) {
   usePageChrome({ fullWidth: true, fillHeight: true })
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const qc = useQueryClient()
-  const [draft, setDraft] = useState<Draft>(() => ({
+  // The dashboard as it was when the editor opened — the etag baseline that Save
+  // checks against and that "Restore" reverts to.
+  const baseline = (): Draft => ({
     name: dash.name,
     icon: dash.icon,
     scope: dash.ownerId ? "personal" : "org",
     hidden: dash.hidden,
     body: dash.body,
-  }))
+  })
+  const [draft, setDraft] = useState<Draft>(baseline)
   const [dirty, setDirty] = useState(false)
-  const [tab, setTab] = useState("general")
+  // The active tab lives in the URL (`?tab=layout`) so it's deep-linkable (e.g.
+  // the dashboard page's gear) and survives reloads. `replace` keeps tab toggles
+  // out of history — back should leave the editor, not cycle tabs.
+  const tab = searchParams.get("tab") === "layout" ? "layout" : "general"
+  const setTab = (next: string) =>
+    setSearchParams(
+      (prev) => {
+        const p = new URLSearchParams(prev)
+        p.set("tab", next)
+        return p
+      },
+      { replace: true },
+    )
   const [editingId, setEditingId] = useState<string | null>(null)
   const [galleryOpen, setGalleryOpen] = useState(false)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
+  // Inspector width — restored from the last drag, clamped to the allowed range.
+  const [inspectorWidth, setInspectorWidth] = useState(() => {
+    const saved = Number(localStorage.getItem(INSPECTOR_KEY))
+    return saved >= INSPECTOR_MIN && saved <= INSPECTOR_MAX ? saved : 360
+  })
   const { blocker, bypass } = useUnsavedGuard(dirty)
+  // The canvas is an expandable surface: it fills the box's height so tiles can
+  // be placed across the whole area, not just a content-sized strip at the top.
+  const { ref: canvasBoxRef, height: canvasHeight } = useFillHeight()
+  // Esc deselects the configured widget (clicking empty canvas does too) — but
+  // not while the gallery is open, where Esc should just close it.
+  useEffect(() => {
+    if (!editingId || galleryOpen) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setEditingId(null)
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [editingId, galleryOpen])
 
   const patch = (p: Partial<Draft>) => {
     setDraft((d) => ({ ...d, ...p }))
@@ -96,6 +137,53 @@ export function DashboardEditor({
   const patchBody = (fn: (body: Dashboard["body"]) => Dashboard["body"]) => {
     setDraft((d) => ({ ...d, body: fn(d.body) }))
     setDirty(true)
+  }
+  // Throw away every local edit and clear dirty — a no-op when clean, so the
+  // button is disabled then.
+  const restore = () => {
+    setDraft(baseline())
+    setDirty(false)
+  }
+
+  // Selection toggles on a click. RGL reports the press (onDragStart) and the
+  // release (onDragStop) separately, so we remember whether the tile was already
+  // selected at press time: a no-move click on the selected tile deselects it,
+  // while dragging it (or pressing another tile) keeps it selected — no flicker.
+  const press = useRef<{ id: string; wasSelected: boolean } | null>(null)
+  const onTilePress = (id: string) => {
+    press.current = { id, wasSelected: id === editingId }
+    if (id !== editingId) setEditingId(id)
+  }
+  const onTileStop = (layout: Parameters<typeof applyLayouts>[1]) => {
+    // RGL fires stop even for a no-move click; applyLayouts returns the same ref
+    // then, so a clean click commits nothing and instead toggles selection.
+    if (applyLayouts(draft.body, layout) !== draft.body) patchBody((b) => applyLayouts(b, layout))
+    else if (press.current?.wasSelected) setEditingId(null)
+    press.current = null
+  }
+
+  // Drag the divider to resize the inspector — the panel sits on the right, so
+  // dragging left widens it. Width persists for next time on release.
+  const startInspectorResize = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    const startX = e.clientX
+    const startW = inspectorWidth
+    let last = startW
+    const onMove = (ev: PointerEvent) => {
+      last = clampInspector(startW + (startX - ev.clientX))
+      setInspectorWidth(last)
+    }
+    const onUp = () => {
+      document.removeEventListener("pointermove", onMove)
+      document.removeEventListener("pointerup", onUp)
+      document.body.style.removeProperty("cursor")
+      document.body.style.removeProperty("user-select")
+      localStorage.setItem(INSPECTOR_KEY, String(last))
+    }
+    document.body.style.cursor = "col-resize"
+    document.body.style.userSelect = "none"
+    document.addEventListener("pointermove", onMove)
+    document.addEventListener("pointerup", onUp)
   }
 
   // The draft body's live data — the modal mounts its own collections, so a
@@ -160,11 +248,19 @@ export function DashboardEditor({
         <Tabs value={tab} onValueChange={setTab} className="min-h-0 flex-1 gap-0">
           <TabBar
             right={
-              tab === "layout" && (
-                <Button size="sm" variant="outline" onClick={() => setGalleryOpen(true)}>
-                  <Plus size={14} /> Add widget
+              <>
+                {tab === "layout" && (
+                  <Button size="sm" variant="outline" onClick={() => setGalleryOpen(true)}>
+                    <Plus size={14} /> Add widget
+                  </Button>
+                )}
+                <Button size="sm" variant="outline" onClick={restore} disabled={!dirty}>
+                  Restore
                 </Button>
-              )
+                <Button size="sm" onClick={() => save.mutate()} disabled={!dirty || save.isPending}>
+                  {save.isPending ? "Saving…" : "Save"}
+                </Button>
+              </>
             }
           >
             <TabBarItem value="general" icon={<SlidersHorizontal size={16} />}>
@@ -175,7 +271,7 @@ export function DashboardEditor({
             </TabBarItem>
           </TabBar>
 
-          <TabsContent value="general" className="min-h-0 flex-1 overflow-y-auto pt-4 pb-24">
+          <TabsContent value="general" className="min-h-0 flex-1 overflow-y-auto pt-4 pb-6">
             <div className="space-y-4">
               <Field label="Name">
                 <div className="flex items-center gap-2">
@@ -238,62 +334,105 @@ export function DashboardEditor({
             </div>
           </TabsContent>
 
-          <TabsContent value="layout" className="flex min-h-0 flex-1">
-            <div className="min-w-0 flex-1 overflow-y-auto pt-4">
-              {draft.body.widgets.length === 0 ? (
-                <div className="flex h-full min-h-[280px] flex-col items-center justify-center rounded-xl border border-dashed p-12 text-center">
-                  <div className="mb-4 flex size-10 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-                    <LayoutDashboard size={20} />
+          <TabsContent value="layout" className="flex min-h-0 flex-1 pt-4">
+            {/* One frame around the whole working area: a seamless canvas (no
+                inner card — widgets sit on the surface) on the left, and the
+                widget inspector on the right, divided only by its left border. */}
+            <div className="flex min-h-0 flex-1 overflow-hidden rounded-xl border border-border">
+              {/* Clicking empty canvas (anything that isn't a tile) deselects;
+                  Esc does too. Tile selection rides RGL's onDragStart. */}
+              {/* biome-ignore lint/a11y/noStaticElementInteractions: background-deselect is a pointer affordance — keyboard users press Esc. */}
+              {/* biome-ignore lint/a11y/useKeyWithClickEvents: same — Esc is handled globally above. */}
+              <div
+                ref={canvasBoxRef}
+                onClick={(e) => {
+                  if (editingId && !(e.target as HTMLElement).closest(".react-grid-item"))
+                    setEditingId(null)
+                }}
+                className="flex min-w-0 flex-1 flex-col overflow-y-auto p-3"
+              >
+                {draft.body.widgets.length === 0 ? (
+                  <div className="flex min-h-[280px] flex-1 flex-col items-center justify-center rounded-lg border border-dashed p-12 text-center">
+                    <div className="mb-4 flex size-10 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+                      <LayoutDashboard size={20} />
+                    </div>
+                    <p className="max-w-sm text-sm text-balance text-muted-foreground">
+                      Add a metric or list to start.
+                    </p>
                   </div>
-                  <p className="max-w-sm text-sm text-balance text-muted-foreground">
-                    Add a metric or list to start.
-                  </p>
-                </div>
-              ) : (
-                <div className="rounded-xl border border-border p-3">
+                ) : (
                   <WidgetCanvas
                     body={draft.body}
                     instData={instData}
                     cIndex={cIndex}
                     conceptsLoaded={conceptsLoaded}
-                    onStop={(layout) => patchBody((b) => applyLayouts(b, layout))}
-                    onEdit={setEditingId}
-                    onRemove={(id) => {
-                      patchBody((b) => removeWidget(b, id))
-                      if (id === editingId) setEditingId(null)
+                    minHeight={canvasHeight}
+                    selectedId={editingId}
+                    onStop={onTileStop}
+                    onSelect={onTilePress}
+                  />
+                )}
+              </div>
+              {/* Drag the divider to resize the inspector; arrow keys nudge it. */}
+              {/* biome-ignore lint/a11y/useSemanticElements: a focusable, value-bearing window splitter is a div with role=separator, not an <hr>. */}
+              <div
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="Resize widget settings"
+                aria-valuenow={inspectorWidth}
+                aria-valuemin={INSPECTOR_MIN}
+                aria-valuemax={INSPECTOR_MAX}
+                tabIndex={0}
+                onPointerDown={startInspectorResize}
+                onKeyDown={(e) => {
+                  const delta = e.key === "ArrowLeft" ? 16 : e.key === "ArrowRight" ? -16 : 0
+                  if (!delta) return
+                  e.preventDefault()
+                  const next = clampInspector(inspectorWidth + delta)
+                  setInspectorWidth(next)
+                  localStorage.setItem(INSPECTOR_KEY, String(next))
+                }}
+                className="relative w-px shrink-0 cursor-col-resize bg-border outline-none transition-colors after:absolute after:inset-y-0 after:-left-1 after:-right-1 after:content-[''] hover:bg-primary/40 focus-visible:bg-primary/60"
+              />
+              {/* The inspector is always present — it edits the selected tile,
+                  or prompts you to pick one when nothing is selected. */}
+              <aside
+                style={{ width: inspectorWidth }}
+                className="flex shrink-0 flex-col overflow-y-auto p-4"
+              >
+                {editing ? (
+                  <WidgetEditor
+                    widget={editing}
+                    concepts={concepts}
+                    onChange={(p) => patchBody((b) => updateWidget(b, editing.id, p))}
+                    onRemove={() => {
+                      patchBody((b) => removeWidget(b, editing.id))
+                      setEditingId(null)
                     }}
                   />
-                </div>
-              )}
-            </div>
-            {editing && (
-              <aside className="w-[360px] shrink-0 overflow-y-auto border-l p-4 pb-24">
-                <WidgetEditor
-                  widget={editing}
-                  concepts={concepts}
-                  onChange={(p) => patchBody((b) => updateWidget(b, editing.id, p))}
-                  onClose={() => setEditingId(null)}
-                />
+                ) : (
+                  <div className="flex flex-1 flex-col items-center justify-center gap-2 text-center">
+                    <div className="flex size-10 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+                      <SlidersHorizontal size={18} />
+                    </div>
+                    <p className="text-sm font-medium text-foreground">No widget selected</p>
+                    <p className="max-w-[220px] text-xs text-balance text-muted-foreground">
+                      Select a widget on the canvas to configure it.
+                    </p>
+                  </div>
+                )}
               </aside>
-            )}
+            </div>
           </TabsContent>
         </Tabs>
 
-        <div className="pointer-events-none absolute right-6 bottom-6 z-10 flex flex-col items-end gap-2">
-          {saveError && (
+        {saveError && (
+          <div className="pointer-events-none absolute right-6 bottom-6 z-10">
             <p className="pointer-events-auto max-w-md rounded-md border border-destructive/30 bg-background px-3 py-2 text-xs text-destructive shadow-lg">
               {saveError}
             </p>
-          )}
-          <div className="pointer-events-auto flex gap-2">
-            <Button variant="outline" className="shadow-lg" onClick={() => navigate(LIST)}>
-              Cancel
-            </Button>
-            <Button className="shadow-lg" onClick={() => save.mutate()} disabled={save.isPending}>
-              {save.isPending ? "Saving…" : "Save"}
-            </Button>
           </div>
-        </div>
+        )}
       </div>
 
       {galleryOpen && (
