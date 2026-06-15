@@ -353,8 +353,8 @@ const KNOWN_STATE_TYPES = new Set<string>(LINEAR_STATE_TYPES)
  * dedupes on. Field display names are decorative; everything keys off field ids.
  */
 const TICKET_CONCEPT: ProvisionConceptSpec = {
-  name: "Linear Ticket",
-  pluralName: "Linear Tickets",
+  name: "Linear - Ticket",
+  pluralName: "Linear - Tickets",
   description: "Issues synced from Linear.",
   icon: "lucide:Triangle",
   color: "#8b5cf6",

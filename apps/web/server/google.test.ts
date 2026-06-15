@@ -238,7 +238,7 @@ describe("Google integration", () => {
       `SELECT name FROM concepts WHERE org_id = $1 AND id = $2`,
       [actor.orgId, conceptId],
     )
-    expect(concept.rows[0]?.name).toBe("Google Calendar Event")
+    expect(concept.rows[0]?.name).toBe("Google - Calendar Event")
 
     const fId = fieldMap.externalId as string
     const fTitle = fieldMap.title as string
@@ -318,7 +318,7 @@ describe("Google integration", () => {
       `SELECT name FROM concepts WHERE org_id = $1 AND id = $2`,
       [actor.orgId, conceptId],
     )
-    expect(concept.rows[0]?.name).toBe("Gmail Email")
+    expect(concept.rows[0]?.name).toBe("Google - Email")
 
     const fId = fieldMap.externalId as string
     const fSubject = fieldMap.subject as string

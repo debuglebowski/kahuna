@@ -491,8 +491,8 @@ type CalendarEvent = {
  * field display names are decorative (everything keys off field ids).
  */
 const EVENT_CONCEPT: ProvisionConceptSpec = {
-  name: "Google Calendar Event",
-  pluralName: "Google Calendar Events",
+  name: "Google - Calendar Event",
+  pluralName: "Google - Calendar Events",
   description: "Events synced from Google Calendar.",
   icon: "lucide:CalendarDays",
   color: "#0ea5e9",
@@ -547,21 +547,46 @@ const eventFieldsFor = (
   return out
 }
 
-/** Mirror one event into the org's Event concept (idempotent, keyed by event id).
- *  Skips cancelled events and those without an id. */
-async function upsertEventInstance(
+/** Mirror this connection's already-synced calendar events into the org's Event
+ *  concept (idempotent, keyed by event id). Reads stored event rows only — the
+ *  same backfill `mirrorGmailThreads` does. Projecting inline per fetched event
+ *  only covered events seen during that sync; events stored before the concept
+ *  projection existed (or banked behind a `syncToken`) were never re-fetched, so
+ *  the concept stayed empty. Mirroring from the stored table closes that gap.
+ *  Skips cancelled/deleted events, and skips events whose projected fields already
+ *  match the live instance so an unchanged event doesn't append a redundant
+ *  `InstanceUpdated` every sync (the event log would otherwise bloat at scale). */
+async function mirrorCalendarEvents(
   conn: typeof googleConnection.$inferSelect,
   eventConcept: ProvisionedConcept,
-  event: CalendarEvent,
 ) {
   const externalFieldId = eventConcept.fieldMap.externalId
-  if (!externalFieldId || !event.id || event.status === "cancelled") return
-  await upsertInstanceByExternalId(googleScopeOf(conn), {
-    conceptId: eventConcept.conceptId,
-    externalFieldId,
-    externalValue: event.id,
-    fields: eventFieldsFor(event, eventConcept.fieldMap),
-  })
+  if (!externalFieldId) return
+  const rows = await pool.query<{ google_event_id: string; raw: CalendarEvent }>(
+    `SELECT google_event_id, raw FROM google_calendar_event
+       WHERE connection_id = $1 AND deleted_at IS NULL AND status IS DISTINCT FROM 'cancelled'`,
+    [conn.id],
+  )
+  // Current projected state keyed by external id, so an unchanged event is skipped.
+  const live = await pool.query<{ ext: string; state: Record<string, unknown> }>(
+    `SELECT state->>$2 AS ext, state FROM instances
+       WHERE org_id = $1 AND concept_id = $3 AND archived_at IS NULL
+         AND version_status = 'published'`,
+    [conn.orgId, externalFieldId, eventConcept.conceptId],
+  )
+  const stateByExt = new Map(live.rows.map((r) => [r.ext, r.state]))
+  for (const row of rows.rows) {
+    if (!row.google_event_id) continue
+    const fields = eventFieldsFor(row.raw, eventConcept.fieldMap)
+    const current = stateByExt.get(row.google_event_id)
+    if (current && Object.entries(fields).every(([k, v]) => current[k] === v)) continue
+    await upsertInstanceByExternalId(googleScopeOf(conn), {
+      conceptId: eventConcept.conceptId,
+      externalFieldId,
+      externalValue: row.google_event_id,
+      fields,
+    })
+  }
 }
 
 async function syncCalendar(connectionId: string, calendarId = "primary") {
@@ -606,11 +631,14 @@ async function syncCalendar(connectionId: string, calendarId = "primary") {
       const page = await fetchPage(pageToken)
       for (const event of page.items ?? []) {
         await upsertCalendarEvent(connection, calendarId, event)
-        await upsertEventInstance(connection, eventConcept, event)
       }
       pageToken = page.nextPageToken
       if (page.nextSyncToken) syncToken = page.nextSyncToken
     } while (pageToken)
+    // Project from the stored table (not just this sync's fetched delta) so a
+    // valid syncToken — which never re-fetches past events — can't leave the
+    // concept empty. Idempotent and skips unchanged events.
+    await mirrorCalendarEvents(connection, eventConcept)
     await db
       .insert(googleCalendarSync)
       .values({ connectionId, calendarId, syncToken, lastSyncedAt: new Date() })
@@ -725,8 +753,8 @@ const header = (msg: GmailMessage, name: string) =>
  * (= Gmail thread id) is the unique upsert key; field names are decorative.
  */
 const EMAIL_CONCEPT: ProvisionConceptSpec = {
-  name: "Gmail Email",
-  pluralName: "Gmail Emails",
+  name: "Google - Email",
+  pluralName: "Google - Emails",
   description: "Email threads synced from Gmail (metadata only).",
   icon: "lucide:Mail",
   color: "#ef4444",

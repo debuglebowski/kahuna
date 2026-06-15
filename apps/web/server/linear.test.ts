@@ -500,7 +500,7 @@ describe("Linear → Kingsmaker concept mirror (Phase 1)", () => {
       `SELECT name FROM concepts WHERE org_id = $1 AND id = $2`,
       [actor.orgId, conceptId],
     )
-    expect(concept.rows[0]?.name).toBe("Linear Ticket")
+    expect(concept.rows[0]?.name).toBe("Linear - Ticket")
 
     const fId = fieldMap.identifier as string
     const fTitle = fieldMap.title as string
