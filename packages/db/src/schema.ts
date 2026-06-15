@@ -67,6 +67,13 @@ export const concepts = pgTable(
     // settings → Layout; every instance of the concept renders it (there is no
     // per-user layout switch).
     instanceView: jsonb("instance_view"),
+    // The field whose value is this concept's instance display label ("title").
+    // An explicit pick (any scalar field id) replaces the old "first text field"
+    // heuristic; null falls back to it only for an as-yet-unconfigured concept.
+    // For managed concepts the integration sets this and the UI locks it. No FK:
+    // the value lives in instance state regardless, so a dropped field still
+    // resolves (and avoids a delete-order constraint).
+    titleFieldId: uuid("title_field_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     // Archive marker (mirrors `fields`/`labels`): a non-null value hides the
     // concept from the live list but keeps the row (restorable). A true *delete*
@@ -121,6 +128,13 @@ export const fields = pgTable(
     kind: text("kind").notNull(),
     formula: text("formula"),
     config: jsonb("config").notNull().default(sql`'{}'::jsonb`),
+    // Per-field ownership marker, mirroring `concepts.managed_by`: the typed
+    // integration kind (e.g. "google.gmail") for a field the connector sync owns
+    // and keeps read-only, else null for a user-added field. On a managed concept
+    // the synced fields carry the kind while user fields stay null — so members
+    // can add + edit their OWN fields (e.g. a status) without touching the
+    // integration's data. Drives the field-level read-only guard.
+    managedBy: text("managed_by"),
     // Optional display glyph (see `concepts.icon`): literal emoji or "lucide:Name".
     icon: text("icon"),
     // Display order within the concept (ascending); ties broken by name. New

@@ -332,6 +332,8 @@ export const api = {
     ),
   setConceptInstanceView: (id: string, instanceView: InstanceViewLayout | null) =>
     call((c) => c.setConceptInstanceView({ id, instanceView })),
+  setConceptTitleField: (id: string, titleFieldId: string | null) =>
+    call((c) => c.setConceptTitleField({ id, titleFieldId })),
   archiveConcept: (id: string) => call((c) => c.archiveConcept({ id })),
   restoreConcept: (id: string) => call((c) => c.restoreConcept({ id })),
   deleteConcept: (id: string) => call((c) => c.deleteConcept({ id })),
@@ -572,7 +574,9 @@ export const api = {
     return body.threads
   },
   getGoogleThread: async (threadId: string): Promise<ReadonlyArray<GoogleMessage>> => {
-    const res = await fetch(`/api/integrations/google/gmail/threads/${encodeURIComponent(threadId)}`)
+    const res = await fetch(
+      `/api/integrations/google/gmail/threads/${encodeURIComponent(threadId)}`,
+    )
     if (!res.ok) {
       const body = (await res.json().catch(() => null)) as { error?: string } | null
       if (body?.error === "GMAIL_READ_SCOPE_REQUIRED") throw new Error("GMAIL_READ_SCOPE_REQUIRED")

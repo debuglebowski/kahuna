@@ -55,9 +55,9 @@ import {
   type InstanceGraph,
   type InstanceGraphConfig,
 } from "../../lib/instanceGraph"
+import { instanceLabel } from "../../lib/instanceLabel"
 import { useInstanceViewPrefs } from "../../lib/instanceViews"
 import { queryClient } from "../../lib/queryClient"
-import { instanceLabel } from "../../lib/instanceLabel"
 import { SelfLoopEdge } from "../graph/SelfLoopEdge"
 import { useGraphPositions } from "../graph/useGraphPositions"
 import { Button, pillStyle, Spinner } from "../ui"
@@ -390,7 +390,7 @@ export function GraphBody({ ctx }: { ctx: InstanceCtx }) {
         {
           itemId: ctx.instance.itemId,
           instanceId: ctx.instance.id,
-          label: instanceLabel(ctx.instance, ctx.fields),
+          label: instanceLabel(ctx.instance, ctx.fields, ctx.concept.titleFieldId),
           conceptId: ctx.concept.id,
           conceptName: ctx.concept.name,
         },

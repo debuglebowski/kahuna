@@ -35,6 +35,17 @@ import { isDeactivated, roleOf } from "./session"
 import * as uc from "./use-cases"
 
 /**
+ * `listInstances` cap. The engine's `findInstances` defaults to 100 — fine for a
+ * paged table, but every dashboard widget (metric/breakdown/calendar/gantt)
+ * aggregates or plots over the WHOLE concept, so a 100-row cap silently drops
+ * data: e.g. a Calendar over a synced source with thousands of events shows
+ * almost nothing (the 100 newest by creation rarely land in the viewed month).
+ * Raise it to cover realistic concepts. NOTE: a true fix for unbounded concepts
+ * is date-windowed loading for the date-plotting widgets — follow-up.
+ */
+const LIST_INSTANCES_LIMIT = 50_000
+
+/**
  * Per-request auth: derive OrgContext (org_id + actor) from the session cookie
  * in the request headers. Provided to every handler; fails the RPC otherwise.
  */
@@ -337,6 +348,8 @@ const HandlersLive = ServerRpcs.toLayer({
   // Not admin-gated: any member may shape a concept's default instance layout.
   setConceptInstanceView: ({ id, instanceView }) =>
     as<Concept>(uc.setConceptInstanceView(id, instanceView)),
+  setConceptTitleField: ({ id, titleFieldId }) =>
+    admin<Concept>(uc.setConceptTitleField(id, titleFieldId)),
   archiveConcept: ({ id }) => admin<Concept>(uc.archiveConcept(id)),
   restoreConcept: ({ id }) => admin<Concept>(uc.restoreConcept(id)),
   deleteConcept: ({ id }) => admin<Concept>(uc.deleteConcept(id)),
@@ -365,7 +378,9 @@ const HandlersLive = ServerRpcs.toLayer({
   reorderFields: ({ conceptId, orders }) =>
     admin<ReadonlyArray<Field>>(uc.reorderFields(conceptId, orders)),
   listInstances: ({ conceptId, includeArchived }) =>
-    mapErr(uc.listInstances(conceptId, { decorate: true, includeArchived })),
+    mapErr(
+      uc.listInstances(conceptId, { decorate: true, includeArchived, limit: LIST_INSTANCES_LIMIT }),
+    ),
   getInstance: ({ id }) => as<InstanceDetail>(uc.getInstanceDetail(id)),
   getChanged: () => mapErr(uc.getChanged),
   listEvents: ({ conceptId, since, limit }) => mapErr(uc.listEvents({ conceptId, since, limit })),

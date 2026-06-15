@@ -50,6 +50,8 @@ export interface ConceptRow {
   readonly versioning_enabled: boolean
   /** Org-wide default instance-detail layout (`{ tiles }`); null = built-in preset. */
   readonly instance_view: unknown
+  /** Field id used as the instance display label; null = first-text-field fallback. */
+  readonly title_field_id: string | null
   readonly created_at: Date
   readonly archived_at: Date | null
   /** Present only when ConceptService.list is called withCounts. */
@@ -79,6 +81,7 @@ export interface FieldRow {
   readonly kind: string
   readonly formula: string | null
   readonly config: unknown
+  readonly managed_by: string | null
   readonly icon: string | null
   readonly position: number | string
   readonly archived_at: Date | null
@@ -186,6 +189,7 @@ export const toConcept = (r: ConceptRow): Concept => ({
   defaultLabelIds: toIdArray(r.default_label_ids),
   versioningEnabled: r.versioning_enabled ?? false,
   instanceView: toInstanceViewLayout(r.instance_view),
+  titleFieldId: r.title_field_id,
   createdAt: r.created_at,
   archivedAt: r.archived_at,
   ...(r.item_count == null ? {} : { itemCount: Number(r.item_count) }),
@@ -217,6 +221,7 @@ export const toField = (r: FieldRow): Field => ({
   kind: r.kind as FieldKind,
   formula: r.formula,
   config: toFieldConfig(r.config),
+  managedBy: r.managed_by,
   icon: r.icon,
   position: Number(r.position),
   archivedAt: r.archived_at,

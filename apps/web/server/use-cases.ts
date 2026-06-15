@@ -47,10 +47,12 @@ type UC<A, E = unknown> = Effect.Effect<A, E, OrgContext | EngineServices>
 
 // ── managed-concept guard ─────────────────────────────────────────────────────
 // A connector-managed concept's schema + instances are owned by an integration
-// sync; reject user-initiated mutations here at the use-case boundary. The sync
-// path calls the engine services directly (runEngineOrThrow), never through these
-// use-cases, so it stays free to write. Discriminated by the typed `managedBy`
-// kind on the concept — never by concept name.
+// sync; the sync path calls the engine services directly (runEngineOrThrow),
+// never through these use-cases, so it stays free to write. At the use-case
+// boundary the guard is FIELD-LEVEL: synced fields (Field.managedBy set) and the
+// record lifecycle stay read-only, but members may add + edit their OWN fields
+// (managedBy null) — e.g. a status on a synced email. Discriminated by the typed
+// `managedBy` kind on the concept/field — never by name.
 
 const ensureUnmanagedConcept = (conceptId: string): UC<void> =>
   Effect.flatMap(ConceptService, (c) => c.getById(conceptId)).pipe(
@@ -68,18 +70,77 @@ const ensureUnmanagedInstance = (instanceId: string): UC<void> =>
     Effect.flatMap((inst) => ensureUnmanagedConcept(inst.conceptId)),
     // get() is live-only; if the instance is archived/gone, skip the guard and let
     // the real mutation surface the proper InstanceNotFound. Live managed instances
-    // (the case that matters) are still covered by create/update/archive guards.
+    // (the case that matters) are still covered by create/archive guards.
     Effect.catchAll((e) =>
       (e as { _tag?: string })?._tag === "InstanceNotFound" ? Effect.void : Effect.fail(e),
     ),
   )
 
+// Block a SCHEMA edit (rename/config/archive/delete) to a connector-SYNCED field;
+// a user-added field on the same concept (managedBy null) stays editable.
 const ensureUnmanagedField = (fieldId: string): UC<void> =>
   Effect.flatMap(FieldService, (f) => f.getById(fieldId)).pipe(
-    Effect.flatMap((field) => ensureUnmanagedConcept(field.conceptId)),
+    Effect.flatMap((field) =>
+      field.managedBy
+        ? Effect.flatMap(ConceptService, (c) => c.getById(field.conceptId)).pipe(
+            Effect.flatMap((concept) =>
+              Effect.fail(
+                new ManagedConceptReadonly({
+                  concept: concept.name,
+                  managedBy: field.managedBy as string,
+                }),
+              ),
+            ),
+          )
+        : Effect.void,
+    ),
+  )
+
+// For an instance VALUE write to specific keys: a managed concept accepts the
+// write only when every touched key is a user-added (unmanaged) field — so a
+// member can set their own fields on a synced record while the integration's
+// fields stay read-only. Unmanaged concepts pass freely (no field is managed); a
+// missing/archived instance skips the guard (the real mutation surfaces the
+// proper InstanceNotFound). Keyed by field id; non-field keys (e.g. __labels) pass.
+const ensureWritablePatch = (instanceId: string, keys: ReadonlyArray<string>): UC<void> =>
+  Effect.flatMap(InstanceService, (i) => i.get(instanceId)).pipe(
+    Effect.flatMap((inst) =>
+      Effect.flatMap(ConceptService, (c) => c.getById(inst.conceptId)).pipe(
+        Effect.flatMap((concept) =>
+          !concept.managedBy
+            ? Effect.void
+            : Effect.flatMap(FieldService, (f) =>
+                f.listFields(concept.id, { includeArchived: true }),
+              ).pipe(
+                Effect.flatMap((fields) => {
+                  const managed = new Set(fields.filter((fd) => fd.managedBy).map((fd) => fd.id))
+                  return keys.some((k) => managed.has(k))
+                    ? Effect.fail(
+                        new ManagedConceptReadonly({
+                          concept: concept.name,
+                          managedBy: concept.managedBy as string,
+                        }),
+                      )
+                    : Effect.void
+                }),
+              ),
+        ),
+      ),
+    ),
+    Effect.catchAll((e) =>
+      (e as { _tag?: string })?._tag === "InstanceNotFound" ? Effect.void : Effect.fail(e),
+    ),
   )
 
 // ── reads ───────────────────────────────────────────────────────────────────
+
+/** The field id that holds an instance's display label ("title"): the concept's
+ *  explicit `titleFieldId`, else the first text field (fallback for an as-yet
+ *  unconfigured concept). Mirrors the client `instanceLabel`. */
+const titleFieldIdOf = (
+  titleFieldId: string | null,
+  defs: ReadonlyArray<{ readonly id: string; readonly kind: string }>,
+): string | undefined => titleFieldId ?? defs.find((f) => f.kind === "text")?.id
 
 export interface ListOpts {
   readonly where?: Record<string, unknown>
@@ -142,6 +203,7 @@ export const getInstanceDetail = (id: string): UC<unknown> =>
         conceptsSvc.list(),
       ])
     const nameById = new Map(allConcepts.map((c) => [c.id, c.name] as const))
+    const titleByConcept = new Map(allConcepts.map((c) => [c.id, c.titleFieldId] as const))
 
     // Inherited (static) labels come from the concept; the instance's own labels
     // live under the synthetic `__labels` state key. Both resolved to live labels
@@ -207,9 +269,9 @@ export const getInstanceDetail = (id: string): UC<unknown> =>
           fieldsSvc.listFields(other.conceptId),
           computed.decorate(other),
         ])
-        // Resolve a display label from the connected concept's first text field
-        // (its state is keyed by field id; the client lacks these defs).
-        const textField = otherFields.find((f) => f.kind === "text" && d.state[f.id])
+        // Resolve a display label from the connected concept's title field (its
+        // state is keyed by field id; the client lacks these defs).
+        const titleId = titleFieldIdOf(titleByConcept.get(other.conceptId) ?? null, otherFields)
         return {
           relationId: rel.id,
           fieldId: rel.fieldId,
@@ -217,7 +279,7 @@ export const getInstanceDetail = (id: string): UC<unknown> =>
           relationName: field.name,
           relationInverseName: field.config.inverseName ?? null,
           relationInversePluralName: field.config.inversePluralName ?? null,
-          label: textField ? String(d.state[textField.id]) : "(untitled)",
+          label: titleId && d.state[titleId] ? String(d.state[titleId]) : "(untitled)",
           direction,
           conceptId: other.conceptId,
           conceptName: nameById.get(other.conceptId) ?? other.conceptId,
@@ -312,6 +374,13 @@ export const setConceptInstanceView = (
   id: string,
   instanceView: InstanceViewLayout | null,
 ): UC<unknown> => Effect.flatMap(ConceptService, (c) => c.setInstanceView(id, instanceView))
+
+/** Designate (or clear) a concept's title field. Rejected for a managed concept —
+ *  the integration owns its title (set at provision time). */
+export const setConceptTitleField = (id: string, titleFieldId: string | null): UC<unknown> =>
+  ensureUnmanagedConcept(id).pipe(
+    Effect.zipRight(Effect.flatMap(ConceptService, (c) => c.setTitleField(id, titleFieldId))),
+  )
 
 export const archiveConcept = (id: string): UC<unknown> =>
   ensureUnmanagedConcept(id).pipe(
@@ -494,9 +563,9 @@ export const addField = (input: {
   readonly formula?: string
   readonly icon?: string | null
 }): UC<unknown> =>
-  ensureUnmanagedConcept(input.conceptId).pipe(
-    Effect.zipRight(Effect.flatMap(FieldService, (f) => f.addField(input))),
-  )
+  // A user-added field is always unmanaged (managedBy null), so any concept —
+  // managed or not — accepts it; the synced fields keep their own marker.
+  Effect.flatMap(FieldService, (f) => f.addField(input))
 
 export const updateField = (input: {
   readonly id: string
@@ -522,9 +591,9 @@ export const reorderFields = (
   conceptId: string,
   orders: ReadonlyArray<{ readonly id: string; readonly position: number }>,
 ): UC<unknown> =>
-  ensureUnmanagedConcept(conceptId).pipe(
-    Effect.zipRight(Effect.flatMap(FieldService, (f) => f.reorder(conceptId, orders))),
-  )
+  // Pure presentation (display order); harmless on a managed concept and lets a
+  // member position their own fields among the synced ones.
+  Effect.flatMap(FieldService, (f) => f.reorder(conceptId, orders))
 
 export interface FeedItem {
   readonly id: number
@@ -592,7 +661,7 @@ export const updateInstance = (
   expectedVersion: number,
   patch: Record<string, unknown>,
 ): UC<Instance> =>
-  ensureUnmanagedInstance(id).pipe(
+  ensureWritablePatch(id, Object.keys(patch)).pipe(
     Effect.zipRight(
       Effect.flatMap(InstanceService, (i) => i.update({ instanceId: id, expectedVersion, patch })),
     ),
@@ -605,7 +674,7 @@ export const transitionInstance = (
   to: string,
 ): UC<Instance> =>
   Effect.gen(function* () {
-    yield* ensureUnmanagedInstance(id)
+    yield* ensureWritablePatch(id, [field])
     return yield* Effect.flatMap(InstanceService, (i) =>
       i.transition({ instanceId: id, expectedVersion, field, to }),
     )
@@ -664,13 +733,17 @@ export const searchInstances = (conceptId: string, query?: string, limit = 20): 
   Effect.gen(function* () {
     const q = yield* QueryService
     const fieldsSvc = yield* FieldService
+    const conceptsSvc = yield* ConceptService
     const rows = yield* q.findInstances({ conceptId, limit: 200 })
-    const defs = yield* fieldsSvc.listFields(conceptId)
-    const textField = defs.find((f) => f.kind === "text")
+    const [defs, concept] = yield* Effect.all([
+      fieldsSvc.listFields(conceptId),
+      conceptsSvc.getById(conceptId),
+    ])
+    const titleId = titleFieldIdOf(concept.titleFieldId, defs)
     const out = rows.map((r) => ({
       itemId: r.itemId,
       instanceId: r.id,
-      label: textField && r.state[textField.id] ? String(r.state[textField.id]) : "(untitled)",
+      label: titleId && r.state[titleId] ? String(r.state[titleId]) : "(untitled)",
       versionSeq: r.versionSeq,
       versionStatus: r.versionStatus,
     }))
@@ -764,7 +837,9 @@ export const resolveTaskSubjects = (subjectIds: ReadonlyArray<string>): UC<unkno
   Effect.gen(function* () {
     const instances = yield* InstanceService
     const fieldsSvc = yield* FieldService
+    const conceptsSvc = yield* ConceptService
     const fieldCache = new Map<string, ReadonlyArray<{ id: string; kind: string }>>()
+    const titleCache = new Map<string, string | null>()
 
     const resolveOne = (subjectId: string) =>
       Effect.gen(function* () {
@@ -780,11 +855,16 @@ export const resolveTaskSubjects = (subjectIds: ReadonlyArray<string>): UC<unkno
           fields = yield* fieldsSvc.listFields(head.conceptId)
           fieldCache.set(head.conceptId, fields)
         }
-        const textField = fields.find((f) => f.kind === "text" && head.state[f.id])
+        let titleFieldId = titleCache.get(head.conceptId)
+        if (titleFieldId === undefined) {
+          titleFieldId = (yield* conceptsSvc.getById(head.conceptId)).titleFieldId
+          titleCache.set(head.conceptId, titleFieldId)
+        }
+        const titleId = titleFieldIdOf(titleFieldId, fields)
         return {
           subjectId,
           instanceId: head.id,
-          label: textField ? String(head.state[textField.id]) : "(untitled)",
+          label: titleId && head.state[titleId] ? String(head.state[titleId]) : "(untitled)",
           conceptId: head.conceptId,
         }
       }).pipe(

@@ -76,7 +76,7 @@ export const sourceEvents = (
   index: number,
   instances: readonly Instance[],
   fields: readonly Field[],
-  opts?: Pick<MatchOpts, "me">,
+  opts?: Pick<MatchOpts, "me"> & { titleFieldId?: string | null },
 ): CalendarEvent[] => {
   const color = sourceColor(source.color, index)
   const out: CalendarEvent[] = []
@@ -89,7 +89,7 @@ export const sourceEvents = (
     out.push({
       id: `${index}:${inst.id}`,
       day,
-      label: picked || instanceLabel(inst, fields),
+      label: picked || instanceLabel(inst, fields, opts?.titleFieldId),
       color,
       href: `/instances/${inst.id}`,
     })
@@ -188,7 +188,7 @@ export const ganttSpans = (
   >,
   instances: readonly Instance[],
   fields: readonly Field[],
-  opts?: Pick<MatchOpts, "me">,
+  opts?: Pick<MatchOpts, "me"> & { titleFieldId?: string | null },
 ): GanttSpan[] => {
   const out: GanttSpan[] = []
   for (const inst of instances) {
@@ -203,7 +203,7 @@ export const ganttSpans = (
       id: inst.id,
       start,
       end,
-      label: picked || instanceLabel(inst, fields),
+      label: picked || instanceLabel(inst, fields, opts?.titleFieldId),
       group: groupRaw == null || groupRaw === "" ? "" : String(groupRaw),
       progress: widget.progressField ? clampProgress(inst.state[widget.progressField]) : null,
     })

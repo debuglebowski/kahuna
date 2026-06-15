@@ -21,9 +21,11 @@ import {
   Columns3,
   GripVertical,
   LayoutDashboard,
+  Lock,
   Pencil,
   Plus,
   SlidersHorizontal,
+  Star,
   Trash2,
 } from "lucide-react"
 import { useMemo, useState } from "react"
@@ -308,6 +310,12 @@ export function ConceptEditor({
   })
   const liveFields = fields.data?.filter((f) => !f.archivedAt) ?? []
   const archivedFields = fields.data?.filter((f) => f.archivedAt) ?? []
+  // On a managed concept the integration's synced fields are read-only (pinned
+  // first), while user-added fields (managedBy null) are fully editable — so a
+  // member can add e.g. a status without touching the synced data.
+  const isManaged = !!concept.managedBy
+  const syncedFields = liveFields.filter((f) => f.managedBy)
+  const userFields = liveFields.filter((f) => !f.managedBy)
 
   // Layout tab: the concept's default instance layout. Capabilities are read
   // from the SAVED concept (not the unsaved General-tab draft), so tile
@@ -336,6 +344,15 @@ export function ConceptEditor({
     onSuccess: () => {
       setLayoutDirty(false)
       qc.invalidateQueries({ queryKey: ["concepts"] })
+    },
+  })
+
+  // Title field saves immediately (no draft) — like the layout, it's its own RPC.
+  const saveTitleField = useMutation({
+    mutationFn: (titleFieldId: string | null) => api.setConceptTitleField(concept.id, titleFieldId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["concepts"] })
+      refetchGraph()
     },
   })
 
@@ -420,6 +437,24 @@ export function ConceptEditor({
     reorderFieldsMut.mutate(next.map((f, i) => ({ id: f.id, position: i })))
   }
 
+  // Managed concept: reorder among USER fields only (synced stay pinned first);
+  // positions are assigned over the full [synced…, user…] order so they never
+  // collide with the synced fields' positions.
+  const onUserFieldDragEnd = (e: DragEndEvent) => {
+    const { active, over } = e
+    if (!over || active.id === over.id) return
+    const from = userFields.findIndex((f) => f.id === active.id)
+    const to = userFields.findIndex((f) => f.id === over.id)
+    if (from < 0 || to < 0) return
+    const next = [...syncedFields, ...arrayMove(userFields, from, to)]
+    qc.setQueryData<Field[]>(["fields", concept.id, "withArchived"], (old) => {
+      if (!old) return old
+      const rank = new Map(next.map((f, i) => [f.id, i]))
+      return [...old].sort((a, b) => (rank.get(a.id) ?? Infinity) - (rank.get(b.id) ?? Infinity))
+    })
+    reorderFieldsMut.mutate(next.map((f, i) => ({ id: f.id, position: i })))
+  }
+
   // Archived items: restore, or purge (admin) — the data-hygiene side of a
   // concept, so it lives here with the rest of its configuration.
   const archivedItems = useQuery({
@@ -463,7 +498,28 @@ export function ConceptEditor({
       <span className="flex-1 truncate text-xs text-muted-foreground">
         {summarize(f, conceptName)}
       </span>
-      {admin &&
+      {/* The title field (its value names each item) carries a read-only badge;
+          you change which field it is from the field's edit modal. */}
+      {!archived && concept.titleFieldId === f.id && (
+        <span
+          className="flex items-center gap-1 text-xs font-medium text-primary"
+          title="Title field — its value names each item"
+        >
+          <Star size={13} className="fill-current" />
+          Title
+        </span>
+      )}
+      {/* Synced (integration-owned) fields are read-only — show a lock, no actions. */}
+      {f.managedBy ? (
+        <span
+          className="flex items-center gap-1 text-xs text-muted-foreground"
+          title="Synced from the integration — read-only"
+        >
+          <Lock size={13} />
+          Synced
+        </span>
+      ) : (
+        admin &&
         (archived ? (
           <>
             <IconButton
@@ -503,7 +559,8 @@ export function ConceptEditor({
               <Trash2 size={15} />
             </IconButton>
           </>
-        ))}
+        ))
+      )}
     </>
   )
 
@@ -797,30 +854,64 @@ export function ConceptEditor({
           </TabsContent>
 
           <TabsContent value="fields" className="flex min-h-0 flex-1 flex-col">
-            {admin && (
-              <div className="flex shrink-0 items-center justify-between gap-2 border-b px-5 py-2.5">
-                <Button variant="outline" size="sm" onClick={() => setFieldModal({ mode: "add" })}>
-                  <Plus size={15} />
-                  Add field
-                </Button>
-                {archivedFields.length > 0 && (
-                  <Button
-                    variant="link"
-                    onClick={() => setShowArchivedFields((v) => !v)}
-                    className="h-auto p-0 text-xs font-normal text-muted-foreground hover:text-foreground"
-                  >
-                    {showArchivedFields ? "Hide" : "Show"} archived ({archivedFields.length})
-                  </Button>
-                )}
-              </div>
-            )}
             <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-6 pb-24">
               {fields.isPending && <Spinner />}
               {!fields.isPending && liveFields.length === 0 && (
                 <p className="text-xs text-muted-foreground">No fields yet.</p>
               )}
               {liveFields.length > 0 &&
-                (admin ? (
+                (isManaged ? (
+                  <div className="space-y-5">
+                    <p className="text-xs text-muted-foreground">
+                      Synced fields are owned by the integration and read-only. Add your own fields
+                      to annotate these records (e.g. a status) — they stay yours and are fully
+                      editable.
+                    </p>
+                    {syncedFields.length > 0 && (
+                      <div className="space-y-1">
+                        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                          Synced fields
+                        </p>
+                        <ul className="divide-y divide-border">
+                          {syncedFields.map((f) => renderFieldRow(f, false))}
+                        </ul>
+                      </div>
+                    )}
+                    <div className="space-y-1">
+                      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                        Your fields
+                      </p>
+                      {userFields.length === 0 ? (
+                        <p className="py-1 text-xs text-muted-foreground">
+                          No custom fields yet.{admin ? " Add one below." : ""}
+                        </p>
+                      ) : admin ? (
+                        <DndContext
+                          sensors={sensors}
+                          collisionDetection={closestCenter}
+                          onDragEnd={onUserFieldDragEnd}
+                        >
+                          <SortableContext
+                            items={userFields.map((f) => f.id)}
+                            strategy={verticalListSortingStrategy}
+                          >
+                            <ul className="divide-y divide-border">
+                              {userFields.map((f) => (
+                                <SortableFieldRow key={f.id} field={f}>
+                                  {fieldRowBody(f, false)}
+                                </SortableFieldRow>
+                              ))}
+                            </ul>
+                          </SortableContext>
+                        </DndContext>
+                      ) : (
+                        <ul className="divide-y divide-border">
+                          {userFields.map((f) => renderFieldRow(f, false))}
+                        </ul>
+                      )}
+                    </div>
+                  </div>
+                ) : admin ? (
                   <DndContext
                     sensors={sensors}
                     collisionDetection={closestCenter}
@@ -844,6 +935,27 @@ export function ConceptEditor({
                     {liveFields.map((f) => renderFieldRow(f, false))}
                   </ul>
                 ))}
+              {admin && (
+                <div className="flex items-center justify-between gap-2 border-t border-border pt-3">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setFieldModal({ mode: "add" })}
+                  >
+                    <Plus size={15} />
+                    Add field
+                  </Button>
+                  {archivedFields.length > 0 && (
+                    <Button
+                      variant="link"
+                      onClick={() => setShowArchivedFields((v) => !v)}
+                      className="h-auto p-0 text-xs font-normal text-muted-foreground hover:text-foreground"
+                    >
+                      {showArchivedFields ? "Hide" : "Show"} archived ({archivedFields.length})
+                    </Button>
+                  )}
+                </div>
+              )}
               {showArchivedFields && archivedFields.length > 0 && (
                 <div className="space-y-1 border-t border-border pt-3">
                   <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -976,9 +1088,34 @@ export function ConceptEditor({
             onCancel={() => setFieldModal(null)}
             pending={fieldModal.mode === "add" ? addField.isPending : updateField.isPending}
           />
-          {(addField.error || updateField.error) && (
+          {/* Title field is a concept-level setting; offered per field here (edit
+              only — a new field has no id yet). Saves immediately via its own RPC.
+              Managed concepts own their title, so it isn't offered there. */}
+          {fieldModal.mode === "edit" &&
+            !concept.managedBy &&
+            fieldModal.field.kind !== "relation" &&
+            fieldModal.field.kind !== "file" && (
+              <div className="mt-4 flex items-center gap-2 border-t border-border pt-4">
+                <Checkbox
+                  id="title-field-toggle"
+                  checked={concept.titleFieldId === fieldModal.field.id}
+                  disabled={!admin || saveTitleField.isPending}
+                  onCheckedChange={(v) =>
+                    saveTitleField.mutate(v === true ? fieldModal.field.id : null)
+                  }
+                />
+                <label htmlFor="title-field-toggle" className="text-sm font-medium text-foreground">
+                  Use as the title field
+                </label>
+                <InfoHint
+                  text="Its value names each item — shown as the label in lists, the calendar, relation pickers, and elsewhere."
+                  label="Title field — more info"
+                />
+              </div>
+            )}
+          {(addField.error || updateField.error || saveTitleField.error) && (
             <p className="mt-3 text-sm text-destructive">
-              {msgOf(addField.error ?? updateField.error)}
+              {msgOf(addField.error ?? updateField.error ?? saveTitleField.error)}
             </p>
           )}
         </Modal>

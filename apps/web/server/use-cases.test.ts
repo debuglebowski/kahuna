@@ -1,8 +1,14 @@
 import { randomUUID } from "node:crypto"
-import type { EngineServices, OrgContext } from "@kingsmaker/engine"
-import type { Effect } from "effect"
+import {
+  ConceptService,
+  type EngineServices,
+  FieldService,
+  InstanceService,
+  type OrgContext,
+} from "@kingsmaker/engine"
+import { Effect } from "effect"
 import { describe, expect, it } from "vitest"
-import { runEngineOrThrow } from "./runtime"
+import { runEngine, runEngineOrThrow } from "./runtime"
 import { seedKingsmaker } from "./seed/seed"
 import {
   addField,
@@ -35,6 +41,7 @@ import {
   saveGraphLayout,
   saveInstanceGraphLayout,
   updateField,
+  updateInstance,
   updateInstanceViewPrefs,
 } from "./use-cases"
 
@@ -49,6 +56,9 @@ const has = (xs: unknown, id: string) => ids(xs).includes(id)
 
 const run = <A, E>(orgId: string, eff: Effect.Effect<A, E, OrgContext | EngineServices>) =>
   runEngineOrThrow({ orgId, actor: "system" }, eff)
+
+/** The error code of a (failed) use-case result; undefined on success. */
+const codeOf = (r: { readonly ok: boolean; readonly code?: string }) => (r.ok ? undefined : r.code)
 
 type FieldRow = { id: string; name: string; kind: string }
 
@@ -341,5 +351,101 @@ describe("instance view prefs", () => {
 
     // Prefs are org-scoped: the other org still reads defaults.
     expect(await run(orgB, getInstanceViewPrefs)).toEqual({ userId: "system", body: empty })
+  })
+})
+
+describe("managed concepts: field-level read-only guard", () => {
+  it("locks synced fields + record lifecycle, but allows user fields + their values", async () => {
+    const org = randomUUID()
+    const scope = { orgId: org, actor: "u" }
+    await run(org, seedKingsmaker)
+
+    // Simulate a connector sync: a managed concept + one integration-owned field
+    // (the sync path goes straight through the engine, bypassing the guard).
+    const concept = await run(
+      org,
+      Effect.flatMap(ConceptService, (c) => c.create({ name: "Email", managedBy: "google.gmail" })),
+    )
+    const synced = await run(
+      org,
+      Effect.flatMap(FieldService, (f) =>
+        f.addField({
+          conceptId: concept.id,
+          name: "Subject",
+          kind: "text",
+          managedBy: "google.gmail",
+        }),
+      ),
+    )
+    expect(synced.managedBy).toBe("google.gmail")
+
+    // A member adds their OWN field — allowed on a managed concept; stays unmanaged.
+    const userField = (await run(
+      org,
+      addField({
+        conceptId: concept.id,
+        name: "Status",
+        kind: "enum",
+        config: { options: ["new", "done"] },
+      }),
+    )) as { id: string; managedBy: string | null }
+    expect(userField.managedBy).toBeNull()
+
+    // Schema edits: synced field locked, user field editable.
+    expect(codeOf(await runEngine(scope, updateField({ id: synced.id, name: "Renamed" })))).toBe(
+      "MANAGED_READONLY",
+    )
+    expect((await runEngine(scope, updateField({ id: userField.id, name: "State" }))).ok).toBe(true)
+    expect(codeOf(await runEngine(scope, archiveField(synced.id)))).toBe("MANAGED_READONLY")
+    // A throwaway user field archives fine (don't archive the one used below).
+    const extra = (await run(
+      org,
+      addField({ conceptId: concept.id, name: "Extra", kind: "text" }),
+    )) as WithId
+    expect((await runEngine(scope, archiveField(extra.id))).ok).toBe(true)
+
+    // A synced record (created by the sync path).
+    const inst = await run(
+      org,
+      Effect.flatMap(InstanceService, (i) =>
+        i.create({ conceptId: concept.id, fields: { [synced.id]: "Hello" } }),
+      ),
+    )
+
+    // Value writes: a member may set their own field, but not a synced one.
+    expect(
+      (await runEngine(scope, updateInstance(inst.id, inst.version, { [userField.id]: "new" }))).ok,
+    ).toBe(true)
+    expect(
+      codeOf(
+        await runEngine(scope, updateInstance(inst.id, inst.version, { [synced.id]: "tampered" })),
+      ),
+    ).toBe("MANAGED_READONLY")
+
+    // Record lifecycle stays integration-owned.
+    expect(codeOf(await runEngine(scope, createInstance(concept.id, {})))).toBe("MANAGED_READONLY")
+    expect(codeOf(await runEngine(scope, deleteInstance(inst.id)))).toBe("MANAGED_READONLY")
+  })
+
+  it("leaves unmanaged concepts fully editable (no false positives)", async () => {
+    const org = randomUUID()
+    const scope = { orgId: org, actor: "u" }
+    await run(org, seedKingsmaker)
+
+    const concept = (await run(org, createConcept("Widget"))) as WithId
+    const field = (await run(
+      org,
+      addField({ conceptId: concept.id, name: "Note", kind: "text" }),
+    )) as WithId
+    const inst = (await run(org, createInstance(concept.id, { [field.id]: "x" }))) as {
+      id: string
+      version: number
+    }
+
+    expect((await runEngine(scope, updateField({ id: field.id, name: "Notes" }))).ok).toBe(true)
+    expect(
+      (await runEngine(scope, updateInstance(inst.id, inst.version, { [field.id]: "y" }))).ok,
+    ).toBe(true)
+    expect((await runEngine(scope, deleteInstance(inst.id))).ok).toBe(true)
   })
 })

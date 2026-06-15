@@ -2,7 +2,7 @@ import { differenceInCalendarDays } from "date-fns"
 import { Fragment, useMemo } from "react"
 import { useNavigate } from "react-router-dom"
 import { pillStyle } from "@/components/ui"
-import type { DashboardWidget } from "@/lib/api"
+import type { Concept, DashboardWidget } from "@/lib/api"
 import { useSession } from "@/lib/auth-client"
 import type { ConceptInstanceData } from "@/lib/conceptData"
 import { parseDateValue } from "@/lib/dates"
@@ -26,9 +26,12 @@ const BAR_COLOR = "#3b82f6"
 export function GanttWidget({
   widget,
   data,
+  concept,
 }: {
   widget: Gantt
   data: ConceptInstanceData | undefined
+  /** The bar's concept — its title field drives bar labels. */
+  concept?: Concept
 }) {
   const navigate = useNavigate()
   const { data: session } = useSession()
@@ -37,8 +40,12 @@ export function GanttWidget({
   const groupField = widget.groupBy ? fields.find((f) => f.id === widget.groupBy) : undefined
 
   const spans = useMemo(
-    () => ganttSpans(widget, data?.instances ?? [], fields, { me }),
-    [widget, data?.instances, fields, me],
+    () =>
+      ganttSpans(widget, data?.instances ?? [], fields, {
+        me,
+        titleFieldId: concept?.titleFieldId,
+      }),
+    [widget, data?.instances, fields, me, concept?.titleFieldId],
   )
 
   if (!widget.conceptId) return <p className="text-sm text-muted-foreground">Pick a concept.</p>

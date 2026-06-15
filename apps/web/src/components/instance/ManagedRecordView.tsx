@@ -3,16 +3,16 @@ import { Card } from "../ui"
 import type { InstanceCtx } from "./types"
 
 /**
- * Opinionated, READ-ONLY detail view for a connector-managed concept whose data
- * is owned by an integration sync (Linear ticket, Calendar event, …). Renders
- * the concept's fields as a fixed definition list via the shared
+ * Opinionated, READ-ONLY detail view for the SYNCED fields of a connector-managed
+ * concept (Linear ticket, Calendar event, …) — the data the integration owns
+ * (`managedBy` set). Renders them as a fixed definition list via the shared
  * {@link FieldValueCell} — no inline editing, no customizable layout (that's the
- * "opinionated" part). Field-kind aware (enum→chips, url→link, date formatted),
- * keyed off field defs — never off field names.
+ * "opinionated" part). User-added fields are editable separately
+ * ({@link ManagedUserFields}). Field-kind aware, keyed off field defs — never names.
  */
 export function ManagedRecordView({ ctx }: { ctx: InstanceCtx }) {
   const fields = ctx.fields
-    .filter((f) => !f.archivedAt)
+    .filter((f) => !f.archivedAt && !!f.managedBy)
     .slice()
     .sort((a, b) => a.position - b.position || a.name.localeCompare(b.name))
 

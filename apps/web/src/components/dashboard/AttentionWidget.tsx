@@ -99,7 +99,9 @@ export function AttentionWidget({
             onClick={() => navigate(`/instances/${i.id}`)}
             className="flex w-full items-center justify-between gap-2 rounded px-1 py-1 text-left text-sm hover:bg-muted"
           >
-            <span className="truncate text-foreground">{instanceLabel(i, fields)}</span>
+            <span className="truncate text-foreground">
+              {instanceLabel(i, fields, concept?.titleFieldId)}
+            </span>
             {showDays && d != null && (
               <span className="shrink-0 text-xs text-muted-foreground">{d}d quiet</span>
             )}

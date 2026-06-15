@@ -117,6 +117,11 @@ export interface Concept {
    *  grid, same shape as a view-prefs custom layout); null = render the built-in
    *  default preset. Set in concept settings; every instance renders it. */
   readonly instanceView: InstanceViewLayout | null
+  /** Field id whose value is this concept's instance display label ("title");
+   *  any scalar field. Replaces the implicit "first text field" guess — null only
+   *  for an unconfigured concept (then the fallback applies). Integration-set and
+   *  UI-locked on a managed concept. */
+  readonly titleFieldId: Id | null
   readonly createdAt: Date
   /** Archive marker (mirrors `Field`/`Label`/`Instance`): non-null = archived
    *  (hidden from the live list but restorable). A true delete removes the row. */
@@ -152,6 +157,12 @@ export interface Field {
   readonly kind: FieldKind
   readonly formula: string | null
   readonly config: FieldConfig
+  /** Per-field ownership marker (mirrors `Concept.managedBy`): the integration
+   *  kind (e.g. `"google.gmail"`) for a connector-synced, read-only field, else
+   *  null for a user-added field. On a managed concept, synced fields carry the
+   *  kind while user fields stay null — so members may add + edit their own
+   *  fields. Drives the field-level read-only guard. Keyed by kind, never name. */
+  readonly managedBy: string | null
   /** Optional display glyph (see `Concept.icon`): literal emoji or `lucide:Name`. */
   readonly icon: string | null
   /** Display order within the concept (ascending); ties broken by name. */

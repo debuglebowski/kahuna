@@ -4,7 +4,7 @@ import { ChevronLeft, ChevronRight } from "lucide-react"
 import { useMemo, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { pillStyle } from "@/components/ui"
-import type { DashboardWidget } from "@/lib/api"
+import type { Concept, DashboardWidget } from "@/lib/api"
 import { useSession } from "@/lib/auth-client"
 import { KEY, tasksGlobalCollection, useRegisterCollection } from "@/lib/collections"
 import type { ConceptInstanceData } from "@/lib/conceptData"
@@ -35,9 +35,12 @@ const WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 export function CalendarWidget({
   widget,
   instData,
+  cIndex,
 }: {
   widget: Calendar
   instData: Record<string, ConceptInstanceData>
+  /** Concept lookup so each source's title field drives its event labels. */
+  cIndex: Map<string, Concept>
 }) {
   const navigate = useNavigate()
   const { data: session } = useSession()
@@ -56,11 +59,12 @@ export function CalendarWidget({
     widget.sources.forEach((s, i) => {
       const d = s.conceptId ? instData[s.conceptId] : undefined
       if (!d || !s.dateField) return
-      out.push(...sourceEvents(s, i, d.instances, d.fields, { me }))
+      const titleFieldId = s.conceptId ? (cIndex.get(s.conceptId)?.titleFieldId ?? null) : null
+      out.push(...sourceEvents(s, i, d.instances, d.fields, { me, titleFieldId }))
     })
     if (includeTasks) out.push(...taskEvents(tasksQ.data ?? []))
     return out
-  }, [widget.sources, instData, includeTasks, tasksQ.data, me])
+  }, [widget.sources, instData, includeTasks, tasksQ.data, me, cIndex])
 
   const byDay = useMemo(() => eventsByDay(events), [events])
 

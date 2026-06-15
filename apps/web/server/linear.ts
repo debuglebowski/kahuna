@@ -359,6 +359,7 @@ const TICKET_CONCEPT: ProvisionConceptSpec = {
   icon: "lucide:Triangle",
   color: "#8b5cf6",
   managedBy: "linear",
+  titleFieldKey: "title",
   fields: [
     { key: "identifier", name: "Identifier", kind: "text", config: { unique: true }, icon: "🔖" },
     { key: "title", name: "Title", kind: "text" },

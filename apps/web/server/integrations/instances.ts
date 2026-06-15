@@ -44,6 +44,10 @@ export interface ProvisionConceptSpec {
   /** Marks this as a connector-owned "managed concept" (e.g. "google.gmail").
    *  Locked from user edits + given an opinionated detail view. */
   readonly managedBy?: string
+  /** Logical `key` of the field to use as the instance display label ("title").
+   *  Set as the concept's `titleFieldId` at provision time (overriding the
+   *  auto-assigned first field), so e.g. an event shows its Title, not its id. */
+  readonly titleFieldKey?: string
   readonly fields: ReadonlyArray<ProvisionFieldSpec>
 }
 
@@ -95,6 +99,9 @@ export const provisionConcept = (
           kind: field.kind,
           config: field.config,
           icon: field.icon,
+          // Mark connector-synced fields read-only (mirrors the concept marker);
+          // user-added fields on this concept stay null and remain editable.
+          managedBy: spec.managedBy,
         })
       }
       // Re-list after adding so the map covers freshly created fields too. Match
@@ -107,6 +114,11 @@ export const provisionConcept = (
         const id = idByName.get(field.name)
         if (id) fieldMap[field.key] = id
       }
+      // Pin the display label ("title") to the declared field, overriding the
+      // first-field default `addField` auto-assigns (the external-id key is added
+      // first). Idempotent: re-provision keeps it pinned.
+      const titleId = spec.titleFieldKey ? fieldMap[spec.titleFieldKey] : undefined
+      if (titleId) yield* concepts.setTitleField(concept.id, titleId)
       return { conceptId: concept.id, fieldMap }
     }),
   )

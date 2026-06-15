@@ -15,7 +15,7 @@ import { type ReactNode, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { useNavigate } from "react-router-dom"
 import { Badge, LabelChip } from "@/components/ui"
-import { api, type DashboardWidget, type Field, type Instance } from "@/lib/api"
+import { api, type Concept, type DashboardWidget, type Field, type Instance } from "@/lib/api"
 import { useSession } from "@/lib/auth-client"
 import { instancesByConcept } from "@/lib/collections"
 import type { ConceptInstanceData } from "@/lib/conceptData"
@@ -65,9 +65,12 @@ const moveErrorText = (err: unknown): string => {
 export function KanbanWidget({
   widget,
   data,
+  concept,
 }: {
   widget: Kanban
   data: ConceptInstanceData | undefined
+  /** The board's concept — its title field drives card labels. */
+  concept?: Concept
 }) {
   const navigate = useNavigate()
   const { data: session } = useSession()
@@ -237,7 +240,7 @@ export function KanbanWidget({
                 <KanbanCard
                   key={inst.id}
                   inst={inst}
-                  title={instanceLabel(inst, fields)}
+                  title={instanceLabel(inst, fields, concept?.titleFieldId)}
                   cardFields={cardFields}
                   // Archived rows are frozen server-side — don't offer the drag.
                   draggable={dragToUpdate && inst.archivedAt == null}
@@ -255,7 +258,7 @@ export function KanbanWidget({
           <DragOverlay>
             {activeInst ? (
               <CardBody
-                title={instanceLabel(activeInst, fields)}
+                title={instanceLabel(activeInst, fields, concept?.titleFieldId)}
                 inst={activeInst}
                 cardFields={cardFields}
                 ghost

@@ -112,6 +112,10 @@ export const Concept = Schema.Struct({
   /** Org-wide default instance-detail layout (a 12-col tile grid); null = the
    *  built-in default preset. Set in concept settings → Layout. */
   instanceView: Schema.NullOr(InstanceViewLayout),
+  /** Field id whose value is this concept's instance display label ("title");
+   *  any scalar field. Null = unconfigured (fallback to first text field).
+   *  Integration-set + UI-locked on a managed concept. */
+  titleFieldId: Schema.NullOr(Schema.String),
   /** Archive marker: non-null = archived (hidden from the live list, restorable). */
   archivedAt: Schema.NullOr(Schema.Date),
   /** Total items (live + archived) — present only on a `withCounts` list. */
@@ -186,6 +190,11 @@ export const Field = Schema.Struct({
   kind: FieldKind,
   formula: Schema.NullOr(Schema.String),
   config: FieldConfig,
+  /** Per-field ownership marker (mirrors `Concept.managedBy`): the integration
+   *  kind (e.g. `"google.gmail"`) for a connector-synced, read-only field, else
+   *  null for a user-added field. On a managed concept, synced fields carry the
+   *  kind while user fields stay null — so members may add + edit their own. */
+  managedBy: Schema.NullOr(Schema.String),
   /** Display glyph: literal emoji or `lucide:Name` (see `Concept.icon`). */
   icon: Schema.NullOr(Schema.String),
   /** Display order within the concept (ascending); ties broken by name. */
@@ -388,12 +397,23 @@ export type SidebarView = typeof SidebarView.Type
 // — the server only persists/serves the document. The widget union is APPEND-ONLY
 // (a closed union breaks old clients on reshape); add new widget types at the end.
 
-/** A widget's placement on the grid canvas (react-grid-layout coords). */
+/** A widget's placement on the grid canvas (react-grid-layout coords). `w`/`h`
+ *  are always the RESOLVED grid cells (the source of truth RGL renders). The
+ *  units govern how the size is shown/entered in the config panel, Figma-style:
+ *  - width: "px"/"pct" are fixed (snap to the nearest cell); "fr" is a flex
+ *    track whose weight lives in `wFr` — fr widgets split the columns left over
+ *    in their row, so `w` is then derived per-row (see `normalizeFrWidths`).
+ *  - height: "px"/"pct" are fixed; "fr" = grid rows (vertical has no shared
+ *    budget to flex). Absent width unit = "pct", absent height unit = "fr". */
 const WidgetLayout = Schema.Struct({
   x: Schema.Number,
   y: Schema.Number,
   w: Schema.Number,
   h: Schema.Number,
+  wUnit: Schema.optional(Schema.Literal("fr", "px", "pct")),
+  hUnit: Schema.optional(Schema.Literal("fr", "px", "pct")),
+  /** Flex weight for a width-fr widget (CSS-grid `fr`). Absent ⇒ weight 1. */
+  wFr: Schema.optional(Schema.Number),
 })
 
 /** Fields shared by every widget. */
@@ -919,6 +939,14 @@ export class KingsmakerRpcs extends RpcGroup.make(
   // versioning edits in updateConcept).
   Rpc.make("setConceptInstanceView", {
     payload: { id: Schema.String, instanceView: Schema.NullOr(InstanceViewLayout) },
+    success: Concept,
+    error: RpcError,
+  }),
+  // Set (or clear with null) the field used as a concept's instance display label
+  // ("title"). Admin-gated (a schema-shaping choice). Rejected for managed concepts
+  // (the integration owns it).
+  Rpc.make("setConceptTitleField", {
+    payload: { id: Schema.String, titleFieldId: Schema.NullOr(Schema.String) },
     success: Concept,
     error: RpcError,
   }),

@@ -14,6 +14,9 @@ export interface AddFieldInput {
   readonly formula?: string
   /** Optional display glyph: literal emoji or `lucide:Name` (see `Field.icon`). */
   readonly icon?: string | null
+  /** Integration ownership marker (see `Field.managedBy`): set by a connector
+   *  sync for a read-only synced field; omit (→ null) for a user-added field. */
+  readonly managedBy?: string | null
 }
 
 /** Recognised `config.format` names per kind (value validators live in InstanceService). */
@@ -168,10 +171,20 @@ export class FieldService extends Effect.Service<FieldService>()("engine/FieldSe
             WHERE org_id = ${orgId} AND concept_id = ${input.conceptId}`
           const position = Number(max[0]?.max ?? -1) + 1
           const rows = yield* sql<FieldRow>`
-            INSERT INTO fields (org_id, concept_id, name, kind, formula, config, icon, position)
-            VALUES (${orgId}, ${input.conceptId}, ${input.name}, ${input.kind}, ${input.formula ?? null}, ${sql.json(config)}, ${input.icon ?? null}, ${position})
+            INSERT INTO fields (org_id, concept_id, name, kind, formula, config, managed_by, icon, position)
+            VALUES (${orgId}, ${input.conceptId}, ${input.name}, ${input.kind}, ${input.formula ?? null}, ${sql.json(config)}, ${input.managedBy ?? null}, ${input.icon ?? null}, ${position})
             RETURNING *`
           const field = toField(rows[0]!)
+          // Auto-designate the first scalar field as the concept's title (display
+          // label) when none is set yet — so every concept carries an explicit
+          // title field instead of relying on a runtime heuristic. Only when null
+          // (idempotent); relation/file fields can't be a title. A managed
+          // provision overrides this with its declared title key afterward.
+          if (field.kind !== "relation" && field.kind !== "file") {
+            yield* sql`
+              UPDATE concepts SET title_field_id = ${field.id}
+              WHERE org_id = ${orgId} AND id = ${input.conceptId} AND title_field_id IS NULL`
+          }
           yield* events.append({
             subjectKind: "field",
             subjectId: field.id,

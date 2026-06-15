@@ -5,6 +5,7 @@ import {
   ConceptInUse,
   ConceptNameConflict,
   ConceptNotFound,
+  FieldNotFound,
   LabelNotFound,
   VersioningInUse,
 } from "../errors"
@@ -256,6 +257,32 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
         }),
       )
 
+    /** Set (or clear) the field whose value is this concept's instance display
+     *  label. `null` clears it (fallback to the first-text-field heuristic). Like
+     *  `setInstanceView`, presentational config → emits no event. Validates the
+     *  field belongs to a LIVE field of this concept (any kind; the picker limits
+     *  to scalars, but a stale/relation id is rejected here as a guard). */
+    const setTitleField = (id: string, titleFieldId: string | null) =>
+      sql.withTransaction(
+        Effect.gen(function* () {
+          const { orgId } = yield* OrgContext
+          yield* getById(id) // 404 if missing / cross-org
+          if (titleFieldId) {
+            const f = yield* sql<{ readonly id: string }>`
+              SELECT id FROM fields
+              WHERE org_id = ${orgId} AND concept_id = ${id} AND id = ${titleFieldId}
+                AND archived_at IS NULL LIMIT 1`
+            if (!f[0]) return yield* Effect.fail(new FieldNotFound({ fieldId: titleFieldId }))
+          }
+          const rows = yield* sql<ConceptRow>`
+            UPDATE concepts SET title_field_id = ${titleFieldId}
+            WHERE org_id = ${orgId} AND id = ${id} RETURNING *`
+          const row = rows[0]
+          if (!row) return yield* Effect.fail(new ConceptNotFound({ concept: id }))
+          return toConcept(row)
+        }),
+      )
+
     /** Archive a concept (soft, restorable): hides it from the live list but keeps
      *  the row and its fields/instances intact. Idempotent on an archived concept. */
     const archive = (id: string) =>
@@ -338,6 +365,7 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
       list,
       update,
       setInstanceView,
+      setTitleField,
       archive,
       restore,
       purge,

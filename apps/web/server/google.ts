@@ -497,6 +497,7 @@ const EVENT_CONCEPT: ProvisionConceptSpec = {
   icon: "lucide:CalendarDays",
   color: "#0ea5e9",
   managedBy: "google.calendar",
+  titleFieldKey: "title",
   fields: [
     { key: "externalId", name: "Event ID", kind: "text", config: { unique: true }, icon: "🔖" },
     { key: "title", name: "Title", kind: "text" },
@@ -759,6 +760,7 @@ const EMAIL_CONCEPT: ProvisionConceptSpec = {
   icon: "lucide:Mail",
   color: "#ef4444",
   managedBy: "google.gmail",
+  titleFieldKey: "subject",
   fields: [
     { key: "externalId", name: "Thread ID", kind: "text", config: { unique: true }, icon: "🔖" },
     { key: "subject", name: "Subject", kind: "text" },
