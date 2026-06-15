@@ -14,6 +14,7 @@ import { api, type Concept, type DashboardWidget, type RichTextEnvelope } from "
 import { taskStatusesCollection } from "@/lib/collections"
 import { capitalize } from "@/lib/fieldDisplay"
 import { WIDGET_CATALOG } from "@/lib/widgetCatalog"
+import { ConceptSelectItems } from "../ConceptSelectItems"
 import { ConditionList, useFields } from "../ConditionList"
 import { RichTextEditor } from "../editor/RichTextEditor"
 import { MultiCombobox } from "../MultiCombobox"
@@ -148,11 +149,7 @@ export function WidgetEditor({
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="__none">Select a concept…</SelectItem>
-              {concepts.map((c) => (
-                <SelectItem key={c.id} value={c.id}>
-                  {c.pluralName || c.name}
-                </SelectItem>
-              ))}
+              <ConceptSelectItems concepts={concepts} />
             </SelectContent>
           </Select>
         </FieldRow>
@@ -669,11 +666,7 @@ export function WidgetEditor({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="__any">Any record</SelectItem>
-                {concepts.map((c) => (
-                  <SelectItem key={c.id} value={c.id}>
-                    {c.pluralName || c.name}
-                  </SelectItem>
-                ))}
+                <ConceptSelectItems concepts={concepts} />
               </SelectContent>
             </Select>
           </FieldRow>
@@ -1333,11 +1326,7 @@ export function WidgetEditor({
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__none">Select a concept…</SelectItem>
-                  {concepts.map((c) => (
-                    <SelectItem key={c.id} value={c.id}>
-                      {c.pluralName || c.name}
-                    </SelectItem>
-                  ))}
+                  <ConceptSelectItems concepts={concepts} />
                 </SelectContent>
               </Select>
             </FieldRow>
@@ -1509,11 +1498,7 @@ function FilesInstancePicker({
         </SelectTrigger>
         <SelectContent>
           <SelectItem value="__none">Concept…</SelectItem>
-          {concepts.map((c) => (
-            <SelectItem key={c.id} value={c.id}>
-              {c.pluralName || c.name}
-            </SelectItem>
-          ))}
+          <ConceptSelectItems concepts={concepts} />
         </SelectContent>
       </Select>
       {searchConceptId && (

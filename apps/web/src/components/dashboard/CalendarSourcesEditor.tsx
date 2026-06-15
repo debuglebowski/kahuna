@@ -9,6 +9,7 @@ import {
 import type { Concept, Label } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { type CalendarSource, SOURCE_FALLBACK_COLORS, sourceColor } from "@/lib/widgetDates"
+import { ConceptSelectItems } from "../ConceptSelectItems"
 import { ConditionList, useFields } from "../ConditionList"
 import { Button, Field as FieldRow, IconButton } from "../ui"
 
@@ -98,11 +99,7 @@ function SourceCard({
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="__none">Select a concept…</SelectItem>
-            {concepts.map((c) => (
-              <SelectItem key={c.id} value={c.id}>
-                {c.pluralName || c.name}
-              </SelectItem>
-            ))}
+            <ConceptSelectItems concepts={concepts} />
           </SelectContent>
         </Select>
       </FieldRow>

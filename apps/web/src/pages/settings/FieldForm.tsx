@@ -1,5 +1,6 @@
 import { Check, Plus, X } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
+import { ConceptSelectItems } from "@/components/ConceptSelectItems"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
 import {
@@ -359,11 +360,7 @@ export function FieldForm({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="__none">—</SelectItem>
-                {concepts.map((c) => (
-                  <SelectItem key={c.id} value={c.id}>
-                    {c.name}
-                  </SelectItem>
-                ))}
+                <ConceptSelectItems concepts={concepts} label={(c) => c.name} />
               </SelectContent>
             </Select>
           </Field>

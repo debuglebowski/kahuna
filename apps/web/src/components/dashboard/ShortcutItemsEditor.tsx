@@ -9,6 +9,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { api, type Concept, type DashboardWidget } from "@/lib/api"
+import { ConceptSelectItems } from "../ConceptSelectItems"
 import { Button, IconButton, Input } from "../ui"
 import { ShortcutItemGlyph } from "./ShortcutsWidget"
 
@@ -114,11 +115,7 @@ export function ShortcutItemsEditor({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="__none">Concept…</SelectItem>
-                {concepts.map((c) => (
-                  <SelectItem key={c.id} value={c.id}>
-                    {c.pluralName || c.name}
-                  </SelectItem>
-                ))}
+                <ConceptSelectItems concepts={concepts} />
               </SelectContent>
             </Select>
             {conceptId && (
