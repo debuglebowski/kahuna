@@ -533,20 +533,31 @@ export interface SidebarView {
 // the contract stays engine-free). The widget union is APPEND-ONLY — never reshape
 // an existing widget; add new types at the end.
 
-/** A widget's placement on the grid canvas (react-grid-layout coords). */
+/** LEGACY pre-auto-layout placement (react-grid-layout coords). Optional now —
+ *  the client migrates these bodies to the auto-layout tree. */
 export interface WidgetLayout {
   readonly x: number
   readonly y: number
   readonly w: number
   readonly h: number
 }
+/** A node's size on one axis (48-tile units). `fr` = flex weight. */
+export interface Dim {
+  readonly unit: "tiles" | "fr" | "pct"
+  readonly value: number
+  readonly min?: number
+  readonly max?: number
+}
 /** Fields shared by every widget. `conceptId` is OPTIONAL so the same body can
- *  render in per-concept context (implicit conceptId) later. */
+ *  render in per-concept context (implicit conceptId) later. `w`/`h` are the
+ *  auto-layout size; `layout` is the migrated-away legacy placement. */
 interface WidgetBase {
   readonly id: string
   readonly title: string | null
   readonly icon?: string | null
-  readonly layout: WidgetLayout
+  readonly layout?: WidgetLayout
+  readonly w?: Dim
+  readonly h?: Dim
 }
 /** Metric — one number: count of matching instances, or sum/avg of a field. */
 export interface MetricWidget extends WidgetBase {
@@ -796,9 +807,23 @@ export type DashboardWidget =
   | CalendarWidget
   | GanttWidget
   | FilesWidget
+/** An invisible auto-layout container (Figma-style); children flow by `direction`. */
+export interface DashboardGroup {
+  readonly id: string
+  readonly type: "group"
+  readonly direction: "row" | "col"
+  readonly w?: Dim
+  readonly h?: Dim
+  readonly children: ReadonlyArray<DashboardNode>
+}
+export type DashboardNode = DashboardWidget | DashboardGroup
+/** The persisted dashboard document — an auto-layout tree (`direction`+`children`),
+ *  or a LEGACY flat `widgets` list (migrated to a tree client-side). The engine
+ *  treats it as an opaque document; resolution happens in the client. */
 export interface DashboardBody {
-  readonly widgets: ReadonlyArray<DashboardWidget>
-  /** Grid columns (default 12) and row height in px. Forward-compat. */
+  readonly direction?: "row" | "col"
+  readonly children?: ReadonlyArray<DashboardNode>
+  readonly widgets?: ReadonlyArray<DashboardWidget>
   readonly cols?: number
   readonly rowHeight?: number
 }

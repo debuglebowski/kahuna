@@ -12,6 +12,7 @@ import {
 import { KNOWN_EVENT_TYPES } from "@/lib/activity"
 import { api, type Concept, type DashboardWidget, type RichTextEnvelope } from "@/lib/api"
 import { taskStatusesCollection } from "@/lib/collections"
+import type { Dim, DimUnit, NormWidget } from "@/lib/dashboards"
 import { capitalize } from "@/lib/fieldDisplay"
 import { WIDGET_CATALOG } from "@/lib/widgetCatalog"
 import { ConceptSelectItems } from "../ConceptSelectItems"
@@ -51,6 +52,139 @@ const toggleIn = <T,>(
   on: boolean,
 ): T[] => all.filter((x) => (x === item ? on : current.includes(x)))
 
+const DIM_UNITS: { value: DimUnit; label: string }[] = [
+  { value: "fr", label: "fr" },
+  { value: "tiles", label: "tiles" },
+  { value: "pct", label: "%" },
+]
+
+const parseNum = (raw: string): number | undefined => {
+  const n = Number.parseFloat(raw)
+  return Number.isFinite(n) && n >= 0 ? n : undefined
+}
+
+/** A numeric input with a local draft buffer — commits on blur/Enter so the
+ *  parse/clamp round-trip doesn't fight typing. */
+function NumberField({
+  value,
+  onCommit,
+  ariaLabel,
+  placeholder,
+  className,
+}: {
+  value: string
+  onCommit: (raw: string) => void
+  ariaLabel: string
+  placeholder?: string
+  className?: string
+}) {
+  const [draft, setDraft] = useState<string | null>(null)
+  return (
+    <Input
+      type="text"
+      inputMode="numeric"
+      aria-label={ariaLabel}
+      placeholder={placeholder}
+      value={draft ?? value}
+      onChange={(e) => setDraft(e.target.value)}
+      onFocus={(e) => e.target.select()}
+      onBlur={(e) => {
+        setDraft(null)
+        onCommit(e.target.value)
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") e.currentTarget.blur()
+      }}
+      className={className}
+    />
+  )
+}
+
+/** One axis's size: value + unit, plus optional min/max clamps (in tiles). */
+function DimField({
+  label,
+  dim,
+  onChange,
+}: {
+  label: string
+  dim: Dim
+  onChange: (d: Dim) => void
+}) {
+  const set = (p: Partial<Dim>) => onChange({ ...dim, ...p })
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center gap-1.5">
+        <span className="w-12 shrink-0 text-xs font-medium text-muted-foreground">{label}</span>
+        <NumberField
+          className="flex-1"
+          ariaLabel={`${label} value`}
+          value={String(dim.value)}
+          onCommit={(raw) => {
+            const n = parseNum(raw)
+            if (n != null) set({ value: n })
+          }}
+        />
+        <Select value={dim.unit} onValueChange={(v) => set({ unit: v as DimUnit })}>
+          <SelectTrigger aria-label={`${label} unit`} className="w-[4.75rem] px-2">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {DIM_UNITS.map((u) => (
+              <SelectItem key={u.value} value={u.value}>
+                {u.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="flex items-center gap-1.5 pl-[3.375rem]">
+        <span className="text-xs text-muted-foreground">min</span>
+        <NumberField
+          className="h-7 w-16"
+          ariaLabel={`${label} min tiles`}
+          placeholder="—"
+          value={dim.min != null ? String(dim.min) : ""}
+          onCommit={(raw) => set({ min: raw.trim() === "" ? undefined : parseNum(raw) })}
+        />
+        <span className="text-xs text-muted-foreground">max</span>
+        <NumberField
+          className="h-7 w-16"
+          ariaLabel={`${label} max tiles`}
+          placeholder="—"
+          value={dim.max != null ? String(dim.max) : ""}
+          onCommit={(raw) => set({ max: raw.trim() === "" ? undefined : parseNum(raw) })}
+        />
+        <span className="ml-auto text-xs text-muted-foreground">tiles</span>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Width + height size controls for any node (widget or group). `fr` = flex
+ * weight (share of the parent's leftover along its direction); `tiles`/`%` are
+ * fixed; `min`/`max` (tiles) keep an `fr` from collapsing to 0 when space runs out.
+ */
+export function SizeControls({
+  node,
+  onChange,
+}: {
+  node: { w: Dim; h: Dim }
+  onChange: (patch: { w?: Dim; h?: Dim }) => void
+}) {
+  return (
+    <FieldRow
+      label="Size"
+      hint="fr = flex weight (a share of the parent's leftover space). tiles/% are fixed. min/max are in tiles and keep an fr from collapsing to 0."
+    >
+      <div className="space-y-3">
+        <DimField label="Width" dim={node.w} onChange={(w) => onChange({ w })} />
+        <DimField label="Height" dim={node.h} onChange={(h) => onChange({ h })} />
+      </div>
+    </FieldRow>
+  )
+}
+
 /**
  * Configure one dashboard widget — the side panel of the dashboard edit modal's
  * Layout tab. The type dropdown up top recasts the widget in place (id, layout,
@@ -66,9 +200,9 @@ export function WidgetEditor({
   onChangeType,
   onRemove,
 }: {
-  widget: DashboardWidget
+  widget: NormWidget
   concepts: readonly Concept[]
-  onChange: (patch: Partial<DashboardWidget>) => void
+  onChange: (patch: Partial<NormWidget>) => void
   onChangeType: (type: DashboardWidget["type"]) => void
   onRemove: () => void
 }) {
@@ -134,6 +268,8 @@ export function WidgetEditor({
           onChange={(e) => patch({ title: e.target.value || null })}
         />
       </FieldRow>
+
+      <SizeControls node={widget} onChange={onChange} />
 
       {/* Org-global widgets (members/welcome) have no concept to pick; tasks
           gets its own "Any record" select below (its conceptId is a filter);

@@ -43,7 +43,7 @@ describe("dashboards (DashboardService)", () => {
       const body: DashboardBody = { widgets: [metric, bogus] }
       const updated = yield* dash.update({ id: home.id, body })
       // toDashboardBody filters the unrecognised widget, keeps the metric.
-      expect(updated.body.widgets.map((w) => w.id)).toEqual(["w1"])
+      expect((updated.body.widgets ?? []).map((w) => w.id)).toEqual(["w1"])
 
       const missing = yield* dash.update({ id: newOrgId(), body }).pipe(Effect.flip)
       expect(missing._tag).toBe("DashboardNotFound")
@@ -132,6 +132,53 @@ describe("dashboards (DashboardService)", () => {
       ]
       const updated = yield* dash.update({ id: home.id, body: { widgets } })
       expect(updated.body.widgets).toEqual(widgets)
+    }).pipe(Effect.provide(testLayer(newOrgId()))),
+  )
+
+  it.effect("auto-layout TREE body persists + reads back intact (nested groups)", () =>
+    Effect.gen(function* () {
+      const dash = yield* DashboardService
+      const home = (yield* dash.list())[0]!
+      const tree: DashboardBody = {
+        direction: "row",
+        children: [
+          {
+            id: "w1",
+            type: "note",
+            title: null,
+            w: { unit: "fr", value: 1 },
+            h: { unit: "tiles", value: 10 },
+            content: { doc: { type: "doc", content: [] }, text: "" },
+          },
+          {
+            id: "g1",
+            type: "group",
+            direction: "col",
+            w: { unit: "fr", value: 2 },
+            h: { unit: "fr", value: 1 },
+            children: [
+              {
+                id: "w2",
+                type: "metric",
+                title: null,
+                conceptId: "c1",
+                conditions: [],
+                agg: "count",
+                w: { unit: "pct", value: 50, min: 4, max: 20 },
+                h: { unit: "fr", value: 1 },
+              },
+            ],
+          },
+        ],
+      }
+      const updated = yield* dash.update({ id: home.id, body: tree })
+      // The tree document survives storage + the defensive read coercion.
+      expect(updated.body.direction).toBe("row")
+      expect(updated.body.children).toEqual(tree.children)
+      expect(updated.body.widgets).toBeUndefined()
+      // A fresh read sees the same tree (not just the write echo).
+      const reread = (yield* dash.list()).find((d) => d.id === home.id)!
+      expect(reread.body.children).toEqual(tree.children)
     }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
 

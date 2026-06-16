@@ -4,6 +4,7 @@ import type { ConceptInstanceData } from "@/lib/conceptData"
 import { formatWidgetNumber, heroTextClass, sizeVariant } from "@/lib/dashboards"
 import { cn } from "@/lib/utils"
 import { metricValue } from "@/lib/widgetAggregations"
+import { useWidgetBox } from "./widgetBox"
 
 type Goal = Extract<DashboardWidget, { type: "goal" }>
 
@@ -46,6 +47,7 @@ export function GoalWidget({
   concept: Concept | undefined
 }) {
   const { data: session } = useSession()
+  const box = useWidgetBox()
   if (!widget.conceptId || !concept) {
     return <p className="text-sm text-muted-foreground">Pick a concept to track.</p>
   }
@@ -74,7 +76,7 @@ export function GoalWidget({
   const pctLabel = pct == null ? null : `${Math.round(pct * 100)}%`
 
   if (variant === "ring") {
-    const size = RING_PX[sizeVariant(widget.layout)]
+    const size = RING_PX[sizeVariant(box.height)]
     const stroke = 8
     const r = (size - stroke) / 2
     const c = 2 * Math.PI * r
@@ -124,7 +126,7 @@ export function GoalWidget({
           <span
             className={cn(
               "font-semibold tabular-nums",
-              heroTextClass(widget.layout),
+              heroTextClass(box.height),
               t ? TEXT_TONE[t] : "text-foreground",
             )}
           >

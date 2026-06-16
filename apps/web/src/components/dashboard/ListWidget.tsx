@@ -8,11 +8,13 @@ import { api, type Concept, type DashboardWidget, type Field, type Instance } fr
 import { useSession } from "@/lib/auth-client"
 import { instancesByConcept } from "@/lib/collections"
 import type { ConceptInstanceData } from "@/lib/conceptData"
+import { isWide } from "@/lib/dashboards"
 import { FieldValueCell } from "@/lib/fieldDisplay"
 import { useQuickEdit } from "@/lib/quickEdit"
 import { cn, showValue } from "@/lib/utils"
 import { matchInstance } from "@/lib/widgetAggregations"
 import { InstanceForm } from "@/pages/InstanceForm"
+import { useWidgetBox } from "./widgetBox"
 
 type List = Extract<DashboardWidget, { type: "list" }>
 
@@ -33,6 +35,7 @@ export function ListWidget({
   const me = session?.user.id ?? null
   const fields = data?.fields ?? []
   const conceptId = widget.conceptId ?? ""
+  const box = useWidgetBox()
   const [quickEdit, toggleQuickEdit] = useQuickEdit(conceptId)
   const [adding, setAdding] = useState(false)
   const archived = widget.archived ?? "exclude"
@@ -80,7 +83,7 @@ export function ListWidget({
   ])
 
   const variant = widget.variant ?? "auto"
-  const cards = variant === "cards" || (variant === "auto" && widget.layout.w < 5)
+  const cards = variant === "cards" || (variant === "auto" && !isWide(box.width))
 
   // One field saved per edit; refetch (success or fail) reconciles value + version.
   const onSaveCell = async (inst: Instance, fieldId: string, value: unknown) => {

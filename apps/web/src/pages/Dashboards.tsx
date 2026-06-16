@@ -9,7 +9,7 @@ import { Button, IconButton, Spinner } from "@/components/ui"
 import { api, type Concept } from "@/lib/api"
 import { conceptsCollection, KEY, useRegisterCollection } from "@/lib/collections"
 import { conceptIndex, useConceptData } from "@/lib/conceptData"
-import { referencedConceptIds } from "@/lib/dashboards"
+import { migrate, referencedConceptIds } from "@/lib/dashboards"
 
 /**
  * The dashboard canvas (`/dashboards`) — a READ-ONLY render of the selected
@@ -18,7 +18,7 @@ import { referencedConceptIds } from "@/lib/dashboards"
  * page just re-reads the `dashboards` query.
  */
 export function Dashboards() {
-  usePageChrome({ fullWidth: true }) // widget canvas uses the whole viewport width
+  usePageChrome({ fullWidth: true, fillHeight: true }) // canvas fills the viewport (48×48 tiles)
   const navigate = useNavigate()
   const conceptsLive = useLiveQuery((q) => q.from({ c: conceptsCollection }))
   useRegisterCollection(KEY.concepts, conceptsCollection)
@@ -45,7 +45,8 @@ export function Dashboards() {
     )
   }, [dashboards, routeId])
 
-  const body = selected?.body ?? null
+  // Normalize the stored body (tree or legacy flat list) for rendering.
+  const body = useMemo(() => (selected?.body ? migrate(selected.body) : null), [selected])
   const ids = useMemo(() => (body ? referencedConceptIds(body) : []), [body])
   const { instData, loaders } = useConceptData(ids)
 
@@ -58,9 +59,9 @@ export function Dashboards() {
     )
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex h-full min-h-0 flex-col gap-4">
       {loaders}
-      <header className="flex items-center justify-between gap-2">
+      <header className="flex shrink-0 items-center justify-between gap-2">
         <h1 className="cancel-drag text-xl font-semibold">
           {selected.name}
           {selected.ownerId ? " · personal" : ""}
@@ -74,7 +75,7 @@ export function Dashboards() {
         </IconButton>
       </header>
 
-      {body.widgets.length === 0 ? (
+      {body.children.length === 0 ? (
         <div className="flex min-h-[320px] flex-col items-center justify-center rounded-xl border border-dashed p-12 text-center">
           <div className="mb-4 flex size-10 items-center justify-center rounded-lg bg-muted text-muted-foreground">
             <LayoutDashboard size={20} />
@@ -92,13 +93,15 @@ export function Dashboards() {
           </Button>
         </div>
       ) : (
-        <WidgetCanvas
-          body={body}
-          instData={instData}
-          cIndex={cIndex}
-          conceptsLoaded={conceptsLoaded}
-          readOnly
-        />
+        <div className="min-h-0 flex-1">
+          <WidgetCanvas
+            body={body}
+            instData={instData}
+            cIndex={cIndex}
+            conceptsLoaded={conceptsLoaded}
+            readOnly
+          />
+        </div>
       )}
     </div>
   )

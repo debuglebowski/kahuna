@@ -3,9 +3,16 @@ import { useMemo } from "react"
 import { api, type Concept, type DashboardWidget, type Instance } from "@/lib/api"
 import { useSession } from "@/lib/auth-client"
 import type { ConceptInstanceData } from "@/lib/conceptData"
-import { formatMetric, formatWidgetNumber, heroTextClass } from "@/lib/dashboards"
+import {
+  formatMetric,
+  formatWidgetNumber,
+  heroTextClass,
+  isWide,
+  sizeVariant,
+} from "@/lib/dashboards"
 import { cn } from "@/lib/utils"
 import { createdOnOrBefore, metricValue } from "@/lib/widgetAggregations"
+import { useWidgetBox } from "./widgetBox"
 
 type Metric = Extract<DashboardWidget, { type: "metric" }>
 
@@ -38,6 +45,7 @@ export function MetricWidget({
   concept: Concept | undefined
 }) {
   const { data: session } = useSession()
+  const box = useWidgetBox()
   const conceptId = widget.conceptId ?? ""
   const includeArchived = widget.includeArchived ?? false
 
@@ -111,7 +119,8 @@ export function MetricWidget({
 
   const variant = widget.variant ?? "auto"
   const bar =
-    variant === "bar" || (variant === "auto" && widget.layout.w >= 6 && widget.layout.h <= 2)
+    variant === "bar" ||
+    (variant === "auto" && isWide(box.width) && sizeVariant(box.height) === "sm")
 
   if (bar) {
     return (
@@ -127,9 +136,7 @@ export function MetricWidget({
 
   return (
     <div className="flex h-full flex-col justify-center">
-      <div
-        className={cn("font-semibold tabular-nums text-foreground", heroTextClass(widget.layout))}
-      >
+      <div className={cn("font-semibold tabular-nums text-foreground", heroTextClass(box.height))}>
         {hero}
       </div>
       {/* Label and delta each on their own line, stacked under the number. */}

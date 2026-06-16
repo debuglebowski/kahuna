@@ -6,6 +6,7 @@ import type {
   Concept,
   Dashboard,
   DashboardBody,
+  DashboardNode,
   DashboardWidget,
   EngineEvent,
   EventPayload,
@@ -151,25 +152,33 @@ const KNOWN_WIDGETS = new Set([
 ])
 
 /** Coerce a jsonb body into a well-formed dashboard body (defensive against
- *  garbage / drift): keep only widgets with a known `type` and a `layout`. */
+ *  garbage / drift). The body is an opaque document resolved client-side: an
+ *  auto-layout tree (`direction` + `children`), or a LEGACY flat `widgets` list.
+ *  The tree passes through; legacy widgets are kept by known `type`. */
 const toDashboardBody = (raw: unknown): DashboardBody => {
   if (!raw || typeof raw !== "object") return { widgets: [] }
   const r = raw as {
+    direction?: unknown
+    children?: unknown
     widgets?: unknown
     cols?: unknown
     rowHeight?: unknown
   }
+  const direction = r.direction === "row" || r.direction === "col" ? r.direction : undefined
+  const children = Array.isArray(r.children)
+    ? (r.children as ReadonlyArray<DashboardNode>)
+    : undefined
   const widgets = Array.isArray(r.widgets)
     ? r.widgets.filter(
         (x): x is DashboardWidget =>
-          !!x &&
-          typeof x === "object" &&
-          KNOWN_WIDGETS.has((x as { type?: string }).type ?? "") &&
-          !!(x as { layout?: unknown }).layout,
+          !!x && typeof x === "object" && KNOWN_WIDGETS.has((x as { type?: string }).type ?? ""),
       )
-    : []
+    : undefined
   return {
-    widgets,
+    ...(direction ? { direction } : {}),
+    ...(children ? { children } : {}),
+    // A tree (children present) carries no widgets list; otherwise default to [].
+    ...(children ? {} : { widgets: widgets ?? [] }),
     ...(typeof r.cols === "number" ? { cols: r.cols } : {}),
     ...(typeof r.rowHeight === "number" ? { rowHeight: r.rowHeight } : {}),
   }

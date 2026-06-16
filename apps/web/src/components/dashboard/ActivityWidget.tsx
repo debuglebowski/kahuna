@@ -6,7 +6,9 @@ import { MemberAvatar, memberLabel, type OrgMember } from "@/components/item/Ass
 import { type ActivityResolvers, eventLabel, eventSnippet, relativeTime } from "@/lib/activity"
 import { api, type DashboardWidget, type FeedItem } from "@/lib/api"
 import { taskStatusesCollection } from "@/lib/collections"
+import { isWide } from "@/lib/dashboards"
 import { useFullOrg } from "@/pages/settings/SettingsLayout"
+import { useWidgetBox } from "./widgetBox"
 
 type Activity = Extract<DashboardWidget, { type: "activity" }>
 
@@ -61,6 +63,7 @@ export function EventRows({ events }: { events: readonly FeedItem[] }) {
  *  by tile width. Inline diff snippets reuse the activity-feed derivations. */
 export function ActivityWidget({ widget }: { widget: Activity }) {
   const navigate = useNavigate()
+  const box = useWidgetBox()
   const limit = widget.limit ?? 20
   const types = widget.eventTypes
   const q = useQuery({
@@ -97,7 +100,7 @@ export function ActivityWidget({ widget }: { widget: Activity }) {
   if (events.length === 0) return <p className="text-sm text-muted-foreground">No activity.</p>
 
   const variant = widget.variant ?? "auto"
-  const log = variant === "log" || (variant === "auto" && widget.layout.w >= 6)
+  const log = variant === "log" || (variant === "auto" && isWide(box.width))
   const showDiffs = widget.showDiffs ?? true
   const open = (e: FeedItem) =>
     e.subjectKind === "instance" && navigate(`/instances/${e.subjectId}`)

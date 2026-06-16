@@ -397,14 +397,9 @@ export type SidebarView = typeof SidebarView.Type
 // — the server only persists/serves the document. The widget union is APPEND-ONLY
 // (a closed union breaks old clients on reshape); add new widget types at the end.
 
-/** A widget's placement on the grid canvas (react-grid-layout coords). `w`/`h`
- *  are always the RESOLVED grid cells (the source of truth RGL renders). The
- *  units govern how the size is shown/entered in the config panel, Figma-style:
- *  - width: "px"/"pct" are fixed (snap to the nearest cell); "fr" is a flex
- *    track whose weight lives in `wFr` — fr widgets split the columns left over
- *    in their row, so `w` is then derived per-row (see `normalizeFrWidths`).
- *  - height: "px"/"pct" are fixed; "fr" = grid rows (vertical has no shared
- *    budget to flex). Absent width unit = "pct", absent height unit = "fr". */
+/** LEGACY pre-auto-layout placement (react-grid-layout coords). Kept optional so
+ *  old stored bodies still decode; the client migrates them to the tree model
+ *  (`Dim`-sized nodes) on load. New bodies omit it. */
 const WidgetLayout = Schema.Struct({
   x: Schema.Number,
   y: Schema.Number,
@@ -412,16 +407,30 @@ const WidgetLayout = Schema.Struct({
   h: Schema.Number,
   wUnit: Schema.optional(Schema.Literal("fr", "px", "pct")),
   hUnit: Schema.optional(Schema.Literal("fr", "px", "pct")),
-  /** Flex weight for a width-fr widget (CSS-grid `fr`). Absent ⇒ weight 1. */
   wFr: Schema.optional(Schema.Number),
 })
 
-/** Fields shared by every widget. */
+/** A node's size along one axis, in 48-tile units (the window is 48×48 tiles).
+ *  `fr` = flex weight: claims a share of the parent's LEFTOVER tiles along the
+ *  parent's direction (0 when none are left). `tiles`/`pct` are fixed sizes;
+ *  `min`/`max` (tiles) clamp the result. */
+const Dim = Schema.Struct({
+  unit: Schema.Literal("tiles", "fr", "pct"),
+  value: Schema.Number,
+  min: Schema.optional(Schema.Number),
+  max: Schema.optional(Schema.Number),
+})
+
+/** Fields shared by every widget. `w`/`h` are the auto-layout size; `layout` is
+ *  the legacy placement (migrated away on load). Both optional during the
+ *  transition — the client normalizes either into a sized tree node. */
 const widgetBase = {
   id: Schema.String,
   title: Schema.NullOr(Schema.String),
   icon: Schema.optional(Schema.NullOr(Schema.String)),
-  layout: WidgetLayout,
+  layout: Schema.optional(WidgetLayout),
+  w: Schema.optional(Dim),
+  h: Schema.optional(Dim),
 }
 /** `conceptId` is optional on every concept-scoped widget so the same body can
  *  render in per-concept context (implicit conceptId) later. */
@@ -704,8 +713,41 @@ export const DashboardWidget = Schema.Union(
 )
 export type DashboardWidget = typeof DashboardWidget.Type
 
+// ── auto-layout tree ───────────────────────────────────────────────────────────
+// A dashboard is a tree of nodes laid out like Figma auto-layout / CSS flexbox.
+// A Group is an invisible container with a `direction` (row/col) that flows its
+// children and hands them its own tile budget; nesting is allowed. A Widget is a
+// leaf. Every node carries a `Dim` size per axis (`w`/`h`). The window is the
+// root container (48×48 tiles). Resolved CLIENT-SIDE to flex CSS.
+
+/** A group node — invisible structural container (discriminated by type:"group"
+ *  against the widget `type`s). Recursive: children are nodes (widgets or groups). */
+export interface DashboardGroup {
+  readonly id: string
+  readonly type: "group"
+  readonly direction: "row" | "col"
+  readonly w?: typeof Dim.Type | undefined
+  readonly h?: typeof Dim.Type | undefined
+  readonly children: ReadonlyArray<DashboardNode>
+}
+export type DashboardNode = DashboardWidget | DashboardGroup
+
+const DashboardGroup: Schema.Schema<DashboardGroup> = Schema.Struct({
+  id: Schema.String,
+  type: Schema.Literal("group"),
+  direction: Schema.Literal("row", "col"),
+  w: Schema.optional(Dim),
+  h: Schema.optional(Dim),
+  children: Schema.Array(Schema.suspend((): Schema.Schema<DashboardNode> => DashboardNode)),
+})
+const DashboardNode: Schema.Schema<DashboardNode> = Schema.Union(DashboardWidget, DashboardGroup)
+
 export const DashboardBody = Schema.Struct({
-  widgets: Schema.Array(DashboardWidget),
+  /** Root container layout (the 48×48 window). New bodies set these. */
+  direction: Schema.optional(Schema.Literal("row", "col")),
+  children: Schema.optional(Schema.Array(DashboardNode)),
+  /** LEGACY flat widget list — pre-auto-layout bodies; client migrates to a tree. */
+  widgets: Schema.optional(Schema.Array(DashboardWidget)),
   cols: Schema.optional(Schema.Number),
   rowHeight: Schema.optional(Schema.Number),
 })

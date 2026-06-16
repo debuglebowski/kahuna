@@ -24,6 +24,8 @@ export type {
   ConceptGraphNode,
   Dashboard,
   DashboardBody,
+  DashboardGroup,
+  DashboardNode,
   DashboardWidget,
   DeactivatedMember,
   FeedItem,

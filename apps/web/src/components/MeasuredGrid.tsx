@@ -1,9 +1,25 @@
-import { useLayoutEffect, useRef, useState } from "react"
+import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import GridLayout, { type Layout } from "react-grid-layout"
 import "react-grid-layout/css/styles.css"
 import "react-resizable/css/styles.css"
-import type { GridItem } from "@/lib/dashboards"
-import { GRID_COLS, GRID_ROW_HEIGHT } from "@/lib/dashboards"
+
+/** A react-grid-layout item (subset we use). The coarse 12-col grid that backs
+ *  the instance-view editor — dashboards moved to a flexbox auto-layout tree. */
+export interface GridItem {
+  i: string
+  x: number
+  y: number
+  w: number
+  h: number
+  minW?: number
+  minH?: number
+}
+
+// Coarse grid (the instance-view editor's). cols/rowHeight/margin are props so a
+// caller can override; nothing overrides them today.
+const DEFAULT_COLS = 12
+const DEFAULT_ROW_HEIGHT = 72
+const DEFAULT_MARGIN = 12
 
 /**
  * Container width for the grid, measured before first paint so tiles mount at
@@ -67,6 +83,10 @@ export function MeasuredGrid({
   minHeight,
   onStop,
   onDragStart,
+  onWidth,
+  cols = DEFAULT_COLS,
+  rowHeight = DEFAULT_ROW_HEIGHT,
+  margin = DEFAULT_MARGIN,
   children,
 }: {
   layout: GridItem[]
@@ -81,18 +101,29 @@ export function MeasuredGrid({
    *  it's a reliable click-to-select even though the drag lifecycle re-renders
    *  the tile and swallows the native click). */
   onDragStart?: (id: string) => void
+  /** Reports the measured grid container width (px) — feeds the px/% size
+   *  conversions in the dashboard editor's widget config panel. */
+  onWidth?: (width: number) => void
+  /** Grid resolution. Defaults to the coarse instance-view grid; the dashboard
+   *  passes a fine grid (≈1px cells, no gutter) for continuous sizing. */
+  cols?: number
+  rowHeight?: number
+  margin?: number
   children: React.ReactNode
 }) {
   const { ref, width } = useMeasuredWidth()
+  useEffect(() => {
+    if (width !== null) onWidth?.(width)
+  }, [width, onWidth])
   return (
     <div ref={ref} className="-mx-1">
       {width !== null && (
         <GridLayout
           width={width}
           layout={layout}
-          cols={GRID_COLS}
-          rowHeight={GRID_ROW_HEIGHT}
-          margin={[12, 12]}
+          cols={cols}
+          rowHeight={rowHeight}
+          margin={[margin, margin]}
           draggableCancel=".cancel-drag"
           isDraggable={isDraggable}
           isResizable={isResizable}

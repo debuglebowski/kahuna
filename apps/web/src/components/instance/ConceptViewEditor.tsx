@@ -11,6 +11,7 @@ import {
 } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import type { Layout } from "react-grid-layout"
+import type { GridItem } from "@/components/MeasuredGrid"
 import { MeasuredGrid, useFillHeight } from "@/components/MeasuredGrid"
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog"
 import {
@@ -19,7 +20,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import type { GridItem } from "@/lib/dashboards"
 import {
   type ConceptCaps,
   INSTANCE_VIEWS,

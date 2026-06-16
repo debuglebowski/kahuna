@@ -1,214 +1,390 @@
-import type { DashboardBody, DashboardWidget } from "./api"
+import type { CSSProperties } from "react"
+import type { DashboardBody, DashboardNode, DashboardWidget } from "./api"
 
 /**
- * Pure helpers for the dashboard canvas: which concepts a body references (to
- * mount their live collections), and translating between the stored widget list
- * and react-grid-layout's `Layout[]`. No React — the page wires these to RGL.
+ * The dashboard auto-layout engine. A dashboard is a TREE of nodes laid out like
+ * Figma auto-layout / CSS flexbox: a Group is an invisible container with a
+ * `direction` that flows its children; a Widget is a leaf. The window is the root
+ * container — a 48×48 tile grid that fills the viewport. A tile is a global unit
+ * (viewport / 48 per axis); fixed sizes nest within it. fr = flex weight (share of
+ * the parent's leftover along its direction). No React here — `LayoutNode` wires
+ * the resolved styles to the DOM.
  */
 
-export const GRID_COLS = 12
-export const GRID_ROW_HEIGHT = 72
+/** Window is GRID×GRID tiles. */
+export const GRID = 48
 
-/** A react-grid-layout item (subset we use). */
-export interface GridItem {
-  i: string
-  x: number
-  y: number
-  w: number
-  h: number
-  minW?: number
-  minH?: number
+export type Axis = "w" | "h"
+export type DimUnit = "tiles" | "fr" | "pct"
+/** A node's size on one axis. `min`/`max` are in tiles. */
+export interface Dim {
+  unit: DimUnit
+  value: number
+  min?: number
+  max?: number
 }
 
-/** Concept ids whose INSTANCES a dashboard needs loaded. Excludes trend/activity
- *  (those read the event log via `listEvents`) and tasks (its `conceptId` is a
- *  task filter resolved through the subject refs, not an instance scope). */
-export const referencedConceptIds = (body: DashboardBody): string[] => {
-  const ids = new Set<string>()
-  for (const w of body.widgets) {
-    // Files reads its own RPC (conceptId scopes that call, not instance data).
-    if (w.type === "trend" || w.type === "activity" || w.type === "tasks" || w.type === "files")
-      continue
-    // Calendar scopes per-source, not via a single conceptId.
-    if (w.type === "calendar") {
-      for (const s of w.sources) if (s.conceptId) ids.add(s.conceptId)
-      continue
+// ── Normalized runtime tree (every node has a guaranteed size) ────────────────
+export type NormWidget = DashboardWidget & { w: Dim; h: Dim }
+export interface NormGroup {
+  id: string
+  type: "group"
+  direction: "row" | "col"
+  w: Dim
+  h: Dim
+  children: NormNode[]
+}
+export type NormNode = NormWidget | NormGroup
+export interface NormBody {
+  direction: "row" | "col"
+  children: NormNode[]
+}
+
+export const isGroup = (n: NormNode): n is NormGroup => n.type === "group"
+
+/** Default size for a fresh/migrated node: fill (flex weight 1) on both axes. */
+export const FILL: Dim = { unit: "fr", value: 1 }
+
+const dim = (d: Dim | undefined, fallback: Dim): Dim =>
+  d
+    ? {
+        unit: d.unit,
+        value: d.value,
+        ...(d.min != null ? { min: d.min } : {}),
+        ...(d.max != null ? { max: d.max } : {}),
+      }
+    : { ...fallback }
+
+const normNode = (n: DashboardNode): NormNode => {
+  if (n.type === "group") {
+    return {
+      id: n.id,
+      type: "group",
+      direction: n.direction,
+      w: dim(n.w, FILL),
+      h: dim(n.h, FILL),
+      children: n.children.map(normNode),
     }
-    if (!("conceptId" in w)) continue
-    if (w.conceptId) ids.add(w.conceptId)
   }
+  // Drop the legacy `layout` placement; size comes from w/h (defaulted to fill).
+  const { layout: _legacy, ...rest } = n
+  return { ...rest, w: dim(n.w, FILL), h: dim(n.h, FILL) } as NormWidget
+}
+
+/**
+ * Normalize a stored body — new tree OR legacy flat widget list — into the
+ * runtime tree. Legacy bodies dump every widget into a `col` root (each fills its
+ * row); the user re-arranges from there.
+ */
+export const migrate = (body: DashboardBody): NormBody => {
+  if (body.children !== undefined) {
+    return { direction: body.direction ?? "col", children: body.children.map(normNode) }
+  }
+  return { direction: "col", children: (body.widgets ?? []).map(normNode) }
+}
+
+/** Back to the stored shape for persistence (the contract validates it). */
+export const serialize = (body: NormBody): DashboardBody => ({
+  direction: body.direction,
+  children: body.children as unknown as readonly DashboardNode[],
+})
+
+// ── Tree operations (immutable) ───────────────────────────────────────────────
+export const findNode = (body: NormBody, id: string): NormNode | null => {
+  const walk = (nodes: NormNode[]): NormNode | null => {
+    for (const n of nodes) {
+      if (n.id === id) return n
+      if (isGroup(n)) {
+        const f = walk(n.children)
+        if (f) return f
+      }
+    }
+    return null
+  }
+  return walk(body.children)
+}
+
+/** The parent group id of `id`, or null when it sits in the root. Undefined if
+ *  the node isn't found. */
+export const parentOf = (body: NormBody, id: string): string | null | undefined => {
+  let found: string | null | undefined
+  const walk = (nodes: NormNode[], parent: string | null) => {
+    for (const n of nodes) {
+      if (n.id === id) {
+        found = parent
+        return
+      }
+      if (isGroup(n)) walk(n.children, n.id)
+    }
+  }
+  walk(body.children, null)
+  return found
+}
+
+export const updateNode = (body: NormBody, id: string, fn: (n: NormNode) => NormNode): NormBody => {
+  const walk = (nodes: NormNode[]): NormNode[] =>
+    nodes.map((n) => {
+      if (n.id === id) return fn(n)
+      if (isGroup(n)) return { ...n, children: walk(n.children) }
+      return n
+    })
+  return { ...body, children: walk(body.children) }
+}
+
+export const removeNode = (body: NormBody, id: string): NormBody => {
+  const walk = (nodes: NormNode[]): NormNode[] =>
+    nodes
+      .filter((n) => n.id !== id)
+      .map((n) => (isGroup(n) ? { ...n, children: walk(n.children) } : n))
+  return { ...body, children: walk(body.children) }
+}
+
+/** Move a node by `delta` (±1) among its siblings; clamped at the ends. */
+export const reorderNode = (body: NormBody, id: string, delta: number): NormBody => {
+  const walk = (nodes: NormNode[]): NormNode[] => {
+    const i = nodes.findIndex((n) => n.id === id)
+    if (i >= 0) {
+      const j = i + delta
+      if (j < 0 || j >= nodes.length) return nodes
+      const next = [...nodes]
+      const [moved] = next.splice(i, 1)
+      if (moved) next.splice(j, 0, moved)
+      return next
+    }
+    return nodes.map((n) => (isGroup(n) ? { ...n, children: walk(n.children) } : n))
+  }
+  return { ...body, children: walk(body.children) }
+}
+
+/** Insert `node` into `parentId` (null = root) at `index` (default end). */
+export const insertNode = (
+  body: NormBody,
+  parentId: string | null,
+  node: NormNode,
+  index?: number,
+): NormBody => {
+  const into = (children: NormNode[]): NormNode[] => {
+    const next = [...children]
+    next.splice(index ?? next.length, 0, node)
+    return next
+  }
+  if (parentId === null) return { ...body, children: into(body.children) }
+  return updateNode(body, parentId, (n) => (isGroup(n) ? { ...n, children: into(n.children) } : n))
+}
+
+/** Every id in a node's subtree (including the node itself). */
+export const subtreeIds = (node: NormNode): string[] =>
+  isGroup(node) ? [node.id, ...node.children.flatMap(subtreeIds)] : [node.id]
+
+/** Reparent `id` into `targetParentId` (null = root). With `beforeId`, insert
+ *  directly before that sibling (for drag-to-position); otherwise append. No-op
+ *  if the target is the node itself or one of its descendants (would orphan it),
+ *  or if it's already appended to the same parent. */
+export const moveNode = (
+  body: NormBody,
+  id: string,
+  targetParentId: string | null,
+  beforeId?: string | null,
+): NormBody => {
+  const node = findNode(body, id)
+  if (!node) return body
+  if (targetParentId !== null && subtreeIds(node).includes(targetParentId)) return body
+  if (!beforeId && parentOf(body, id) === targetParentId) return body // already there, no reposition
+  const removed = removeNode(body, id)
+  let index: number | undefined
+  if (beforeId && beforeId !== id) {
+    const siblings =
+      targetParentId === null
+        ? removed.children
+        : ((findNode(removed, targetParentId) as NormGroup | null)?.children ?? [])
+    const i = siblings.findIndex((n) => n.id === beforeId)
+    if (i >= 0) index = i
+  }
+  return insertNode(removed, targetParentId, node, index)
+}
+
+/** Dissolve a group, promoting its children into its parent at its position
+ *  (keeps the children; only the wrapper is removed). */
+export const unwrapGroup = (body: NormBody, id: string): NormBody => {
+  const replace = (nodes: NormNode[]): NormNode[] =>
+    nodes.flatMap((n) => {
+      if (n.id === id && isGroup(n)) return n.children
+      if (isGroup(n)) return [{ ...n, children: replace(n.children) }]
+      return [n]
+    })
+  return { ...body, children: replace(body.children) }
+}
+
+// ── Flex resolution ───────────────────────────────────────────────────────────
+/** Px size of one tile on each axis, given the measured window content box. */
+export interface TilePx {
+  x: number
+  y: number
+}
+export const tilePx = (width: number, height: number): TilePx => ({
+  x: width / GRID,
+  y: height / GRID,
+})
+
+const px = (tiles: number, per: number) => `${tiles * per}px`
+
+/**
+ * The flex style for a node, given its PARENT's direction and the global tile
+ * size. The main axis (along the parent direction) drives `flex`; the cross axis
+ * sets an explicit size or stretches. `fr` with no leftover collapses to 0 unless
+ * a `min` holds it open.
+ */
+export const nodeStyle = (
+  node: NormNode,
+  parentDir: "row" | "col",
+  tile: TilePx,
+): CSSProperties => {
+  const mainAxis: Axis = parentDir === "row" ? "w" : "h"
+  const crossAxis: Axis = mainAxis === "w" ? "h" : "w"
+  const mainDim = node[mainAxis]
+  const crossDim = node[crossAxis]
+  const mainTile = mainAxis === "w" ? tile.x : tile.y
+  const crossTile = crossAxis === "w" ? tile.x : tile.y
+  const style: CSSProperties = { minWidth: 0, minHeight: 0 }
+
+  // Main axis → flex.
+  if (mainDim.unit === "fr") {
+    style.flexGrow = mainDim.value
+    style.flexShrink = 1
+    style.flexBasis = 0
+  } else {
+    style.flexGrow = 0
+    style.flexShrink = 0
+    style.flexBasis = mainDim.unit === "tiles" ? px(mainDim.value, mainTile) : `${mainDim.value}%`
+  }
+  if (mainDim.min != null)
+    style[mainAxis === "w" ? "minWidth" : "minHeight"] = px(mainDim.min, mainTile)
+  if (mainDim.max != null)
+    style[mainAxis === "w" ? "maxWidth" : "maxHeight"] = px(mainDim.max, mainTile)
+
+  // Cross axis → explicit size, or stretch to fill the parent.
+  if (crossDim.unit === "fr") {
+    style.alignSelf = "stretch"
+  } else {
+    style[crossAxis === "w" ? "width" : "height"] =
+      crossDim.unit === "tiles" ? px(crossDim.value, crossTile) : `${crossDim.value}%`
+  }
+  if (crossDim.min != null)
+    style[crossAxis === "w" ? "minWidth" : "minHeight"] = px(crossDim.min, crossTile)
+  if (crossDim.max != null)
+    style[crossAxis === "w" ? "maxWidth" : "maxHeight"] = px(crossDim.max, crossTile)
+
+  return style
+}
+
+// ── Concept references (walk the tree) ────────────────────────────────────────
+/** Concept ids whose INSTANCES the dashboard needs loaded. Excludes trend/activity
+ *  (event log), tasks (filter, not scope), files (own RPC); calendar scopes per
+ *  source. */
+export const referencedConceptIds = (body: NormBody): string[] => {
+  const ids = new Set<string>()
+  const walk = (n: NormNode) => {
+    if (isGroup(n)) {
+      n.children.forEach(walk)
+      return
+    }
+    if (n.type === "trend" || n.type === "activity" || n.type === "tasks" || n.type === "files")
+      return
+    if (n.type === "calendar") {
+      for (const s of n.sources) if (s.conceptId) ids.add(s.conceptId)
+      return
+    }
+    if ("conceptId" in n && n.conceptId) ids.add(n.conceptId)
+  }
+  body.children.forEach(walk)
   return [...ids]
 }
 
-/** RGL layout array derived from the widgets (coords live inline on each). */
-export const widgetLayouts = (body: DashboardBody): GridItem[] =>
-  body.widgets.map((w) => ({ i: w.id, ...w.layout, minW: 2, minH: 1 }))
+// ── Node construction ─────────────────────────────────────────────────────────
+// New nodes flex (fr) but carry a default `min` (tiles) so they can't silently
+// collapse to nothing when a parent fills up — the sustainable default the
+// min/max mechanism is for. Cleared/edited freely in the size panel.
+const NEW: Dim = { unit: "fr", value: 1, min: 6 }
 
-/** Fold an RGL layout change back onto the body (match by widget id). Returns
- *  the same `body` reference when nothing actually moved — RGL fires its stop
- *  callback even for a no-move click (which we use to select a tile), so this
- *  lets callers skip a spurious "dirty" edit. */
-export const applyLayouts = (body: DashboardBody, layout: readonly GridItem[]): DashboardBody => {
-  const byId = new Map(layout.map((l) => [l.i, l] as const))
-  let changed = false
-  const widgets = body.widgets.map((w) => {
-    const l = byId.get(w.id)
-    if (!l) return w
-    const cur = w.layout
-    if (cur.x === l.x && cur.y === l.y && cur.w === l.w && cur.h === l.h) return w
-    changed = true
-    return { ...w, layout: { x: l.x, y: l.y, w: l.w, h: l.h } }
-  })
-  return changed ? { ...body, widgets } : body
-}
-
-const overlaps = (
-  a: { x: number; y: number; w: number; h: number },
-  x: number,
-  y: number,
-  w: number,
-  h: number,
-): boolean => x < a.x + a.w && x + w > a.x && y < a.y + a.h && y + h > a.y
-
-/** First free slot for a `w`×`h` tile, scanning left-to-right then top-to-bottom
- *  — so new widgets flow across the row and wrap, instead of piling at x:0. */
-const nextSlot = (body: DashboardBody, w: number, h: number): { x: number; y: number } => {
-  const cols = body.cols ?? GRID_COLS
-  const ws = body.widgets.map((wi) => wi.layout)
-  const maxY = ws.reduce((m, l) => Math.max(m, l.y + l.h), 0)
-  for (let y = 0; y <= maxY; y++) {
-    for (let x = 0; x + w <= cols; x++) {
-      if (!ws.some((l) => overlaps(l, x, y, w, h))) return { x, y }
-    }
-  }
-  return { x: 0, y: maxY }
-}
-
-export const addWidget = (body: DashboardBody, widget: DashboardWidget): DashboardBody => ({
-  ...body,
-  widgets: [...body.widgets, widget],
+export const newGroup = (direction: "row" | "col" = "row"): NormGroup => ({
+  id: crypto.randomUUID(),
+  type: "group",
+  direction,
+  w: { ...NEW },
+  h: { ...NEW },
+  children: [],
 })
 
-export const removeWidget = (body: DashboardBody, id: string): DashboardBody => ({
-  ...body,
-  widgets: body.widgets.filter((w) => w.id !== id),
-})
-
-/** Replace one widget by id, merging a partial patch (type/id preserved). */
-export const updateWidget = (
-  body: DashboardBody,
-  id: string,
-  patch: Partial<DashboardWidget>,
-): DashboardBody => ({
-  ...body,
-  widgets: body.widgets.map((w) => (w.id === id ? ({ ...w, ...patch } as DashboardWidget) : w)),
-})
-
-/** Default tile size per widget type (on the 12-col grid). */
-const DEFAULT_SIZE: Record<DashboardWidget["type"], { w: number; h: number }> = {
-  metric: { w: 3, h: 2 },
-  list: { w: 6, h: 4 },
-  breakdown: { w: 4, h: 4 },
-  attention: { w: 4, h: 3 },
-  trend: { w: 6, h: 3 },
-  activity: { w: 4, h: 4 },
-  tasks: { w: 6, h: 5 },
-  members: { w: 4, h: 5 },
-  welcome: { w: 6, h: 2 },
-  goal: { w: 3, h: 2 },
-  shortcuts: { w: 3, h: 4 },
-  note: { w: 4, h: 3 },
-  kanban: { w: 8, h: 5 },
-  calendar: { w: 6, h: 5 },
-  gantt: { w: 8, h: 4 },
-  files: { w: 4, h: 4 },
-}
-
-/** A blank widget of the given type, appended at the bottom of the grid with no
- *  concept set (the editor fills in the concept + config). */
-export const newWidget = (body: DashboardBody, type: DashboardWidget["type"]): DashboardWidget => {
-  const size = DEFAULT_SIZE[type]
-  const base = {
-    id: crypto.randomUUID(),
-    title: null,
-    layout: { ...nextSlot(body, size.w, size.h), ...size },
-  } as const
-  // Only the concept-scoped types carry `conceptId` — spreading it from `base`
-  // would silently persist it onto the org-global widgets (spreads bypass
-  // excess-property checks).
+/** A blank widget of the given type — fills its slot; the editor sets concept/config. */
+export const newWidget = (type: DashboardWidget["type"]): NormWidget => {
+  const base = { id: crypto.randomUUID(), title: null, w: { ...NEW }, h: { ...NEW } } as const
   const scoped = { ...base, conceptId: null } as const
   switch (type) {
     case "metric":
-      return { ...scoped, type: "metric", conditions: [], agg: "count" }
+      return { ...scoped, type: "metric", conditions: [], agg: "count" } as NormWidget
     case "list":
-      return { ...scoped, type: "list", conditions: [], orderBy: null, limit: 10 }
+      return { ...scoped, type: "list", conditions: [], orderBy: null, limit: 10 } as NormWidget
     case "breakdown":
-      return { ...scoped, type: "breakdown", conditions: [], groupBy: "", chart: "bar" }
+      return {
+        ...scoped,
+        type: "breakdown",
+        conditions: [],
+        groupBy: "",
+        chart: "bar",
+      } as NormWidget
     case "attention":
-      return { ...scoped, type: "attention" }
+      return { ...scoped, type: "attention" } as NormWidget
     case "trend":
-      return { ...scoped, type: "trend", bucket: "day", since: "30d" }
+      return { ...scoped, type: "trend", bucket: "day", since: "30d" } as NormWidget
     case "activity":
-      return { ...scoped, type: "activity" }
+      return { ...scoped, type: "activity" } as NormWidget
     case "tasks":
-      return { ...base, type: "tasks" }
+      return { ...base, type: "tasks" } as NormWidget
     case "members":
-      return { ...base, type: "members" }
+      return { ...base, type: "members" } as NormWidget
     case "welcome":
-      return { ...base, type: "welcome" }
+      return { ...base, type: "welcome" } as NormWidget
     case "goal":
-      return { ...scoped, type: "goal", conditions: [], agg: "count", target: null }
+      return { ...scoped, type: "goal", conditions: [], agg: "count", target: null } as NormWidget
     case "shortcuts":
-      return { ...base, type: "shortcuts", items: [] }
+      return { ...base, type: "shortcuts", items: [] } as NormWidget
     case "note":
-      return { ...base, type: "note" }
+      return { ...base, type: "note" } as NormWidget
     case "kanban":
-      return { ...scoped, type: "kanban", conditions: [], groupBy: "" }
+      return { ...scoped, type: "kanban", conditions: [], groupBy: "" } as NormWidget
     case "calendar":
-      return { ...base, type: "calendar", mode: "month", sources: [] }
+      return { ...base, type: "calendar", mode: "month", sources: [] } as NormWidget
     case "gantt":
-      return { ...scoped, type: "gantt", conditions: [], scale: "week", startField: "" }
+      return {
+        ...scoped,
+        type: "gantt",
+        conditions: [],
+        scale: "week",
+        startField: "",
+      } as NormWidget
     case "files":
-      return { ...scoped, type: "files", scope: "org" }
+      return { ...scoped, type: "files", scope: "org" } as NormWidget
   }
 }
 
-/** Swap one widget for an entirely new object (same id). Unlike
- *  {@link updateWidget}, this replaces rather than merges — the type switcher
- *  needs the old type's config gone, not folded under the new discriminant. */
-export const replaceWidget = (
-  body: DashboardBody,
-  id: string,
-  widget: DashboardWidget,
-): DashboardBody => ({
-  ...body,
-  widgets: body.widgets.map((w) => (w.id === id ? widget : w)),
-})
-
-/** Recast a widget to a different type, keeping its id, layout, and title — and
- *  carrying the concept over when both the old and new types are concept-scoped.
- *  Every other type-specific field resets to the new type's defaults; a partial
- *  merge would strand incompatible config under the new discriminant. */
-export const retypeWidget = (
-  existing: DashboardWidget,
-  type: DashboardWidget["type"],
-): DashboardWidget => {
-  // newWidget reads `body` only to pick a free slot — we keep the existing
-  // layout, so the slot it computes is discarded.
-  const fresh = newWidget({ widgets: [] }, type)
+/** Recast a widget to a different type, keeping id, size, and title (and concept
+ *  when both types are concept-scoped). */
+export const retypeWidget = (existing: NormWidget, type: DashboardWidget["type"]): NormWidget => {
+  const fresh = newWidget(type)
   const carryConcept =
     "conceptId" in existing && "conceptId" in fresh ? { conceptId: existing.conceptId } : null
   return {
     ...fresh,
     id: existing.id,
-    layout: existing.layout,
+    w: existing.w,
+    h: existing.h,
     title: existing.title,
     ...carryConcept,
-  } as DashboardWidget
+  } as NormWidget
 }
 
-/** Format a widget's hero number: integers with thousands separators, else 2dp
- *  (shared by Metric + Goal). */
+// ── Display helpers (metric + goal) ───────────────────────────────────────────
+/** Format a widget's hero number: integers with separators, else 2dp. */
 export const formatWidgetNumber = (n: number): string =>
   Number.isInteger(n)
     ? n.toLocaleString()
@@ -216,9 +392,6 @@ export const formatWidgetNumber = (n: number): string =>
 
 export type MetricFormat = "plain" | "compact" | "currency" | "percent"
 
-/** Metric hero number in the widget's configured format. `percent` treats the
- *  value as a ratio (0.42 → "42%"); `currency` falls back to USD when the
- *  field's values carry no code. */
 export const formatMetric = (n: number, format: MetricFormat, currency?: string): string => {
   switch (format) {
     case "compact":
@@ -227,7 +400,6 @@ export const formatMetric = (n: number, format: MetricFormat, currency?: string)
       try {
         return n.toLocaleString(undefined, { style: "currency", currency: currency || "USD" })
       } catch {
-        // unknown currency code stored on the values — degrade to a suffix
         return `${formatWidgetNumber(n)} ${currency}`
       }
     case "percent":
@@ -237,14 +409,18 @@ export const formatMetric = (n: number, format: MetricFormat, currency?: string)
   }
 }
 
+// ── Measured display variants ─────────────────────────────────────────────────
+// Widgets are flex-sized, so their on-screen size is emergent — these read the
+// MEASURED pixel box (see `useWidgetBox`) rather than any stored dimension.
 export type SizeVariant = "sm" | "md" | "lg"
 
-/** Display variant from a tile's grid size — compact tiles keep small type,
- *  taller tiles scale their hero element up. Height-driven: width alone never
- *  grows type (a wide 2-row strip still has only ~150px of height). */
-export const sizeVariant = (layout: { w: number; h: number }): SizeVariant =>
-  layout.h <= 2 ? "sm" : layout.h <= 4 ? "md" : "lg"
+/** Hero-element variant from a tile's pixel height. */
+export const sizeVariant = (heightPx: number): SizeVariant =>
+  heightPx <= 150 ? "sm" : heightPx <= 300 ? "md" : "lg"
 
-/** Tailwind class for a hero number at the tile's size (Metric + Goal). */
-export const heroTextClass = (layout: { w: number; h: number }): string =>
-  ({ sm: "text-3xl", md: "text-4xl", lg: "text-6xl" })[sizeVariant(layout)]
+/** Tailwind class for a hero number at the tile's height (Metric + Goal). */
+export const heroTextClass = (heightPx: number): string =>
+  ({ sm: "text-3xl", md: "text-4xl", lg: "text-6xl" })[sizeVariant(heightPx)]
+
+/** Wide enough for the dense layout (Metric bar, Activity log, List table). */
+export const isWide = (widthPx: number): boolean => widthPx >= 400
