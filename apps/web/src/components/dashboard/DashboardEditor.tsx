@@ -2,14 +2,17 @@ import { useMutation, useQueryClient } from "@tanstack/react-query"
 import {
   ChevronDown,
   ChevronUp,
+  Circle,
+  CircleDot,
   Group as GroupIcon,
   LayoutDashboard,
   Plus,
   SlidersHorizontal,
+  SquareStack,
   Trash2,
   X,
 } from "lucide-react"
-import { type DragEvent as ReactDragEvent, useEffect, useMemo, useState } from "react"
+import { type DragEvent as ReactDragEvent, useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
 import { IconPicker } from "@/components/IconPicker"
 import { usePageChrome } from "@/components/Layout"
@@ -28,6 +31,7 @@ import {
   findNode,
   insertNode,
   isGroup,
+  isTabs,
   migrate,
   moveNode,
   type NormBody,
@@ -35,8 +39,8 @@ import {
   type NormNode,
   type NormWidget,
   newGroup,
+  newTabs,
   newWidget,
-  parentOf,
   referencedConceptIds,
   removeNode,
   reorderNode,
@@ -48,6 +52,7 @@ import {
 } from "@/lib/dashboards"
 import { useUnsavedGuard } from "@/lib/useUnsavedGuard"
 import { cn } from "@/lib/utils"
+import { InspectorSection } from "./InspectorSection"
 import { WidgetCanvas } from "./WidgetCanvas"
 import { SizeControls, WidgetEditor } from "./WidgetEditor"
 import { WidgetGallery } from "./WidgetGallery"
@@ -71,11 +76,22 @@ const LIST = "/settings/dashboards"
 
 const INSPECTOR_MIN = 300
 const INSPECTOR_MAX = 600
+const INSPECTOR_DEFAULT = 380
 const INSPECTOR_KEY = "dashboard.inspectorWidth"
 const clampInspector = (w: number) => Math.min(INSPECTOR_MAX, Math.max(INSPECTOR_MIN, w))
 
+// Layers vs Settings split (fraction of the inspector's height taken by Layers).
+const LAYERS_MIN_FRAC = 0.15
+const LAYERS_MAX_FRAC = 0.7
+const LAYERS_DEFAULT_FRAC = 1 / 4
+const LAYERS_KEY = "dashboard.layersFraction"
+const clampLayers = (f: number) => Math.min(LAYERS_MAX_FRAC, Math.max(LAYERS_MIN_FRAC, f))
+
 const nodeLabel = (n: NormNode, cIndex: Map<string, Concept>): string => {
-  if (isGroup(n)) return `${n.direction === "row" ? "Row" : "Column"} group`
+  if (isGroup(n)) {
+    if (n.display === "tabs") return n.label || "Tabs"
+    return n.label || `${n.direction === "row" ? "Row" : "Column"} group`
+  }
   return (
     n.title ||
     ("conceptId" in n && n.conceptId ? (cIndex.get(n.conceptId)?.name ?? "") : "") ||
@@ -193,7 +209,17 @@ function Layers({
               {hint === "after" && (
                 <div className="absolute inset-x-0 bottom-0 h-0.5 rounded bg-primary" />
               )}
-              {grp && <GroupIcon size={12} className="shrink-0 text-muted-foreground" />}
+              {grp ? (
+                isTabs(n) ? (
+                  <SquareStack size={12} className="shrink-0 text-muted-foreground" />
+                ) : (
+                  <GroupIcon size={12} className="shrink-0 text-muted-foreground" />
+                )
+              ) : (
+                <span className="flex w-3 shrink-0 justify-center" aria-hidden="true">
+                  <span className="size-1.5 rounded-full bg-muted-foreground/50" />
+                </span>
+              )}
               <span className={cn("flex-1 truncate", grp && "text-muted-foreground")}>
                 {nodeLabel(n, cIndex)}
               </span>
@@ -251,48 +277,29 @@ function Layers({
   )
 }
 
-/** Reparent control — move a node into any other group, or the root window.
- *  Hidden when there's nowhere else to go (no other groups). */
-function MoveControl({
-  nodeId,
-  body,
-  cIndex,
-  onMove,
+/** Flow ↔ tabs picker, shared by both group inspectors. */
+function DisplayField({
+  group,
+  onChange,
 }: {
-  nodeId: string
-  body: NormBody
-  cIndex: Map<string, Concept>
-  onMove: (target: string | null) => void
+  group: NormGroup
+  onChange: (patch: Partial<NormGroup>) => void
 }) {
-  const node = findNode(body, nodeId)
-  const excluded = new Set(node ? subtreeIds(node) : [])
-  const options: { value: string; label: string }[] = [{ value: "__root", label: "Root (window)" }]
-  const walk = (nodes: NormNode[], depth: number) => {
-    for (const n of nodes) {
-      if (!isGroup(n)) continue
-      if (!excluded.has(n.id))
-        options.push({ value: n.id, label: `${"— ".repeat(depth)}${nodeLabel(n, cIndex)}` })
-      walk(n.children, depth + 1)
-    }
-  }
-  walk(body.children, 0)
-  if (options.length <= 1) return null
-  const value = parentOf(body, nodeId) ?? "__root"
   return (
     <Field
-      label="Move to"
-      hint="Reparent this node into another group, or back to the root window."
+      label="Display"
+      hint="Flow lays children out along the direction; tabs show one at a time behind a tab bar."
     >
-      <Select value={value} onValueChange={(v) => onMove(v === "__root" ? null : v)}>
+      <Select
+        value={group.display === "tabs" ? "tabs" : "flow"}
+        onValueChange={(v) => onChange({ display: v as "flow" | "tabs" })}
+      >
         <SelectTrigger className="w-full">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
-          {options.map((o) => (
-            <SelectItem key={o.value} value={o.value}>
-              {o.label}
-            </SelectItem>
-          ))}
+          <SelectItem value="flow">Flow (all visible)</SelectItem>
+          <SelectItem value="tabs">Tabs (one at a time)</SelectItem>
         </SelectContent>
       </Select>
     </Field>
@@ -303,39 +310,184 @@ function GroupInspector({
   group,
   onChange,
   onUnwrap,
-  onRemove,
 }: {
   group: NormGroup
   onChange: (patch: Partial<NormGroup>) => void
   onUnwrap: () => void
-  onRemove: () => void
 }) {
   return (
-    <div className="space-y-4">
-      <Field
-        label="Direction"
-        hint="How this group flows its children. fr children share this axis."
-      >
-        <Select
-          value={group.direction}
-          onValueChange={(v) => onChange({ direction: v as "row" | "col" })}
+    <div className="divide-y divide-border">
+      <InspectorSection title="Size">
+        <SizeControls node={group} onChange={onChange} />
+      </InspectorSection>
+      <InspectorSection title="General">
+        <Field
+          label="Label"
+          hint="Name shown in Layers (and as the tab title inside a tabs group)."
         >
-          <SelectTrigger className="w-full">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="row">Row → (horizontal)</SelectItem>
-            <SelectItem value="col">Column ↓ (vertical)</SelectItem>
-          </SelectContent>
-        </Select>
-      </Field>
-      <SizeControls node={group} onChange={onChange} />
-      <div className="flex flex-col gap-2 border-t border-border pt-3">
-        <Button variant="outline" onClick={onUnwrap} disabled={group.children.length === 0}>
+          <Input
+            value={group.label ?? ""}
+            onChange={(e) => onChange({ label: e.target.value || null })}
+            placeholder={`${group.direction === "row" ? "Row" : "Column"} group`}
+          />
+        </Field>
+        <DisplayField group={group} onChange={onChange} />
+        <Field
+          label="Direction"
+          hint="How this group flows its children. fr children share this axis."
+        >
+          <Select
+            value={group.direction}
+            onValueChange={(v) => onChange({ direction: v as "row" | "col" })}
+          >
+            <SelectTrigger className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="row">Row → (horizontal)</SelectItem>
+              <SelectItem value="col">Column ↓ (vertical)</SelectItem>
+            </SelectContent>
+          </Select>
+        </Field>
+      </InspectorSection>
+      <div className="pt-3">
+        <Button
+          variant="outline"
+          className="w-full"
+          onClick={onUnwrap}
+          disabled={group.children.length === 0}
+        >
           Unwrap — keep contents
         </Button>
-        <Button variant="destructive" onClick={onRemove}>
-          <Trash2 size={15} /> Delete group{group.children.length > 0 ? " + contents" : ""}
+      </div>
+    </div>
+  )
+}
+
+/** Inspector for a tabs group — display + bar position, plus the tab list
+ *  (rename / set-default / reorder / remove). Tabs are CREATED by dragging a node
+ *  onto the tab bar (the dropped node is the tab); this panel manages the ones
+ *  that exist. */
+function TabsInspector({
+  group,
+  onChange,
+  onTabRename,
+  onTabRemove,
+  onTabReorder,
+  onSetDefault,
+  onUnwrap,
+}: {
+  group: NormGroup
+  onChange: (patch: Partial<NormGroup>) => void
+  onTabRename: (childId: string, label: string) => void
+  onTabRemove: (childId: string) => void
+  onTabReorder: (childId: string, delta: number) => void
+  onSetDefault: (childId: string) => void
+  onUnwrap: () => void
+}) {
+  const defaultId =
+    group.active && group.children.some((c) => c.id === group.active)
+      ? group.active
+      : (group.children[0]?.id ?? null)
+  return (
+    <div className="divide-y divide-border">
+      <InspectorSection title="Size">
+        <SizeControls node={group} onChange={onChange} />
+      </InspectorSection>
+      <InspectorSection title="General">
+        <Field label="Label" hint="Name shown in Layers.">
+          <Input
+            value={group.label ?? ""}
+            onChange={(e) => onChange({ label: e.target.value || null })}
+            placeholder="Tabs"
+          />
+        </Field>
+        <DisplayField group={group} onChange={onChange} />
+        <Field label="Tab bar" hint="Which edge the tabs sit on.">
+          <Select
+            value={group.tabBar ?? "top"}
+            onValueChange={(v) => onChange({ tabBar: v as "top" | "bottom" | "left" | "right" })}
+          >
+            <SelectTrigger className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="top">Top</SelectItem>
+              <SelectItem value="bottom">Bottom</SelectItem>
+              <SelectItem value="left">Left</SelectItem>
+              <SelectItem value="right">Right</SelectItem>
+            </SelectContent>
+          </Select>
+        </Field>
+      </InspectorSection>
+
+      <InspectorSection title="Tabs">
+        {group.children.length === 0 ? (
+          <p className="text-xs text-muted-foreground">
+            No tabs yet — drag a widget or group onto the tab bar to add one.
+          </p>
+        ) : (
+          <div className="space-y-1">
+            {group.children.map((c, i) => (
+              <div key={c.id} className="flex items-center gap-1">
+                <button
+                  type="button"
+                  aria-label={c.id === defaultId ? "Default tab" : "Set as default tab"}
+                  title={c.id === defaultId ? "Opens by default" : "Set as default tab"}
+                  onClick={() => onSetDefault(c.id)}
+                  className={cn(
+                    "shrink-0 rounded p-0.5",
+                    c.id === defaultId
+                      ? "text-primary"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  {c.id === defaultId ? <CircleDot size={14} /> : <Circle size={14} />}
+                </button>
+                <Input
+                  value={(isGroup(c) ? c.label : c.title) ?? ""}
+                  placeholder={`Tab ${i + 1}`}
+                  onChange={(e) => onTabRename(c.id, e.target.value)}
+                  className="h-8 flex-1"
+                />
+                <button
+                  type="button"
+                  aria-label="Move up"
+                  className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+                  onClick={() => onTabReorder(c.id, -1)}
+                >
+                  <ChevronUp size={14} />
+                </button>
+                <button
+                  type="button"
+                  aria-label="Move down"
+                  className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+                  onClick={() => onTabReorder(c.id, 1)}
+                >
+                  <ChevronDown size={14} />
+                </button>
+                <button
+                  type="button"
+                  aria-label="Remove tab"
+                  className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-destructive"
+                  onClick={() => onTabRemove(c.id)}
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </InspectorSection>
+
+      <div className="pt-3">
+        <Button
+          variant="outline"
+          className="w-full"
+          onClick={onUnwrap}
+          disabled={group.children.length === 0}
+        >
+          Unwrap — keep contents
         </Button>
       </div>
     </div>
@@ -395,7 +547,16 @@ export function DashboardEditor({
   const [layerHint, setLayerHint] = useState<{ id: string; zone: DropZone } | null>(null)
   const [inspectorWidth, setInspectorWidth] = useState(() => {
     const saved = Number(localStorage.getItem(INSPECTOR_KEY))
-    return saved >= INSPECTOR_MIN && saved <= INSPECTOR_MAX ? saved : 380
+    return saved >= INSPECTOR_MIN && saved <= INSPECTOR_MAX ? saved : INSPECTOR_DEFAULT
+  })
+  // Vertical split of the inspector: Settings (top) vs Layers (bottom). Layers
+  // defaults to a quarter of the height, Settings the remaining three quarters.
+  // The ref is the splittable region (Settings + splitter + Layers), so the
+  // fraction math stays exact regardless of the pinned remove footer below it.
+  const splitRef = useRef<HTMLDivElement>(null)
+  const [layersFraction, setLayersFraction] = useState(() => {
+    const saved = Number(localStorage.getItem(LAYERS_KEY))
+    return saved >= LAYERS_MIN_FRAC && saved <= LAYERS_MAX_FRAC ? saved : LAYERS_DEFAULT_FRAC
   })
   const { blocker, bypass } = useUnsavedGuard(dirty)
 
@@ -443,12 +604,37 @@ export function DashboardEditor({
     document.addEventListener("pointerup", onUp)
   }
 
+  const startLayersResize = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    const rect = splitRef.current?.getBoundingClientRect()
+    if (!rect) return
+    let last = layersFraction
+    const onMove = (ev: PointerEvent) => {
+      // Layers sits at the BOTTOM, so its share grows as the pointer rises.
+      last = clampLayers(1 - (ev.clientY - rect.top) / Math.max(1, rect.height))
+      setLayersFraction(last)
+    }
+    const onUp = () => {
+      document.removeEventListener("pointermove", onMove)
+      document.removeEventListener("pointerup", onUp)
+      document.body.style.removeProperty("cursor")
+      document.body.style.removeProperty("user-select")
+      localStorage.setItem(LAYERS_KEY, String(last))
+    }
+    document.body.style.cursor = "row-resize"
+    document.body.style.userSelect = "none"
+    document.addEventListener("pointermove", onMove)
+    document.addEventListener("pointerup", onUp)
+  }
+
   const ids = useMemo(() => referencedConceptIds(draft.body), [draft.body])
   const { instData, loaders } = useConceptData(ids)
 
   const editing = editingId ? findNode(draft.body, editingId) : null
   // New nodes drop into the selected group, else the root.
   const targetParent = editing && isGroup(editing) ? editing.id : null
+  // Empty tree → the canvas shows its own prompt and the inspector is hidden.
+  const hasNodes = draft.body.children.length > 0
 
   const save = useMutation({
     mutationFn: () =>
@@ -486,6 +672,11 @@ export function DashboardEditor({
     const g = newGroup("row")
     patchBody((b) => insertNode(b, targetParent, g))
     setEditingId(g.id)
+  }
+  const addTabs = () => {
+    const t = newTabs()
+    patchBody((b) => insertNode(b, targetParent, t))
+    setEditingId(t.id)
   }
   const removeSelected = (id: string) => {
     patchBody((b) => removeNode(b, id))
@@ -554,6 +745,10 @@ export function DashboardEditor({
                     <Button size="sm" variant="outline" onClick={addGroup}>
                       <GroupIcon size={14} /> Add group
                     </Button>
+                    <Button size="sm" variant="outline" onClick={addTabs}>
+                      <SquareStack size={14} /> Add tabs
+                    </Button>
+                    <div className="mx-1.5 h-5 w-px shrink-0 bg-border" aria-hidden="true" />
                   </>
                 )}
                 <Button size="sm" variant="outline" onClick={restore} disabled={!dirty}>
@@ -647,7 +842,7 @@ export function DashboardEditor({
                 onClick={() => setEditingId(null)}
                 className="min-w-0 flex-1 overflow-hidden bg-muted/20 p-3"
               >
-                {draft.body.children.length === 0 ? (
+                {!hasNodes ? (
                   <div className="flex h-full flex-col items-center justify-center rounded-lg border border-dashed p-12 text-center">
                     <div className="mb-4 flex size-10 items-center justify-center rounded-lg bg-muted text-muted-foreground">
                       <LayoutDashboard size={20} />
@@ -655,6 +850,38 @@ export function DashboardEditor({
                     <p className="max-w-sm text-sm text-balance text-muted-foreground">
                       Add a widget or a group to start building the layout.
                     </p>
+                    <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setGalleryOpen(true)
+                        }}
+                      >
+                        <Plus size={14} /> Add widget
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          addGroup()
+                        }}
+                      >
+                        <GroupIcon size={14} /> Add group
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          addTabs()
+                        }}
+                      >
+                        <SquareStack size={14} /> Add tabs
+                      </Button>
+                    </div>
                   </div>
                 ) : (
                   <WidgetCanvas
@@ -670,109 +897,190 @@ export function DashboardEditor({
                   />
                 )}
               </div>
-              {/* biome-ignore lint/a11y/useSemanticElements: a value-bearing splitter is a div with role=separator. */}
-              <div
-                role="separator"
-                aria-orientation="vertical"
-                aria-label="Resize inspector"
-                aria-valuenow={inspectorWidth}
-                aria-valuemin={INSPECTOR_MIN}
-                aria-valuemax={INSPECTOR_MAX}
-                tabIndex={0}
-                onPointerDown={startInspectorResize}
-                onKeyDown={(e) => {
-                  const delta = e.key === "ArrowLeft" ? 16 : e.key === "ArrowRight" ? -16 : 0
-                  if (!delta) return
-                  e.preventDefault()
-                  const next = clampInspector(inspectorWidth + delta)
-                  setInspectorWidth(next)
-                  localStorage.setItem(INSPECTOR_KEY, String(next))
-                }}
-                className="relative w-px shrink-0 cursor-col-resize bg-border outline-none transition-colors after:absolute after:inset-y-0 after:-left-1 after:-right-1 after:content-[''] hover:bg-primary/40 focus-visible:bg-primary/60"
-              />
-              <aside
-                style={{ width: inspectorWidth }}
-                className="flex shrink-0 flex-col overflow-hidden"
-              >
-                {/* Layers — the structure tree. */}
-                <div className="min-h-[120px] max-h-[40%] shrink-0 overflow-y-auto border-b border-border p-2">
-                  <p className="px-1.5 pb-1 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
-                    Layers
-                  </p>
-                  {draft.body.children.length === 0 ? (
-                    <p className="px-1.5 text-xs text-muted-foreground">Nothing yet.</p>
-                  ) : (
-                    <Layers
-                      nodes={draft.body.children}
-                      depth={0}
-                      parentId={null}
-                      selectedId={editingId}
-                      cIndex={cIndex}
-                      dnd={layersDnd}
-                      onSelect={setEditingId}
-                      onReorder={(id, delta) => patchBody((b) => reorderNode(b, id, delta))}
-                      onRemove={requestRemove}
-                    />
-                  )}
-                </div>
-                {/* Selected-node settings. */}
-                <div className="min-h-0 flex-1 overflow-y-auto p-4">
-                  {editing == null ? (
-                    <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
-                      <div className="flex size-10 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-                        <SlidersHorizontal size={18} />
+              {hasNodes && (
+                <>
+                  {/* biome-ignore lint/a11y/useSemanticElements: a value-bearing splitter is a div with role=separator. */}
+                  <div
+                    role="separator"
+                    aria-orientation="vertical"
+                    aria-label="Resize inspector"
+                    aria-valuenow={inspectorWidth}
+                    aria-valuemin={INSPECTOR_MIN}
+                    aria-valuemax={INSPECTOR_MAX}
+                    tabIndex={0}
+                    onPointerDown={startInspectorResize}
+                    onDoubleClick={() => {
+                      setInspectorWidth(INSPECTOR_DEFAULT)
+                      localStorage.setItem(INSPECTOR_KEY, String(INSPECTOR_DEFAULT))
+                    }}
+                    onKeyDown={(e) => {
+                      const delta = e.key === "ArrowLeft" ? 16 : e.key === "ArrowRight" ? -16 : 0
+                      if (!delta) return
+                      e.preventDefault()
+                      const next = clampInspector(inspectorWidth + delta)
+                      setInspectorWidth(next)
+                      localStorage.setItem(INSPECTOR_KEY, String(next))
+                    }}
+                    className="relative w-px shrink-0 cursor-col-resize bg-border outline-none transition-colors after:absolute after:inset-y-0 after:-left-1 after:-right-1 after:content-[''] hover:bg-primary/40 focus-visible:bg-primary/60"
+                  />
+                  <aside
+                    style={{ width: inspectorWidth }}
+                    className="flex shrink-0 flex-col overflow-hidden"
+                  >
+                    {/* Splittable region: Settings (top), splitter, Layers (bottom). */}
+                    <div ref={splitRef} className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                      {/* Selected-node settings. */}
+                      <div className="min-h-0 flex-1 overflow-y-auto p-4">
+                        {editing == null ? (
+                          <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
+                            <div className="flex size-10 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+                              <SlidersHorizontal size={18} />
+                            </div>
+                            <p className="text-sm font-medium text-foreground">Nothing selected</p>
+                            <p className="max-w-[220px] text-xs text-balance text-muted-foreground">
+                              Select a widget or group — on the canvas or in Layers — to configure
+                              it. New items drop into the selected group.
+                            </p>
+                          </div>
+                        ) : isGroup(editing) ? (
+                          editing.display === "tabs" ? (
+                            <TabsInspector
+                              group={editing}
+                              onChange={(p) =>
+                                patchBody((b) =>
+                                  updateNode(b, editing.id, (n) => ({ ...n, ...p }) as NormNode),
+                                )
+                              }
+                              onTabRename={(childId, label) =>
+                                patchBody((b) =>
+                                  updateNode(b, childId, (n) =>
+                                    isGroup(n)
+                                      ? ({ ...n, label: label || null } as NormNode)
+                                      : ({ ...n, title: label || null } as NormNode),
+                                  ),
+                                )
+                              }
+                              onTabRemove={(childId) => requestRemove(childId)}
+                              onTabReorder={(childId, delta) =>
+                                patchBody((b) => reorderNode(b, childId, delta))
+                              }
+                              onSetDefault={(childId) =>
+                                patchBody((b) =>
+                                  updateNode(
+                                    b,
+                                    editing.id,
+                                    (n) => ({ ...n, active: childId }) as NormNode,
+                                  ),
+                                )
+                              }
+                              onUnwrap={() => {
+                                patchBody((b) => unwrapGroup(b, editing.id))
+                                setEditingId(null)
+                              }}
+                            />
+                          ) : (
+                            <GroupInspector
+                              group={editing}
+                              onChange={(p) =>
+                                patchBody((b) =>
+                                  updateNode(b, editing.id, (n) => ({ ...n, ...p }) as NormNode),
+                                )
+                              }
+                              onUnwrap={() => {
+                                patchBody((b) => unwrapGroup(b, editing.id))
+                                setEditingId(null)
+                              }}
+                            />
+                          )
+                        ) : (
+                          <WidgetEditor
+                            widget={editing}
+                            concepts={concepts}
+                            onChange={(p) =>
+                              patchBody((b) =>
+                                updateNode(b, editing.id, (n) => ({ ...n, ...p }) as NormNode),
+                              )
+                            }
+                            onChangeType={(type) =>
+                              patchBody((b) =>
+                                updateNode(b, editing.id, () =>
+                                  retypeWidget(editing as NormWidget, type),
+                                ),
+                              )
+                            }
+                          />
+                        )}
                       </div>
-                      <p className="text-sm font-medium text-foreground">Nothing selected</p>
-                      <p className="max-w-[220px] text-xs text-balance text-muted-foreground">
-                        Select a widget or group — on the canvas or in Layers — to configure it. New
-                        items drop into the selected group.
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="space-y-4">
-                      <MoveControl
-                        nodeId={editing.id}
-                        body={draft.body}
-                        cIndex={cIndex}
-                        onMove={(target) => patchBody((b) => moveNode(b, editing.id, target))}
+                      {/* biome-ignore lint/a11y/useSemanticElements: a value-bearing splitter is a div with role=separator. */}
+                      <div
+                        role="separator"
+                        aria-orientation="horizontal"
+                        aria-label="Resize layers"
+                        aria-valuenow={Math.round(layersFraction * 100)}
+                        aria-valuemin={Math.round(LAYERS_MIN_FRAC * 100)}
+                        aria-valuemax={Math.round(LAYERS_MAX_FRAC * 100)}
+                        tabIndex={0}
+                        onPointerDown={startLayersResize}
+                        onDoubleClick={() => {
+                          setLayersFraction(LAYERS_DEFAULT_FRAC)
+                          localStorage.setItem(LAYERS_KEY, String(LAYERS_DEFAULT_FRAC))
+                        }}
+                        onKeyDown={(e) => {
+                          // Layers is the bottom pane: ArrowUp grows it, ArrowDown shrinks it.
+                          const delta =
+                            e.key === "ArrowUp" ? 0.03 : e.key === "ArrowDown" ? -0.03 : 0
+                          if (!delta) return
+                          e.preventDefault()
+                          const next = clampLayers(layersFraction + delta)
+                          setLayersFraction(next)
+                          localStorage.setItem(LAYERS_KEY, String(next))
+                        }}
+                        className="relative h-px shrink-0 cursor-row-resize bg-border outline-none transition-colors after:absolute after:inset-x-0 after:-top-1 after:-bottom-1 after:content-[''] hover:bg-primary/40 focus-visible:bg-primary/60"
                       />
-                      {isGroup(editing) ? (
-                        <GroupInspector
-                          group={editing}
-                          onChange={(p) =>
-                            patchBody((b) =>
-                              updateNode(b, editing.id, (n) => ({ ...n, ...p }) as NormNode),
-                            )
-                          }
-                          onUnwrap={() => {
-                            patchBody((b) => unwrapGroup(b, editing.id))
-                            setEditingId(null)
-                          }}
-                          onRemove={() => requestRemove(editing.id)}
-                        />
-                      ) : (
-                        <WidgetEditor
-                          widget={editing}
-                          concepts={concepts}
-                          onChange={(p) =>
-                            patchBody((b) =>
-                              updateNode(b, editing.id, (n) => ({ ...n, ...p }) as NormNode),
-                            )
-                          }
-                          onChangeType={(type) =>
-                            patchBody((b) =>
-                              updateNode(b, editing.id, () =>
-                                retypeWidget(editing as NormWidget, type),
-                              ),
-                            )
-                          }
-                          onRemove={() => removeSelected(editing.id)}
-                        />
-                      )}
+                      {/* Layers — the structure tree (resizable; defaults to a quarter). */}
+                      <div
+                        style={{ height: `${layersFraction * 100}%` }}
+                        className="flex min-h-[64px] shrink-0 flex-col overflow-hidden"
+                      >
+                        <div className="min-h-0 flex-1 overflow-y-auto p-2">
+                          <Layers
+                            nodes={draft.body.children}
+                            depth={0}
+                            parentId={null}
+                            selectedId={editingId}
+                            cIndex={cIndex}
+                            dnd={layersDnd}
+                            onSelect={setEditingId}
+                            onReorder={(id, delta) => patchBody((b) => reorderNode(b, id, delta))}
+                            onRemove={requestRemove}
+                          />
+                        </div>
+                      </div>
                     </div>
-                  )}
-                </div>
-              </aside>
+                    {/* Pinned remove action — always at the far bottom, full width. */}
+                    {editing && (
+                      <div className="shrink-0 border-t border-border p-3">
+                        <Button
+                          variant="destructive"
+                          className="w-full"
+                          onClick={() =>
+                            isGroup(editing)
+                              ? requestRemove(editing.id)
+                              : removeSelected(editing.id)
+                          }
+                        >
+                          <Trash2 size={15} />
+                          {isGroup(editing)
+                            ? `Delete ${editing.display === "tabs" ? "tabs" : "group"}${
+                                editing.children.length > 0 ? " + contents" : ""
+                              }`
+                            : "Remove widget"}
+                        </Button>
+                      </div>
+                    )}
+                  </aside>
+                </>
+              )}
             </div>
           </TabsContent>
         </Tabs>

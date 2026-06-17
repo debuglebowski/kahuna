@@ -169,6 +169,21 @@ describe("dashboards (DashboardService)", () => {
               },
             ],
           },
+          {
+            id: "t1",
+            type: "group",
+            direction: "col",
+            display: "tabs",
+            label: "Views",
+            active: "p2",
+            tabBar: "left",
+            w: { unit: "fr", value: 1 },
+            h: { unit: "fr", value: 1 },
+            children: [
+              { id: "p1", type: "group", direction: "col", label: "One", children: [] },
+              { id: "p2", type: "group", direction: "col", label: "Two", children: [] },
+            ],
+          },
         ],
       }
       const updated = yield* dash.update({ id: home.id, body: tree })

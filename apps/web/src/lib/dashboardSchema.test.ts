@@ -60,6 +60,53 @@ describe("DashboardBody schema codec (recursive tree)", () => {
     expect(encoded).toEqual(tree)
   })
 
+  it("round-trips a tabs group (display/label/active/tabBar) losslessly", () => {
+    const body = {
+      direction: "col" as const,
+      children: [
+        {
+          id: "t1",
+          type: "group" as const,
+          direction: "col" as const,
+          display: "tabs" as const,
+          label: "Views",
+          active: "p2",
+          tabBar: "left" as const,
+          w: { unit: "fr" as const, value: 1 },
+          h: { unit: "fr" as const, value: 1 },
+          children: [
+            {
+              id: "p1",
+              type: "group" as const,
+              direction: "col" as const,
+              label: "One",
+              children: [],
+            },
+            {
+              id: "p2",
+              type: "group" as const,
+              direction: "col" as const,
+              label: "Two",
+              children: [],
+            },
+          ],
+        },
+      ],
+    }
+    const decoded = Schema.decodeUnknownSync(DashboardBody)(body)
+    expect(Schema.encodeSync(DashboardBody)(decoded)).toEqual(body)
+  })
+
+  it("decodes a group with no display flag (back-compat — absent = flow)", () => {
+    const body = {
+      direction: "col",
+      children: [{ id: "g", type: "group", direction: "row", children: [] }],
+    }
+    const decoded = Schema.decodeUnknownSync(DashboardBody)(body)
+    const grp = decoded.children?.[0] as { display?: unknown }
+    expect(grp.display).toBeUndefined()
+  })
+
   it("still decodes a legacy flat body (back-compat read)", () => {
     const legacy = {
       widgets: [{ id: "a", type: "note", title: null, layout: { x: 0, y: 0, w: 6, h: 4 } }],

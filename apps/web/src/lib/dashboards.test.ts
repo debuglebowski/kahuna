@@ -6,6 +6,7 @@ import {
   formatWidgetNumber,
   insertNode,
   isGroup,
+  isTabs,
   isWide,
   migrate,
   moveNode,
@@ -14,6 +15,7 @@ import {
   type NormNode,
   type NormWidget,
   newGroup,
+  newTabs,
   newWidget,
   nodeStyle,
   parentOf,
@@ -23,6 +25,7 @@ import {
   serialize,
   sizeVariant,
   subtreeIds,
+  tabTitle,
   unwrapGroup,
   updateNode,
 } from "./dashboards"
@@ -259,6 +262,66 @@ describe("node construction", () => {
   })
 })
 
+describe("tabs groups", () => {
+  it("newTabs is an empty tabs group with a top bar", () => {
+    const t = newTabs()
+    expect(t).toMatchObject({ type: "group", display: "tabs", tabBar: "top", children: [] })
+    expect(isTabs(t)).toBe(true)
+    expect(isGroup(t)).toBe(true)
+  })
+
+  it("a flow group has no display flag; isTabs is false", () => {
+    const g = newGroup("row")
+    expect(g.display).toBeUndefined()
+    expect(isTabs(g)).toBe(false)
+    expect(isTabs(w("x"))).toBe(false)
+  })
+
+  it("tabTitle uses the node's name, else Tab N", () => {
+    expect(tabTitle({ ...newGroup("col"), label: "Pipeline" }, 0)).toBe("Pipeline") // named group
+    expect(tabTitle(newGroup("col"), 3)).toBe("Tab 4") // unnamed group
+    expect(tabTitle(w("x"), 1)).toBe("Tab 2") // unnamed widget
+    expect(tabTitle({ ...w("x"), title: "Overview" } as NormWidget, 0)).toBe("Overview")
+  })
+
+  it("migrate keeps flow implicit and carries tab fields through", () => {
+    const body: DashboardBody = {
+      direction: "col",
+      children: [
+        { id: "plain", type: "group", direction: "row", children: [] },
+        {
+          id: "t",
+          type: "group",
+          direction: "col",
+          display: "tabs",
+          tabBar: "left",
+          active: "p1",
+          label: "Views",
+          children: [{ id: "p1", type: "group", direction: "col", label: "One", children: [] }],
+        },
+      ],
+    }
+    const out = migrate(body)
+    expect((out.children[0] as NormGroup).display).toBeUndefined()
+    expect(isTabs(out.children[0]!)).toBe(false)
+    const tabs = out.children[1] as NormGroup
+    expect(tabs).toMatchObject({ display: "tabs", tabBar: "left", active: "p1", label: "Views" })
+    expect((tabs.children[0] as NormGroup).label).toBe("One")
+  })
+
+  it("round-trips a tabs group (display/active/tabBar) through serialize", () => {
+    const tabs: NormGroup = {
+      ...newTabs(),
+      id: "t",
+      active: "p1",
+      tabBar: "bottom",
+      children: [{ ...newGroup("col"), id: "p1", label: "One" }],
+    }
+    const body: NormBody = { direction: "col", children: [tabs] }
+    expect(migrate(serialize(body))).toEqual(body)
+  })
+})
+
 describe("referencedConceptIds", () => {
   it("walks the tree, collecting concept-scoped ids only", () => {
     const body: NormBody = {
@@ -270,6 +333,28 @@ describe("referencedConceptIds", () => {
         ]),
         // tasks conceptId is a filter, not a data scope → ignored
         { ...newWidget("tasks"), id: "t", conceptId: "c9" } as NormWidget,
+      ],
+    }
+    expect(referencedConceptIds(body).sort()).toEqual(["c1", "c2"])
+  })
+
+  it("collects concepts from every tab panel (inactive tabs preload too)", () => {
+    const body: NormBody = {
+      direction: "col",
+      children: [
+        {
+          ...newTabs(),
+          children: [
+            {
+              ...newGroup("col"),
+              children: [{ ...newWidget("list"), id: "l", conceptId: "c1" } as NormWidget],
+            },
+            {
+              ...newGroup("col"),
+              children: [{ ...newWidget("metric"), id: "m", conceptId: "c2" } as NormWidget],
+            },
+          ],
+        },
       ],
     }
     expect(referencedConceptIds(body).sort()).toEqual(["c1", "c2"])

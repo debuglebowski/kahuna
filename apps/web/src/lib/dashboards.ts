@@ -30,6 +30,15 @@ export interface NormGroup {
   id: string
   type: "group"
   direction: "row" | "col"
+  /** Absent = "flow" (children laid out along `direction`). "tabs" = one child
+   *  visible at a time behind a tab bar (each child is a tab/panel). */
+  display?: "flow" | "tabs"
+  /** Optional name — Layers label, and this node's tab title under a tabs parent. */
+  label?: string | null
+  /** Tabs only: child id open by default (persisted); falls back to the first. */
+  active?: string | null
+  /** Tabs only: tab-bar edge (default "top"). */
+  tabBar?: "top" | "bottom" | "left" | "right"
   w: Dim
   h: Dim
   children: NormNode[]
@@ -41,6 +50,12 @@ export interface NormBody {
 }
 
 export const isGroup = (n: NormNode): n is NormGroup => n.type === "group"
+/** A group that presents its children as tabs (one visible at a time). */
+export const isTabs = (n: NormNode): n is NormGroup => isGroup(n) && n.display === "tabs"
+
+/** A node's tab title under a tabs parent: its own name, else "Tab N" (1-based). */
+export const tabTitle = (n: NormNode, index: number): string =>
+  (isGroup(n) ? n.label : n.title) || `Tab ${index + 1}`
 
 /** Default size for a fresh/migrated node: fill (flex weight 1) on both axes. */
 export const FILL: Dim = { unit: "fr", value: 1 }
@@ -61,6 +76,11 @@ const normNode = (n: DashboardNode): NormNode => {
       id: n.id,
       type: "group",
       direction: n.direction,
+      // Flow is implicit (absent); carry "tabs" + its fields through.
+      ...(n.display === "tabs" ? { display: "tabs" } : {}),
+      ...(n.label != null ? { label: n.label } : {}),
+      ...(n.active != null ? { active: n.active } : {}),
+      ...(n.tabBar != null ? { tabBar: n.tabBar } : {}),
       w: dim(n.w, FILL),
       h: dim(n.h, FILL),
       children: n.children.map(normNode),
@@ -310,6 +330,21 @@ export const newGroup = (direction: "row" | "col" = "row"): NormGroup => ({
   id: crypto.randomUUID(),
   type: "group",
   direction,
+  w: { ...NEW },
+  h: { ...NEW },
+  children: [],
+})
+
+/** A blank tabs group — starts with NO tabs (the dashboard shows "No tab added").
+ *  Tabs are added by dragging any node (widget or group) onto the tab bar; the
+ *  dropped node IS the tab. `direction` is irrelevant under tabs but kept so a
+ *  flow⇄tabs toggle is lossless. */
+export const newTabs = (): NormGroup => ({
+  id: crypto.randomUUID(),
+  type: "group",
+  direction: "col",
+  display: "tabs",
+  tabBar: "top",
   w: { ...NEW },
   h: { ...NEW },
   children: [],

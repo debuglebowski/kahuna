@@ -721,11 +721,24 @@ export type DashboardWidget = typeof DashboardWidget.Type
 // root container (48×48 tiles). Resolved CLIENT-SIDE to flex CSS.
 
 /** A group node — invisible structural container (discriminated by type:"group"
- *  against the widget `type`s). Recursive: children are nodes (widgets or groups). */
+ *  against the widget `type`s). Recursive: children are nodes (widgets or groups).
+ *  `display` picks how it presents its children: "flow" (default) lays them all
+ *  out along `direction`; "tabs" shows one child at a time behind a tab bar (each
+ *  child is a tab/panel). All tab fields are optional + ignored under "flow", so an
+ *  older client decodes a tabs group as a plain flow group (graceful degradation). */
 export interface DashboardGroup {
   readonly id: string
   readonly type: "group"
   readonly direction: "row" | "col"
+  readonly display?: "flow" | "tabs" | undefined
+  /** Optional name — shown in the Layers tree, and used as this node's tab title
+   *  when its parent is a tabs group. */
+  readonly label?: string | null | undefined
+  /** Tabs only: the child id open by default (persisted). Falls back to the first
+   *  child when absent/stale. */
+  readonly active?: string | null | undefined
+  /** Tabs only: which edge the tab bar sits on. Default "top". */
+  readonly tabBar?: "top" | "bottom" | "left" | "right" | undefined
   readonly w?: typeof Dim.Type | undefined
   readonly h?: typeof Dim.Type | undefined
   readonly children: ReadonlyArray<DashboardNode>
@@ -736,6 +749,10 @@ const DashboardGroup: Schema.Schema<DashboardGroup> = Schema.Struct({
   id: Schema.String,
   type: Schema.Literal("group"),
   direction: Schema.Literal("row", "col"),
+  display: Schema.optional(Schema.Literal("flow", "tabs")),
+  label: Schema.optional(Schema.NullOr(Schema.String)),
+  active: Schema.optional(Schema.NullOr(Schema.String)),
+  tabBar: Schema.optional(Schema.Literal("top", "bottom", "left", "right")),
   w: Schema.optional(Dim),
   h: Schema.optional(Dim),
   children: Schema.Array(Schema.suspend((): Schema.Schema<DashboardNode> => DashboardNode)),

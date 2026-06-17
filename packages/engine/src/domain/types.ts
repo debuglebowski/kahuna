@@ -807,11 +807,18 @@ export type DashboardWidget =
   | CalendarWidget
   | GanttWidget
   | FilesWidget
-/** An invisible auto-layout container (Figma-style); children flow by `direction`. */
+/** An invisible auto-layout container (Figma-style). `display` "flow" (default)
+ *  lays children out along `direction`; "tabs" shows one child at a time behind a
+ *  tab bar (each child is a tab/panel). Opaque to the engine — mirrors the
+ *  contract's `DashboardGroup`. */
 export interface DashboardGroup {
   readonly id: string
   readonly type: "group"
   readonly direction: "row" | "col"
+  readonly display?: "flow" | "tabs"
+  readonly label?: string | null
+  readonly active?: string | null
+  readonly tabBar?: "top" | "bottom" | "left" | "right"
   readonly w?: Dim
   readonly h?: Dim
   readonly children: ReadonlyArray<DashboardNode>

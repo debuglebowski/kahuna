@@ -109,8 +109,8 @@ export function ListWidget({
   if (!widget.conceptId) return <p className="text-sm text-muted-foreground">Pick a concept.</p>
 
   // List renders its own title (the chrome header is suppressed for lists) so it
-  // sits on the same row as the toolbar actions.
-  const heading = widget.title?.trim() || concept?.name || ""
+  // sits on the same row as the toolbar actions. Empty title → empty (no fallback).
+  const heading = widget.title?.trim() || ""
 
   return (
     // cancel-drag: clicks/edits inside the table must never start a tile drag.

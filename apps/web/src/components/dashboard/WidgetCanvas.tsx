@@ -6,11 +6,13 @@ import {
   findNode,
   isGroup,
   type NormBody,
+  type NormGroup,
   type NormNode,
   type NormWidget,
   nodeStyle,
   subtreeIds,
   type TilePx,
+  tabTitle,
   tilePx,
 } from "@/lib/dashboards"
 import { cn } from "@/lib/utils"
@@ -207,22 +209,17 @@ function renderWidget(w: NormWidget, ctx: RenderCtx) {
   }
 }
 
-/** A widget tile's header label (a list/metric/note render their own). */
-function headerLabel(w: NormNode, cIndex: Map<string, Concept>): string {
+/** A widget tile's header label (a list/metric/note render their own). Shows ONLY
+ *  the explicit title — an empty title means no header (no concept/type fallback). */
+function headerLabel(w: NormNode): string {
   if (w.type === "group" || w.type === "list") return ""
-  return (
-    w.title ||
-    ("conceptId" in w && w.conceptId && w.type !== "tasks" && w.type !== "metric"
-      ? (cIndex.get(w.conceptId)?.name ?? "")
-      : "") ||
-    (w.type === "note" || w.type === "metric" ? "" : w.type)
-  )
+  return w.title ?? ""
 }
 
 /** A leaf widget tile — a measured card; content reads its box for variants. */
 function WidgetLeaf({ node, ctx }: { node: NormWidget; ctx: RenderCtx }) {
   const [ref, size] = useElementSize()
-  const label = headerLabel(node, ctx.cIndex)
+  const label = headerLabel(node)
   const selected = !ctx.readOnly && ctx.selectedId === node.id
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: interactive only in edit mode (role/tabIndex/keydown set together); readOnly tiles are inert.
@@ -288,6 +285,9 @@ function LayoutNode({
 }) {
   const style = nodeStyle(node, parentDir, ctx.tile)
   const drop = nodeDrop(ctx, node, parentId, parentDir, nextId)
+  if (isGroup(node) && node.display === "tabs") {
+    return <TabsNode node={node} parentDir={parentDir} ctx={ctx} />
+  }
   if (isGroup(node)) {
     const selected = !ctx.readOnly && ctx.selectedId === node.id
     return (
@@ -352,6 +352,156 @@ function LayoutNode({
     <div style={style} className="relative min-h-0" {...drop.props}>
       <DropLine zone={drop.zone} parentDir={parentDir} />
       <WidgetLeaf node={node} ctx={ctx} />
+    </div>
+  )
+}
+
+/** A tabs group: one child (panel) visible at a time behind a tab bar. The active
+ *  tab follows (a) the selected node, so editing reveals its panel; (b) the last
+ *  clicked tab; (c) the persisted `active` default; (d) the first child. Drops onto
+ *  the BAR append a new tab; drops into the visible panel add to that panel. */
+function TabsNode({
+  node,
+  parentDir,
+  ctx,
+}: {
+  node: NormGroup
+  parentDir: "row" | "col"
+  ctx: RenderCtx
+}) {
+  const style = nodeStyle(node, parentDir, ctx.tile)
+  const [picked, setPicked] = useState<string | null>(null)
+  const ids = node.children.map((c) => c.id)
+  // Selection wins (keep the edited node visible), then a clicked tab, then the
+  // persisted default, then the first child.
+  const selectedChild =
+    !ctx.readOnly && ctx.selectedId
+      ? (node.children.find((c) => subtreeIds(c).includes(ctx.selectedId as string))?.id ?? null)
+      : null
+  const fallback = node.active && ids.includes(node.active) ? node.active : (ids[0] ?? null)
+  const activeId = selectedChild ?? (picked && ids.includes(picked) ? picked : null) ?? fallback
+  const activeChild = node.children.find((c) => c.id === activeId) ?? null
+
+  const pos = node.tabBar ?? "top"
+  const vertical = pos === "left" || pos === "right"
+  const barFirst = pos === "top" || pos === "left"
+  const containerDir = vertical
+    ? barFirst
+      ? "row"
+      : "row-reverse"
+    : barFirst
+      ? "column"
+      : "column-reverse"
+
+  const selected = !ctx.readOnly && ctx.selectedId === node.id
+  // The bar accepts a drop = append the dragged node as a new tab.
+  const canBarDrop =
+    !ctx.readOnly && ctx.dragId !== null && ctx.dragId !== node.id && !ctx.dropInvalid(node.id)
+  const barActive = ctx.hint?.id === node.id && ctx.hint.zone === "into"
+  const barDrop = canBarDrop
+    ? {
+        onDragOver: (e: DragEvent) => {
+          e.preventDefault()
+          e.stopPropagation()
+          if (ctx.hint?.id !== node.id || ctx.hint.zone !== "into")
+            ctx.setHint({ id: node.id, zone: "into" })
+        },
+        onDrop: (e: DragEvent) => {
+          e.preventDefault()
+          e.stopPropagation()
+          ctx.drop(node.id, null)
+        },
+      }
+    : {}
+
+  return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: interactive only in edit mode (role/tabIndex/keydown set together); readOnly is inert.
+    <div
+      style={{ ...style, display: "flex", flexDirection: containerDir }}
+      {...dragProps(ctx, node.id)}
+      role={ctx.readOnly ? undefined : "button"}
+      tabIndex={ctx.readOnly ? undefined : 0}
+      onClick={
+        ctx.readOnly
+          ? undefined
+          : (e) => {
+              e.stopPropagation()
+              ctx.onSelect?.(node.id)
+            }
+      }
+      onKeyDown={
+        ctx.readOnly
+          ? undefined
+          : (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault()
+                ctx.onSelect?.(node.id)
+              }
+            }
+      }
+      className={cn(
+        "relative min-h-0 overflow-hidden rounded-lg",
+        !ctx.readOnly && "border border-dashed border-border/70 hover:border-foreground/30",
+        selected && "border-primary ring-1 ring-primary",
+        ctx.dragId === node.id && "opacity-40",
+      )}
+    >
+      <div
+        {...barDrop}
+        className={cn(
+          "flex shrink-0 gap-1 overflow-auto p-1",
+          vertical ? "flex-col" : "flex-row",
+          barActive && "rounded-md bg-primary/10 ring-1 ring-inset ring-primary",
+        )}
+      >
+        {node.children.length === 0 && (
+          <span className="px-2 py-1.5 text-sm text-muted-foreground">No tabs</span>
+        )}
+        {node.children.map((c, i) => (
+          <button
+            key={c.id}
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              setPicked(c.id)
+              if (!ctx.readOnly) ctx.onSelect?.(c.id)
+            }}
+            className={cn(
+              "max-w-[180px] shrink-0 truncate rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+              c.id === activeId
+                ? "bg-accent text-foreground"
+                : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
+            )}
+          >
+            {tabTitle(c, i)}
+          </button>
+        ))}
+      </div>
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col p-1.5">
+        {activeChild ? (
+          <LayoutNode
+            node={activeChild}
+            parentDir="col"
+            parentId={node.id}
+            nextId={null}
+            ctx={ctx}
+          />
+        ) : ctx.readOnly ? (
+          <div className="flex flex-1 items-center justify-center p-6 text-center text-sm text-muted-foreground">
+            No tab added
+          </div>
+        ) : (
+          <div
+            {...barDrop}
+            className={cn(
+              "flex flex-1 items-center justify-center rounded-lg border border-dashed p-6 text-center text-xs text-muted-foreground",
+              barActive ? "border-primary bg-primary/5 text-foreground" : "border-border/70",
+            )}
+          >
+            Drag a widget or group onto the bar to add a tab.
+          </div>
+        )}
+      </div>
     </div>
   )
 }
