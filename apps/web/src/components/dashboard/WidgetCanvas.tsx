@@ -39,7 +39,7 @@ const BreakdownWidget = lazy(() =>
 const TrendWidget = lazy(() => import("./TrendWidget").then((m) => ({ default: m.TrendWidget })))
 
 /** Flex gap = the gutter between sibling tiles/groups (px). */
-const GAP = 12
+const GAP = 16
 
 type Zone = "before" | "after" | "into"
 
@@ -322,10 +322,14 @@ function LayoutNode({
               }
         }
         className={cn(
-          "relative min-h-0 rounded-lg",
-          !ctx.readOnly && "border border-dashed border-border/70 hover:border-foreground/30",
-          selected && "border-primary ring-1 ring-primary",
-          drop.zone === "into" && "border-primary bg-primary/5 ring-2 ring-primary",
+          "relative min-h-0 rounded-xl",
+          // Edit-only border + inset; never applied in the live (readOnly) render.
+          !ctx.readOnly && "border p-2 hover:border-foreground/30",
+          // Dashed/muted only while idle — selection or a drop-target switch it to a
+          // solid border so a node never shows the dashed and solid outlines at once.
+          !ctx.readOnly && !selected && drop.zone !== "into" && "border-dashed border-border/70",
+          selected && "border-solid border-primary ring-1 ring-primary",
+          drop.zone === "into" && "border-solid border-primary bg-primary/5 ring-2 ring-primary",
           ctx.dragId === node.id && "opacity-40",
         )}
       >
@@ -440,16 +444,21 @@ function TabsNode({
             }
       }
       className={cn(
-        "relative min-h-0 overflow-hidden rounded-lg",
-        !ctx.readOnly && "border border-dashed border-border/70 hover:border-foreground/30",
-        selected && "border-primary ring-1 ring-primary",
+        "relative min-h-0 gap-2 overflow-hidden rounded-xl",
+        // The gap separates the tab bar from the panel in BOTH modes so the content
+        // never butts against the bar. Border + inset are edit-only (see group
+        // above); the live render carries neither (gap is not an outer inset).
+        !ctx.readOnly && "border p-2 hover:border-foreground/30",
+        // Dashed only while idle; selection switches to a solid border (never both).
+        !ctx.readOnly && !selected && "border-dashed border-border/70",
+        selected && "border-solid border-primary ring-1 ring-primary",
         ctx.dragId === node.id && "opacity-40",
       )}
     >
       <div
         {...barDrop}
         className={cn(
-          "flex shrink-0 gap-1 overflow-auto p-1",
+          "flex shrink-0 gap-1 overflow-auto",
           vertical ? "flex-col" : "flex-row",
           barActive && "rounded-md bg-primary/10 ring-1 ring-inset ring-primary",
         )}
@@ -477,7 +486,7 @@ function TabsNode({
           </button>
         ))}
       </div>
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col p-1.5">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {activeChild ? (
           <LayoutNode
             node={activeChild}
