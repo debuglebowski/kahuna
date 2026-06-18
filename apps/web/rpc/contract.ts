@@ -431,6 +431,12 @@ const widgetBase = {
   layout: Schema.optional(WidgetLayout),
   w: Schema.optional(Dim),
   h: Schema.optional(Dim),
+  /** Presentation variant id — a key into the client `VARIANT_CATALOG` for this
+   *  widget type (which carries the label, optional preview, and any config
+   *  preset applied on select). Free-form string by design: adding a variant is
+   *  a catalog edit, never a schema/API change. Absent = the type's first
+   *  catalog entry (its default). */
+  variant: Schema.optional(Schema.String),
 }
 /** `conceptId` is optional on every concept-scoped widget so the same body can
  *  render in per-concept context (implicit conceptId) later. */
@@ -457,8 +463,6 @@ const MetricWidget = Schema.Struct({
   field: Schema.optional(Schema.NullOr(Schema.String)),
   /** Caption under the hero number; absent/empty = auto ("Deals" / "sum of X"). */
   label: Schema.optional(Schema.NullOr(Schema.String)),
-  /** `auto` renders the wide stat bar on short, wide tiles. */
-  variant: Schema.optional(Schema.Literal("auto", "tile", "bar")),
   format: Schema.optional(Schema.Literal("plain", "compact", "currency", "percent")),
   /** Secondary stat: change vs the value N days ago (instance-createdAt based). */
   delta: Schema.optional(Schema.Literal("off", "7d", "30d")),
@@ -473,8 +477,6 @@ const ListWidget = Schema.Struct({
   orderBy: Schema.optional(Schema.NullOr(Schema.String)),
   limit: Schema.optional(Schema.NullOr(Schema.Number)),
   columns: Schema.optional(Schema.Array(Schema.String)),
-  /** `auto` switches to cards on narrow tiles (w < 5). */
-  variant: Schema.optional(Schema.Literal("auto", "table", "cards")),
   archived: Schema.optional(Schema.Literal("exclude", "include", "only")),
 })
 const BreakdownWidget = Schema.Struct({
@@ -499,8 +501,6 @@ const AttentionWidget = Schema.Struct({
   computedField: Schema.optional(Schema.NullOr(Schema.String)),
   bands: Schema.optional(Schema.Array(Schema.Literal("cooling", "cold", "heating", "steady"))),
   limit: Schema.optional(Schema.NullOr(Schema.Number)),
-  /** `bands` = badge rollup + stale queue; `strip` = heat strip + worst-N. */
-  variant: Schema.optional(Schema.Literal("bands", "strip")),
   /** "34d" quiet-duration per stale row (default on). */
   showDays: Schema.optional(Schema.Boolean),
   /** Pre-filter the population before the rollup; absent = all instances. */
@@ -523,8 +523,6 @@ const ActivityWidget = Schema.Struct({
   ...ConceptScoped,
   type: Schema.Literal("activity"),
   limit: Schema.optional(Schema.NullOr(Schema.Number)),
-  /** `auto` picks the dense log on wide tiles (w >= 6), else the timeline rail. */
-  variant: Schema.optional(Schema.Literal("auto", "timeline", "log")),
   /** Inline payload snippets ("stage: open → nego", note previews). */
   showDiffs: Schema.optional(Schema.Boolean),
   /** Client-side event-type filter (e.g. notes only); absent = all. */
@@ -539,8 +537,6 @@ const TasksWidget = Schema.Struct({
   showToolbar: Schema.optional(Schema.Boolean),
   showComposer: Schema.optional(Schema.Boolean),
   showDone: Schema.optional(Schema.Boolean),
-  /** `checklist` = flat rows, no toolbar/composer/groups chrome. */
-  variant: Schema.optional(Schema.Literal("full", "checklist")),
   groupBy: Schema.optional(Schema.Literal("schedule", "status", "priority", "none")),
   /** Which row metadata to render; absent = all. */
   rowMeta: Schema.optional(Schema.Array(Schema.Literal("due", "priority", "labels", "assignee"))),
@@ -556,8 +552,6 @@ const MembersWidget = Schema.Struct({
   ...widgetBase,
   type: Schema.Literal("members"),
   showToolbar: Schema.optional(Schema.Boolean),
-  /** `rows` = the directory list (default); `grid` = avatar orientation cards. */
-  variant: Schema.optional(Schema.Literal("rows", "grid")),
   /** Row metadata toggles (rows variant); absent = role + email. */
   fields: Schema.optional(Schema.Array(Schema.Literal("role", "email", "joined"))),
   sort: Schema.optional(Schema.Literal("name", "role", "joined")),
@@ -567,8 +561,6 @@ const MembersWidget = Schema.Struct({
 const WelcomeWidget = Schema.Struct({
   ...widgetBase,
   type: Schema.Literal("welcome"),
-  /** `hero` = the big-title banner (default); `card` = compact orientation card. */
-  variant: Schema.optional(Schema.Literal("hero", "card")),
   /** "12 members · 87 events this week" line under the greeting. */
   showPulse: Schema.optional(Schema.Boolean),
   /** Curated quick links (same shape as Shortcuts items); absent/empty = none. */
@@ -587,7 +579,6 @@ const GoalWidget = Schema.Struct({
   target: Schema.optional(Schema.NullOr(Schema.Number)),
   /** `reach` = progress toward >= target (quota); `stay` = keep <= target (budget). */
   direction: Schema.optional(Schema.Literal("reach", "stay")),
-  variant: Schema.optional(Schema.Literal("bar", "ring", "number")),
   showPercent: Schema.optional(Schema.Boolean),
 })
 // Shortcuts — hand-picked jump-off points; fully manual by design (no filters).
@@ -596,7 +587,6 @@ const ShortcutsWidget = Schema.Struct({
   ...widgetBase,
   type: Schema.Literal("shortcuts"),
   items: Schema.Array(ShortcutItem),
-  variant: Schema.optional(Schema.Literal("list", "grid")),
   /** Open URL targets in a new tab (internal targets always navigate in-app). */
   newTab: Schema.optional(Schema.Boolean),
 })
@@ -687,7 +677,6 @@ const FilesWidget = Schema.Struct({
   instanceId: Schema.optional(Schema.NullOr(Schema.String)),
   /** Off = read-only browse (no drop-zone). */
   allowUpload: Schema.optional(Schema.Boolean),
-  variant: Schema.optional(Schema.Literal("gallery", "list")),
   sort: Schema.optional(Schema.Literal("newest", "name", "size")),
   limit: Schema.optional(Schema.NullOr(Schema.Number)),
   fileType: Schema.optional(Schema.Literal("all", "image", "doc", "pdf", "other")),

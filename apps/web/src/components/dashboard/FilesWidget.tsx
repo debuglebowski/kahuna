@@ -76,7 +76,7 @@ export function FilesWidget({ widget }: { widget: Files }) {
       )}
       <FileList
         files={files}
-        variant={widget.variant ?? "list"}
+        variant={widget.variant === "gallery" ? "gallery" : "list"}
         onChanged={() => filesQ.refetch()}
         emptyText="No files at this scope yet."
       />

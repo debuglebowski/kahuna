@@ -7,9 +7,11 @@ type Members = Extract<DashboardWidget, { type: "members" }>
  *  or a read-only avatar grid for orientation; field/sort/limit shape it for
  *  small tiles. */
 export function MembersWidget({ widget }: { widget: Members }) {
+  // `variant` is a free-form catalog id; narrow to this widget's two layouts.
+  const variant = widget.variant === "grid" ? "grid" : "rows"
   const key = [
     widget.showToolbar ?? true,
-    widget.variant ?? "rows",
+    variant,
     widget.fields ? widget.fields.join(",") : "*",
     widget.sort ?? "name",
     widget.limit ?? "",
@@ -20,7 +22,7 @@ export function MembersWidget({ widget }: { widget: Members }) {
       <MemberDirectory
         key={key}
         showToolbar={widget.showToolbar ?? true}
-        variant={widget.variant ?? "rows"}
+        variant={variant}
         fields={widget.fields ?? ["role", "email"]}
         sort={widget.sort ?? "name"}
         limit={widget.limit ?? null}

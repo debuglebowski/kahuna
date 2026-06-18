@@ -14,6 +14,8 @@ const SCOPE: Record<NonNullable<Tasks["assignee"]>, string> = {
  *  with config-time filters (status / due / concept), grouping, row-meta
  *  toggles, and a chrome-less checklist variant. */
 export function TasksWidget({ widget }: { widget: Tasks }) {
+  // `variant` is a free-form catalog id; narrow to this widget's two layouts.
+  const variant = widget.variant === "checklist" ? "checklist" : "full"
   // The directory seeds its toolbar state from props in useState initializers,
   // so a config change must remount it — key on the config values.
   const key = [
@@ -21,7 +23,7 @@ export function TasksWidget({ widget }: { widget: Tasks }) {
     widget.showToolbar ?? true,
     widget.showComposer ?? true,
     widget.showDone ?? false,
-    widget.variant ?? "full",
+    variant,
     widget.groupBy ?? "schedule",
     widget.rowMeta ? widget.rowMeta.join(",") : "*",
     (widget.statusIds ?? []).join(","),
@@ -37,7 +39,7 @@ export function TasksWidget({ widget }: { widget: Tasks }) {
         showToolbar={widget.showToolbar ?? true}
         showComposer={widget.showComposer ?? true}
         defaultShowDone={widget.showDone ?? false}
-        variant={widget.variant ?? "full"}
+        variant={variant}
         groupBy={widget.groupBy ?? "schedule"}
         rowMeta={widget.rowMeta}
         statusIds={widget.statusIds}

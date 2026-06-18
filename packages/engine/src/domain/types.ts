@@ -558,6 +558,10 @@ interface WidgetBase {
   readonly layout?: WidgetLayout
   readonly w?: Dim
   readonly h?: Dim
+  /** Presentation variant id — a key into the client `VARIANT_CATALOG` for this
+   *  widget type. Free-form by design: a new variant is a catalog edit, not a
+   *  schema change. Absent = the type's default (first catalog entry). */
+  readonly variant?: string
 }
 /** Metric — one number: count of matching instances, or sum/avg of a field. */
 export interface MetricWidget extends WidgetBase {
@@ -570,8 +574,6 @@ export interface MetricWidget extends WidgetBase {
   readonly field?: string | null
   /** Caption under the hero number; absent/empty = auto ("Deals" / "sum of X"). */
   readonly label?: string | null
-  /** `auto` renders the wide stat bar on short, wide tiles. */
-  readonly variant?: "auto" | "tile" | "bar"
   readonly format?: "plain" | "compact" | "currency" | "percent"
   /** Secondary stat: change vs the value N days ago (instance-createdAt based). */
   readonly delta?: "off" | "7d" | "30d"
@@ -587,8 +589,6 @@ export interface ListWidget extends WidgetBase {
   readonly limit?: number | null
   /** Field ids to show as columns; empty/absent = concept default columns. */
   readonly columns?: ReadonlyArray<string>
-  /** `auto` switches to cards on narrow tiles (w < 5). */
-  readonly variant?: "auto" | "table" | "cards"
   readonly archived?: "exclude" | "include" | "only"
 }
 /** Breakdown — group instances by an enum field or by label → bar/pie chart. */
@@ -616,8 +616,6 @@ export interface AttentionWidget extends WidgetBase {
   /** Bands to surface in the stale queue, in order. */
   readonly bands?: ReadonlyArray<"cooling" | "cold" | "heating" | "steady">
   readonly limit?: number | null
-  /** `bands` = badge rollup + stale queue; `strip` = heat strip + worst-N. */
-  readonly variant?: "bands" | "strip"
   /** "34d" quiet-duration per stale row (default on). */
   readonly showDays?: boolean
   /** Pre-filter the population before the rollup; absent = all instances. */
@@ -642,8 +640,6 @@ export interface ActivityWidget extends WidgetBase {
   readonly type: "activity"
   readonly conceptId?: string | null
   readonly limit?: number | null
-  /** `auto` picks the dense log on wide tiles (w >= 6), else the timeline rail. */
-  readonly variant?: "auto" | "timeline" | "log"
   /** Inline payload snippets ("stage: open → nego", note previews). */
   readonly showDiffs?: boolean
   /** Client-side event-type filter (e.g. notes only); absent = all. */
@@ -657,8 +653,6 @@ export interface TasksWidget extends WidgetBase {
   readonly showToolbar?: boolean
   readonly showComposer?: boolean
   readonly showDone?: boolean
-  /** `checklist` = flat rows, no toolbar/composer/groups chrome. */
-  readonly variant?: "full" | "checklist"
   readonly groupBy?: "schedule" | "status" | "priority" | "none"
   /** Which row metadata to render; absent = all. */
   readonly rowMeta?: ReadonlyArray<"due" | "priority" | "labels" | "assignee">
@@ -674,8 +668,6 @@ export interface TasksWidget extends WidgetBase {
 export interface MembersWidget extends WidgetBase {
   readonly type: "members"
   readonly showToolbar?: boolean
-  /** `rows` = the directory list (default); `grid` = avatar orientation cards. */
-  readonly variant?: "rows" | "grid"
   /** Row metadata toggles (rows variant); absent = role + email. */
   readonly fields?: ReadonlyArray<"role" | "email" | "joined">
   readonly sort?: "name" | "role" | "joined"
@@ -685,8 +677,6 @@ export interface MembersWidget extends WidgetBase {
 /** Welcome — a big-title greeting for the viewer. */
 export interface WelcomeWidget extends WidgetBase {
   readonly type: "welcome"
-  /** `hero` = the big-title banner (default); `card` = compact orientation card. */
-  readonly variant?: "hero" | "card"
   /** "12 members · 87 events this week" line under the greeting. */
   readonly showPulse?: boolean
   /** Curated quick links (same shape as Shortcuts items); absent/empty = none. */
@@ -704,7 +694,6 @@ export interface GoalWidget extends WidgetBase {
   readonly target?: number | null
   /** `reach` = progress toward >= target (quota); `stay` = keep <= target (budget). */
   readonly direction?: "reach" | "stay"
-  readonly variant?: "bar" | "ring" | "number"
   readonly showPercent?: boolean
 }
 /** One curated shortcut. `ref` is an instance id, dashboard id, or URL per `kind`. */
@@ -719,7 +708,6 @@ export interface ShortcutItem {
 export interface ShortcutsWidget extends WidgetBase {
   readonly type: "shortcuts"
   readonly items: ReadonlyArray<ShortcutItem>
-  readonly variant?: "list" | "grid"
   /** Open URL targets in a new tab (internal targets always navigate in-app). */
   readonly newTab?: boolean
 }
@@ -785,7 +773,6 @@ export interface FilesWidget extends WidgetBase {
   readonly scope: "instance" | "concept" | "org"
   readonly instanceId?: string | null
   readonly allowUpload?: boolean
-  readonly variant?: "gallery" | "list"
   readonly sort?: "newest" | "name" | "size"
   readonly limit?: number | null
   readonly fileType?: "all" | "image" | "doc" | "pdf" | "other"
