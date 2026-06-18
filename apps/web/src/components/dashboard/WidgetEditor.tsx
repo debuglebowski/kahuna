@@ -14,6 +14,7 @@ import { api, type Concept, type DashboardWidget, type RichTextEnvelope } from "
 import { taskStatusesCollection } from "@/lib/collections"
 import type { Dim, DimUnit, NormWidget } from "@/lib/dashboards"
 import { capitalize } from "@/lib/fieldDisplay"
+import { resolveVariantId } from "@/lib/variantCatalog"
 import { WIDGET_CATALOG } from "@/lib/widgetCatalog"
 import { ConceptSelectItems } from "../ConceptSelectItems"
 import { ConditionList, useFields } from "../ConditionList"
@@ -471,24 +472,63 @@ export function WidgetEditor({
                 />
               </FieldRow>
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <VariantPicker widget={widget} onChange={patch} />
-              <FieldRow label="Archived">
+            <FieldRow label="Archived">
+              <Select
+                value={widget.archived ?? "exclude"}
+                onValueChange={(v) => patch({ archived: v as "exclude" | "include" | "only" })}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="exclude">Exclude</SelectItem>
+                  <SelectItem value="include">Include</SelectItem>
+                  <SelectItem value="only">Only archived</SelectItem>
+                </SelectContent>
+              </Select>
+            </FieldRow>
+            {/* The grouped/rows variants section/color by an enum field; absent =
+              the concept's first enum. Shown only when that variant is active. */}
+            {resolveVariantId(widget) === "grouped" && (
+              <FieldRow label="Group by">
                 <Select
-                  value={widget.archived ?? "exclude"}
-                  onValueChange={(v) => patch({ archived: v as "exclude" | "include" | "only" })}
+                  value={widget.groupBy || "__none"}
+                  onValueChange={(v) => patch({ groupBy: v === "__none" ? null : v })}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Select a field…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none">Select a field…</SelectItem>
+                    {enumFields.map((f) => (
+                      <SelectItem key={f.id} value={f.id}>
+                        {f.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </FieldRow>
+            )}
+            {resolveVariantId(widget) === "rows" && (
+              <FieldRow label="Status dot">
+                <Select
+                  value={widget.statusField || "__auto"}
+                  onValueChange={(v) => patch({ statusField: v === "__auto" ? null : v })}
                 >
                   <SelectTrigger className="w-full">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="exclude">Exclude</SelectItem>
-                    <SelectItem value="include">Include</SelectItem>
-                    <SelectItem value="only">Only archived</SelectItem>
+                    <SelectItem value="__auto">First enum field</SelectItem>
+                    {enumFields.map((f) => (
+                      <SelectItem key={f.id} value={f.id}>
+                        {f.name}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </FieldRow>
-            </div>
+            )}
           </>
         )}
 

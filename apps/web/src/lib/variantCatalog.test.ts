@@ -30,7 +30,7 @@ describe("variant catalog", () => {
   })
 
   it("resolveVariantId prefers an explicit variant, else the type default", () => {
-    expect(resolveVariantId({ type: "metric" })).toBe("auto")
+    expect(resolveVariantId({ type: "metric" })).toBe("tile")
     expect(resolveVariantId({ type: "metric", variant: "bar" })).toBe("bar")
     // Free-form: an id not in the catalog still resolves to itself (renderer falls back).
     expect(resolveVariantId({ type: "metric", variant: "spark" })).toBe("spark")

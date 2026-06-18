@@ -3,13 +3,7 @@ import { useMemo } from "react"
 import { api, type Concept, type DashboardWidget, type Instance } from "@/lib/api"
 import { useSession } from "@/lib/auth-client"
 import type { ConceptInstanceData } from "@/lib/conceptData"
-import {
-  formatMetric,
-  formatWidgetNumber,
-  heroTextClass,
-  isWide,
-  sizeVariant,
-} from "@/lib/dashboards"
+import { formatMetric, formatWidgetNumber, heroTextClass, sizeVariant } from "@/lib/dashboards"
 import { cn } from "@/lib/utils"
 import { createdOnOrBefore, metricSeries, metricValue } from "@/lib/widgetAggregations"
 import { useWidgetBox } from "./widgetBox"
@@ -70,9 +64,9 @@ const sniffCurrency = (instances: readonly Instance[], fieldId?: string | null):
 }
 
 /** A single big number: count of matching instances, or sum/avg of a field.
- *  Variants: centered tile (default), a wide stat bar (`auto` picks the bar on
- *  short, wide tiles), or a sparkline KPI (number beside an inline trend). All
- *  support an optional delta vs the value N days ago. */
+ *  Variants: centered tile (default), a wide stat bar, or a sparkline KPI
+ *  (number beside an inline trend). All support an optional delta vs the value
+ *  N days ago. */
 export function MetricWidget({
   widget,
   data,
@@ -104,7 +98,7 @@ export function MetricWidget({
   // Sparkline trail (spark variant only): the metric sampled daily across a
   // window derived from the delta setting (7d → 7d, otherwise 30d), so it needs
   // no new config. `now` is mount-stable so resize re-renders don't re-sample.
-  const isSpark = (widget.variant ?? "auto") === "spark"
+  const isSpark = (widget.variant ?? "tile") === "spark"
   const sparkDays = widget.delta === "7d" ? 7 : 30
   const now = useMemo(() => Date.now(), [])
   const series = useMemo(
@@ -211,10 +205,7 @@ export function MetricWidget({
     )
   }
 
-  const variant = widget.variant ?? "auto"
-  const bar =
-    variant === "bar" ||
-    (variant === "auto" && isWide(box.width) && sizeVariant(box.height) === "sm")
+  const bar = (widget.variant ?? "tile") === "bar"
 
   if (bar) {
     return (

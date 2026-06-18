@@ -478,6 +478,12 @@ const ListWidget = Schema.Struct({
   limit: Schema.optional(Schema.NullOr(Schema.Number)),
   columns: Schema.optional(Schema.Array(Schema.String)),
   archived: Schema.optional(Schema.Literal("exclude", "include", "only")),
+  /** `grouped` variant: enum field id to section rows by; absent = prompt to
+   *  pick one (no implicit default). */
+  groupBy: Schema.optional(Schema.NullOr(Schema.String)),
+  /** `rows` variant: enum field id whose option color drives the status dot;
+   *  absent = first enum. */
+  statusField: Schema.optional(Schema.NullOr(Schema.String)),
 })
 const BreakdownWidget = Schema.Struct({
   ...widgetBase,

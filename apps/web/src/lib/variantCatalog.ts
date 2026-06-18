@@ -15,7 +15,7 @@ import type { DashboardWidget } from "./api"
  * Conventions:
  *  - The FIRST entry for a type is its default (used when `widget.variant` is
  *    unset). It MUST match the renderer's hardcoded fallback (e.g. MetricWidget's
- *    `widget.variant ?? "auto"`) so an unset widget and an explicit default render
+ *    `widget.variant ?? "tile"`) so an unset widget and an explicit default render
  *    identically.
  *  - `preset` is optional; pure-layout variants (today's migrated ones) omit it.
  *  - `Preview` is optional; the picker shows it as a thumbnail and falls back to
@@ -47,22 +47,22 @@ type WidgetType = DashboardWidget["type"]
 /** Per-type variant lists. First entry = default. Populate freely. */
 export const VARIANT_CATALOG: Record<WidgetType, readonly WidgetVariant[]> = {
   metric: [
-    { id: "auto", label: "Auto", description: "Wide stat bar on short tiles; tile otherwise." },
     { id: "tile", label: "Tile", description: "Big number centered over its caption." },
     { id: "bar", label: "Stat bar", description: "Number and caption on one row." },
     { id: "spark", label: "Sparkline", description: "Number beside an inline trend line." },
   ],
   list: [
-    { id: "auto", label: "Auto", description: "Cards on narrow tiles; a table otherwise." },
     { id: "table", label: "Table", description: "Columned rows." },
     { id: "cards", label: "Cards", description: "One card per item." },
+    { id: "rows", label: "Line feed", description: "Compact one-line rows with a status dot." },
+    { id: "grouped", label: "Grouped", description: "Collapsible sections by an enum field." },
+    { id: "gallery", label: "Gallery", description: "Responsive tile grid." },
   ],
   attention: [
     { id: "bands", label: "Band badges", description: "Badge rollup + stale queue." },
     { id: "strip", label: "Heat strip", description: "Proportional heat strip + worst-N." },
   ],
   activity: [
-    { id: "auto", label: "Auto", description: "Dense log on wide tiles; timeline rail otherwise." },
     { id: "timeline", label: "Timeline", description: "Avatar rail with timestamps." },
     { id: "log", label: "Dense log", description: "Compact one-line rows." },
   ],

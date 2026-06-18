@@ -25,7 +25,10 @@ export function VariantPicker({
 }) {
   const variants = variantsFor(widget.type)
   if (variants.length < 2) return null
-  const current = resolveVariantId(widget) ?? variants[0]?.id
+  // A widget may carry a since-removed id (e.g. the old "auto"); show the
+  // default rather than a blank trigger when the stored id is unknown.
+  const resolved = resolveVariantId(widget)
+  const current = variants.some((v) => v.id === resolved) ? resolved : variants[0]?.id
 
   return (
     <FieldRow label="Variant">

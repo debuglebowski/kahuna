@@ -590,8 +590,15 @@ export interface ListWidget extends WidgetBase {
   /** Field ids to show as columns; empty/absent = concept default columns. */
   readonly columns?: ReadonlyArray<string>
   readonly archived?: "exclude" | "include" | "only"
+  /** `grouped` variant: enum field id to section rows by; absent = prompt to
+   *  pick one (no implicit default). */
+  readonly groupBy?: string | null
+  /** `rows` variant: enum field id whose option color drives the status dot;
+   *  absent = first enum. */
+  readonly statusField?: string | null
 }
-/** Breakdown — group instances by an enum field or by label → bar/pie chart. */
+/** Breakdown — group instances by an enum field or by label, rendered as bars,
+ *  pie, ranked horizontal bars, donut, a stacked composition bar, or a table. */
 export interface BreakdownWidget extends WidgetBase {
   readonly type: "breakdown"
   readonly conceptId?: string | null

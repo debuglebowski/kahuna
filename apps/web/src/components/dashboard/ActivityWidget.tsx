@@ -6,9 +6,7 @@ import { MemberAvatar, memberLabel, type OrgMember } from "@/components/item/Ass
 import { type ActivityResolvers, eventLabel, eventSnippet, relativeTime } from "@/lib/activity"
 import { api, type DashboardWidget, type FeedItem } from "@/lib/api"
 import { taskStatusesCollection } from "@/lib/collections"
-import { isWide } from "@/lib/dashboards"
 import { useFullOrg } from "@/pages/settings/SettingsLayout"
-import { useWidgetBox } from "./widgetBox"
 
 type Activity = Extract<DashboardWidget, { type: "activity" }>
 
@@ -59,11 +57,10 @@ export function EventRows({ events }: { events: readonly FeedItem[] }) {
 }
 
 /** Recent events as a feed (whole-org, or one concept's instance events).
- *  Variants: avatar timeline rail (narrow) or a dense log (wide); `auto` picks
- *  by tile width. Inline diff snippets reuse the activity-feed derivations. */
+ *  Variants: an avatar timeline rail (default) or a dense log. Inline diff
+ *  snippets reuse the activity-feed derivations. */
 export function ActivityWidget({ widget }: { widget: Activity }) {
   const navigate = useNavigate()
-  const box = useWidgetBox()
   const limit = widget.limit ?? 20
   const types = widget.eventTypes
   const q = useQuery({
@@ -99,8 +96,7 @@ export function ActivityWidget({ widget }: { widget: Activity }) {
   if (q.isLoading) return <p className="text-sm text-muted-foreground">Loading…</p>
   if (events.length === 0) return <p className="text-sm text-muted-foreground">No activity.</p>
 
-  const variant = widget.variant ?? "auto"
-  const log = variant === "log" || (variant === "auto" && isWide(box.width))
+  const log = (widget.variant ?? "timeline") === "log"
   const showDiffs = widget.showDiffs ?? true
   const open = (e: FeedItem) =>
     e.subjectKind === "instance" && navigate(`/instances/${e.subjectId}`)
