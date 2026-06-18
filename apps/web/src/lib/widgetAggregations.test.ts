@@ -12,6 +12,7 @@ import {
   groupBy,
   kanbanBuckets,
   matchInstance,
+  metricSeries,
   metricValue,
   OTHER_KEY,
   sortBuckets,
@@ -170,6 +171,38 @@ describe("createdOnOrBefore (metric delta baseline)", () => {
     const recent = { ...inst({}), createdAt: new Date("2026-06-01") }
     const out = createdOnOrBefore([old, recent], Date.parse("2026-03-01"))
     expect(out.map((i) => i.id)).toEqual([old.id])
+  })
+})
+
+describe("metricSeries (sparkline)", () => {
+  it("samples the cumulative metric across the window, ending on `to`", () => {
+    const a = { ...inst({}), createdAt: new Date("2026-01-01") }
+    const b = { ...inst({}), createdAt: new Date("2026-01-11") }
+    // 3 samples over [Jan 1, Jan 21]: Jan 1 (a only), Jan 11 (a+b), Jan 21 (a+b).
+    const out = metricSeries(
+      [a, b],
+      "count",
+      [],
+      null,
+      Date.parse("2026-01-01"),
+      Date.parse("2026-01-21"),
+      3,
+    )
+    expect(out).toEqual([1, 2, 2])
+  })
+
+  it("clamps points to at least 2", () => {
+    const a = { ...inst({}), createdAt: new Date("2026-01-01") }
+    const out = metricSeries(
+      [a],
+      "count",
+      [],
+      null,
+      Date.parse("2026-01-01"),
+      Date.parse("2026-02-01"),
+      1,
+    )
+    expect(out).toEqual([1, 1])
   })
 })
 

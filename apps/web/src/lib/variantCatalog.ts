@@ -48,8 +48,9 @@ type WidgetType = DashboardWidget["type"]
 export const VARIANT_CATALOG: Record<WidgetType, readonly WidgetVariant[]> = {
   metric: [
     { id: "auto", label: "Auto", description: "Wide stat bar on short tiles; tile otherwise." },
-    { id: "tile", label: "Tile", description: "Big number stacked over its caption." },
+    { id: "tile", label: "Tile", description: "Big number centered over its caption." },
     { id: "bar", label: "Stat bar", description: "Number and caption on one row." },
+    { id: "spark", label: "Sparkline", description: "Number beside an inline trend line." },
   ],
   list: [
     { id: "auto", label: "Auto", description: "Cards on narrow tiles; a table otherwise." },

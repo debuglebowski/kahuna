@@ -230,6 +230,32 @@ export const metricValue = (
     : avgField(instances, conds, fieldId, opts)
 }
 
+/** A Metric sparkline series: the metric value sampled at `points` evenly-spaced
+ *  times across [fromMs, toMs], each computed over the instances that already
+ *  existed at that time (created-at based — the same approximation as the
+ *  "vs N days ago" delta). The final sample lands exactly on `toMs`. `from`/`to`
+ *  are passed in (not read from the clock) so this stays pure/testable. `points`
+ *  is clamped to ≥ 2; null samples count as 0 so the line is always continuous. */
+export const metricSeries = (
+  instances: readonly Instance[],
+  agg: "count" | "sum" | "avg",
+  conds: readonly SidebarCondition[],
+  fieldId: string | null | undefined,
+  fromMs: number,
+  toMs: number,
+  points: number,
+  opts?: MatchOpts,
+): number[] => {
+  const n = Math.max(2, Math.floor(points))
+  const step = (toMs - fromMs) / (n - 1)
+  const series: number[] = []
+  for (let i = 0; i < n; i++) {
+    const cutoff = i === n - 1 ? toMs : fromMs + step * i
+    series.push(metricValue(createdOnOrBefore(instances, cutoff), agg, conds, fieldId, opts) ?? 0)
+  }
+  return series
+}
+
 export interface TrendPoint {
   readonly bucket: string
   readonly count: number

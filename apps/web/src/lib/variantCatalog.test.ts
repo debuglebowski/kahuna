@@ -49,8 +49,8 @@ describe("variant catalog", () => {
   })
 
   it("variantPatch on an unknown id just sets the variant (no preset)", () => {
-    expect(variantPatch("metric", "spark")).toEqual({ variant: "spark" })
-    expect(findVariant("metric", "spark")).toBeUndefined()
+    expect(variantPatch("metric", "nope")).toEqual({ variant: "nope" })
+    expect(findVariant("metric", "nope")).toBeUndefined()
   })
 })
 
