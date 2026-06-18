@@ -557,14 +557,22 @@ export function WidgetEditor({
               <FieldRow label="Chart">
                 <Select
                   value={widget.chart}
-                  onValueChange={(v) => patch({ chart: v as "bar" | "pie" })}
+                  onValueChange={(v) =>
+                    patch({
+                      chart: v as "bar" | "pie" | "bars-h" | "donut" | "stacked" | "table",
+                    })
+                  }
                 >
                   <SelectTrigger className="w-full">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="bar">Bar</SelectItem>
+                    <SelectItem value="bar">Bars (vertical)</SelectItem>
+                    <SelectItem value="bars-h">Bars (ranked)</SelectItem>
                     <SelectItem value="pie">Pie</SelectItem>
+                    <SelectItem value="donut">Donut</SelectItem>
+                    <SelectItem value="stacked">Composition bar</SelectItem>
+                    <SelectItem value="table">Table</SelectItem>
                   </SelectContent>
                 </Select>
               </FieldRow>
@@ -618,6 +626,23 @@ export function WidgetEditor({
                 className="w-28"
               />
             </FieldRow>
+            {widget.chart === "table" && (
+              <FieldRow label="Trend column (table only)">
+                <Select
+                  value={widget.delta ?? "off"}
+                  onValueChange={(v) => patch({ delta: v as "off" | "7d" | "30d" })}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="off">Off</SelectItem>
+                    <SelectItem value="7d">Last 7 days</SelectItem>
+                    <SelectItem value="30d">Last 30 days</SelectItem>
+                  </SelectContent>
+                </Select>
+              </FieldRow>
+            )}
           </>
         )}
 

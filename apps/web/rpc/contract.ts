@@ -492,13 +492,17 @@ const BreakdownWidget = Schema.Struct({
   conditions: Schema.Array(SidebarCondition),
   ...ConditionMatch,
   groupBy: Schema.String,
-  chart: Schema.Literal("bar", "pie"),
+  /** Presentation: vertical bars / pie (recharts), ranked horizontal bars,
+   *  donut-with-total, a 100%-stacked composition bar, or a numeric table. */
+  chart: Schema.Literal("bar", "pie", "bars-h", "donut", "stacked", "table"),
   /** `field` = the enum's configured option order (falls back to label). */
   sort: Schema.optional(Schema.Literal("count", "label", "field")),
   /** Value labels on bars / in the legend. */
   values: Schema.optional(Schema.Literal("count", "percent", "both")),
   /** Collapse groups past this many into an "Other" bucket; null/absent = all. */
   maxGroups: Schema.optional(Schema.NullOr(Schema.Number)),
+  /** Table chart only: add a per-group trend sparkline + delta over this window. */
+  delta: Schema.optional(Schema.Literal("off", "7d", "30d")),
 })
 const AttentionWidget = Schema.Struct({
   ...widgetBase,

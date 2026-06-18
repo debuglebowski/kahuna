@@ -10,6 +10,7 @@ import {
   countInstances,
   createdOnOrBefore,
   groupBy,
+  groupSeries,
   kanbanBuckets,
   matchInstance,
   metricSeries,
@@ -203,6 +204,43 @@ describe("metricSeries (sparkline)", () => {
       1,
     )
     expect(out).toEqual([1, 1])
+  })
+})
+
+describe("groupSeries (breakdown table trend/delta)", () => {
+  const at = (stage: string, day: string): Instance => ({
+    ...inst({ stage }),
+    createdAt: new Date(day),
+  })
+
+  it("re-groups the cumulative population at each sample, ending on `to`", () => {
+    // open: Jan 1 + Jan 11; won: Jan 11. 3 samples over [Jan 1, Jan 21].
+    const data = [at("open", "2026-01-01"), at("open", "2026-01-11"), at("won", "2026-01-11")]
+    const out = groupSeries(
+      data,
+      [],
+      "stage",
+      Date.parse("2026-01-01"),
+      Date.parse("2026-01-21"),
+      3,
+    )
+    expect(out.get("open")).toEqual([1, 2, 2])
+    expect(out.get("won")).toEqual([0, 1, 1]) // zero-filled before it first appears
+  })
+
+  it("respects the filter and clamps points to at least 2", () => {
+    const data = [at("open", "2026-01-01"), at("won", "2026-01-01")]
+    // Window sits entirely after creation, so both samples see the one open row.
+    const out = groupSeries(
+      data,
+      [eq("stage", "open")],
+      "stage",
+      Date.parse("2026-01-15"),
+      Date.parse("2026-02-01"),
+      1,
+    )
+    expect(out.get("open")).toEqual([1, 1])
+    expect(out.has("won")).toBe(false)
   })
 })
 

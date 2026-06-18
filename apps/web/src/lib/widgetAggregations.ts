@@ -132,6 +132,38 @@ export const groupBy = (
     .sort((a, b) => b.count - a.count)
 }
 
+/** Per-group count series across [fromMs, toMs] — the breakdown table's trend
+ *  sparkline + delta. Created-at based, like `metricSeries`: at each evenly-spaced
+ *  sample time it re-groups the instances that already existed then. Every key
+ *  that ever appears gets a full-length series (zero-filled for samples before it
+ *  first shows up). The final sample lands on `toMs`, so each series' last value
+ *  is the current count and `last − first` is the window's delta. `from`/`to` are
+ *  passed in (not read from the clock) so this stays pure/testable; `points` is
+ *  clamped to ≥ 2. */
+export const groupSeries = (
+  instances: readonly Instance[],
+  conds: readonly SidebarCondition[],
+  key: string,
+  fromMs: number,
+  toMs: number,
+  points: number,
+  opts?: MatchOpts,
+): Map<string, number[]> => {
+  const n = Math.max(2, Math.floor(points))
+  const step = (toMs - fromMs) / (n - 1)
+  const series = new Map<string, number[]>()
+  for (let i = 0; i < n; i++) {
+    const cutoff = i === n - 1 ? toMs : fromMs + step * i
+    const counts = new Map(
+      groupBy(createdOnOrBefore(instances, cutoff), conds, key, opts).map((b) => [b.key, b.count]),
+    )
+    // A key first seen at sample i was 0 for the i earlier samples.
+    for (const k of counts.keys()) if (!series.has(k)) series.set(k, new Array(i).fill(0))
+    for (const [k, arr] of series) arr.push(counts.get(k) ?? 0)
+  }
+  return series
+}
+
 /** Bucket matching instances by an enum field's value for the Kanban board.
  *  Key "" collects unset values (the synthetic "no value" column); a `multiple`
  *  enum contributes its FIRST value (a card sits in exactly one column).

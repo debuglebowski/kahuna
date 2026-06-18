@@ -606,13 +606,15 @@ export interface BreakdownWidget extends WidgetBase {
   readonly match?: ConditionMatch
   /** A field id (enum) to group by, or `__labels` to group by label. */
   readonly groupBy: string
-  readonly chart: "bar" | "pie"
+  readonly chart: "bar" | "pie" | "bars-h" | "donut" | "stacked" | "table"
   /** `field` = the enum's configured option order (falls back to label). */
   readonly sort?: "count" | "label" | "field"
   /** Value labels on bars / in the legend. */
   readonly values?: "count" | "percent" | "both"
   /** Collapse groups past this many into an "Other" bucket; null/absent = all. */
   readonly maxGroups?: number | null
+  /** Table chart only: per-group trend sparkline + delta over this window. */
+  readonly delta?: "off" | "7d" | "30d"
 }
 /** Attention — decay/momentum band rollup + a stale-queue list. */
 export interface AttentionWidget extends WidgetBase {
