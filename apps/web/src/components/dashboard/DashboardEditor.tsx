@@ -1085,17 +1085,19 @@ export function DashboardEditor({
                                 }
                               />
                             )}
-                            {/* Remove action — a text button beneath the last settings section. */}
-                            {editing && (
+                          </div>
+                          {/* Remove action — pinned to the bottom of the settings pane. */}
+                          {editing && (
+                            <div className="p-4 pt-0">
                               <Button
-                                variant="ghost"
+                                variant="outline"
                                 size="sm"
                                 onClick={() =>
                                   isGroup(editing)
                                     ? requestRemove(editing.id)
                                     : removeSelected(editing.id)
                                 }
-                                className="mt-2 w-full justify-start gap-1.5 px-2 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                                className="w-full justify-center gap-1.5 px-2 text-destructive hover:bg-destructive/10 hover:text-destructive"
                               >
                                 <Trash2 size={14} />
                                 {isGroup(editing)
@@ -1104,8 +1106,8 @@ export function DashboardEditor({
                                     }`
                                   : "Remove widget"}
                               </Button>
-                            )}
-                          </div>
+                            </div>
+                          )}
                           {/* biome-ignore lint/a11y/useSemanticElements: a value-bearing splitter is a div with role=separator. */}
                           <div
                             role="separator"
