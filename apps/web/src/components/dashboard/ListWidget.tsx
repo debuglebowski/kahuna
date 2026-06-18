@@ -161,6 +161,7 @@ export function ListWidget({
             onSaveCell={onSaveCell}
             defaultSortKey={widget.orderBy ?? null}
             dense
+            fill
           />
         )}
       </div>

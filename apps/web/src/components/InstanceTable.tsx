@@ -26,6 +26,7 @@ export function InstanceTable({
   onSaveCell,
   defaultSortKey = null,
   dense = false,
+  fill = false,
 }: {
   columns: Field[]
   rows: Instance[]
@@ -34,6 +35,10 @@ export function InstanceTable({
   defaultSortKey?: string | null
   /** Tighter cell padding for embedded surfaces (widgets). */
   dense?: boolean
+  /** Fill the scroll container to the parent's height so the (empty space and)
+   *  horizontal scrollbar sit at the bottom, not under the last row. Rows keep
+   *  their natural height (dashboard list widget). */
+  fill?: boolean
 }) {
   const navigate = useNavigate()
   const [sortKey, setSortKey] = useState<string | null>(defaultSortKey)
@@ -51,7 +56,7 @@ export function InstanceTable({
   const pad = dense ? "px-3" : "px-6"
 
   return (
-    <Table>
+    <Table containerClassName={cn(fill && "h-full")}>
       <TableHeader>
         <TableRow>
           <TableHead className={cn("w-12 text-muted-foreground", pad)}>#</TableHead>
