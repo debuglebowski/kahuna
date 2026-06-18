@@ -691,6 +691,19 @@ const FilesWidget = Schema.Struct({
   limit: Schema.optional(Schema.NullOr(Schema.Number)),
   fileType: Schema.optional(Schema.Literal("all", "image", "doc", "pdf", "other")),
 })
+// Document — one record's rich text field, edited inline on the canvas. Bound to
+// a specific record (`instanceId`) + a `richtext` field (`fieldId`); autosaves via
+// `updateInstance` (the server re-derives the envelope's `text`). `conceptId` is
+// the field-picker's scope (the chosen record's concept), not a data filter.
+const DocumentWidget = Schema.Struct({
+  ...widgetBase,
+  ...ConceptScoped,
+  type: Schema.Literal("document"),
+  instanceId: Schema.optional(Schema.NullOr(Schema.String)),
+  fieldId: Schema.optional(Schema.NullOr(Schema.String)),
+  /** Hide the field-name header above the editor. */
+  hideLabel: Schema.optional(Schema.Boolean),
+})
 
 export const DashboardWidget = Schema.Union(
   MetricWidget,
@@ -709,6 +722,7 @@ export const DashboardWidget = Schema.Union(
   CalendarWidget,
   GanttWidget,
   FilesWidget,
+  DocumentWidget,
 )
 export type DashboardWidget = typeof DashboardWidget.Type
 

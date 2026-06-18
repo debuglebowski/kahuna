@@ -19,6 +19,7 @@ import { cn } from "@/lib/utils"
 import { ActivityWidget } from "./ActivityWidget"
 import { AttentionWidget } from "./AttentionWidget"
 import { CalendarWidget } from "./CalendarWidget"
+import { DocumentWidget } from "./DocumentWidget"
 import { FilesWidget } from "./FilesWidget"
 import { GanttWidget } from "./GanttWidget"
 import { GoalWidget } from "./GoalWidget"
@@ -200,6 +201,10 @@ function renderWidget(w: NormWidget, ctx: RenderCtx) {
       return <GanttWidget widget={w} data={data} concept={concept} />
     case "files":
       return <FilesWidget widget={w} />
+    case "document":
+      // Editable on the live page (and the editor's Preview), inert while tiles
+      // are arranged — `readOnly` is true exactly in those interactive contexts.
+      return <DocumentWidget widget={w} editable={ctx.readOnly} />
     default:
       return (
         <p className="text-sm text-muted-foreground">

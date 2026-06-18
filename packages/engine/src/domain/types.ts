@@ -786,6 +786,14 @@ export interface FilesWidget extends WidgetBase {
   readonly limit?: number | null
   readonly fileType?: "all" | "image" | "doc" | "pdf" | "other"
 }
+/** Document — one record's rich text field, edited inline on a dashboard. */
+export interface DocumentWidget extends WidgetBase {
+  readonly type: "document"
+  readonly conceptId?: string | null
+  readonly instanceId?: string | null
+  readonly fieldId?: string | null
+  readonly hideLabel?: boolean
+}
 export type DashboardWidget =
   | MetricWidget
   | ListWidget
@@ -803,6 +811,7 @@ export type DashboardWidget =
   | CalendarWidget
   | GanttWidget
   | FilesWidget
+  | DocumentWidget
 /** An invisible auto-layout container (Figma-style). `display` "flow" (default)
  *  lays children out along `direction`; "tabs" shows one child at a time behind a
  *  tab bar (each child is a tab/panel). Opaque to the engine — mirrors the

@@ -3,6 +3,7 @@ import {
   BarChart3,
   CalendarDays,
   Files,
+  FileText,
   GanttChart,
   Gauge,
   Link2,
@@ -303,6 +304,20 @@ const NotePreview = () => (
   </Frame>
 )
 
+const DocumentPreview = () => (
+  <Frame className="justify-center gap-1.5">
+    {/* A mini toolbar row signals this note is editable, unlike the plain Note. */}
+    <div className="flex gap-1">
+      <Sq className="size-2 rounded-[2px] bg-primary/45" />
+      <Sq className="size-2 rounded-[2px] bg-muted-foreground/25" />
+      <Sq className="size-2 rounded-[2px] bg-muted-foreground/25" />
+    </div>
+    <Line className="w-full" />
+    <Line className="w-5/6" />
+    <Line className="w-1/2 bg-primary/40 transition-[width] duration-300 ease-out group-hover:w-4/5" />
+  </Frame>
+)
+
 const KanbanPreview = () => (
   <Frame className="flex-row gap-1.5">
     {[
@@ -540,6 +555,15 @@ export const WIDGET_CATALOG: ReadonlyArray<WidgetMeta> = [
     icon: StickyNote,
     category: "Page content",
     Preview: NotePreview,
+  },
+  {
+    type: "document",
+    label: "Document",
+    description: "A record's rich text field, editable inline.",
+    keywords: ["rich text", "editor", "field", "record", "richtext", "prose", "body", "wysiwyg"],
+    icon: FileText,
+    category: "Page content",
+    Preview: DocumentPreview,
   },
   {
     type: "kanban",

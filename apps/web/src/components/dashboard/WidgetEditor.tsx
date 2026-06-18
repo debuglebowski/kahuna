@@ -264,6 +264,7 @@ export function WidgetEditor({
   // Rich text shows fine as a list column (text preview) but grouping/sorting
   // on a { doc, text } envelope is meaningless.
   const groupableFields = scalarFields.filter((f) => f.kind !== "richtext")
+  const richTextFields = (fields.data ?? []).filter((f) => f.kind === "richtext")
   const numberFields = (fields.data ?? []).filter((f) => f.kind === "number" || f.kind === "money")
   const computedFields = (fields.data ?? []).filter((f) => f.kind === "computed")
   // Kanban columns: single-valued enums only (a card sits in exactly one column).
@@ -1137,6 +1138,59 @@ export function WidgetEditor({
           </>
         )}
 
+        {widget.type === "document" && (
+          <>
+            <FieldRow label="Record">
+              <FilesInstancePicker
+                instanceId={widget.instanceId ?? null}
+                concepts={concepts}
+                onPick={(instanceId, pickedConceptId) =>
+                  // A new record carries its concept (the field scope) and clears
+                  // the field; clearing the record clears both.
+                  patch({
+                    instanceId,
+                    conceptId: instanceId ? (pickedConceptId ?? null) : null,
+                    fieldId: null,
+                  })
+                }
+              />
+            </FieldRow>
+            {widget.instanceId && (
+              <FieldRow label="Rich text field">
+                <Select
+                  value={widget.fieldId || "__none"}
+                  onValueChange={(v) => patch({ fieldId: v === "__none" ? null : v })}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Select a field…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none">Select a field…</SelectItem>
+                    {richTextFields.map((f) => (
+                      <SelectItem key={f.id} value={f.id}>
+                        {f.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {richTextFields.length === 0 && (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    This record’s concept has no rich text fields.
+                  </p>
+                )}
+              </FieldRow>
+            )}
+            <FieldRow label="Header">
+              <ToggleChip
+                pressed={!(widget.hideLabel ?? false)}
+                onPressedChange={(p) => patch({ hideLabel: !p })}
+              >
+                Field name
+              </ToggleChip>
+            </FieldRow>
+          </>
+        )}
+
         {widget.type === "kanban" && (
           <>
             <div className="grid grid-cols-2 gap-3">
@@ -1569,7 +1623,9 @@ function PickedInstanceLabel({ instanceId }: { instanceId: string }) {
 }
 
 /** Concept + search → one instance ref (the Shortcuts picker pattern), with the
- *  current pick shown as a clearable row. */
+ *  current pick shown as a clearable row. `onPick` also reports the search
+ *  concept so callers that store it (the Document widget) can scope a field
+ *  picker; callers that don't (Files) just ignore it. */
 function FilesInstancePicker({
   instanceId,
   concepts,
@@ -1577,7 +1633,7 @@ function FilesInstancePicker({
 }: {
   instanceId: string | null
   concepts: readonly Concept[]
-  onPick: (instanceId: string | null) => void
+  onPick: (instanceId: string | null, conceptId: string | null) => void
 }) {
   const [searchConceptId, setSearchConceptId] = useState("")
   const [query, setQuery] = useState("")
@@ -1593,7 +1649,7 @@ function FilesInstancePicker({
         <span className="min-w-0 flex-1 truncate">
           <PickedInstanceLabel instanceId={instanceId} />
         </span>
-        <IconButton aria-label="Clear record" onClick={() => onPick(null)}>
+        <IconButton aria-label="Clear record" onClick={() => onPick(null, null)}>
           <X size={14} />
         </IconButton>
       </div>
@@ -1621,7 +1677,7 @@ function FilesInstancePicker({
               <button
                 key={r.itemId}
                 type="button"
-                onClick={() => onPick(r.instanceId)}
+                onClick={() => onPick(r.instanceId, searchConceptId)}
                 className="flex w-full items-center rounded px-2 py-1 text-left text-sm hover:bg-accent"
               >
                 {r.label}

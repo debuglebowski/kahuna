@@ -102,6 +102,7 @@ export const VARIANT_CATALOG: Record<WidgetType, readonly WidgetVariant[]> = {
   calendar: [{ id: "default", label: "Default" }],
   gantt: [{ id: "default", label: "Default" }],
   note: [{ id: "default", label: "Default" }],
+  document: [{ id: "default", label: "Default" }],
 }
 
 /** Variants for a widget type (empty array if somehow unknown). */

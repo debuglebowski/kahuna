@@ -299,8 +299,8 @@ export const nodeStyle = (
 
 // ── Concept references (walk the tree) ────────────────────────────────────────
 /** Concept ids whose INSTANCES the dashboard needs loaded. Excludes trend/activity
- *  (event log), tasks (filter, not scope), files (own RPC); calendar scopes per
- *  source. */
+ *  (event log), tasks (filter, not scope), files/document (own RPC); calendar
+ *  scopes per source. */
 export const referencedConceptIds = (body: NormBody): string[] => {
   const ids = new Set<string>()
   const walk = (n: NormNode) => {
@@ -308,7 +308,13 @@ export const referencedConceptIds = (body: NormBody): string[] => {
       n.children.forEach(walk)
       return
     }
-    if (n.type === "trend" || n.type === "activity" || n.type === "tasks" || n.type === "files")
+    if (
+      n.type === "trend" ||
+      n.type === "activity" ||
+      n.type === "tasks" ||
+      n.type === "files" ||
+      n.type === "document"
+    )
       return
     if (n.type === "calendar") {
       for (const s of n.sources) if (s.conceptId) ids.add(s.conceptId)
@@ -399,6 +405,8 @@ export const newWidget = (type: DashboardWidget["type"]): NormWidget => {
       } as NormWidget
     case "files":
       return { ...scoped, type: "files", scope: "org" } as NormWidget
+    case "document":
+      return { ...scoped, type: "document", instanceId: null, fieldId: null } as NormWidget
   }
 }
 
