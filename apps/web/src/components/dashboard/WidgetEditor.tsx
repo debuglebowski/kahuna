@@ -283,10 +283,6 @@ export function WidgetEditor({
 
   return (
     <div className="divide-y divide-border">
-      <InspectorSection title="Size">
-        <SizeControls node={widget} onChange={onChange} />
-      </InspectorSection>
-
       <InspectorSection title="General">
         <FieldRow label="Type">
           <Select
@@ -307,6 +303,8 @@ export function WidgetEditor({
           </Select>
         </FieldRow>
 
+        <VariantPicker widget={widget} onChange={patch} />
+
         <FieldRow label="Title (optional)">
           <Input
             value={widget.title ?? ""}
@@ -316,26 +314,33 @@ export function WidgetEditor({
         </FieldRow>
       </InspectorSection>
 
+      <InspectorSection title="Size">
+        <SizeControls node={widget} onChange={onChange} />
+      </InspectorSection>
+
       <InspectorSection title="Content">
         {/* Org-global widgets (members/welcome) have no concept to pick; tasks
           gets its own "Any record" select below (its conceptId is a filter);
-          files picks per scope in its own section. */}
-        {"conceptId" in widget && widget.type !== "tasks" && widget.type !== "files" && (
-          <FieldRow label="Concept">
-            <Select
-              value={conceptId || "__none"}
-              onValueChange={(v) => patch({ conceptId: v === "__none" ? null : v })}
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue placeholder="Select a concept…" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__none">Select a concept…</SelectItem>
-                <ConceptSelectItems concepts={concepts} />
-              </SelectContent>
-            </Select>
-          </FieldRow>
-        )}
+          files/document pick a record in their own section. */}
+        {"conceptId" in widget &&
+          widget.type !== "tasks" &&
+          widget.type !== "files" &&
+          widget.type !== "document" && (
+            <FieldRow label="Concept">
+              <Select
+                value={conceptId || "__none"}
+                onValueChange={(v) => patch({ conceptId: v === "__none" ? null : v })}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Select a concept…" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none">Select a concept…</SelectItem>
+                  <ConceptSelectItems concepts={concepts} />
+                </SelectContent>
+              </Select>
+            </FieldRow>
+          )}
 
         {widget.type === "metric" && (
           <>
@@ -383,27 +388,24 @@ export function WidgetEditor({
                 onChange={(e) => patch({ label: e.target.value || null })}
               />
             </FieldRow>
-            <div className="grid grid-cols-2 gap-3">
-              <VariantPicker widget={widget} onChange={patch} />
-              <FieldRow label="Number format">
-                <Select
-                  value={widget.format ?? "plain"}
-                  onValueChange={(v) =>
-                    patch({ format: v as "plain" | "compact" | "currency" | "percent" })
-                  }
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="plain">Plain</SelectItem>
-                    <SelectItem value="compact">Compact (1.2K)</SelectItem>
-                    <SelectItem value="currency">Currency</SelectItem>
-                    <SelectItem value="percent">Percent</SelectItem>
-                  </SelectContent>
-                </Select>
-              </FieldRow>
-            </div>
+            <FieldRow label="Number format">
+              <Select
+                value={widget.format ?? "plain"}
+                onValueChange={(v) =>
+                  patch({ format: v as "plain" | "compact" | "currency" | "percent" })
+                }
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="plain">Plain</SelectItem>
+                  <SelectItem value="compact">Compact (1.2K)</SelectItem>
+                  <SelectItem value="currency">Currency</SelectItem>
+                  <SelectItem value="percent">Percent</SelectItem>
+                </SelectContent>
+              </Select>
+            </FieldRow>
             <div className="grid grid-cols-2 gap-3">
               <FieldRow label="Delta">
                 <Select
@@ -676,7 +678,6 @@ export function WidgetEditor({
                 className="w-28"
               />
             </FieldRow>
-            <VariantPicker widget={widget} onChange={patch} />
             <FieldRow label="Show">
               <ToggleChip
                 pressed={widget.showDays ?? true}
@@ -750,18 +751,15 @@ export function WidgetEditor({
 
         {widget.type === "activity" && (
           <>
-            <div className="grid grid-cols-2 gap-3">
-              <FieldRow label="Max items">
-                <Input
-                  type="number"
-                  min={1}
-                  value={widget.limit ?? ""}
-                  onChange={(e) => patch({ limit: e.target.value ? Number(e.target.value) : null })}
-                  className="w-28"
-                />
-              </FieldRow>
-              <VariantPicker widget={widget} onChange={patch} />
-            </div>
+            <FieldRow label="Max items">
+              <Input
+                type="number"
+                min={1}
+                value={widget.limit ?? ""}
+                onChange={(e) => patch({ limit: e.target.value ? Number(e.target.value) : null })}
+                className="w-28"
+              />
+            </FieldRow>
             <FieldRow label="Event types (optional)">
               <MultiCombobox
                 options={KNOWN_EVENT_TYPES.map((t) => ({ id: t, label: humanizeType(t) }))}
@@ -785,24 +783,21 @@ export function WidgetEditor({
 
         {widget.type === "tasks" && (
           <>
-            <div className="grid grid-cols-2 gap-3">
-              <FieldRow label="Default assignee">
-                <Select
-                  value={widget.assignee ?? "all"}
-                  onValueChange={(v) => patch({ assignee: v as "all" | "me" | "none" })}
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">Everyone</SelectItem>
-                    <SelectItem value="me">Me</SelectItem>
-                    <SelectItem value="none">Unassigned</SelectItem>
-                  </SelectContent>
-                </Select>
-              </FieldRow>
-              <VariantPicker widget={widget} onChange={patch} />
-            </div>
+            <FieldRow label="Default assignee">
+              <Select
+                value={widget.assignee ?? "all"}
+                onValueChange={(v) => patch({ assignee: v as "all" | "me" | "none" })}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Everyone</SelectItem>
+                  <SelectItem value="me">Me</SelectItem>
+                  <SelectItem value="none">Unassigned</SelectItem>
+                </SelectContent>
+              </Select>
+            </FieldRow>
             <div className="grid grid-cols-2 gap-3">
               <FieldRow label="Group by">
                 <Select
@@ -907,24 +902,21 @@ export function WidgetEditor({
 
         {widget.type === "members" && (
           <>
-            <div className="grid grid-cols-2 gap-3">
-              <VariantPicker widget={widget} onChange={patch} />
-              <FieldRow label="Sort">
-                <Select
-                  value={widget.sort ?? "name"}
-                  onValueChange={(v) => patch({ sort: v as "name" | "role" | "joined" })}
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="name">Name</SelectItem>
-                    <SelectItem value="role">Role</SelectItem>
-                    <SelectItem value="joined">Joined</SelectItem>
-                  </SelectContent>
-                </Select>
-              </FieldRow>
-            </div>
+            <FieldRow label="Sort">
+              <Select
+                value={widget.sort ?? "name"}
+                onValueChange={(v) => patch({ sort: v as "name" | "role" | "joined" })}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="name">Name</SelectItem>
+                  <SelectItem value="role">Role</SelectItem>
+                  <SelectItem value="joined">Joined</SelectItem>
+                </SelectContent>
+              </Select>
+            </FieldRow>
             <div className="grid grid-cols-2 gap-3">
               <FieldRow label="Max members (optional)">
                 <Input
@@ -968,17 +960,14 @@ export function WidgetEditor({
         {widget.type === "welcome" && (
           <>
             <p className="text-xs text-muted-foreground">The greeting rotates on every visit.</p>
-            <div className="grid grid-cols-2 gap-3">
-              <VariantPicker widget={widget} onChange={patch} />
-              <FieldRow label="Show">
-                <ToggleChip
-                  pressed={widget.showPulse ?? false}
-                  onPressedChange={(p) => patch({ showPulse: p })}
-                >
-                  Org pulse
-                </ToggleChip>
-              </FieldRow>
-            </div>
+            <FieldRow label="Show">
+              <ToggleChip
+                pressed={widget.showPulse ?? false}
+                onPressedChange={(p) => patch({ showPulse: p })}
+              >
+                Org pulse
+              </ToggleChip>
+            </FieldRow>
             <FieldRow label="Quick links (optional)">
               <ShortcutItemsEditor
                 items={widget.links ?? []}
@@ -1054,17 +1043,14 @@ export function WidgetEditor({
                 </Select>
               </FieldRow>
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <VariantPicker widget={widget} onChange={patch} />
-              <FieldRow label="Show">
-                <ToggleChip
-                  pressed={widget.showPercent ?? true}
-                  onPressedChange={(p) => patch({ showPercent: p })}
-                >
-                  Percent
-                </ToggleChip>
-              </FieldRow>
-            </div>
+            <FieldRow label="Show">
+              <ToggleChip
+                pressed={widget.showPercent ?? true}
+                onPressedChange={(p) => patch({ showPercent: p })}
+              >
+                Percent
+              </ToggleChip>
+            </FieldRow>
           </>
         )}
 
@@ -1077,17 +1063,14 @@ export function WidgetEditor({
                 onChange={(items) => patch({ items })}
               />
             </FieldRow>
-            <div className="grid grid-cols-2 gap-3">
-              <VariantPicker widget={widget} onChange={patch} />
-              <FieldRow label="URL targets">
-                <ToggleChip
-                  pressed={widget.newTab ?? false}
-                  onPressedChange={(p) => patch({ newTab: p })}
-                >
-                  New tab
-                </ToggleChip>
-              </FieldRow>
-            </div>
+            <FieldRow label="URL targets">
+              <ToggleChip
+                pressed={widget.newTab ?? false}
+                onPressedChange={(p) => patch({ newTab: p })}
+              >
+                New tab
+              </ToggleChip>
+            </FieldRow>
           </>
         )}
 
@@ -1524,24 +1507,21 @@ export function WidgetEditor({
                 />
               </FieldRow>
             )}
-            <div className="grid grid-cols-2 gap-3">
-              <VariantPicker widget={widget} onChange={patch} />
-              <FieldRow label="Sort">
-                <Select
-                  value={widget.sort ?? "newest"}
-                  onValueChange={(v) => patch({ sort: v as "newest" | "name" | "size" })}
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="newest">Newest</SelectItem>
-                    <SelectItem value="name">Name</SelectItem>
-                    <SelectItem value="size">Size</SelectItem>
-                  </SelectContent>
-                </Select>
-              </FieldRow>
-            </div>
+            <FieldRow label="Sort">
+              <Select
+                value={widget.sort ?? "newest"}
+                onValueChange={(v) => patch({ sort: v as "newest" | "name" | "size" })}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="newest">Newest</SelectItem>
+                  <SelectItem value="name">Name</SelectItem>
+                  <SelectItem value="size">Size</SelectItem>
+                </SelectContent>
+              </Select>
+            </FieldRow>
             <div className="grid grid-cols-2 gap-3">
               <FieldRow label="File type">
                 <Select

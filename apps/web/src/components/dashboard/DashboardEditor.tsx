@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import {
+  Check,
   ChevronDown,
   ChevronUp,
   Circle,
@@ -528,6 +529,10 @@ export function DashboardEditor({
   })
   const [draft, setDraft] = useState<Draft>(baseline)
   const [dirty, setDirty] = useState(false)
+  // Last-saved snapshot (the Restore target) + its optimistic-concurrency token.
+  // Saving stays in the editor and advances both, so repeated saves keep working.
+  const [saved, setSaved] = useState<Draft>(baseline)
+  const [savedAt, setSavedAt] = useState<Date | null>(dash.updatedAt ?? null)
   const tab = searchParams.get("tab") === "layout" ? "layout" : "general"
   const setTab = (next: string) =>
     setSearchParams(
@@ -590,7 +595,7 @@ export function DashboardEditor({
     setDirty(true)
   }
   const restore = () => {
-    setDraft(baseline())
+    setDraft(saved)
     setDirty(false)
   }
 
@@ -649,20 +654,23 @@ export function DashboardEditor({
   const hasNodes = draft.body.children.length > 0
 
   const save = useMutation({
-    mutationFn: () =>
+    mutationFn: (d: Draft) =>
       api.updateDashboard({
         id: dash.id,
-        name: draft.name.trim(),
-        icon: draft.icon,
-        scope: draft.scope,
-        hidden: draft.hidden,
-        body: serialize(draft.body),
-        expectedUpdatedAt: dash.updatedAt ?? undefined,
+        name: d.name.trim(),
+        icon: d.icon,
+        scope: d.scope,
+        hidden: d.hidden,
+        body: serialize(d.body),
+        expectedUpdatedAt: savedAt ?? undefined,
       }),
-    onSuccess: async () => {
+    // Save stays in the editor (no navigate): the just-saved draft becomes the new
+    // Restore baseline and the returned updatedAt is the next write's token.
+    onSuccess: async (updated, d) => {
       await qc.invalidateQueries({ queryKey: ["dashboards"] })
-      bypass()
-      navigate(LIST)
+      setSaved(d)
+      setSavedAt(updated.updatedAt ?? null)
+      setDirty(false)
     },
   })
   const del = useMutation({
@@ -781,10 +789,19 @@ export function DashboardEditor({
                       <div className="mx-1.5 h-5 w-px shrink-0 bg-border" aria-hidden="true" />
                     </>
                   ))}
+                {!dirty && save.isSuccess && (
+                  <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+                    <Check size={13} className="text-success" /> Saved
+                  </span>
+                )}
                 <Button size="sm" variant="outline" onClick={restore} disabled={!dirty}>
                   Restore
                 </Button>
-                <Button size="sm" onClick={() => save.mutate()} disabled={!dirty || save.isPending}>
+                <Button
+                  size="sm"
+                  onClick={() => save.mutate(draft)}
+                  disabled={!dirty || save.isPending}
+                >
                   {save.isPending ? "Saving…" : "Save"}
                 </Button>
               </>
@@ -1068,6 +1085,26 @@ export function DashboardEditor({
                                 }
                               />
                             )}
+                            {/* Remove action — a text button beneath the last settings section. */}
+                            {editing && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() =>
+                                  isGroup(editing)
+                                    ? requestRemove(editing.id)
+                                    : removeSelected(editing.id)
+                                }
+                                className="mt-2 w-full justify-start gap-1.5 px-2 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                              >
+                                <Trash2 size={14} />
+                                {isGroup(editing)
+                                  ? `Delete ${editing.display === "tabs" ? "tabs" : "group"}${
+                                      editing.children.length > 0 ? " + contents" : ""
+                                    }`
+                                  : "Remove widget"}
+                              </Button>
+                            )}
                           </div>
                           {/* biome-ignore lint/a11y/useSemanticElements: a value-bearing splitter is a div with role=separator. */}
                           <div
@@ -1117,27 +1154,6 @@ export function DashboardEditor({
                             </div>
                           </div>
                         </div>
-                        {/* Pinned remove action — always at the far bottom, full width. */}
-                        {editing && (
-                          <div className="shrink-0 border-t border-border p-3">
-                            <Button
-                              variant="destructive"
-                              className="w-full"
-                              onClick={() =>
-                                isGroup(editing)
-                                  ? requestRemove(editing.id)
-                                  : removeSelected(editing.id)
-                              }
-                            >
-                              <Trash2 size={15} />
-                              {isGroup(editing)
-                                ? `Delete ${editing.display === "tabs" ? "tabs" : "group"}${
-                                    editing.children.length > 0 ? " + contents" : ""
-                                  }`
-                                : "Remove widget"}
-                            </Button>
-                          </div>
-                        )}
                       </aside>
                     </>
                   )}
