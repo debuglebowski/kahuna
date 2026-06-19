@@ -1,6 +1,7 @@
 import { Schema } from "effect"
 import { describe, expect, it } from "vitest"
-import { DashboardBody } from "../../rpc/contract"
+import { DashboardBody, DashboardWidget } from "../../rpc/contract"
+import { newWidget } from "./dashboards"
 
 // Proves the RECURSIVE contract schema (the actual codec the RPC layer runs on
 // save/read) round-trips a nested group tree — the highest-risk piece, since a
@@ -122,5 +123,62 @@ describe("DashboardBody schema codec (recursive tree)", () => {
       children: [{ id: "x", type: "note", title: null, w: { unit: "bogus", value: 1 } }],
     }
     expect(() => Schema.decodeUnknownSync(DashboardBody)(bad)).toThrow()
+  })
+})
+
+// Guards the contract↔engine hand-sync: every widget type must (a) be in the
+// contract union and (b) be constructible by `newWidget` with a body the codec
+// accepts. Adding a type to one place but not the other fails here. The engine
+// `DashboardWidget` union is kept in lock-step by its own typecheck (rows.ts /
+// use-cases.ts consume it), so the contract count standing in for both is sound.
+describe("DashboardWidget union completeness (hand-sync guard)", () => {
+  // The full set of widget types. Adding a type means adding it here AND to the
+  // contract union, the engine union, `newWidget`, and the variant catalog.
+  const ALL_WIDGET_TYPES = [
+    "metric",
+    "list",
+    "breakdown",
+    "attention",
+    "trend",
+    "activity",
+    "tasks",
+    "members",
+    "welcome",
+    "goal",
+    "shortcuts",
+    "note",
+    "kanban",
+    "calendar",
+    "gantt",
+    "files",
+    "document",
+    "record-details",
+    "record-connections",
+    "record-graph",
+    "record-labels",
+    "record-versions",
+    "record-notes",
+    "record-tasks",
+    "record-activity",
+  ] as const
+
+  it("the contract union has exactly one member per known widget type", () => {
+    const members = (DashboardWidget as unknown as { members: ReadonlyArray<unknown> }).members
+    expect(members).toHaveLength(ALL_WIDGET_TYPES.length)
+  })
+
+  it("every type builds a widget the contract body codec accepts (and round-trips)", () => {
+    const body = {
+      direction: "col" as const,
+      children: ALL_WIDGET_TYPES.map((t) => newWidget(t)),
+    }
+    const decoded = Schema.decodeUnknownSync(DashboardBody)(body)
+    expect(decoded.children).toHaveLength(ALL_WIDGET_TYPES.length)
+    // Re-encode must not throw and must keep every node.
+    const encoded = Schema.encodeSync(DashboardBody)(decoded)
+    expect(encoded.children).toHaveLength(ALL_WIDGET_TYPES.length)
+    // Each widget's discriminant survives the round-trip.
+    const types = new Set((encoded.children ?? []).map((c) => (c as { type: string }).type))
+    for (const t of ALL_WIDGET_TYPES) expect(types.has(t)).toBe(true)
   })
 })

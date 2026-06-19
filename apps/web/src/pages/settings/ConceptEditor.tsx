@@ -28,14 +28,13 @@ import {
   Star,
   Trash2,
 } from "lucide-react"
-import { useMemo, useState } from "react"
+import { useState } from "react"
 import { Link, useNavigate } from "react-router-dom"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Tabs, TabsContent } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { IconPicker } from "../../components/IconPicker"
-import { ConceptViewEditor } from "../../components/instance/ConceptViewEditor"
 import { LabelMultiSelect } from "../../components/LabelMultiSelect"
 import { usePageChrome } from "../../components/Layout"
 import {
@@ -58,18 +57,12 @@ import {
 import {
   api,
   type Concept,
+  type Dashboard,
   type Field,
   type Instance,
-  type InstanceViewLayout,
   type Label,
 } from "../../lib/api"
 import { ConceptIcon, DEFAULT_CONCEPT_ICON, DEFAULT_FIELD_ICON } from "../../lib/icons"
-import {
-  type ConceptCaps,
-  DEFAULT_VIEW,
-  sanitizeTiles,
-  type ViewTile,
-} from "../../lib/instanceViews"
 import { useUnsavedGuard } from "../../lib/useUnsavedGuard"
 import { showValue } from "../../lib/utils"
 import { FieldForm, type FieldFormValue, fieldKindLabel } from "./FieldForm"
@@ -173,6 +166,57 @@ function SortableFieldRow({ field, children }: { field: Field; children: React.R
   )
 }
 
+/** A concept's record-view row — drag to reorder (top = opens by default), click
+ *  to edit, trash to delete. */
+function RecordViewRow({
+  view,
+  isFirst,
+  onOpen,
+  onDelete,
+}: {
+  view: Dashboard
+  isFirst: boolean
+  onOpen: () => void
+  onDelete: () => void
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: view.id,
+  })
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      className={`flex items-center gap-2 rounded-md border border-border bg-background px-3 py-2 hover:bg-accent${
+        isDragging ? " opacity-60 shadow" : ""
+      }`}
+    >
+      <button
+        type="button"
+        className="cursor-grab text-muted-foreground hover:text-foreground active:cursor-grabbing"
+        aria-label="Drag to reorder"
+        {...attributes}
+        {...listeners}
+      >
+        <GripVertical size={16} />
+      </button>
+      <button
+        type="button"
+        onClick={onOpen}
+        className="-my-2 flex flex-1 items-center gap-2 py-2 text-left"
+      >
+        <ConceptIcon value={view.icon || "lucide:LayoutDashboard"} size={16} />
+        <span className="flex-1 truncate text-sm font-medium text-foreground">
+          {view.name || <span className="text-muted-foreground">(untitled view)</span>}
+        </span>
+        {isFirst && <Badge tone="blue">Opens by default</Badge>}
+      </button>
+      <IconButton aria-label={`Delete ${view.name || "view"}`} onClick={onDelete}>
+        <Trash2 size={15} />
+      </IconButton>
+    </div>
+  )
+}
+
 /** The draft the General + Labels tabs edit; one Save persists it as a whole. */
 interface Draft {
   name: string
@@ -240,10 +284,9 @@ export function ConceptEditor({
     versioningEnabled: concept.versioningEnabled,
   }))
   const [dirty, setDirty] = useState(false)
-  // The Layout tab keeps its own draft (saved via a separate, non-admin RPC), so
-  // its unsaved edits must also arm the navigation guard.
-  const [layoutDirty, setLayoutDirty] = useState(false)
-  const { blocker, bypass } = useUnsavedGuard(dirty || layoutDirty)
+  // Record-view deletion confirm (the Layout tab manages per-concept record views).
+  const [confirmDeleteView, setConfirmDeleteView] = useState<string | null>(null)
+  const { blocker, bypass } = useUnsavedGuard(dirty)
   const [tab, setTab] = useState("general")
   const [colorOpen, setColorOpen] = useState(false)
   const [showArchivedFields, setShowArchivedFields] = useState(false)
@@ -317,33 +360,52 @@ export function ConceptEditor({
   const syncedFields = liveFields.filter((f) => f.managedBy)
   const userFields = liveFields.filter((f) => !f.managedBy)
 
-  // Layout tab: the concept's default instance layout. Capabilities are read
-  // from the SAVED concept (not the unsaved General-tab draft), so tile
-  // availability tracks what instances actually show.
-  const hasDocuments = liveFields.some((f) => f.kind === "richtext")
-  const caps: ConceptCaps = useMemo(
-    () => ({ versioned: concept.versioningEnabled, hasDocuments }),
-    [concept.versioningEnabled, hasDocuments],
-  )
-  const savedTiles = useMemo(
-    () => sanitizeTiles(concept.instanceView?.tiles ?? []),
-    [concept.instanceView],
-  )
-  // No stored layout → seed the editor from the built-in default preset so it
-  // opens on the effective layout rather than a blank canvas.
-  const initialTiles: ViewTile[] = useMemo(
-    () => (savedTiles.length > 0 ? savedTiles : DEFAULT_VIEW.tiles(caps)),
-    [savedTiles, caps],
-  )
-  // Remount the editor whenever the stored layout changes (save / reset) so its
-  // baseline always reflects what's persisted.
-  const layoutKey = JSON.stringify(concept.instanceView ?? null)
-  const saveLayout = useMutation({
-    mutationFn: (layout: InstanceViewLayout | null) =>
-      api.setConceptInstanceView(concept.id, layout),
+  // Layout tab: the concept's RECORD VIEWS — per-concept dashboards that render
+  // one instance at a time. Editing happens on the dashboard-editor route; this
+  // tab lists them in order (the FIRST opens by default; drag to reorder).
+  // (Replaces the old instance_view tile layout.)
+  const recordDashboards = useQuery({
+    queryKey: ["recordDashboards", concept.id],
+    queryFn: () => api.listRecordDashboards(concept.id),
+  })
+  const invalidateViews = () => {
+    qc.invalidateQueries({ queryKey: ["recordDashboards", concept.id] })
+    qc.invalidateQueries({ queryKey: ["dashboards"] }) // the settings list (["dashboards","all"])
+  }
+  const createRecordView = useMutation({
+    mutationFn: (count: number) =>
+      api.createDashboard({
+        name: count === 0 ? `${concept.name} view` : "New view",
+        scope: "org",
+        kind: "record",
+        conceptId: concept.id,
+        body: { widgets: [] },
+      }),
+    onSuccess: (d) => {
+      invalidateViews()
+      navigate(`/settings/dashboards/${d.id}?concept=${concept.id}`)
+    },
+  })
+  const reorderRecordViews = useMutation({
+    mutationFn: (orders: { id: string; position: number }[]) => api.reorderDashboards(orders),
+    onSuccess: invalidateViews,
+  })
+  const onViewDragEnd = (e: DragEndEvent) => {
+    const views = recordDashboards.data ?? []
+    const { active, over } = e
+    if (!over || active.id === over.id) return
+    const from = views.findIndex((d) => d.id === active.id)
+    const to = views.findIndex((d) => d.id === over.id)
+    if (from < 0 || to < 0) return
+    reorderRecordViews.mutate(
+      arrayMove([...views], from, to).map((d, i) => ({ id: d.id, position: i })),
+    )
+  }
+  const deleteRecordView = useMutation({
+    mutationFn: (id: string) => api.deleteDashboard(id),
     onSuccess: () => {
-      setLayoutDirty(false)
-      qc.invalidateQueries({ queryKey: ["concepts"] })
+      setConfirmDeleteView(null)
+      invalidateViews()
     },
   })
 
@@ -976,23 +1038,61 @@ export function ConceptEditor({
 
           {!concept.managedBy && (
             <TabsContent value="layout" className="flex min-h-0 flex-1 flex-col pt-4">
-              <p className="shrink-0 pb-3 text-xs text-muted-foreground">
-                The default detail layout for every {concept.name} item. Drag, resize and configure
-                tiles; a tile with more than one content shows them as tabs.
-              </p>
-              <ConceptViewEditor
-                key={layoutKey}
-                initialTiles={initialTiles}
-                caps={caps}
-                isDefault={concept.instanceView == null}
-                onSave={(tiles) => saveLayout.mutate({ tiles })}
-                onResetDefault={() => saveLayout.mutate(null)}
-                saving={saveLayout.isPending}
-                onDirtyChange={setLayoutDirty}
-              />
-              {saveLayout.error && (
-                <p className="shrink-0 pt-2 text-sm text-destructive">{msgOf(saveLayout.error)}</p>
-              )}
+              <div className="flex shrink-0 items-start justify-between gap-3 pb-3">
+                <p className="text-xs text-muted-foreground">
+                  Record views for {concept.name} — each is a dashboard that lays out a single item
+                  (its fields, related records, notes, and more). Drag to reorder; the top view is
+                  what a record opens with unless a reference asks for a specific one.
+                </p>
+                <Button
+                  size="sm"
+                  className="shrink-0"
+                  onClick={() => createRecordView.mutate(recordDashboards.data?.length ?? 0)}
+                  disabled={createRecordView.isPending}
+                >
+                  <Plus size={15} /> New view
+                </Button>
+              </div>
+              <div className="min-h-0 flex-1 overflow-y-auto">
+                {!recordDashboards.data ? (
+                  <Spinner />
+                ) : recordDashboards.data.length === 0 ? (
+                  <Card className="p-6 text-sm text-muted-foreground">
+                    No record views yet — items render the built-in default layout. Create a view to
+                    design how a {concept.name} looks.
+                  </Card>
+                ) : (
+                  <DndContext
+                    sensors={sensors}
+                    collisionDetection={closestCenter}
+                    onDragEnd={onViewDragEnd}
+                  >
+                    <SortableContext
+                      items={recordDashboards.data.map((d) => d.id)}
+                      strategy={verticalListSortingStrategy}
+                    >
+                      <div className="space-y-1.5">
+                        {recordDashboards.data.map((d, i) => (
+                          <RecordViewRow
+                            key={d.id}
+                            view={d}
+                            isFirst={i === 0}
+                            onOpen={() =>
+                              navigate(`/settings/dashboards/${d.id}?concept=${concept.id}`)
+                            }
+                            onDelete={() => setConfirmDeleteView(d.id)}
+                          />
+                        ))}
+                      </div>
+                    </SortableContext>
+                  </DndContext>
+                )}
+                {(createRecordView.error || reorderRecordViews.error) && (
+                  <p className="pt-2 text-sm text-destructive">
+                    {msgOf(createRecordView.error || reorderRecordViews.error)}
+                  </p>
+                )}
+              </div>
             </TabsContent>
           )}
 
@@ -1129,6 +1229,18 @@ export function ConceptEditor({
           confirmVariant="danger"
           onConfirm={() => blocker.proceed()}
           onCancel={() => blocker.reset()}
+        />
+      )}
+      {confirmDeleteView && (
+        <ConfirmDialog
+          title="Delete record view?"
+          message="This view and its layout will be permanently deleted. Items keep rendering with the remaining views (or the built-in default)."
+          confirmLabel="Delete"
+          confirmVariant="danger"
+          pending={deleteRecordView.isPending}
+          error={deleteRecordView.error ? msgOf(deleteRecordView.error) : undefined}
+          onConfirm={() => deleteRecordView.mutate(confirmDeleteView)}
+          onCancel={() => setConfirmDeleteView(null)}
         />
       )}
       {dialog?.kind === "archiveField" && (

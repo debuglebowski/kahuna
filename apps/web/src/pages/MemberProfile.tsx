@@ -17,6 +17,7 @@ import {
 } from "@/lib/collections"
 import { formatDateValue } from "@/lib/dates"
 import { memberLabel, useMembers } from "@/lib/members"
+import { recordHref } from "@/lib/recordHref"
 import { isSnoozed } from "@/lib/taskGroups"
 import { initialsOf } from "@/lib/utils"
 
@@ -93,7 +94,7 @@ export function MemberProfile() {
       )
       return versions.find((v) => v.versionStatus === "published") ?? versions[0] ?? null
     },
-    onSuccess: (head) => head && navigate(`/instances/${head.id}`),
+    onSuccess: (head) => head && navigate(recordHref(head.id)),
   })
 
   if (membersPending) return <Spinner />

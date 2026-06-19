@@ -149,6 +149,15 @@ const KNOWN_WIDGETS = new Set([
   "calendar",
   "gantt",
   "files",
+  "document",
+  "record-details",
+  "record-connections",
+  "record-graph",
+  "record-labels",
+  "record-versions",
+  "record-notes",
+  "record-tasks",
+  "record-activity",
 ])
 
 /** Coerce a jsonb body into a well-formed dashboard body (defensive against
@@ -329,6 +338,8 @@ export interface DashboardRow {
   readonly icon: string | null
   readonly position: number | string
   readonly hidden: boolean
+  readonly kind: string
+  readonly concept_id: string | null
   readonly body: unknown
   readonly created_at: Date
   readonly updated_at: Date
@@ -342,6 +353,8 @@ export const toDashboard = (r: DashboardRow): Dashboard => ({
   icon: r.icon,
   position: Number(r.position),
   hidden: r.hidden,
+  kind: r.kind === "record" ? "record" : "page",
+  conceptId: r.concept_id,
   body: toDashboardBody(r.body),
   createdAt: r.created_at,
   updatedAt: r.updated_at,

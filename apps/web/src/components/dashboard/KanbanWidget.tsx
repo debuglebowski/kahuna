@@ -21,6 +21,7 @@ import { instancesByConcept } from "@/lib/collections"
 import type { ConceptInstanceData } from "@/lib/conceptData"
 import { capitalize, FieldValueCell } from "@/lib/fieldDisplay"
 import { instanceLabel } from "@/lib/instanceLabel"
+import { recordHref } from "@/lib/recordHref"
 import { isRichTextEmpty } from "@/lib/richtext"
 import { cn, showValue } from "@/lib/utils"
 import { kanbanBuckets } from "@/lib/widgetAggregations"
@@ -207,7 +208,7 @@ export function KanbanWidget({
 
   const openCard = (id: string) => {
     if (suppressClick.current) return
-    navigate(`/instances/${id}`)
+    navigate(recordHref(id, { dashboard: widget.recordDashboardId }))
   }
 
   return (

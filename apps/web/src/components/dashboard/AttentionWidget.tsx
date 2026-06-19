@@ -5,6 +5,7 @@ import type { Concept, DashboardWidget, Field, Instance } from "@/lib/api"
 import { useSession } from "@/lib/auth-client"
 import type { ConceptInstanceData } from "@/lib/conceptData"
 import { instanceLabel } from "@/lib/instanceLabel"
+import { recordHref } from "@/lib/recordHref"
 import { cn } from "@/lib/utils"
 import { bandRollup, daysOf, matchInstance, staleInstances } from "@/lib/widgetAggregations"
 
@@ -96,7 +97,7 @@ export function AttentionWidget({
           <button
             key={i.id}
             type="button"
-            onClick={() => navigate(`/instances/${i.id}`)}
+            onClick={() => navigate(recordHref(i.id))}
             className="flex w-full items-center justify-between gap-2 rounded px-1 py-1 text-left text-sm hover:bg-muted"
           >
             <span className="truncate text-foreground">

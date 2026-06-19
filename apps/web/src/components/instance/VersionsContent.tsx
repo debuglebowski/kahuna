@@ -2,6 +2,7 @@ import { useMutation, useQuery } from "@tanstack/react-query"
 import { Archive, ArchiveRestore, Check, GitBranch } from "lucide-react"
 import { useNavigate } from "react-router-dom"
 import { api } from "../../lib/api"
+import { recordHref } from "../../lib/recordHref"
 import { Badge, Button } from "../ui"
 import type { InstanceCtx } from "./types"
 
@@ -34,7 +35,7 @@ export function VersionsBody({ ctx }: { ctx: InstanceCtx }) {
     mutationFn: () => api.newVersion(itemId),
     onSuccess: (d) => {
       refetch()
-      navigate(`/instances/${d.id}`)
+      navigate(recordHref(d.id))
     },
   })
   const publish = useMutation({
@@ -47,7 +48,7 @@ export function VersionsBody({ ctx }: { ctx: InstanceCtx }) {
       refetch()
       if (headSeq != null) {
         const head = published.find((v) => v.versionSeq === headSeq)
-        if (head) navigate(`/instances/${head.id}`)
+        if (head) navigate(recordHref(head.id))
       }
     },
   })
@@ -107,7 +108,7 @@ export function VersionsBody({ ctx }: { ctx: InstanceCtx }) {
             >
               <button
                 type="button"
-                onClick={() => navigate(`/instances/${v.id}`)}
+                onClick={() => navigate(recordHref(v.id))}
                 className="flex items-center gap-2 text-left text-sm hover:underline"
               >
                 <span className="font-medium text-foreground">v{v.versionSeq}</span>

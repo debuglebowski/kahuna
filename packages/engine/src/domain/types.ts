@@ -48,6 +48,9 @@ export interface FieldConfig {
   readonly inverseName?: string
   /** relation: plural of `inverseName`; the UI picks singular/plural by count. */
   readonly inversePluralName?: string
+  /** relation: open referenced records with this record-dashboard id (a 'record'
+   *  dashboard owned by `target`); absent = that concept's default record view. */
+  readonly recordDashboardId?: string | null
   /** computed: which built-in + its params */
   readonly computedKind?: "decay" | "momentum"
   readonly params?: Record<string, unknown>
@@ -567,6 +570,9 @@ interface WidgetBase {
 export interface MetricWidget extends WidgetBase {
   readonly type: "metric"
   readonly conceptId?: string | null
+  /** Record dashboards: narrow the population to the current record's related
+   *  instances via this relation field id (instead of the whole concept). */
+  readonly relationFieldId?: string | null
   readonly conditions: ReadonlyArray<SidebarCondition>
   readonly match?: ConditionMatch
   readonly agg: "count" | "sum" | "avg"
@@ -583,6 +589,8 @@ export interface MetricWidget extends WidgetBase {
 export interface ListWidget extends WidgetBase {
   readonly type: "list"
   readonly conceptId?: string | null
+  /** Record dashboards: narrow to the current record's related instances. */
+  readonly relationFieldId?: string | null
   readonly conditions: ReadonlyArray<SidebarCondition>
   readonly match?: ConditionMatch
   readonly orderBy?: string | null
@@ -596,12 +604,16 @@ export interface ListWidget extends WidgetBase {
   /** `rows` variant: enum field id whose option color drives the status dot;
    *  absent = first enum. */
   readonly statusField?: string | null
+  /** Open rows with this record-dashboard id; absent = the concept's default. */
+  readonly recordDashboardId?: string | null
 }
 /** Breakdown — group instances by an enum field or by label, rendered as bars,
  *  pie, ranked horizontal bars, donut, a stacked composition bar, or a table. */
 export interface BreakdownWidget extends WidgetBase {
   readonly type: "breakdown"
   readonly conceptId?: string | null
+  /** Record dashboards: narrow to the current record's related instances. */
+  readonly relationFieldId?: string | null
   readonly conditions: ReadonlyArray<SidebarCondition>
   readonly match?: ConditionMatch
   /** A field id (enum) to group by, or `__labels` to group by label. */
@@ -731,6 +743,8 @@ export interface NoteWidget extends WidgetBase {
 export interface KanbanWidget extends WidgetBase {
   readonly type: "kanban"
   readonly conceptId?: string | null
+  /** Record dashboards: narrow to the current record's related instances. */
+  readonly relationFieldId?: string | null
   readonly conditions: ReadonlyArray<SidebarCondition>
   readonly match?: ConditionMatch
   /** Enum field id whose values become the columns. */
@@ -741,6 +755,8 @@ export interface KanbanWidget extends WidgetBase {
   readonly showEmptyColumns?: boolean
   readonly orderBy?: string | null
   readonly includeArchived?: boolean
+  /** Open cards with this record-dashboard id; absent = the concept's default. */
+  readonly recordDashboardId?: string | null
 }
 /** One calendar source: a concept's instances plotted by a date field. */
 export interface CalendarSource {
@@ -794,6 +810,33 @@ export interface DocumentWidget extends WidgetBase {
   readonly fieldId?: string | null
   readonly hideLabel?: boolean
 }
+/** Record-scoped widgets — one panel of the CURRENT record on a 'record' dashboard
+ *  (instance supplied by page context; no per-widget conceptId/instanceId). Each
+ *  reuses an existing instance-detail panel. Opaque to the engine like the rest. */
+export interface RecordDetailsWidget extends WidgetBase {
+  readonly type: "record-details"
+}
+export interface RecordConnectionsWidget extends WidgetBase {
+  readonly type: "record-connections"
+}
+export interface RecordGraphWidget extends WidgetBase {
+  readonly type: "record-graph"
+}
+export interface RecordLabelsWidget extends WidgetBase {
+  readonly type: "record-labels"
+}
+export interface RecordVersionsWidget extends WidgetBase {
+  readonly type: "record-versions"
+}
+export interface RecordNotesWidget extends WidgetBase {
+  readonly type: "record-notes"
+}
+export interface RecordTasksWidget extends WidgetBase {
+  readonly type: "record-tasks"
+}
+export interface RecordActivityWidget extends WidgetBase {
+  readonly type: "record-activity"
+}
 export type DashboardWidget =
   | MetricWidget
   | ListWidget
@@ -812,6 +855,14 @@ export type DashboardWidget =
   | GanttWidget
   | FilesWidget
   | DocumentWidget
+  | RecordDetailsWidget
+  | RecordConnectionsWidget
+  | RecordGraphWidget
+  | RecordLabelsWidget
+  | RecordVersionsWidget
+  | RecordNotesWidget
+  | RecordTasksWidget
+  | RecordActivityWidget
 /** An invisible auto-layout container (Figma-style). `display` "flow" (default)
  *  lays children out along `direction`; "tabs" shows one child at a time behind a
  *  tab bar (each child is a tab/panel). Opaque to the engine — mirrors the
@@ -848,6 +899,12 @@ export interface Dashboard {
   readonly icon: string | null
   readonly position: number
   readonly hidden: boolean
+  /** "page" (default/legacy) = free-standing canvas; "record" = per-concept
+   *  single-instance template. */
+  readonly kind: "page" | "record"
+  /** Owning concept for a "record" dashboard; null for "page". Record dashboards
+   *  order by `position` — the first is what a bare reference opens. */
+  readonly conceptId: string | null
   readonly body: DashboardBody
   readonly createdAt: Date
   readonly updatedAt: Date

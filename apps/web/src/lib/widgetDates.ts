@@ -13,6 +13,7 @@ import type { DashboardWidget, Field, Instance, Task } from "./api"
 import { type MatchOpts, matchInstance } from "./conditions"
 import { parseDateValue, toISODate } from "./dates"
 import { instanceLabel } from "./instanceLabel"
+import { recordHref } from "./recordHref"
 import { showValue } from "./utils"
 
 /**
@@ -91,7 +92,7 @@ export const sourceEvents = (
       day,
       label: picked || instanceLabel(inst, fields, opts?.titleFieldId),
       color,
-      href: `/instances/${inst.id}`,
+      href: recordHref(inst.id),
     })
   }
   return out

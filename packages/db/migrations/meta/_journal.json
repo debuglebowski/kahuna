@@ -225,6 +225,20 @@
       "when": 1781524963395,
       "tag": "0031_mute_big_bertha",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1781812258541,
+      "tag": "0032_demonic_deathstrike",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1781823070299,
+      "tag": "0033_illegal_mathemanic",
+      "breakpoints": true
     }
   ]
 }

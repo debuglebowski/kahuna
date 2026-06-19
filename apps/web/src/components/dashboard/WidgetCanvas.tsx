@@ -16,6 +16,8 @@ import {
   tilePx,
 } from "@/lib/dashboards"
 import { cn } from "@/lib/utils"
+import { capsOf, TILE_CONTENTS } from "../instance/registry"
+import type { InstanceCtx } from "../instance/types"
 import { ActivityWidget } from "./ActivityWidget"
 import { AttentionWidget } from "./AttentionWidget"
 import { CalendarWidget } from "./CalendarWidget"
@@ -48,6 +50,10 @@ interface RenderCtx {
   instData: Record<string, ConceptInstanceData>
   cIndex: Map<string, Concept>
   conceptsLoaded: boolean
+  /** Present only on a RECORD dashboard — the current record's assembled context.
+   *  Record-scoped widgets render from it; concept-scoped widgets with a
+   *  `relationFieldId` narrow to its related instances. Absent on page dashboards. */
+  record?: InstanceCtx
   readOnly: boolean
   selectedId: string | null
   onSelect?: (id: string) => void
@@ -148,12 +154,55 @@ function DropLine({ zone, parentDir }: { zone: Zone | null; parentDir: "row" | "
   return <div className={cn("pointer-events-none absolute z-10 rounded bg-primary", pos)} />
 }
 
+/** Record-scoped widget type → the instance-detail content key whose panel it
+ *  reuses. (Document + Files have their own dashboard widgets already.) */
+const RECORD_WIDGET_CONTENT = {
+  "record-details": "details",
+  "record-connections": "connected",
+  "record-graph": "graph",
+  "record-labels": "labels",
+  "record-versions": "versions",
+  "record-notes": "notes",
+  "record-tasks": "tasks",
+  "record-activity": "activity",
+} as const
+
+/** Render one instance-detail panel for the current record. Empty state off a
+ *  record dashboard, or when the panel doesn't apply to this concept. */
+function RecordPanel({
+  contentKey,
+  record,
+}: {
+  contentKey: keyof typeof TILE_CONTENTS
+  record?: InstanceCtx
+}) {
+  if (!record)
+    return (
+      <p className="text-sm text-muted-foreground">This widget only shows on a record dashboard.</p>
+    )
+  const content = TILE_CONTENTS[contentKey]
+  if (content.available && !content.available(capsOf(record)))
+    return <p className="text-sm text-muted-foreground">Not available for this record.</p>
+  const Body = content.Body
+  return <Body ctx={record} />
+}
+
 /** The widget content for a leaf node (the per-type renderer switch). */
 function renderWidget(w: NormWidget, ctx: RenderCtx) {
   // Tasks' conceptId is a task FILTER (resolved via subject refs), not a data scope.
   const cid = "conceptId" in w && w.type !== "tasks" ? (w.conceptId ?? undefined) : undefined
-  const data = cid ? ctx.instData[cid] : undefined
+  let data = cid ? ctx.instData[cid] : undefined
   const concept = cid ? ctx.cIndex.get(cid) : undefined
+  // Record dashboards: a concept-scoped widget bound to a relation field shows the
+  // CURRENT record's related instances of that relation, not the whole concept.
+  if (ctx.record && "relationFieldId" in w && w.relationFieldId && data) {
+    const relIds = new Set(
+      ctx.record.related
+        .filter((r) => r.fieldId === w.relationFieldId && r.instance)
+        .map((r) => r.instance!.id),
+    )
+    data = { ...data, instances: data.instances.filter((i) => relIds.has(i.id)) }
+  }
   if (cid && ctx.conceptsLoaded && !concept)
     return (
       <p className="text-sm text-muted-foreground">
@@ -200,11 +249,36 @@ function renderWidget(w: NormWidget, ctx: RenderCtx) {
     case "gantt":
       return <GanttWidget widget={w} data={data} concept={concept} />
     case "files":
-      return <FilesWidget widget={w} />
+      // On a record dashboard an instance-scoped Files widget binds to the current
+      // record when no explicit instance is set.
+      return (
+        <FilesWidget
+          widget={
+            ctx.record && w.scope === "instance" && !w.instanceId
+              ? { ...w, instanceId: ctx.record.instance.id }
+              : w
+          }
+        />
+      )
     case "document":
       // Editable on the live page (and the editor's Preview), inert while tiles
       // are arranged — `readOnly` is true exactly in those interactive contexts.
-      return <DocumentWidget widget={w} editable={ctx.readOnly} />
+      // On a record dashboard the record supplies the instance when unset.
+      return (
+        <DocumentWidget
+          widget={ctx.record && !w.instanceId ? { ...w, instanceId: ctx.record.instance.id } : w}
+          editable={ctx.readOnly}
+        />
+      )
+    case "record-details":
+    case "record-connections":
+    case "record-graph":
+    case "record-labels":
+    case "record-versions":
+    case "record-notes":
+    case "record-tasks":
+    case "record-activity":
+      return <RecordPanel contentKey={RECORD_WIDGET_CONTENT[w.type]} record={ctx.record} />
     default:
       return (
         <p className="text-sm text-muted-foreground">
@@ -532,6 +606,7 @@ export function WidgetCanvas({
   instData,
   cIndex,
   conceptsLoaded = true,
+  record,
   readOnly = false,
   selectedId = null,
   onSelect,
@@ -541,6 +616,8 @@ export function WidgetCanvas({
   instData: Record<string, ConceptInstanceData>
   cIndex: Map<string, Concept>
   conceptsLoaded?: boolean
+  /** The current record (record dashboards only) — drives record-scoped widgets. */
+  record?: InstanceCtx
   readOnly?: boolean
   selectedId?: string | null
   onSelect?: (id: string) => void
@@ -562,6 +639,7 @@ export function WidgetCanvas({
     instData,
     cIndex,
     conceptsLoaded,
+    record,
     readOnly,
     selectedId,
     onSelect,

@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/table"
 import type { Field, Instance } from "@/lib/api"
 import { FieldValueCell } from "@/lib/fieldDisplay"
+import { recordHref } from "@/lib/recordHref"
 import { cn, showValue } from "@/lib/utils"
 import { EditableCell, isInlineEditable } from "./InlineCellEditor"
 
@@ -25,6 +26,7 @@ export function InstanceTable({
   quickEdit = false,
   onSaveCell,
   defaultSortKey = null,
+  recordDashboardId = null,
   dense = false,
   fill = false,
 }: {
@@ -33,6 +35,8 @@ export function InstanceTable({
   quickEdit?: boolean
   onSaveCell?: (inst: Instance, fieldId: string, value: unknown) => Promise<void>
   defaultSortKey?: string | null
+  /** Open rows with this record dashboard (list widget); absent = concept default. */
+  recordDashboardId?: string | null
   /** Tighter cell padding for embedded surfaces (widgets). */
   dense?: boolean
   /** Fill the scroll container to the parent's height so the (empty space and)
@@ -83,7 +87,11 @@ export function InstanceTable({
           <TableRow
             key={r.id}
             className={cn(!quickEdit && "cursor-pointer")}
-            onClick={quickEdit ? undefined : () => navigate(`/instances/${r.id}`)}
+            onClick={
+              quickEdit
+                ? undefined
+                : () => navigate(recordHref(r.id, { dashboard: recordDashboardId }))
+            }
           >
             <TableCell className={cn("tabular-nums text-muted-foreground", pad)}>
               {quickEdit ? (
@@ -93,7 +101,7 @@ export function InstanceTable({
                   className="tabular-nums hover:text-foreground hover:underline"
                   onClick={(e) => {
                     e.stopPropagation()
-                    navigate(`/instances/${r.id}`)
+                    navigate(recordHref(r.id, { dashboard: recordDashboardId }))
                   }}
                 >
                   {i + 1}

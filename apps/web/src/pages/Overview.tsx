@@ -17,6 +17,7 @@ import {
   useRegisterCollection,
 } from "@/lib/collections"
 import { formatDateValue } from "@/lib/dates"
+import { recordHref } from "@/lib/recordHref"
 import { isSnoozed } from "@/lib/taskGroups"
 import { pickWelcome } from "@/lib/welcomeMessages"
 
@@ -82,7 +83,7 @@ export function Overview() {
       )
       return versions.find((v) => v.versionStatus === "published") ?? versions[0] ?? null
     },
-    onSuccess: (head) => head && navigate(`/instances/${head.id}`),
+    onSuccess: (head) => head && navigate(recordHref(head.id)),
   })
   const err = complete.error ?? open.error
 

@@ -6,17 +6,22 @@ import {
   FileText,
   GanttChart,
   Gauge,
+  GitBranch,
+  History,
   Link2,
   ListChecks,
   type LucideIcon,
   Megaphone,
+  Rows3,
   SquareKanban,
   StickyNote,
   Table,
+  Tags,
   Target,
   TrendingUp,
   TriangleAlert,
   Users,
+  Waypoints,
 } from "lucide-react"
 import type { ReactNode } from "react"
 import type { DashboardWidget } from "./api"
@@ -31,6 +36,7 @@ import { cn } from "./utils"
  */
 
 export type WidgetCategory =
+  | "This record"
   | "Numbers & goals"
   | "Charts"
   | "Lists & tables"
@@ -41,6 +47,7 @@ export type WidgetCategory =
 /** Categories in display order — drives both the gallery's filter chips and the
  *  order its sections render in (empty sections are skipped). */
 export const WIDGET_CATEGORIES: readonly WidgetCategory[] = [
+  "This record",
   "Numbers & goals",
   "Charts",
   "Lists & tables",
@@ -58,6 +65,9 @@ export interface WidgetMeta {
   icon: LucideIcon
   /** The single category this widget belongs to (a gallery section + filter chip). */
   category: WidgetCategory
+  /** Which dashboard kinds may add this widget; absent = both. Record-scoped
+   *  panels are "record" only; page-only chrome (e.g. Welcome) is "page" only. */
+  kinds?: readonly ("page" | "record")[]
   Preview: () => ReactNode
 }
 
@@ -90,6 +100,19 @@ const Card = ({ className }: { className?: string }) => (
 )
 
 // ── Per-widget previews ───────────────────────────────────────────────────────
+
+/** Shared sketch for record-scoped panels — a titled box over a few content rows. */
+const RecordPanelPreview = () => (
+  <Frame className="justify-center gap-1.5">
+    <div className="flex items-center gap-1.5">
+      <Sq className="bg-primary/40" />
+      <Line className="w-1/3 bg-primary/40" />
+    </div>
+    <Line className="w-5/6" />
+    <Line className="w-2/3" />
+    <Line className="w-3/4" />
+  </Frame>
+)
 
 const MetricPreview = () => (
   <Frame className="items-start justify-center gap-1">
@@ -536,6 +559,7 @@ export const WIDGET_CATALOG: ReadonlyArray<WidgetMeta> = [
     keywords: ["banner", "greeting", "intro", "hero", "header", "message", "announcement"],
     icon: Megaphone,
     category: "Page content",
+    kinds: ["page"],
     Preview: WelcomePreview,
   },
   {
@@ -609,5 +633,86 @@ export const WIDGET_CATALOG: ReadonlyArray<WidgetMeta> = [
     icon: Files,
     category: "Lists & tables",
     Preview: FilesPreview,
+  },
+  // ── Record-scoped panels (record dashboards only) ─────────────────────────────
+  {
+    type: "record-details",
+    label: "Details",
+    description: "This record's field values.",
+    keywords: ["fields", "properties", "attributes", "values", "record", "data"],
+    icon: Rows3,
+    category: "This record",
+    kinds: ["record"],
+    Preview: RecordPanelPreview,
+  },
+  {
+    type: "record-connections",
+    label: "Connections",
+    description: "Records linked to this one.",
+    keywords: ["relations", "links", "connected", "related", "references", "associations"],
+    icon: Link2,
+    category: "This record",
+    kinds: ["record"],
+    Preview: RecordPanelPreview,
+  },
+  {
+    type: "record-graph",
+    label: "Relationships",
+    description: "This record's relationship graph.",
+    keywords: ["graph", "network", "map", "nodes", "edges", "relationships"],
+    icon: Waypoints,
+    category: "This record",
+    kinds: ["record"],
+    Preview: RecordPanelPreview,
+  },
+  {
+    type: "record-labels",
+    label: "Labels",
+    description: "Labels on this record.",
+    keywords: ["tags", "labels", "categories", "badges", "markers"],
+    icon: Tags,
+    category: "This record",
+    kinds: ["record"],
+    Preview: RecordPanelPreview,
+  },
+  {
+    type: "record-versions",
+    label: "Versions",
+    description: "This record's version history.",
+    keywords: ["versions", "history", "revisions", "drafts", "published"],
+    icon: GitBranch,
+    category: "This record",
+    kinds: ["record"],
+    Preview: RecordPanelPreview,
+  },
+  {
+    type: "record-notes",
+    label: "Notes",
+    description: "Notes on this record.",
+    keywords: ["notes", "comments", "annotations", "memo", "remarks"],
+    icon: StickyNote,
+    category: "This record",
+    kinds: ["record"],
+    Preview: RecordPanelPreview,
+  },
+  {
+    type: "record-tasks",
+    label: "Tasks",
+    description: "Tasks on this record.",
+    keywords: ["tasks", "todo", "checklist", "work", "assignments"],
+    icon: ListChecks,
+    category: "This record",
+    kinds: ["record"],
+    Preview: RecordPanelPreview,
+  },
+  {
+    type: "record-activity",
+    label: "Activity",
+    description: "This record's change history.",
+    keywords: ["activity", "feed", "history", "events", "audit", "changes"],
+    icon: History,
+    category: "This record",
+    kinds: ["record"],
+    Preview: RecordPanelPreview,
   },
 ]

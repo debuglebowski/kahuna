@@ -103,6 +103,15 @@ export const VARIANT_CATALOG: Record<WidgetType, readonly WidgetVariant[]> = {
   gantt: [{ id: "default", label: "Default" }],
   note: [{ id: "default", label: "Default" }],
   document: [{ id: "default", label: "Default" }],
+  // Record-scoped panels — single fixed layout each (no variant picker).
+  "record-details": [{ id: "default", label: "Default" }],
+  "record-connections": [{ id: "default", label: "Default" }],
+  "record-graph": [{ id: "default", label: "Default" }],
+  "record-labels": [{ id: "default", label: "Default" }],
+  "record-versions": [{ id: "default", label: "Default" }],
+  "record-notes": [{ id: "default", label: "Default" }],
+  "record-tasks": [{ id: "default", label: "Default" }],
+  "record-activity": [{ id: "default", label: "Default" }],
 }
 
 /** Variants for a widget type (empty array if somehow unknown). */

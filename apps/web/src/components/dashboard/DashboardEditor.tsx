@@ -52,6 +52,8 @@ import {
   unwrapGroup,
   updateNode,
 } from "@/lib/dashboards"
+import { instanceLabel } from "@/lib/instanceLabel"
+import { useInstanceCtx } from "@/lib/useInstanceCtx"
 import { useUnsavedGuard } from "@/lib/useUnsavedGuard"
 import { cn } from "@/lib/utils"
 import { InspectorSection } from "./InspectorSection"
@@ -508,12 +510,20 @@ export function DashboardEditor({
   concepts,
   cIndex,
   conceptsLoaded,
+  recordMode = false,
+  recordConceptId = null,
 }: {
   dash: Dashboard
   canDelete: boolean
   concepts: readonly Concept[]
   cIndex: Map<string, Concept>
   conceptsLoaded: boolean
+  /** Record dashboard: gate the palette to record widgets + supply a sample-record
+   *  preview, and drop scope/visibility (a record view is a shared per-concept
+   *  template). Otherwise the editor is identical to a page dashboard's. */
+  recordMode?: boolean
+  /** The owning concept (record mode) — drives the preview-record picker. */
+  recordConceptId?: string | null
 }) {
   usePageChrome({ fullWidth: true, fillHeight: true })
   const navigate = useNavigate()
@@ -644,8 +654,27 @@ export function DashboardEditor({
     document.addEventListener("pointerup", onUp)
   }
 
-  const ids = useMemo(() => referencedConceptIds(draft.body), [draft.body])
+  const ids = useMemo(() => {
+    const base = referencedConceptIds(draft.body)
+    // Record dashboards also load the owning concept (preview-record picker +
+    // related-scoped widgets resolve against it).
+    return recordMode && recordConceptId && !base.includes(recordConceptId)
+      ? [...base, recordConceptId]
+      : base
+  }, [draft.body, recordMode, recordConceptId])
   const { instData, loaders } = useConceptData(ids)
+
+  // Record dashboards render their widgets against a real sample instance so the
+  // preview shows live data. Defaults to the first instance; the picker overrides.
+  const sampleInstances = recordConceptId ? (instData[recordConceptId]?.instances ?? []) : []
+  const sampleFields = recordConceptId ? (instData[recordConceptId]?.fields ?? []) : []
+  const [previewId, setPreviewId] = useState<string | null>(null)
+  const effectivePreviewId =
+    previewId && sampleInstances.some((i) => i.id === previewId)
+      ? previewId
+      : (sampleInstances[0]?.id ?? "")
+  const { ctx: previewCtx } = useInstanceCtx(recordMode ? effectivePreviewId : "")
+  const recordCtx = recordMode ? (previewCtx ?? undefined) : undefined
 
   const editing = editingId ? findNode(draft.body, editingId) : null
   // New nodes drop into the selected group, else the root.
@@ -659,7 +688,8 @@ export function DashboardEditor({
         id: dash.id,
         name: d.name.trim(),
         icon: d.icon,
-        scope: d.scope,
+        // Record dashboards are always org-shared; the server ignores scope for them.
+        scope: recordMode ? undefined : d.scope,
         hidden: d.hidden,
         body: serialize(d.body),
         expectedUpdatedAt: savedAt ?? undefined,
@@ -767,6 +797,30 @@ export function DashboardEditor({
                     </>
                   ) : (
                     <>
+                      {recordMode && sampleInstances.length > 0 && (
+                        <>
+                          <Select value={effectivePreviewId} onValueChange={(v) => setPreviewId(v)}>
+                            <SelectTrigger className="h-8 w-44" title="Preview record">
+                              <Eye size={13} className="shrink-0 text-muted-foreground" />
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {sampleInstances.slice(0, 50).map((inst) => (
+                                <SelectItem key={inst.id} value={inst.id}>
+                                  {instanceLabel(
+                                    inst,
+                                    sampleFields,
+                                    recordConceptId
+                                      ? (cIndex.get(recordConceptId)?.titleFieldId ?? null)
+                                      : null,
+                                  )}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <div className="mx-1.5 h-5 w-px shrink-0 bg-border" aria-hidden="true" />
+                        </>
+                      )}
                       <Button size="sm" variant="outline" onClick={() => setGalleryOpen(true)}>
                         <Plus size={14} /> Add widget
                       </Button>
@@ -830,36 +884,40 @@ export function DashboardEditor({
                 </Field>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="Scope">
-                  <Select
-                    value={draft.scope}
-                    onValueChange={(v) => patch({ scope: v as "personal" | "org" })}
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="personal">Personal (only me)</SelectItem>
-                      <SelectItem value="org">Org (everyone)</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </Field>
-                <Field label="Visibility">
-                  <Select
-                    value={draft.hidden ? "hidden" : "shown"}
-                    onValueChange={(v) => patch({ hidden: v === "hidden" })}
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="shown">Shown in switcher</SelectItem>
-                      <SelectItem value="hidden">Hidden</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </Field>
-              </div>
+              {/* Scope + visibility apply only to page dashboards; a record view is
+                a shared per-concept template that never enters the switcher. */}
+              {!recordMode && (
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="Scope">
+                    <Select
+                      value={draft.scope}
+                      onValueChange={(v) => patch({ scope: v as "personal" | "org" })}
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="personal">Personal (only me)</SelectItem>
+                        <SelectItem value="org">Org (everyone)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                  <Field label="Visibility">
+                    <Select
+                      value={draft.hidden ? "hidden" : "shown"}
+                      onValueChange={(v) => patch({ hidden: v === "hidden" })}
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="shown">Shown in switcher</SelectItem>
+                        <SelectItem value="hidden">Hidden</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                </div>
+              )}
 
               <div className="border-t border-border pt-3">
                 <Button
@@ -890,6 +948,7 @@ export function DashboardEditor({
                     instData={instData}
                     cIndex={cIndex}
                     conceptsLoaded={conceptsLoaded}
+                    record={recordCtx}
                     readOnly
                   />
                 </div>
@@ -950,6 +1009,7 @@ export function DashboardEditor({
                         instData={instData}
                         cIndex={cIndex}
                         conceptsLoaded={conceptsLoaded}
+                        record={recordCtx}
                         selectedId={editingId}
                         onSelect={setEditingId}
                         onMove={(id, target, before) =>
@@ -1071,6 +1131,8 @@ export function DashboardEditor({
                               <WidgetEditor
                                 widget={editing}
                                 concepts={concepts}
+                                recordMode={recordMode}
+                                recordConceptId={recordConceptId}
                                 onChange={(p) =>
                                   patchBody((b) =>
                                     updateNode(b, editing.id, (n) => ({ ...n, ...p }) as NormNode),
@@ -1175,7 +1237,11 @@ export function DashboardEditor({
       </div>
 
       {galleryOpen && (
-        <WidgetGallery onPick={(t) => addWidgetOfType(t)} onClose={() => setGalleryOpen(false)} />
+        <WidgetGallery
+          onPick={(t) => addWidgetOfType(t)}
+          onClose={() => setGalleryOpen(false)}
+          kind={recordMode ? "record" : "page"}
+        />
       )}
       {blocker.state === "blocked" && (
         <ConfirmDialog

@@ -7,6 +7,7 @@ import { useSession } from "@/lib/auth-client"
 import type { ConceptInstanceData } from "@/lib/conceptData"
 import { parseDateValue } from "@/lib/dates"
 import { FieldValueCell } from "@/lib/fieldDisplay"
+import { recordHref } from "@/lib/recordHref"
 import { cn } from "@/lib/utils"
 import { type GanttSpan, ganttSpans, ganttTicks, ganttWindow, PX_PER_DAY } from "@/lib/widgetDates"
 
@@ -105,7 +106,7 @@ export function GanttWidget({
   }
 
   const renderBar = (s: GanttSpan) => {
-    const open = () => navigate(`/instances/${s.id}`)
+    const open = () => navigate(recordHref(s.id))
     if (!s.end) {
       const off = offsetOf(s.start)
       if (off < 0 || off >= totalDays) return null
@@ -213,7 +214,7 @@ export function GanttWidget({
                     groupField && "pl-3",
                   )}
                   style={{ width: LABEL_W }}
-                  onClick={() => navigate(`/instances/${s.id}`)}
+                  onClick={() => navigate(recordHref(s.id))}
                 >
                   {s.label}
                 </button>

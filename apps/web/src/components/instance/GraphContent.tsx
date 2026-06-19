@@ -58,6 +58,7 @@ import {
 import { instanceLabel } from "../../lib/instanceLabel"
 import { useInstanceViewPrefs } from "../../lib/instanceViews"
 import { queryClient } from "../../lib/queryClient"
+import { recordHref } from "../../lib/recordHref"
 import { SelfLoopEdge } from "../graph/SelfLoopEdge"
 import { useGraphPositions } from "../graph/useGraphPositions"
 import { Button, pillStyle, Spinner } from "../ui"
@@ -291,7 +292,7 @@ function GraphFlow({
       edgeTypes={edgeTypes}
       onNodeClick={(_, node) => {
         const d = node.data as { instanceId?: string | null; root?: boolean }
-        if (d.instanceId && !d.root) navigate(`/instances/${d.instanceId}`)
+        if (d.instanceId && !d.root) navigate(recordHref(d.instanceId))
       }}
       onNodeDragStart={onNodeDragStart}
       onNodeDragStop={onNodeDragStop}

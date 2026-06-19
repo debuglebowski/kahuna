@@ -454,11 +454,18 @@ export const reorderViews = (
 
 export const listDashboards: UC<unknown> = Effect.flatMap(DashboardService, (s) => s.list())
 
+export const listAllDashboards: UC<unknown> = Effect.flatMap(DashboardService, (s) => s.listAll())
+
+export const listRecordDashboards = (conceptId: string): UC<unknown> =>
+  Effect.flatMap(DashboardService, (s) => s.listRecordDashboards(conceptId))
+
 export const createDashboard = (input: {
   readonly name: string
   readonly icon?: string | null
   readonly scope: "personal" | "org"
   readonly body: DashboardBody
+  readonly kind?: "page" | "record"
+  readonly conceptId?: string | null
 }): UC<unknown> => Effect.flatMap(DashboardService, (s) => s.create(input))
 
 export const updateDashboard = (input: {

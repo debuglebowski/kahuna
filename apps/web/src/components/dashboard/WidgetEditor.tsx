@@ -240,11 +240,16 @@ export function WidgetEditor({
   concepts,
   onChange,
   onChangeType,
+  recordMode = false,
+  recordConceptId = null,
 }: {
   widget: NormWidget
   concepts: readonly Concept[]
   onChange: (patch: Partial<NormWidget>) => void
   onChangeType: (type: DashboardWidget["type"]) => void
+  /** Record dashboard: offer relation-scoping + auto-bind Document/Files. */
+  recordMode?: boolean
+  recordConceptId?: string | null
 }) {
   const labelsQ = useQuery({ queryKey: ["labels"], queryFn: () => api.listLabels() })
   const labels = labelsQ.data ?? []
@@ -260,6 +265,35 @@ export function WidgetEditor({
   )
   const conceptId = "conceptId" in widget ? (widget.conceptId ?? "") : ""
   const fields = useFields(conceptId)
+  // Record dashboards: relation-scope a concept-scoped widget to the current
+  // record's related instances. The owning concept's relation fields are the
+  // options; picking one sets conceptId = the relation's target.
+  const RELATION_SCOPABLE = new Set(["metric", "list", "breakdown", "kanban"])
+  const relationScopable = recordMode && !!recordConceptId && RELATION_SCOPABLE.has(widget.type)
+  // The owning concept's fields (record mode) — drives both the relation-source
+  // picker and the Document widget's field picker (the record is implicit).
+  const recordFields = useFields(recordMode && recordConceptId ? recordConceptId : "")
+  const recordRelationFields = (recordFields.data ?? []).filter(
+    (f) => f.kind === "relation" && !!f.config.target,
+  )
+  const recordRichTextFields = (recordFields.data ?? []).filter((f) => f.kind === "richtext")
+  // List/Kanban can open their rows with a specific record view of the rows' concept
+  // (else the concept's default). Drives the dashboards-list "usage" grouping.
+  const opensRecords = widget.type === "list" || widget.type === "kanban"
+  const recordViewsQ = useQuery({
+    queryKey: ["recordDashboards", conceptId],
+    queryFn: () => api.listRecordDashboards(conceptId),
+    enabled: opensRecords && !!conceptId,
+  })
+  const recordViews = recordViewsQ.data ?? []
+  const recordDashboardId =
+    "recordDashboardId" in widget
+      ? ((widget as { recordDashboardId?: string | null }).recordDashboardId ?? null)
+      : null
+  const relationFieldId =
+    "relationFieldId" in widget
+      ? ((widget as { relationFieldId?: string | null }).relationFieldId ?? null)
+      : null
   const scalarFields = (fields.data ?? []).filter((f) => f.kind !== "relation" && f.kind !== "file")
   // Rich text shows fine as a list column (text preview) but grouping/sorting
   // on a { doc, text } envelope is meaningless.
@@ -319,13 +353,45 @@ export function WidgetEditor({
       </InspectorSection>
 
       <InspectorSection title="Content">
+        {/* Record dashboards: scope a concept-scoped widget to the whole concept,
+          or to THIS record's related instances via one of its relations. */}
+        {relationScopable && (
+          <FieldRow label="Source">
+            <Select
+              value={relationFieldId ?? "__concept"}
+              onValueChange={(v) => {
+                if (v === "__concept") {
+                  patch({ relationFieldId: null } as Partial<NormWidget>)
+                } else {
+                  const target = recordRelationFields.find((f) => f.id === v)?.config.target ?? null
+                  patch({ relationFieldId: v, conceptId: target } as Partial<NormWidget>)
+                }
+              }}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__concept">Whole concept</SelectItem>
+                {recordRelationFields.map((f) => (
+                  <SelectItem key={f.id} value={f.id}>
+                    Related: {f.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </FieldRow>
+        )}
+
         {/* Org-global widgets (members/welcome) have no concept to pick; tasks
           gets its own "Any record" select below (its conceptId is a filter);
-          files/document pick a record in their own section. */}
+          files/document pick a record in their own section. When a record-relation
+          source is active the relation already fixes the concept (hidden). */}
         {"conceptId" in widget &&
           widget.type !== "tasks" &&
           widget.type !== "files" &&
-          widget.type !== "document" && (
+          widget.type !== "document" &&
+          !(relationScopable && relationFieldId) && (
             <FieldRow label="Concept">
               <Select
                 value={conceptId || "__none"}
@@ -341,6 +407,31 @@ export function WidgetEditor({
               </Select>
             </FieldRow>
           )}
+
+        {/* Which record view a row opens with — also nests this dashboard's view
+          beneath it in the dashboards-list "usage" grouping. */}
+        {opensRecords && conceptId && (
+          <FieldRow label="Open rows with">
+            <Select
+              value={recordDashboardId ?? "__default"}
+              onValueChange={(v) =>
+                patch({ recordDashboardId: v === "__default" ? null : v } as Partial<NormWidget>)
+              }
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__default">Default record view</SelectItem>
+                {recordViews.map((rv) => (
+                  <SelectItem key={rv.id} value={rv.id}>
+                    {rv.name || "(untitled view)"}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </FieldRow>
+        )}
 
         {widget.type === "metric" && (
           <>
@@ -1123,45 +1214,77 @@ export function WidgetEditor({
 
         {widget.type === "document" && (
           <>
-            <FieldRow label="Record">
-              <FilesInstancePicker
-                instanceId={widget.instanceId ?? null}
-                concepts={concepts}
-                onPick={(instanceId, pickedConceptId) =>
-                  // A new record carries its concept (the field scope) and clears
-                  // the field; clearing the record clears both.
-                  patch({
-                    instanceId,
-                    conceptId: instanceId ? (pickedConceptId ?? null) : null,
-                    fieldId: null,
-                  })
-                }
-              />
-            </FieldRow>
-            {widget.instanceId && (
-              <FieldRow label="Rich text field">
+            {recordMode ? (
+              // The record is the one being viewed — only the field is chosen,
+              // from the owning concept's rich text fields.
+              <FieldRow label="Rich text field" hint="Edited for whichever record is open.">
                 <Select
                   value={widget.fieldId || "__none"}
-                  onValueChange={(v) => patch({ fieldId: v === "__none" ? null : v })}
+                  onValueChange={(v) =>
+                    patch({ fieldId: v === "__none" ? null : v, conceptId: recordConceptId })
+                  }
                 >
                   <SelectTrigger className="w-full">
                     <SelectValue placeholder="Select a field…" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__none">Select a field…</SelectItem>
-                    {richTextFields.map((f) => (
+                    {recordRichTextFields.map((f) => (
                       <SelectItem key={f.id} value={f.id}>
                         {f.name}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
-                {richTextFields.length === 0 && (
+                {recordRichTextFields.length === 0 && (
                   <p className="mt-1 text-xs text-muted-foreground">
-                    This record’s concept has no rich text fields.
+                    This concept has no rich text fields.
                   </p>
                 )}
               </FieldRow>
+            ) : (
+              <>
+                <FieldRow label="Record">
+                  <FilesInstancePicker
+                    instanceId={widget.instanceId ?? null}
+                    concepts={concepts}
+                    onPick={(instanceId, pickedConceptId) =>
+                      // A new record carries its concept (the field scope) and clears
+                      // the field; clearing the record clears both.
+                      patch({
+                        instanceId,
+                        conceptId: instanceId ? (pickedConceptId ?? null) : null,
+                        fieldId: null,
+                      })
+                    }
+                  />
+                </FieldRow>
+                {widget.instanceId && (
+                  <FieldRow label="Rich text field">
+                    <Select
+                      value={widget.fieldId || "__none"}
+                      onValueChange={(v) => patch({ fieldId: v === "__none" ? null : v })}
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder="Select a field…" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__none">Select a field…</SelectItem>
+                        {richTextFields.map((f) => (
+                          <SelectItem key={f.id} value={f.id}>
+                            {f.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {richTextFields.length === 0 && (
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        This record’s concept has no rich text fields.
+                      </p>
+                    )}
+                  </FieldRow>
+                )}
+              </>
             )}
             <FieldRow label="Header">
               <ToggleChip
@@ -1498,15 +1621,20 @@ export function WidgetEditor({
                 </Select>
               </FieldRow>
             )}
-            {widget.scope === "instance" && (
-              <FieldRow label="Record">
-                <FilesInstancePicker
-                  instanceId={widget.instanceId ?? null}
-                  concepts={concepts}
-                  onPick={(instanceId) => patch({ instanceId })}
-                />
-              </FieldRow>
-            )}
+            {widget.scope === "instance" &&
+              (recordMode ? (
+                <p className="px-1 text-xs text-muted-foreground">
+                  Shows files for whichever record is open.
+                </p>
+              ) : (
+                <FieldRow label="Record">
+                  <FilesInstancePicker
+                    instanceId={widget.instanceId ?? null}
+                    concepts={concepts}
+                    onPick={(instanceId) => patch({ instanceId })}
+                  />
+                </FieldRow>
+              ))}
             <FieldRow label="Sort">
               <Select
                 value={widget.sort ?? "newest"}

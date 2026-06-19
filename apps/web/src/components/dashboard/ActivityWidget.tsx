@@ -6,6 +6,7 @@ import { MemberAvatar, memberLabel, type OrgMember } from "@/components/item/Ass
 import { type ActivityResolvers, eventLabel, eventSnippet, relativeTime } from "@/lib/activity"
 import { api, type DashboardWidget, type FeedItem } from "@/lib/api"
 import { taskStatusesCollection } from "@/lib/collections"
+import { recordHref } from "@/lib/recordHref"
 import { useFullOrg } from "@/pages/settings/SettingsLayout"
 
 type Activity = Extract<DashboardWidget, { type: "activity" }>
@@ -43,7 +44,7 @@ export function EventRows({ events }: { events: readonly FeedItem[] }) {
             <button
               type="button"
               disabled={!toInstance}
-              onClick={() => toInstance && navigate(`/instances/${e.subjectId}`)}
+              onClick={() => toInstance && navigate(recordHref(e.subjectId))}
               className="truncate text-left text-foreground enabled:hover:underline disabled:cursor-default"
             >
               {humanize(e.eventType)}
@@ -98,8 +99,7 @@ export function ActivityWidget({ widget }: { widget: Activity }) {
 
   const log = (widget.variant ?? "timeline") === "log"
   const showDiffs = widget.showDiffs ?? true
-  const open = (e: FeedItem) =>
-    e.subjectKind === "instance" && navigate(`/instances/${e.subjectId}`)
+  const open = (e: FeedItem) => e.subjectKind === "instance" && navigate(recordHref(e.subjectId))
 
   if (log) {
     return (

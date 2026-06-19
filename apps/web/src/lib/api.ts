@@ -435,11 +435,15 @@ export const api = {
   reorderViews: (orders: ReadonlyArray<{ id: string; position: number }>) =>
     call((c) => c.reorderViews({ orders })),
   listDashboards: () => call((c) => c.listDashboards()),
+  listAllDashboards: () => call((c) => c.listAllDashboards()),
+  listRecordDashboards: (conceptId: string) => call((c) => c.listRecordDashboards({ conceptId })),
   createDashboard: (input: {
     name: string
     icon?: string | null
     scope: "personal" | "org"
     body: DashboardBody
+    kind?: "page" | "record"
+    conceptId?: string | null
   }) => call((c) => c.createDashboard(input)),
   updateDashboard: (input: {
     id: string

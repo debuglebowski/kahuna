@@ -346,6 +346,10 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
           // Zero instances ⇒ any remaining items rows are empty lineages; clear
           // them so the concept row's FK doesn't block the delete.
           yield* sql`DELETE FROM items WHERE org_id = ${orgId} AND concept_id = ${id}`
+          // Record dashboards are per-concept templates (logical FK, no DB cascade);
+          // drop them so they don't orphan invisibly when the concept goes.
+          yield* sql`DELETE FROM dashboards
+            WHERE org_id = ${orgId} AND concept_id = ${id} AND kind = 'record'`
           yield* sql`DELETE FROM concepts WHERE org_id = ${orgId} AND id = ${id}`
           yield* events.append({
             subjectKind: "concept",

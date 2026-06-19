@@ -44,9 +44,13 @@ const matchesQuery = (w: (typeof WIDGET_CATALOG)[number], terms: readonly string
 export function WidgetGallery({
   onPick,
   onClose,
+  kind = "page",
 }: {
   onPick: (type: DashboardWidget["type"]) => void
   onClose: () => void
+  /** Which dashboard the gallery is adding to — gates which widget types appear
+   *  (record-scoped panels only on record dashboards; page chrome only on pages). */
+  kind?: "page" | "record"
 }) {
   const [active, setActive] = useState<Set<WidgetCategory>>(readActive)
   const [query, setQuery] = useState("")
@@ -72,7 +76,11 @@ export function WidgetGallery({
   const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean)
   // A category section shows when nothing is toggled (browse-all) or it's on.
   const isShown = (cat: WidgetCategory) => active.size === 0 || active.has(cat)
-  const filtered = WIDGET_CATALOG.filter((w) => isShown(w.category) && matchesQuery(w, terms))
+  // Gate by dashboard kind: a widget with no `kinds` is universal.
+  const fitsKind = (w: (typeof WIDGET_CATALOG)[number]) => !w.kinds || w.kinds.includes(kind)
+  const filtered = WIDGET_CATALOG.filter(
+    (w) => fitsKind(w) && isShown(w.category) && matchesQuery(w, terms),
+  )
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>

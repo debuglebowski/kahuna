@@ -10,6 +10,7 @@ import { instancesByConcept } from "@/lib/collections"
 import type { ConceptInstanceData } from "@/lib/conceptData"
 import { capitalize, FieldValueCell } from "@/lib/fieldDisplay"
 import { useQuickEdit } from "@/lib/quickEdit"
+import { recordHref } from "@/lib/recordHref"
 import { cn, showValue } from "@/lib/utils"
 import { resolveVariantId } from "@/lib/variantCatalog"
 import { kanbanBuckets, matchInstance } from "@/lib/widgetAggregations"
@@ -108,7 +109,7 @@ export function ListWidget({
   // silently section by a surprise field), so an unset/invalid groupBy prompts.
   const groupField = fields.find((f) => f.id === widget.groupBy && f.kind === "enum")
 
-  const open = (i: Instance) => navigate(`/instances/${i.id}`)
+  const open = (i: Instance) => navigate(recordHref(i.id, { dashboard: widget.recordDashboardId }))
   const titleCol = columns[0]
 
   // One field saved per edit; refetch (success or fail) reconciles value + version.
@@ -128,7 +129,8 @@ export function ListWidget({
       instancesByConcept(conceptId).utils.refetch()
       // On a versioned concept the new item is an unpublished draft — invisible
       // in this head-only list — so go straight to its detail page to edit/publish.
-      if (concept?.versioningEnabled) navigate(`/instances/${created.id}`)
+      if (concept?.versioningEnabled)
+        navigate(recordHref(created.id, { dashboard: widget.recordDashboardId }))
     },
   })
 
@@ -155,6 +157,7 @@ export function ListWidget({
         quickEdit={quickEdit}
         onSaveCell={onSaveCell}
         defaultSortKey={widget.orderBy ?? null}
+        recordDashboardId={widget.recordDashboardId}
         dense
         fill
       />

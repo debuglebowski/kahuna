@@ -10,6 +10,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { api, type Concept, type Field, type RelatedInstance } from "../../lib/api"
+import { recordHref } from "../../lib/recordHref"
 import { Badge, Button, IconButton, Input, Modal } from "../ui"
 import type { InstanceCtx } from "./types"
 
@@ -42,11 +43,15 @@ function Connections({
   conceptById,
   canRemove,
   onRemove,
+  viewByField,
 }: {
   related: ReadonlyArray<RelatedInstance>
   conceptById: ReadonlyMap<string, Concept>
   canRemove: (r: RelatedInstance) => boolean
   onRemove: (relationId: string) => void
+  /** Outbound relation field id → record-dashboard id to open its targets with
+   *  (the field's `config.recordDashboardId`). Inbound edges aren't in the map. */
+  viewByField: ReadonlyMap<string, string | null>
 }) {
   const groups = new Map<string, RelatedInstance[]>()
   for (const r of related) {
@@ -107,7 +112,7 @@ function Connections({
                     className="flex items-center justify-between gap-1 rounded px-2 py-1 hover:bg-accent"
                   >
                     <Link
-                      to={`/instances/${r.instance.id}`}
+                      to={recordHref(r.instance.id, { dashboard: viewByField.get(r.fieldId) })}
                       className="flex min-w-0 flex-1 items-center justify-between"
                     >
                       <span className="truncate text-sm text-foreground">{r.label}</span>
@@ -346,6 +351,11 @@ export function ConnectedBody({ ctx }: { ctx: InstanceCtx }) {
     r.direction === "out"
       ? ctx.editable
       : !!r.instance && !(conceptById.get(r.conceptId)?.versioningEnabled ?? false)
+  // Outbound relation fields can pin which record dashboard their targets open
+  // with (config.recordDashboardId names a dashboard of the field's target concept).
+  const viewByField = new Map<string, string | null>(
+    ctx.relationFields.map((f) => [f.id, f.config.recordDashboardId ?? null]),
+  )
   return (
     <>
       <Connections
@@ -353,6 +363,7 @@ export function ConnectedBody({ ctx }: { ctx: InstanceCtx }) {
         conceptById={conceptById}
         canRemove={canRemove}
         onRemove={(relationId) => removeRel.mutate(relationId)}
+        viewByField={viewByField}
       />
       {removeRel.error && (
         <p className="px-6 pb-4 text-sm text-destructive">{(removeRel.error as Error).message}</p>

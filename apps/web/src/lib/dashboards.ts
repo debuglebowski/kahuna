@@ -326,6 +326,37 @@ export const referencedConceptIds = (body: NormBody): string[] => {
   return [...ids]
 }
 
+/** Record-view ids this dashboard "uses" — the record view its list/kanban widgets
+ *  open rows with. An explicit `recordDashboardId` wins; otherwise the rows open the
+ *  concept's DEFAULT view (its first by order, what "Open rows with: Default record
+ *  view" means), so that's resolved via `defaultByConcept` (concept id → its default
+ *  record-view id) when supplied. Drives the dashboard list's usage grouping (a used
+ *  record view nests beneath its referencer). */
+export const referencedDashboardIds = (
+  body: NormBody,
+  defaultByConcept?: ReadonlyMap<string, string>,
+): string[] => {
+  const ids = new Set<string>()
+  const walk = (n: NormNode) => {
+    if (isGroup(n)) {
+      n.children.forEach(walk)
+      return
+    }
+    if (n.type !== "list" && n.type !== "kanban") return
+    if (n.recordDashboardId) {
+      ids.add(n.recordDashboardId)
+      return
+    }
+    // No explicit view → rows open the concept's default (first) record view.
+    if (n.conceptId && defaultByConcept) {
+      const def = defaultByConcept.get(n.conceptId)
+      if (def) ids.add(def)
+    }
+  }
+  body.children.forEach(walk)
+  return [...ids]
+}
+
 // ── Node construction ─────────────────────────────────────────────────────────
 // New nodes flex (fr) but carry a default `min` (tiles) so they can't silently
 // collapse to nothing when a parent fills up — the sustainable default the
@@ -407,6 +438,17 @@ export const newWidget = (type: DashboardWidget["type"]): NormWidget => {
       return { ...scoped, type: "files", scope: "org" } as NormWidget
     case "document":
       return { ...scoped, type: "document", instanceId: null, fieldId: null } as NormWidget
+    // Record-scoped widgets carry no config — the current record is supplied by
+    // page context on a record dashboard.
+    case "record-details":
+    case "record-connections":
+    case "record-graph":
+    case "record-labels":
+    case "record-versions":
+    case "record-notes":
+    case "record-tasks":
+    case "record-activity":
+      return { ...base, type } as NormWidget
   }
 }
 

@@ -166,6 +166,9 @@ export const FieldConfig = Schema.Struct({
   inverseName: Schema.optional(Schema.String),
   /** relation: plural of `inverseName`; the UI picks singular/plural by count. */
   inversePluralName: Schema.optional(Schema.String),
+  /** relation: open referenced records with this record-dashboard id (a 'record'
+   *  dashboard owned by `target`); absent = that concept's default record view. */
+  recordDashboardId: Schema.optional(Schema.NullOr(Schema.String)),
   computedKind: Schema.optional(Schema.Literal("decay", "momentum")),
   params: Schema.optional(Schema.Record({ key: Schema.String, value: Schema.Unknown })),
   /** any scalar kind: store/validate a list of values. */
@@ -441,6 +444,10 @@ const widgetBase = {
 /** `conceptId` is optional on every concept-scoped widget so the same body can
  *  render in per-concept context (implicit conceptId) later. */
 const ConceptScoped = { conceptId: Schema.optional(Schema.NullOr(Schema.String)) }
+/** On a RECORD dashboard, a concept-scoped widget may narrow its population to the
+ *  CURRENT record's related instances via this relation field id (instead of the
+ *  whole concept). Ignored on a 'page' dashboard or when absent. */
+const RecordRelationScoped = { relationFieldId: Schema.optional(Schema.NullOr(Schema.String)) }
 
 /** One curated shortcut. `ref` is an instance id, dashboard id, or URL per `kind`;
  *  `label` is a display snapshot (dashboards re-resolve to the live name).
@@ -456,6 +463,7 @@ const ShortcutItem = Schema.Struct({
 const MetricWidget = Schema.Struct({
   ...widgetBase,
   ...ConceptScoped,
+  ...RecordRelationScoped,
   type: Schema.Literal("metric"),
   conditions: Schema.Array(SidebarCondition),
   ...ConditionMatch,
@@ -471,6 +479,7 @@ const MetricWidget = Schema.Struct({
 const ListWidget = Schema.Struct({
   ...widgetBase,
   ...ConceptScoped,
+  ...RecordRelationScoped,
   type: Schema.Literal("list"),
   conditions: Schema.Array(SidebarCondition),
   ...ConditionMatch,
@@ -484,10 +493,14 @@ const ListWidget = Schema.Struct({
   /** `rows` variant: enum field id whose option color drives the status dot;
    *  absent = first enum. */
   statusField: Schema.optional(Schema.NullOr(Schema.String)),
+  /** Open rows with this record-dashboard id (a 'record' dashboard of the row's
+   *  concept); absent = that concept's default record view. */
+  recordDashboardId: Schema.optional(Schema.NullOr(Schema.String)),
 })
 const BreakdownWidget = Schema.Struct({
   ...widgetBase,
   ...ConceptScoped,
+  ...RecordRelationScoped,
   type: Schema.Literal("breakdown"),
   conditions: Schema.Array(SidebarCondition),
   ...ConditionMatch,
@@ -619,6 +632,7 @@ const NoteWidget = Schema.Struct({
 const KanbanWidget = Schema.Struct({
   ...widgetBase,
   ...ConceptScoped,
+  ...RecordRelationScoped,
   type: Schema.Literal("kanban"),
   conditions: Schema.Array(SidebarCondition),
   ...ConditionMatch,
@@ -634,6 +648,9 @@ const KanbanWidget = Schema.Struct({
   /** Field id ordering cards within a column; absent = default order. */
   orderBy: Schema.optional(Schema.NullOr(Schema.String)),
   includeArchived: Schema.optional(Schema.Boolean),
+  /** Open cards with this record-dashboard id (a 'record' dashboard of the card's
+   *  concept); absent = that concept's default record view. */
+  recordDashboardId: Schema.optional(Schema.NullOr(Schema.String)),
 })
 /** One calendar source: a concept's instances plotted by a date field. */
 const CalendarSource = Schema.Struct({
@@ -705,6 +722,46 @@ const DocumentWidget = Schema.Struct({
   hideLabel: Schema.optional(Schema.Boolean),
 })
 
+// ── record-scoped widgets ──────────────────────────────────────────────────────
+// These render ONE panel of the CURRENT record and only make sense on a 'record'
+// dashboard, where the instance is supplied by page context (not configured per
+// widget). Each reuses an existing instance-detail panel. They carry NO
+// `conceptId`/`instanceId` — the record is implicit; on a 'page' dashboard they
+// show an "only on a record dashboard" empty state. (Document + Files cover the
+// document/files panels already, auto-binding `instanceId` from record context.)
+const RecordDetailsWidget = Schema.Struct({
+  ...widgetBase,
+  type: Schema.Literal("record-details"),
+})
+const RecordConnectionsWidget = Schema.Struct({
+  ...widgetBase,
+  type: Schema.Literal("record-connections"),
+})
+const RecordGraphWidget = Schema.Struct({
+  ...widgetBase,
+  type: Schema.Literal("record-graph"),
+})
+const RecordLabelsWidget = Schema.Struct({
+  ...widgetBase,
+  type: Schema.Literal("record-labels"),
+})
+const RecordVersionsWidget = Schema.Struct({
+  ...widgetBase,
+  type: Schema.Literal("record-versions"),
+})
+const RecordNotesWidget = Schema.Struct({
+  ...widgetBase,
+  type: Schema.Literal("record-notes"),
+})
+const RecordTasksWidget = Schema.Struct({
+  ...widgetBase,
+  type: Schema.Literal("record-tasks"),
+})
+const RecordActivityWidget = Schema.Struct({
+  ...widgetBase,
+  type: Schema.Literal("record-activity"),
+})
+
 export const DashboardWidget = Schema.Union(
   MetricWidget,
   ListWidget,
@@ -723,6 +780,14 @@ export const DashboardWidget = Schema.Union(
   GanttWidget,
   FilesWidget,
   DocumentWidget,
+  RecordDetailsWidget,
+  RecordConnectionsWidget,
+  RecordGraphWidget,
+  RecordLabelsWidget,
+  RecordVersionsWidget,
+  RecordNotesWidget,
+  RecordTasksWidget,
+  RecordActivityWidget,
 )
 export type DashboardWidget = typeof DashboardWidget.Type
 
@@ -792,6 +857,14 @@ export const Dashboard = Schema.Struct({
   position: Schema.Number,
   hidden: Schema.Boolean,
   body: DashboardBody,
+  /** "page" (default/legacy) = free-standing canvas; "record" = a per-concept
+   *  single-instance template. Optional for rollout: an older server omits it and
+   *  the client treats it as "page". */
+  kind: Schema.optional(Schema.Literal("page", "record")),
+  /** The owning concept for a "record" dashboard; null for "page". Record
+   *  dashboards are ordered by `position`; the first is what a bare reference
+   *  opens (no default flag). */
+  conceptId: Schema.optional(Schema.NullOr(Schema.String)),
   /** Last-write etag for optimistic concurrency (see `updateDashboard.expectedUpdatedAt`).
    *  Optional for rollout: an older server omits it, leaving the guard inactive. */
   updatedAt: Schema.optional(Schema.Date),
@@ -1310,13 +1383,26 @@ export class KingsmakerRpcs extends RpcGroup.make(
     success: Schema.Array(SidebarView),
     error: RpcError,
   }),
+  /** Page dashboards only (the switcher). Record dashboards: `listRecordDashboards`. */
   Rpc.make("listDashboards", { success: Schema.Array(Dashboard), error: RpcError }),
+  /** Every dashboard (page + record) — the settings management list groups both. */
+  Rpc.make("listAllDashboards", { success: Schema.Array(Dashboard), error: RpcError }),
+  /** A concept's record dashboards (org-shared templates), default first. */
+  Rpc.make("listRecordDashboards", {
+    payload: { conceptId: Schema.String },
+    success: Schema.Array(Dashboard),
+    error: RpcError,
+  }),
   Rpc.make("createDashboard", {
     payload: {
       name: Schema.String,
       icon: Schema.optional(Schema.NullOr(Schema.String)),
       scope: Schema.Literal("personal", "org"),
       body: DashboardBody,
+      /** "record" creates a per-concept template (forced org-shared, appended last);
+       *  "conceptId" is then required. Absent/"page" = a free-standing dashboard. */
+      kind: Schema.optional(Schema.Literal("page", "record")),
+      conceptId: Schema.optional(Schema.NullOr(Schema.String)),
     },
     success: Dashboard,
     error: RpcError,

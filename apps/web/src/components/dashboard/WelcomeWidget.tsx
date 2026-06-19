@@ -4,6 +4,7 @@ import { Link } from "react-router-dom"
 import { api, type DashboardWidget } from "@/lib/api"
 import { useSession } from "@/lib/auth-client"
 import { useMembers } from "@/lib/members"
+import { recordHref } from "@/lib/recordHref"
 import { cn } from "@/lib/utils"
 import { renderWelcome, WELCOME_MESSAGES } from "@/lib/welcomeMessages"
 import { ShortcutItemGlyph, urlHref } from "./ShortcutsWidget"
@@ -62,7 +63,7 @@ function QuickLinks({ links }: { links: ReadonlyArray<WelcomeLink> }) {
         ) : (
           <Link
             key={item.id}
-            to={item.kind === "dashboard" ? `/dashboards/${item.ref}` : `/instances/${item.ref}`}
+            to={item.kind === "dashboard" ? `/dashboards/${item.ref}` : recordHref(item.ref)}
             className={chipClass}
           >
             <ShortcutItemGlyph kind={item.kind} />

@@ -1,8 +1,11 @@
 import { describe, expect, it } from "@effect/vitest"
 import { Effect } from "effect"
 import type { DashboardBody, DashboardWidget } from "../domain/types"
+import { ConceptService } from "../services/ConceptService"
 import { DashboardService } from "../services/DashboardService"
 import { newOrgId, testLayer } from "./harness"
+
+const empty: DashboardBody = { widgets: [] }
 
 const metric: DashboardWidget = {
   type: "metric",
@@ -238,6 +241,82 @@ describe("dashboards (DashboardService)", () => {
         { id: home.id, position: 1 },
       ])
       expect(reordered.map((d) => d.id)).toEqual([a.id, home.id])
+    }).pipe(Effect.provide(testLayer(newOrgId()))),
+  )
+
+  it.effect(
+    "record dashboards stay out of list(); listAll + listRecordDashboards include them",
+    () =>
+      Effect.gen(function* () {
+        const dash = yield* DashboardService
+        const cid = newOrgId() // concept_id is a uuid column
+        const rec = yield* dash.create({
+          name: "Card",
+          scope: "org",
+          body: empty,
+          kind: "record",
+          conceptId: cid,
+        })
+        expect(rec.kind).toBe("record")
+        expect(rec.conceptId).toBe(cid)
+        // The switcher list() is page-only.
+        const page = yield* dash.list()
+        expect(page.some((d) => d.id === rec.id)).toBe(false)
+        expect(page.every((d) => d.kind === "page")).toBe(true)
+        // listRecordDashboards is concept-scoped; listAll spans both kinds.
+        expect((yield* dash.listRecordDashboards(cid)).map((d) => d.id)).toEqual([rec.id])
+        const all = yield* dash.listAll()
+        expect(all.some((d) => d.id === rec.id)).toBe(true)
+        expect(all.some((d) => d.kind === "page")).toBe(true)
+      }).pipe(Effect.provide(testLayer(newOrgId()))),
+  )
+
+  it.effect("record dashboards order by position; reorder changes which opens by default", () =>
+    Effect.gen(function* () {
+      const dash = yield* DashboardService
+      const cx = newOrgId() // concept_id is a uuid column
+      const a = yield* dash.create({
+        name: "A",
+        scope: "org",
+        body: empty,
+        kind: "record",
+        conceptId: cx,
+      })
+      const b = yield* dash.create({
+        name: "B",
+        scope: "org",
+        body: empty,
+        kind: "record",
+        conceptId: cx,
+      })
+      // Created in order → A first (the one a bare reference opens).
+      expect((yield* dash.listRecordDashboards(cx)).map((d) => d.id)).toEqual([a.id, b.id])
+      // Reorder so B leads — reuses the shared reorder (positions are per-concept).
+      yield* dash.reorder([
+        { id: b.id, position: 0 },
+        { id: a.id, position: 1 },
+      ])
+      expect((yield* dash.listRecordDashboards(cx)).map((d) => d.id)).toEqual([b.id, a.id])
+    }).pipe(Effect.provide(testLayer(newOrgId()))),
+  )
+
+  it.effect("purging a concept cascades to its record dashboards", () =>
+    Effect.gen(function* () {
+      const concepts = yield* ConceptService
+      const dash = yield* DashboardService
+      const c = yield* concepts.create({ name: "Vendor" })
+      const rec = yield* dash.create({
+        name: "Vendor view",
+        scope: "org",
+        body: empty,
+        kind: "record",
+        conceptId: c.id,
+      })
+      expect((yield* dash.listRecordDashboards(c.id)).map((d) => d.id)).toEqual([rec.id])
+      yield* concepts.purge(c.id)
+      // The concept's record dashboards are gone (no invisible orphans).
+      expect(yield* dash.listRecordDashboards(c.id)).toEqual([])
+      expect((yield* dash.listAll()).some((d) => d.id === rec.id)).toBe(false)
     }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
 

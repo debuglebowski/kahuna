@@ -3,6 +3,7 @@ import { Box, Globe, LayoutDashboard } from "lucide-react"
 import type { ReactNode } from "react"
 import { Link } from "react-router-dom"
 import { api, type DashboardWidget } from "@/lib/api"
+import { recordHref } from "@/lib/recordHref"
 import { cn } from "@/lib/utils"
 
 type Shortcuts = Extract<DashboardWidget, { type: "shortcuts" }>
@@ -71,7 +72,7 @@ export function ShortcutsWidget({ widget }: { widget: Shortcuts }) {
         </a>
       )
     }
-    const to = item.kind === "dashboard" ? `/dashboards/${item.ref}` : `/instances/${item.ref}`
+    const to = item.kind === "dashboard" ? `/dashboards/${item.ref}` : recordHref(item.ref)
     return (
       <Link key={item.id} to={to} className={className}>
         {content}

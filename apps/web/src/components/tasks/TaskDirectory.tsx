@@ -58,6 +58,7 @@ import {
 import { parseDateValue } from "@/lib/dates"
 import { ConceptIcon } from "@/lib/icons"
 import { useMembers } from "@/lib/members"
+import { recordHref } from "@/lib/recordHref"
 import {
   daysOverdue,
   groupTasksBy,
@@ -589,7 +590,7 @@ function TaskRow({
         />
       ) : subjectRef?.instanceId ? (
         <Link
-          to={`/instances/${subjectRef.instanceId}`}
+          to={recordHref(subjectRef.instanceId)}
           className={`min-w-0 ${titleClass} hover:underline`}
         >
           {task.title}
@@ -632,7 +633,7 @@ function TaskRow({
         {subjectRef &&
           (subjectRef.instanceId ? (
             <Link
-              to={`/instances/${subjectRef.instanceId}`}
+              to={recordHref(subjectRef.instanceId)}
               className="flex max-w-44 items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
             >
               <ConceptIcon value={concept?.icon || "lucide:CircleDot"} size={13} />

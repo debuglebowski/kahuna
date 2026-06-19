@@ -316,6 +316,14 @@ export const sidebarViews = pgTable(
  * coords/config) and is **opaque to the engine** — never read or filtered
  * server-side; the web client resolves it against the live concept/instance/event
  * collections. This keeps dashboards off the event store.
+ *
+ * `kind` discriminates two flavours. A `'page'` dashboard (the default, and all
+ * legacy rows) is a free-standing canvas with `concept_id` null — it appears in
+ * the switcher and may be the org's home. A `'record'` dashboard is a TEMPLATE
+ * owned by one concept (`concept_id` set): it renders a single instance at a time
+ * (every widget is implicitly about that record) and never shows in the switcher.
+ * A concept may own several record dashboards; exactly one is `is_default` (the
+ * one used when a reference doesn't name a specific view).
  */
 export const dashboards = pgTable(
   "dashboards",
@@ -332,11 +340,22 @@ export const dashboards = pgTable(
     // Soft visibility toggle — hidden dashboards stay editable but drop out of the
     // switcher. Shared on org dashboards (anyone may flip it).
     hidden: boolean("hidden").notNull().default(false),
+    // 'page' = free-standing canvas (legacy/default); 'record' = per-concept
+    // single-instance template. Drives switcher filtering + the home-seed guard.
+    kind: text("kind").notNull().default("page"),
+    // The owning concept for a 'record' dashboard (logical FK into concepts.id, no
+    // DB FK — matches `concepts.title_field_id`). null for 'page' dashboards.
+    conceptId: uuid("concept_id"),
     body: jsonb("body").notNull().default(sql`'{"widgets":[]}'::jsonb`),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("dashboards_org_owner_idx").on(t.orgId, t.ownerId)],
+  (t) => [
+    index("dashboards_org_owner_idx").on(t.orgId, t.ownerId),
+    // A concept's record dashboards, in `position` order — the FIRST is the one a
+    // bare reference opens (no default flag; reorder to change precedence).
+    index("dashboards_concept_idx").on(t.orgId, t.conceptId).where(sql`${t.kind} = 'record'`),
+  ],
 )
 
 /**

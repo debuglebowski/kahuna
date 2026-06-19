@@ -1,15 +1,15 @@
 import { useLiveQuery } from "@tanstack/react-db"
 import { useMutation, useQuery } from "@tanstack/react-query"
 import { Archive, EllipsisVertical, Pencil, Trash2 } from "lucide-react"
-import { useState } from "react"
-import { useNavigate, useParams } from "react-router-dom"
+import { useMemo, useState } from "react"
+import { useNavigate, useParams, useSearchParams } from "react-router-dom"
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { InstanceViewCanvas } from "../components/instance/InstanceViewCanvas"
+import { WidgetCanvas } from "../components/dashboard/WidgetCanvas"
 import { ManagedInstanceView } from "../components/instance/ManagedInstanceView"
 import type { InstanceCtx } from "../components/instance/types"
 import { usePageChrome } from "../components/Layout"
@@ -17,7 +17,9 @@ import { Badge, Button, ConfirmDialog, Spinner } from "../components/ui"
 import { api, type Field } from "../lib/api"
 import { useSession } from "../lib/auth-client"
 import { instanceDetail, KEY, useRegisterCollection } from "../lib/collections"
-import { conceptInstanceView } from "../lib/instanceViews"
+import { conceptIndex, useConceptData } from "../lib/conceptData"
+import { migrate, referencedConceptIds } from "../lib/dashboards"
+import { defaultRecordBody, resolveRecordDashboard } from "../lib/recordDashboards"
 import { isRichTextEmpty, richTextPreview } from "../lib/richtext"
 import { isAdminRole, useFullOrg } from "./settings/SettingsLayout"
 
@@ -57,6 +59,26 @@ export function InstanceView() {
   // All concepts — to resolve relation targets' versioningEnabled in the picker.
   const allConcepts = useQuery({ queryKey: ["concepts"], queryFn: () => api.listConcepts() })
 
+  // Resolve which record dashboard renders this record: an explicit `?view=`, the
+  // concept's default, else the built-in fallback layout. Record dashboards are
+  // per-concept templates; the current record is supplied to the widgets as context.
+  const [searchParams] = useSearchParams()
+  const viewRef = searchParams.get("view")
+  const conceptId = detail?.concept.id
+  const recordDashQ = useQuery({
+    queryKey: ["recordDashboards", conceptId],
+    queryFn: () => api.listRecordDashboards(conceptId as string),
+    enabled: !!conceptId,
+  })
+  const body = useMemo(() => {
+    if (!detail) return migrate({ widgets: [] })
+    const chosen = resolveRecordDashboard(recordDashQ.data ?? [], viewRef)
+    return migrate(chosen ? chosen.body : defaultRecordBody(detail.concept.versioningEnabled))
+  }, [detail, recordDashQ.data, viewRef])
+  const referencedIds = useMemo(() => referencedConceptIds(body), [body])
+  const { instData, loaders } = useConceptData(referencedIds)
+  const cIndex = useMemo(() => conceptIndex(allConcepts.data ?? []), [allConcepts.data])
+
   // The item leaves the live view on success — land on the dashboards home
   // (concepts have no page of their own).
   const backToConcept = () => {
@@ -94,9 +116,6 @@ export function InstanceView() {
   const relationFields = fields.filter((f) => f.kind === "relation")
   const editable = concept.versioningEnabled ? instance.versionStatus === "draft" : true
 
-  // Layout is owned by the concept (set in concept settings → Layout); every
-  // instance renders it, falling back to the built-in default preset.
-  const view = conceptInstanceView(concept)
   const ctx: InstanceCtx = {
     instance,
     concept,
@@ -159,10 +178,20 @@ export function InstanceView() {
         </div>
       </div>
 
+      {loaders}
       {concept.managedBy ? (
         <ManagedInstanceView ctx={ctx} />
       ) : (
-        <InstanceViewCanvas view={view} ctx={ctx} />
+        <div className="min-h-0 flex-1 overflow-auto">
+          <WidgetCanvas
+            body={body}
+            instData={instData}
+            cIndex={cIndex}
+            conceptsLoaded={!!allConcepts.data}
+            record={ctx}
+            readOnly
+          />
+        </div>
       )}
 
       {dialog === "archive" && (
