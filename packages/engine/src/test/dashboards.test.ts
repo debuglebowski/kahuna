@@ -271,6 +271,26 @@ describe("dashboards (DashboardService)", () => {
       }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
 
+  it.effect("record views honour scope — a personal one is visible only to its owner", () =>
+    Effect.gen(function* () {
+      const org = newOrgId()
+      const cid = newOrgId()
+      const personal = yield* Effect.flatMap(DashboardService, (d) =>
+        d.create({ name: "Mine", scope: "personal", body: empty, kind: "record", conceptId: cid }),
+      ).pipe(Effect.provide(testLayer(org, "alice")))
+      expect(personal.ownerId).toBe("alice")
+      // Alice sees her personal record view; Bob (same org) does not.
+      const aliceViews = yield* Effect.flatMap(DashboardService, (d) =>
+        d.listRecordDashboards(cid),
+      ).pipe(Effect.provide(testLayer(org, "alice")))
+      expect(aliceViews.map((v) => v.id)).toEqual([personal.id])
+      const bobViews = yield* Effect.flatMap(DashboardService, (d) =>
+        d.listRecordDashboards(cid),
+      ).pipe(Effect.provide(testLayer(org, "bob")))
+      expect(bobViews.some((v) => v.id === personal.id)).toBe(false)
+    }),
+  )
+
   it.effect("record dashboards order by position; reorder changes which opens by default", () =>
     Effect.gen(function* () {
       const dash = yield* DashboardService

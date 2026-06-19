@@ -448,14 +448,10 @@ function DashboardRow({
         <span className="flex-1 truncate text-sm font-medium text-foreground">
           {dash.name || <span className="text-muted-foreground">(untitled dashboard)</span>}
         </span>
-        {isRecord ? (
-          <Badge tone="green">{conceptName ?? "Record"}</Badge>
-        ) : (
-          <>
-            <Badge tone={dash.ownerId ? "gray" : "blue"}>{dash.ownerId ? "Personal" : "Org"}</Badge>
-            {dash.hidden && <Badge tone="amber">Hidden</Badge>}
-          </>
-        )}
+        {/* Concept + hidden first; the scope (Personal/Org) pill is always rightmost. */}
+        {isRecord && conceptName && <Badge tone="green">{conceptName}</Badge>}
+        {dash.hidden && <Badge tone="amber">Hidden</Badge>}
+        <Badge tone={dash.ownerId ? "gray" : "blue"}>{dash.ownerId ? "Personal" : "Org"}</Badge>
       </button>
     </div>
   )

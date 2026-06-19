@@ -688,8 +688,7 @@ export function DashboardEditor({
         id: dash.id,
         name: d.name.trim(),
         icon: d.icon,
-        // Record dashboards are always org-shared; the server ignores scope for them.
-        scope: recordMode ? undefined : d.scope,
+        scope: d.scope,
         hidden: d.hidden,
         body: serialize(d.body),
         expectedUpdatedAt: savedAt ?? undefined,
@@ -884,24 +883,24 @@ export function DashboardEditor({
                 </Field>
               </div>
 
-              {/* Scope + visibility apply only to page dashboards; a record view is
-                a shared per-concept template that never enters the switcher. */}
-              {!recordMode && (
-                <div className="grid grid-cols-2 gap-3">
-                  <Field label="Scope">
-                    <Select
-                      value={draft.scope}
-                      onValueChange={(v) => patch({ scope: v as "personal" | "org" })}
-                    >
-                      <SelectTrigger className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="personal">Personal (only me)</SelectItem>
-                        <SelectItem value="org">Org (everyone)</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </Field>
+              {/* Scope applies to both kinds (personal vs org). Visibility is the
+                switcher toggle — page dashboards only; record views aren't in it. */}
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Scope">
+                  <Select
+                    value={draft.scope}
+                    onValueChange={(v) => patch({ scope: v as "personal" | "org" })}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="personal">Personal (only me)</SelectItem>
+                      <SelectItem value="org">Org (everyone)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </Field>
+                {!recordMode && (
                   <Field label="Visibility">
                     <Select
                       value={draft.hidden ? "hidden" : "shown"}
@@ -916,8 +915,8 @@ export function DashboardEditor({
                       </SelectContent>
                     </Select>
                   </Field>
-                </div>
-              )}
+                )}
+              </div>
 
               <div className="border-t border-border pt-3">
                 <Button

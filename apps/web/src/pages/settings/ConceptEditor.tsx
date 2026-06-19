@@ -208,6 +208,7 @@ function RecordViewRow({
         <span className="flex-1 truncate text-sm font-medium text-foreground">
           {view.name || <span className="text-muted-foreground">(untitled view)</span>}
         </span>
+        {view.ownerId && <Badge tone="gray">Personal</Badge>}
         {isFirst && <Badge tone="blue">Opens by default</Badge>}
       </button>
       <IconButton aria-label={`Delete ${view.name || "view"}`} onClick={onDelete}>
