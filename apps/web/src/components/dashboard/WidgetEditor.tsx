@@ -5,7 +5,9 @@ import { useMemo, useState } from "react"
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
@@ -15,7 +17,7 @@ import { taskStatusesCollection } from "@/lib/collections"
 import type { Dim, DimUnit, NormWidget } from "@/lib/dashboards"
 import { capitalize } from "@/lib/fieldDisplay"
 import { resolveVariantId } from "@/lib/variantCatalog"
-import { WIDGET_CATALOG } from "@/lib/widgetCatalog"
+import { WIDGET_CATALOG, WIDGET_CATEGORIES } from "@/lib/widgetCatalog"
 import { ConceptSelectItems } from "../ConceptSelectItems"
 import { ConditionList, useFields } from "../ConditionList"
 import { RichTextEditor } from "../editor/RichTextEditor"
@@ -327,12 +329,25 @@ export function WidgetEditor({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {WIDGET_CATALOG.map((m) => (
-                <SelectItem key={m.type} value={m.type}>
-                  <m.icon size={14} />
-                  {m.label}
-                </SelectItem>
-              ))}
+              {WIDGET_CATEGORIES.map((cat) => {
+                const inCat = WIDGET_CATALOG.filter(
+                  (m) =>
+                    m.category === cat &&
+                    (!m.kinds || m.kinds.includes(recordMode ? "record" : "page")),
+                )
+                if (inCat.length === 0) return null
+                return (
+                  <SelectGroup key={cat} className="mt-2 first:mt-0">
+                    <SelectLabel>{cat}</SelectLabel>
+                    {inCat.map((m) => (
+                      <SelectItem key={m.type} value={m.type}>
+                        <m.icon size={14} />
+                        {m.label}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                )
+              })}
             </SelectContent>
           </Select>
         </FieldRow>

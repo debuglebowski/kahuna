@@ -475,6 +475,7 @@ export const updateDashboard = (input: {
   readonly hidden?: boolean
   readonly scope?: "personal" | "org"
   readonly body?: DashboardBody
+  readonly conceptId?: string | null
   readonly expectedUpdatedAt?: Date
 }): UC<unknown> => Effect.flatMap(DashboardService, (s) => s.update(input))
 

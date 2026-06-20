@@ -187,8 +187,10 @@ export function Dashboards() {
     const dash = allDash.find((d) => d.id === id)
     if (!dash) return <Navigate to={`/settings/concepts/${recordConceptId}?tab=layout`} replace />
     return (
+      // Key on the concept too: repointing the view (?concept=) remounts the editor
+      // with a fresh draft from the now-reset body.
       <DashboardEditor
-        key={dash.id}
+        key={`${dash.id}:${recordConceptId}`}
         dash={dash}
         canDelete
         concepts={concepts}

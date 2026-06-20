@@ -138,6 +138,11 @@ export class DashboardService extends Effect.Service<DashboardService>()(
         readonly hidden?: boolean
         readonly scope?: "personal" | "org"
         readonly body?: DashboardBody
+        /** Repoint a RECORD dashboard at a different concept. The caller resets
+         *  `body` alongside (its widgets reference the old concept's fields); the
+         *  row is appended last in the new concept's view order. No-op for page
+         *  dashboards and when the concept is unchanged. */
+        readonly conceptId?: string | null
         /** Optimistic-concurrency etag: if set and the row's `updated_at` has since
          *  moved, the write is rejected so a concurrent editor isn't clobbered. */
         readonly expectedUpdatedAt?: Date
@@ -164,6 +169,29 @@ export class DashboardService extends Effect.Service<DashboardService>()(
             const ownerId =
               input.scope === undefined ? cur.owner_id : input.scope === "personal" ? actor : null
             const body = input.body === undefined ? cur.body : input.body
+            // Repointing only applies to record templates and only when the concept
+            // actually moves; positions are per-concept, so the row joins the tail
+            // of its new concept's view order.
+            const moving =
+              cur.kind === "record" &&
+              input.conceptId !== undefined &&
+              input.conceptId !== null &&
+              input.conceptId !== cur.concept_id
+            if (moving) {
+              const newConceptId = input.conceptId!
+              const max = yield* sql<{ readonly max: number | string | null }>`
+                SELECT MAX(position) AS max FROM dashboards
+                WHERE org_id = ${orgId} AND kind = 'record' AND concept_id = ${newConceptId}`
+              const position = Number(max[0]?.max ?? -1) + 1
+              const rows = yield* sql<DashboardRow>`
+                UPDATE dashboards
+                SET name = ${name}, icon = ${icon}, hidden = ${hidden}, owner_id = ${ownerId},
+                    concept_id = ${newConceptId}, position = ${position},
+                    body = ${JSON.stringify(body)}::jsonb, updated_at = now()
+                WHERE org_id = ${orgId} AND id = ${input.id}
+                RETURNING *`
+              return toDashboard(rows[0]!)
+            }
             const rows = yield* sql<DashboardRow>`
               UPDATE dashboards
               SET name = ${name}, icon = ${icon}, hidden = ${hidden}, owner_id = ${ownerId},

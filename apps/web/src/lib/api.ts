@@ -452,6 +452,7 @@ export const api = {
     hidden?: boolean
     scope?: "personal" | "org"
     body?: DashboardBody
+    conceptId?: string | null
     expectedUpdatedAt?: Date
   }) => call((c) => c.updateDashboard(input)),
   deleteDashboard: (id: string) => call((c) => c.deleteDashboard({ id })),

@@ -1415,6 +1415,10 @@ export class KingsmakerRpcs extends RpcGroup.make(
       hidden: Schema.optional(Schema.Boolean),
       scope: Schema.optional(Schema.Literal("personal", "org")),
       body: Schema.optional(DashboardBody),
+      /** Repoint a RECORD dashboard at a different concept. Its widgets reference
+       *  the old concept's fields, so the caller resets `body` alongside this.
+       *  The row is appended last in the new concept's view order. */
+      conceptId: Schema.optional(Schema.NullOr(Schema.String)),
       /** Optimistic-concurrency guard: if set and it no longer matches the row's
        *  current `updatedAt`, the update is rejected (someone else edited it). */
       expectedUpdatedAt: Schema.optional(Schema.Date),

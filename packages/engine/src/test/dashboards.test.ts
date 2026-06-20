@@ -320,6 +320,45 @@ describe("dashboards (DashboardService)", () => {
     }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
 
+  it.effect("update repoints a record dashboard at a new concept; appends to its order", () =>
+    Effect.gen(function* () {
+      const dash = yield* DashboardService
+      const cA = newOrgId()
+      const cB = newOrgId()
+      // cB already has one view, so the repointed one must land after it.
+      const existing = yield* dash.create({
+        name: "B-first",
+        scope: "org",
+        body: empty,
+        kind: "record",
+        conceptId: cB,
+      })
+      const rec = yield* dash.create({
+        name: "Moving",
+        scope: "org",
+        body: empty,
+        kind: "record",
+        conceptId: cA,
+      })
+      const moved = yield* dash.update({ id: rec.id, conceptId: cB, body: { widgets: [] } })
+      expect(moved.conceptId).toBe(cB)
+      // Gone from cA, appended last in cB's order.
+      expect(yield* dash.listRecordDashboards(cA)).toEqual([])
+      expect((yield* dash.listRecordDashboards(cB)).map((d) => d.id)).toEqual([existing.id, rec.id])
+    }).pipe(Effect.provide(testLayer(newOrgId()))),
+  )
+
+  it.effect("update ignores conceptId on a page dashboard", () =>
+    Effect.gen(function* () {
+      const dash = yield* DashboardService
+      const home = (yield* dash.list())[0]!
+      const updated = yield* dash.update({ id: home.id, conceptId: newOrgId() })
+      // Page dashboards have no owning concept — the repoint is a no-op.
+      expect(updated.kind).toBe("page")
+      expect(updated.conceptId).toBeNull()
+    }).pipe(Effect.provide(testLayer(newOrgId()))),
+  )
+
   it.effect("purging a concept cascades to its record dashboards", () =>
     Effect.gen(function* () {
       const concepts = yield* ConceptService
