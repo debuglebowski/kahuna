@@ -377,9 +377,9 @@ export function ConceptEditor({
     qc.invalidateQueries({ queryKey: ["dashboards"] }) // the settings list (["dashboards","all"])
   }
   const createRecordView = useMutation({
-    mutationFn: (count: number) =>
+    mutationFn: () =>
       api.createDashboard({
-        name: count === 0 ? `${concept.name} view` : "New view",
+        name: "New view",
         scope: "org",
         kind: "record",
         conceptId: concept.id,
@@ -1051,7 +1051,7 @@ export function ConceptEditor({
                 <Button
                   size="sm"
                   className="shrink-0"
-                  onClick={() => createRecordView.mutate(recordDashboards.data?.length ?? 0)}
+                  onClick={() => createRecordView.mutate()}
                   disabled={createRecordView.isPending}
                 >
                   <Plus size={15} /> New view

@@ -821,20 +821,43 @@ export function DashboardEditor({
             the tab toolbar. Repointing resets the layout, so it's confirmed. */}
         {recordMode && (
           <div className="ml-auto flex shrink-0 items-center gap-2 text-sm font-normal">
-            <span className="text-muted-foreground">Concept</span>
+            <span className="text-muted-foreground">Renders for</span>
             <Select
               value={recordConceptId ?? ""}
               onValueChange={(v) => {
                 if (v && v !== recordConceptId) setPendingConcept(v)
               }}
             >
-              <SelectTrigger className="h-8 w-48" title="Concept this view renders">
+              <SelectTrigger className="h-8 max-w-56" title="Concept this view renders">
                 <SelectValue placeholder="Concept" />
               </SelectTrigger>
               <SelectContent>
                 <ConceptSelectItems concepts={concepts} label={(c) => c.name} />
               </SelectContent>
             </Select>
+            {sampleInstances.length > 0 && (
+              <>
+                <span className="text-muted-foreground">Preview</span>
+                <Select value={effectivePreviewId} onValueChange={(v) => setPreviewId(v)}>
+                  <SelectTrigger className="h-8 max-w-56" title="Preview record">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {sampleInstances.slice(0, 50).map((inst) => (
+                      <SelectItem key={inst.id} value={inst.id}>
+                        {instanceLabel(
+                          inst,
+                          sampleFields,
+                          recordConceptId
+                            ? (cIndex.get(recordConceptId)?.titleFieldId ?? null)
+                            : null,
+                        )}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </>
+            )}
           </div>
         )}
       </div>
@@ -846,30 +869,6 @@ export function DashboardEditor({
               <>
                 {tab === "layout" && (
                   <>
-                    {recordMode && sampleInstances.length > 0 && (
-                      <>
-                        <Select value={effectivePreviewId} onValueChange={(v) => setPreviewId(v)}>
-                          <SelectTrigger className="h-8 w-44" title="Preview record">
-                            <Eye size={13} className="shrink-0 text-muted-foreground" />
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {sampleInstances.slice(0, 50).map((inst) => (
-                              <SelectItem key={inst.id} value={inst.id}>
-                                {instanceLabel(
-                                  inst,
-                                  sampleFields,
-                                  recordConceptId
-                                    ? (cIndex.get(recordConceptId)?.titleFieldId ?? null)
-                                    : null,
-                                )}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <div className="mx-1.5 h-5 w-px shrink-0 bg-border" aria-hidden="true" />
-                      </>
-                    )}
                     {/* Preview toggle (icon-only) sits left of Add; previewing disables
                         Add since the canvas is read-only while it's on. */}
                     <Button
@@ -911,11 +910,6 @@ export function DashboardEditor({
                     <div className="mx-1.5 h-5 w-px shrink-0 bg-border" aria-hidden="true" />
                   </>
                 )}
-                {!dirty && save.isSuccess && (
-                  <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
-                    <Check size={13} className="text-success" /> Saved
-                  </span>
-                )}
                 <Button size="sm" variant="outline" onClick={restore} disabled={!dirty}>
                   Restore
                 </Button>
@@ -925,6 +919,12 @@ export function DashboardEditor({
                   disabled={!dirty || save.isPending}
                 >
                   {save.isPending ? "Saving…" : "Save"}
+                  {/* Check sits in a reserved slot (opacity-toggled) so confirming a
+                      save never changes the button's width. */}
+                  <Check
+                    size={14}
+                    className={!dirty && save.isSuccess ? "opacity-100" : "opacity-0"}
+                  />
                 </Button>
               </>
             }
