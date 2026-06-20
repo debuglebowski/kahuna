@@ -421,12 +421,9 @@ function MissingRecordViews({
         />
       </button>
       {open && (
-        <ul className="max-h-64 space-y-0.5 overflow-y-auto border-t border-warning/20 p-2">
+        <ul className="max-h-64 divide-y divide-warning/15 overflow-y-auto border-t border-warning/20">
           {concepts.map((c) => (
-            <li
-              key={c.id}
-              className="flex items-center gap-2.5 rounded-md px-4 py-1.5 transition-colors hover:bg-muted/40"
-            >
+            <li key={c.id} className="flex items-center gap-2.5 px-4 py-2">
               <ConceptIcon
                 value={c.icon || "lucide:Box"}
                 size={16}
