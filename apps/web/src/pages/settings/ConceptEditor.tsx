@@ -29,7 +29,7 @@ import {
   Trash2,
 } from "lucide-react"
 import { useState } from "react"
-import { Link, useNavigate } from "react-router-dom"
+import { Link, useNavigate, useSearchParams } from "react-router-dom"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Tabs, TabsContent } from "@/components/ui/tabs"
@@ -288,7 +288,10 @@ export function ConceptEditor({
   // Record-view deletion confirm (the Layout tab manages per-concept record views).
   const [confirmDeleteView, setConfirmDeleteView] = useState<string | null>(null)
   const { blocker, bypass } = useUnsavedGuard(dirty)
-  const [tab, setTab] = useState("general")
+  // A `?tab=` deep-link (e.g. "Configure record view" from a record page) opens
+  // that tab; defaults to General.
+  const [searchParams] = useSearchParams()
+  const [tab, setTab] = useState(() => searchParams.get("tab") ?? "general")
   const [colorOpen, setColorOpen] = useState(false)
   const [showArchivedFields, setShowArchivedFields] = useState(false)
   // Field add/edit happens in a nested modal; null = closed.

@@ -19,6 +19,10 @@ interface SettingsItem {
   readonly label: string
   readonly admin: boolean
   readonly icon: ReactNode
+  /** Render this section as a full-height flex column (heading fixed, Outlet
+   *  fills) so the page can pin a footer or own its scroll. The page must also
+   *  request `usePageChrome({ fillHeight: true })`. Default: normal flow. */
+  readonly fillHeight?: boolean
 }
 
 interface SettingsGroup {
@@ -43,6 +47,7 @@ export const SETTINGS_NAV: ReadonlyArray<SettingsGroup> = [
         label: "Dashboards",
         admin: false,
         icon: <LayoutDashboard size={16} />,
+        fillHeight: true,
       },
       { to: "sidebar", label: "Sidebar", admin: false, icon: <PanelLeft size={16} /> },
       { to: "tasks", label: "Tasks", admin: false, icon: <ListTodo size={16} /> },
@@ -95,6 +100,19 @@ export function SettingsLayout() {
   // own their chrome + breadcrumb — render the Outlet bare so it can fill the
   // height (the section <h2> wrapper would duplicate the heading and break it).
   if (parts.length > 3 && parts[3]) return <Outlet context={{ admin }} />
+
+  // Full-height sections (e.g. Dashboards, which pins a footer) get a flex column
+  // with a fixed heading and a height-filling Outlet instead of normal flow.
+  if (item?.fillHeight) {
+    return (
+      <div className="flex h-full flex-col gap-5">
+        <h2 className="shrink-0 text-2xl font-bold tracking-tight text-foreground">{item.label}</h2>
+        <div className="min-h-0 flex-1">
+          <Outlet context={{ admin }} />
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-5">

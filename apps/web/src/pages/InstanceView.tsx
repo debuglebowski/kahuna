@@ -1,6 +1,6 @@
 import { useLiveQuery } from "@tanstack/react-db"
 import { useMutation, useQuery } from "@tanstack/react-query"
-import { Archive, EllipsisVertical, Pencil, Trash2 } from "lucide-react"
+import { Archive, EllipsisVertical, LayoutDashboard, Pencil, Trash2 } from "lucide-react"
 import { useMemo, useState } from "react"
 import { useNavigate, useParams, useSearchParams } from "react-router-dom"
 import {
@@ -19,7 +19,7 @@ import { useSession } from "../lib/auth-client"
 import { instanceDetail, KEY, useRegisterCollection } from "../lib/collections"
 import { conceptIndex, useConceptData } from "../lib/conceptData"
 import { migrate, referencedConceptIds } from "../lib/dashboards"
-import { defaultRecordBody, resolveRecordDashboard } from "../lib/recordDashboards"
+import { resolveRecordDashboard } from "../lib/recordDashboards"
 import { isRichTextEmpty, richTextPreview } from "../lib/richtext"
 import { isAdminRole, useFullOrg } from "./settings/SettingsLayout"
 
@@ -59,9 +59,10 @@ export function InstanceView() {
   // All concepts — to resolve relation targets' versioningEnabled in the picker.
   const allConcepts = useQuery({ queryKey: ["concepts"], queryFn: () => api.listConcepts() })
 
-  // Resolve which record dashboard renders this record: an explicit `?view=`, the
-  // concept's default, else the built-in fallback layout. Record dashboards are
-  // per-concept templates; the current record is supplied to the widgets as context.
+  // Resolve which record dashboard renders this record: an explicit `?view=`, else
+  // the concept's default. There is NO built-in fallback — a concept with no record
+  // view renders the empty state below. Record dashboards are per-concept templates;
+  // the current record is supplied to the widgets as context.
   const [searchParams] = useSearchParams()
   const viewRef = searchParams.get("view")
   const conceptId = detail?.concept.id
@@ -70,11 +71,11 @@ export function InstanceView() {
     queryFn: () => api.listRecordDashboards(conceptId as string),
     enabled: !!conceptId,
   })
-  const body = useMemo(() => {
-    if (!detail) return migrate({ widgets: [] })
-    const chosen = resolveRecordDashboard(recordDashQ.data ?? [], viewRef)
-    return migrate(chosen ? chosen.body : defaultRecordBody(detail.concept.versioningEnabled))
-  }, [detail, recordDashQ.data, viewRef])
+  const chosen = useMemo(
+    () => resolveRecordDashboard(recordDashQ.data ?? [], viewRef),
+    [recordDashQ.data, viewRef],
+  )
+  const body = useMemo(() => migrate(chosen ? chosen.body : { widgets: [] }), [chosen])
   const referencedIds = useMemo(() => referencedConceptIds(body), [body])
   const { instData, loaders } = useConceptData(referencedIds)
   const cIndex = useMemo(() => conceptIndex(allConcepts.data ?? []), [allConcepts.data])
@@ -181,7 +182,9 @@ export function InstanceView() {
       {loaders}
       {concept.managedBy ? (
         <ManagedInstanceView ctx={ctx} />
-      ) : (
+      ) : !recordDashQ.data ? (
+        <Spinner />
+      ) : chosen ? (
         <div className="min-h-0 flex-1 overflow-auto">
           <WidgetCanvas
             body={body}
@@ -192,6 +195,8 @@ export function InstanceView() {
             readOnly
           />
         </div>
+      ) : (
+        <NoRecordView concept={concept} />
       )}
 
       {dialog === "archive" && (
@@ -248,6 +253,30 @@ export function InstanceView() {
           onCancel={() => setDialog(null)}
         />
       )}
+    </div>
+  )
+}
+
+/** Shown when a concept has no record view configured — there is no built-in
+ *  fallback layout, so the record can't render until someone sets one up on the
+ *  concept's Layout tab. */
+function NoRecordView({ concept }: { concept: { id: string; name: string } }) {
+  const navigate = useNavigate()
+  return (
+    <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
+      <div className="rounded-full bg-muted p-3 text-muted-foreground">
+        <LayoutDashboard size={22} />
+      </div>
+      <div className="space-y-1">
+        <h3 className="text-sm font-medium text-foreground">No record view configured</h3>
+        <p className="max-w-sm text-sm text-muted-foreground">
+          {concept.name} has no record view yet, so there's nothing to display this record with.
+          Configure one to choose which widgets appear.
+        </p>
+      </div>
+      <Button onClick={() => navigate(`/settings/concepts/${concept.id}?tab=layout`)}>
+        Configure record view
+      </Button>
     </div>
   )
 }

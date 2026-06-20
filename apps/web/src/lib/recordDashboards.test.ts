@@ -3,12 +3,7 @@ import { describe, expect, it } from "vitest"
 import { DashboardBody as DashboardBodySchema } from "../../rpc/contract"
 import type { Dashboard } from "./api"
 import { migrate } from "./dashboards"
-import {
-  defaultRecordBody,
-  resolveRecordDashboard,
-  tilesToBody,
-  type ViewTileLike,
-} from "./recordDashboards"
+import { resolveRecordDashboard, tilesToBody, type ViewTileLike } from "./recordDashboards"
 import { recordHref } from "./recordHref"
 
 const OPTS = { versioned: true, hasDocuments: true, richtextFieldId: "f-doc", conceptId: "c1" }
@@ -119,14 +114,5 @@ describe("tilesToBody", () => {
     // The runtime tree (post-migrate) re-serialises and decodes through the codec.
     const decoded = Schema.decodeUnknownSync(DashboardBodySchema)(migrate(body as object) as object)
     expect(decoded.children?.length).toBeGreaterThan(0)
-  })
-})
-
-describe("defaultRecordBody", () => {
-  it("includes versions only when versioned, and decodes through the codec", () => {
-    expect(widgetTypes(defaultRecordBody(true))).toContain("record-versions")
-    expect(widgetTypes(defaultRecordBody(false))).not.toContain("record-versions")
-    const decoded = Schema.decodeUnknownSync(DashboardBodySchema)(defaultRecordBody(true) as object)
-    expect(decoded.children).toHaveLength(2)
   })
 })

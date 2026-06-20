@@ -15,10 +15,11 @@ import {
 import { CSS } from "@dnd-kit/utilities"
 import { useLiveQuery } from "@tanstack/react-db"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { ChevronDown, GripVertical, Plus } from "lucide-react"
+import { ChevronDown, GripVertical, Plus, TriangleAlert } from "lucide-react"
 import { type ReactNode, useMemo, useState } from "react"
 import { Navigate, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { DashboardEditor } from "@/components/dashboard/DashboardEditor"
+import { usePageChrome } from "@/components/Layout"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -145,6 +146,13 @@ export function Dashboards() {
         .sort((a, b) => a.name.localeCompare(b.name)),
     [concepts],
   )
+  // Concepts whose records render nothing — there's no built-in fallback layout, so
+  // a record-able concept with no record view needs one set up. Surfaced as a
+  // call-to-action list so they're easy to find and fix.
+  const missingRecordConcepts = useMemo(() => {
+    const have = new Set(recordDashboards.map((d) => d.conceptId).filter(Boolean) as string[])
+    return recordableConcepts.filter((c) => !have.has(c.id))
+  }, [recordableConcepts, recordDashboards])
   const createRecordMut = useMutation({
     mutationFn: (conceptId: string) =>
       api.createDashboard({
@@ -316,7 +324,11 @@ export function Dashboards() {
   }
 
   return (
-    <div className="space-y-4">
+    // Fill the page so the missing-views warning can sit as a pinned footer below
+    // the scrollable list. FillHeight is mounted only here (not on the editor
+    // routes), so it never clobbers the editor's own page chrome.
+    <div className="flex h-full flex-col gap-4">
+      <FillHeight />
       <Toolbar filter={filter} onFilter={setFilter} placeholder="Filter dashboards…">
         <Select value={groupBy} onValueChange={(v) => setGroup(v as DashboardGrouping)}>
           <SelectTrigger className="h-8 w-[150px]" aria-label="Group dashboards by">
@@ -351,8 +363,91 @@ export function Dashboards() {
           </DropdownMenuContent>
         </DropdownMenu>
       </Toolbar>
-      {body}
+      <div className="min-h-0 flex-1 overflow-y-auto">{body}</div>
+      {missingRecordConcepts.length > 0 && (
+        <MissingRecordViews
+          concepts={missingRecordConcepts}
+          pending={createRecordMut.isPending}
+          onCreate={(conceptId) => createRecordMut.mutate(conceptId)}
+        />
+      )}
     </div>
+  )
+}
+
+/** Opts the dashboards list into a full-height shell so {@link MissingRecordViews}
+ *  can pin to the bottom as a footer. A standalone component (renders nothing) so
+ *  it mounts only on the list route — the editor routes set their own chrome. */
+function FillHeight() {
+  usePageChrome({ fillHeight: true })
+  return null
+}
+
+/** A warning banner pinned at the bottom of the list: concepts whose records have
+ *  no view (so they render the empty state). Collapsed by default — click to expand
+ *  the list and create a view for any of them, which opens its editor. */
+function MissingRecordViews({
+  concepts,
+  onCreate,
+  pending,
+}: {
+  concepts: Concept[]
+  onCreate: (conceptId: string) => void
+  pending: boolean
+}) {
+  const [open, setOpen] = useState(false)
+  const n = concepts.length
+  return (
+    <Card className="shrink-0 overflow-hidden border-warning/40 bg-warning/5">
+      {/* Header stays at the top of the card; the list expands below it. */}
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-warning/10"
+      >
+        <TriangleAlert size={17} className="shrink-0 text-warning" />
+        <div className="flex min-w-0 flex-1 items-baseline gap-2">
+          <span className="shrink-0 text-sm font-medium text-foreground">
+            {n} {n === 1 ? "concept has" : "concepts have"} no record view
+          </span>
+          <span className="truncate text-xs text-muted-foreground">
+            Their records show an empty state until one is added.
+          </span>
+        </div>
+        <ChevronDown
+          size={16}
+          className={`shrink-0 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`}
+        />
+      </button>
+      {open && (
+        <ul className="max-h-64 space-y-0.5 overflow-y-auto border-t border-warning/20 p-2">
+          {concepts.map((c) => (
+            <li
+              key={c.id}
+              className="flex items-center gap-2.5 rounded-md px-4 py-1.5 transition-colors hover:bg-muted/40"
+            >
+              <ConceptIcon
+                value={c.icon || "lucide:Box"}
+                size={16}
+                className="shrink-0 text-muted-foreground"
+              />
+              <span className="flex-1 truncate text-sm text-foreground">{c.name}</span>
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={pending}
+                onClick={() => onCreate(c.id)}
+                aria-label={`Create dashboard for ${c.name}`}
+                className="h-7 gap-1.5 px-2 text-xs font-normal text-muted-foreground hover:text-foreground"
+              >
+                <Plus size={13} /> Create dashboard
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
   )
 }
 
