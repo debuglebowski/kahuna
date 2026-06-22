@@ -1,4 +1,4 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   Check,
   ChevronDown,
@@ -683,7 +683,27 @@ export function DashboardEditor({
     previewId && sampleInstances.some((i) => i.id === previewId)
       ? previewId
       : (sampleInstances[0]?.id ?? "")
-  const { ctx: previewCtx } = useInstanceCtx(recordMode ? effectivePreviewId : "")
+
+  // For a versioned concept the preview can be rendered against any version of the
+  // chosen sample record (not just its head), so the designer can check how the
+  // layout behaves for a draft vs a published version. The version picker lists the
+  // selected record's lineage; switching just repoints which version row renders.
+  const versioned = !!(recordConceptId && cIndex.get(recordConceptId)?.versioningEnabled)
+  const previewItemId = sampleInstances.find((i) => i.id === effectivePreviewId)?.itemId ?? null
+  const [previewVersionId, setPreviewVersionId] = useState<string | null>(null)
+  const versionsQ = useQuery({
+    queryKey: ["versions", previewItemId],
+    queryFn: () => api.listVersions(previewItemId as string),
+    enabled: versioned && !!previewItemId,
+  })
+  const versions = versionsQ.data ?? []
+  // Falls back to the selected head whenever the pinned version isn't in this
+  // record's lineage (e.g. right after switching the preview record).
+  const effectiveVersionId =
+    previewVersionId && versions.some((v) => v.id === previewVersionId)
+      ? previewVersionId
+      : effectivePreviewId
+  const { ctx: previewCtx } = useInstanceCtx(recordMode ? effectiveVersionId : "")
   const recordCtx = recordMode ? (previewCtx ?? undefined) : undefined
 
   const editing = editingId ? findNode(draft.body, editingId) : null
@@ -838,7 +858,15 @@ export function DashboardEditor({
             {sampleInstances.length > 0 && (
               <>
                 <span className="text-muted-foreground">Preview</span>
-                <Select value={effectivePreviewId} onValueChange={(v) => setPreviewId(v)}>
+                <Select
+                  value={effectivePreviewId}
+                  onValueChange={(v) => {
+                    setPreviewId(v)
+                    // The pinned version belonged to the previous record — drop it so
+                    // the new record previews against its own head.
+                    setPreviewVersionId(null)
+                  }}
+                >
                   <SelectTrigger className="h-8 max-w-56" title="Preview record">
                     <SelectValue />
                   </SelectTrigger>
@@ -856,6 +884,27 @@ export function DashboardEditor({
                     ))}
                   </SelectContent>
                 </Select>
+                {versioned && (
+                  <>
+                    <span className="text-muted-foreground">Version</span>
+                    <Select value={effectiveVersionId} onValueChange={setPreviewVersionId}>
+                      <SelectTrigger className="h-8 max-w-40" title="Preview version">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {/* Newest first, matching the Versions panel ordering. */}
+                        {[...versions].reverse().map((v) => (
+                          <SelectItem key={v.id} value={v.id}>
+                            {v.versionStatus === "draft"
+                              ? `Draft v${v.versionSeq}`
+                              : `v${v.versionSeq}`}
+                            {v.archivedAt ? " (archived)" : ""}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </>
+                )}
               </>
             )}
           </div>
