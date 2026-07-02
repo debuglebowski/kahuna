@@ -46,9 +46,10 @@ async function purgeOrgEngineData(orgId: string): Promise<void> {
  */
 // Origins allowed to make auth requests (CSRF protection). BetterAuth always
 // trusts the baseURL origin; these are appended. In dev the browser runs on the
-// Vite origin (any localhost port — it drifts when 5173 is taken) while the API
-// is on :3100, so dev trusts all localhost ports via a glob. Production trusts
-// only the baseURL plus whatever TRUSTED_ORIGINS lists (comma-separated).
+// Vite origin (:5100, pinned via strictPort) while the API is on :3100; dev
+// keeps the all-localhost glob so an API_PROXY second stack still works.
+// Production trusts only the baseURL plus whatever TRUSTED_ORIGINS lists
+// (comma-separated).
 const isProd = process.env.NODE_ENV === "production"
 const envOrigins = (process.env.TRUSTED_ORIGINS ?? "")
   .split(",")

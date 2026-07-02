@@ -18,7 +18,12 @@ export default defineConfig(({ mode }) => ({
     "process.env.NODE_ENV": JSON.stringify(mode),
   },
   server: {
-    port: 5173,
+    // 5173 is permanently held by SlayZone's electron-vite, so Vite's default
+    // silently drifts to 5174+. Pin to 5100 (pairs with the API on 3100);
+    // strictPort makes a taken port a hard error instead of a silent bump —
+    // a drifted origin breaks anything that assumes the dev URL.
+    port: 5100,
+    strictPort: true,
     proxy: {
       // Forward API + auth traffic to the Bun server during development.
       // API_PROXY lets a second dev stack point at its own server instance.

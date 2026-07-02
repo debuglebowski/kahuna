@@ -5,7 +5,7 @@ import { spawn } from "node:child_process"
 import { mkdirSync, rmSync } from "node:fs"
 
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-const BASE = "http://localhost:5174"
+const BASE = "http://localhost:5100"
 const OUT = "/Users/Kalle/dev/projects/kingsmaker/screenshots/intro-lab"
 const PROFILE = `/tmp/intro-lab-profile-${process.pid}`
 
@@ -18,7 +18,7 @@ try {
   const r = await fetch(BASE + "/")
   if (!r.ok) throw new Error(`status ${r.status}`)
 } catch (e) {
-  console.error("FATAL: vite not reachable on 5174:", e)
+  console.error("FATAL: vite not reachable on 5100:", e)
   process.exit(1)
 }
 
