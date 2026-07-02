@@ -70,7 +70,7 @@ const config = () => ({
   clientSecret: process.env.GOOGLE_CLIENT_SECRET ?? "",
   redirectUri:
     process.env.GOOGLE_REDIRECT_URI ??
-    `${process.env.BETTER_AUTH_URL ?? "http://localhost:3000"}/api/integrations/google/callback`,
+    `${process.env.BETTER_AUTH_URL ?? "http://localhost:3100"}/api/integrations/google/callback`,
   webhookBaseUrl: process.env.GOOGLE_WEBHOOK_BASE_URL ?? "",
   pubsubTopic: process.env.GOOGLE_PUBSUB_TOPIC ?? "",
   pubsubVerificationToken: process.env.GOOGLE_PUBSUB_VERIFICATION_TOKEN ?? "",
@@ -103,7 +103,7 @@ const scopesForRequest = (url: URL) => {
 
 const redirect = (to: string) =>
   Response.redirect(
-    new URL(to, process.env.BETTER_AUTH_URL ?? "http://localhost:3000").toString(),
+    new URL(to, process.env.BETTER_AUTH_URL ?? "http://localhost:3100").toString(),
     302,
   )
 
@@ -111,11 +111,11 @@ const redirect = (to: string) =>
  * Resolve a stored `returnTo` to a safe absolute URL for the post-OAuth bounce.
  * Same-origin as the server is always allowed; in dev we also allow any
  * localhost/127.0.0.1 port so the Vite dev server (whose port drifts) receives
- * the redirect instead of :3000 (which only serves the built `dist/`). Anything
+ * the redirect instead of :3100 (which only serves the built `dist/`). Anything
  * else falls back to the settings page on the server origin — no open redirect.
  */
 const safeReturnTo = (raw: string | null | undefined): string => {
-  const base = process.env.BETTER_AUTH_URL ?? "http://localhost:3000"
+  const base = process.env.BETTER_AUTH_URL ?? "http://localhost:3100"
   const fallback = new URL("/settings/integrations", base).toString()
   if (!raw) return fallback
   let target: URL

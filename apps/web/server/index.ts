@@ -10,7 +10,7 @@ import { AppRuntime } from "./runtime"
 import { installGracefulShutdown } from "./shutdown"
 import { startHub, streamHandler } from "./stream"
 
-const port = Number(process.env.PORT ?? 3000)
+const port = Number(process.env.PORT ?? 3100)
 const DIST = path.resolve(import.meta.dirname, "../dist")
 
 // Boot the single process-wide LISTEN that powers the live-sync SSE stream,

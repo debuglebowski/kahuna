@@ -23,7 +23,7 @@ import { Feedback } from "./parts"
 const connectUrl = () => {
   const u = new URL("/api/integrations/google/connect", window.location.origin)
   // Absolute origin so the post-OAuth bounce returns to the origin the user
-  // started from (e.g. the Vite dev server), not the API server's :3000.
+  // started from (e.g. the Vite dev server), not the API server's :3100.
   u.searchParams.set("returnTo", `${window.location.origin}/settings/integrations`)
   return u.pathname + u.search
 }

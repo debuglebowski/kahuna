@@ -63,7 +63,7 @@ const config = () => ({
   signingSecret: process.env.SLACK_SIGNING_SECRET ?? "",
   redirectUri:
     process.env.SLACK_REDIRECT_URI ??
-    `${process.env.BETTER_AUTH_URL ?? "http://localhost:3000"}/api/integrations/slack/callback`,
+    `${process.env.BETTER_AUTH_URL ?? "http://localhost:3100"}/api/integrations/slack/callback`,
   scopes: splitScopes(process.env.SLACK_SCOPES).length
     ? splitScopes(process.env.SLACK_SCOPES)
     : DEFAULT_SCOPES,
@@ -92,7 +92,7 @@ export const setSlackFetchForTest = (next: SlackFetch) => {
 
 const redirect = (to: string) =>
   Response.redirect(
-    new URL(to, process.env.BETTER_AUTH_URL ?? "http://localhost:3000").toString(),
+    new URL(to, process.env.BETTER_AUTH_URL ?? "http://localhost:3100").toString(),
     302,
   )
 
@@ -103,7 +103,7 @@ const redirect = (to: string) =>
  * the redirect. Anything else falls back to the settings page — no open redirect.
  */
 const safeReturnTo = (raw: string | null | undefined): string => {
-  const base = process.env.BETTER_AUTH_URL ?? "http://localhost:3000"
+  const base = process.env.BETTER_AUTH_URL ?? "http://localhost:3100"
   const fallback = new URL("/settings/integrations", base).toString()
   if (!raw) return fallback
   let target: URL
