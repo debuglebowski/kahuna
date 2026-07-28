@@ -123,6 +123,17 @@ const ctxFor = (conn: typeof posthogConnection.$inferSelect): RequestCtx => {
   return { host: conn.host, apiKey }
 }
 
+/** The org's PostHog connection, only when usable (connected + has a key).
+ *  Shared with the analytics query surface (`analytics.ts`). */
+export const posthogConnectionForOrg = async (orgId: string) => {
+  const row = await connectionForOrg(orgId)
+  return row?.status === "connected" ? row : null
+}
+
+/** Build an authenticated request ctx from a connection row. */
+export const posthogCtxFor = (conn: typeof posthogConnection.$inferSelect): RequestCtx =>
+  ctxFor(conn)
+
 type PosthogProject = { id: number | string; name?: string }
 
 /**

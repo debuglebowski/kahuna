@@ -440,6 +440,9 @@ const widgetBase = {
    *  a catalog edit, never a schema/API change. Absent = the type's first
    *  catalog entry (its default). */
   variant: Schema.optional(Schema.String),
+  /** Inner padding of the widget's tile, in px. Absent = the canvas default.
+   *  0 lets content (a document editor, a chart) run to the tile's edge. */
+  padding: Schema.optional(Schema.Number),
 }
 /** `conceptId` is optional on every concept-scoped widget so the same body can
  *  render in per-concept context (implicit conceptId) later. */
@@ -550,6 +553,43 @@ const ActivityWidget = Schema.Struct({
   showDiffs: Schema.optional(Schema.Boolean),
   /** Client-side event-type filter (e.g. notes only); absent = all. */
   eventTypes: Schema.optional(Schema.Array(Schema.String)),
+})
+/** On a RECORD dashboard, narrow an analytics query to THIS record: read the
+ *  record's `fieldId` value and send it as an external `property` filter. Absent
+ *  (or on a 'page' dashboard) = the whole org's series. */
+const AnalyticsRecordFilter = Schema.Struct({
+  /** Field id on the record's concept whose value identifies it externally
+   *  (e.g. an email or domain field). */
+  fieldId: Schema.String,
+  /** The provider-side property to match that value against. */
+  property: Schema.String,
+})
+/**
+ * Aggregated time-series from an external analytics provider (PostHog today).
+ * The ONLY data-bound widget whose numbers come from a server-side aggregation
+ * rather than client-side grouping over concept instances — so it carries a
+ * query config instead of a `conceptId`. The same type serves page dashboards
+ * (org-wide) and record dashboards (via `recordFilter`), since the record case
+ * is the identical query plus one filter.
+ */
+const AnalyticsWidget = Schema.Struct({
+  ...widgetBase,
+  type: Schema.Literal("analytics"),
+  /** Which provider answers the query. A union of one today; adding a provider
+   *  is a new member + a server branch, never a new widget type. */
+  provider: Schema.Literal("posthog"),
+  /** `active_users` = distinct people, `event_count` = raw event volume. */
+  metric: Schema.Literal("active_users", "event_count"),
+  /** Restrict to one event name; absent/null = all events. */
+  event: Schema.optional(Schema.NullOr(Schema.String)),
+  interval: Schema.Literal("day", "week", "month"),
+  since: Schema.Literal("7d", "30d", "90d"),
+  /** Provider property to split into one series per value ("the label Y"). */
+  breakdown: Schema.optional(Schema.NullOr(Schema.String)),
+  chart: Schema.optional(Schema.Literal("area", "bars", "table")),
+  /** Header verdict: % change vs the prior period of the same length. */
+  showDelta: Schema.optional(Schema.Boolean),
+  recordFilter: Schema.optional(Schema.NullOr(AnalyticsRecordFilter)),
 })
 // The remaining widgets render org-global surfaces — no instance data scoping.
 const TasksWidget = Schema.Struct({
@@ -769,6 +809,7 @@ export const DashboardWidget = Schema.Union(
   AttentionWidget,
   TrendWidget,
   ActivityWidget,
+  AnalyticsWidget,
   TasksWidget,
   MembersWidget,
   WelcomeWidget,

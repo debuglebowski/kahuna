@@ -1,11 +1,14 @@
-import { useQuery } from "@tanstack/react-query"
+import { useMutation, useQuery } from "@tanstack/react-query"
+import { FileText, GitBranch, Lock, RefreshCw } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
+import { useNavigate } from "react-router-dom"
 import { api, type DashboardWidget } from "@/lib/api"
 import { type AutosaveStatus, createAutosave } from "@/lib/autosave"
+import { recordHref } from "@/lib/recordHref"
 import { isRichTextValue, type RichTextValue } from "@/lib/richtext"
 import { useFields } from "../ConditionList"
 import { RichTextEditor } from "../editor/RichTextEditor"
-import { Spinner } from "../ui"
+import { Button, Spinner } from "../ui"
 
 type Doc = Extract<DashboardWidget, { type: "document" }>
 
@@ -19,6 +22,26 @@ const STATUS_TEXT: Record<AutosaveStatus, string | null> = {
   dirty: "Unsaved",
   saving: "Saving…",
   error: null, // the error message renders instead
+}
+
+/** A connector kind ("linear", "google.gmail") as a source name ("Linear", "Gmail"). */
+const sourceLabel = (managedBy: string): string => {
+  const seg = managedBy.split(".").pop() ?? managedBy
+  return seg.charAt(0).toUpperCase() + seg.slice(1)
+}
+
+/** The save indicator that shares the editor's toolbar row (editable only). */
+function SaveStatus({ status, error }: { status: AutosaveStatus; error: string | null }) {
+  if (status === "error")
+    return <span className="text-xs text-destructive">{error ?? "Save failed"}</span>
+  const text = STATUS_TEXT[status]
+  if (!text) return null
+  return (
+    <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+      {status === "dirty" && <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/70" />}
+      {text}
+    </span>
+  )
 }
 
 /** Autosave for one record's richtext field — the same policy the Document
@@ -58,11 +81,14 @@ function useDocAutosave(instanceId: string, fieldId: string, refetch: () => void
 /**
  * Document — one record's rich text field, edited inline on the canvas. A
  * dashboard consumer of the same `RichTextEditor` the instance Document tile
- * uses; `editable` follows the canvas's read-only flag, so it's live on the
- * dashboard (and the editor's Preview) but inert while tiles are being arranged.
- * Synced (managed) fields stay read-only regardless.
+ * uses. The tile always renders its full editing chrome (toolbar + framed
+ * surface) so it looks identical in the layout editor and on the live page;
+ * `interactive` (the canvas's render-vs-arrange flag) only governs whether
+ * keystrokes land — while tiles are being arranged it's inert. Synced (managed)
+ * fields and frozen published versions stay read-only either way, and say so in a
+ * footer banner under the content.
  */
-export function DocumentWidget({ widget, editable }: { widget: Doc; editable: boolean }) {
+export function DocumentWidget({ widget, interactive }: { widget: Doc; interactive: boolean }) {
   if (!widget.instanceId || !widget.fieldId)
     return (
       <p className="text-sm text-muted-foreground">
@@ -76,8 +102,7 @@ export function DocumentWidget({ widget, editable }: { widget: Doc; editable: bo
       key={`${widget.instanceId}:${widget.fieldId}`}
       instanceId={widget.instanceId}
       fieldId={widget.fieldId}
-      hideLabel={widget.hideLabel ?? false}
-      editable={editable}
+      interactive={interactive}
     />
   )
 }
@@ -85,14 +110,13 @@ export function DocumentWidget({ widget, editable }: { widget: Doc; editable: bo
 function DocumentEditor({
   instanceId,
   fieldId,
-  hideLabel,
-  editable,
+  interactive,
 }: {
   instanceId: string
   fieldId: string
-  hideLabel: boolean
-  editable: boolean
+  interactive: boolean
 }) {
+  const navigate = useNavigate()
   const instanceQ = useQuery({
     queryKey: ["instanceItem", instanceId],
     queryFn: () => api.getInstance(instanceId),
@@ -101,6 +125,26 @@ function DocumentEditor({
   const inst = instanceQ.data?.instance
   const fieldsQ = useFields(inst?.conceptId ?? "")
   const field = fieldsQ.data?.find((f) => f.id === fieldId)
+  const conceptsQ = useQuery({ queryKey: ["concepts"], queryFn: () => api.listConcepts() })
+  const concept = conceptsQ.data?.find((c) => c.id === inst?.conceptId)
+
+  // A published version on a versioned concept is frozen — updateInstance would
+  // reject every save (VersionFrozen), so the widget renders read-only with a
+  // jump to the draft instead. (Non-versioned instances are 'published' too but
+  // editable, so gate on versioningEnabled.)
+  const frozen = (concept?.versioningEnabled ?? false) && inst?.versionStatus === "published"
+  const itemId = inst?.itemId
+  // Only the frozen strip offers the draft jump, so only it needs the version list.
+  const versionsQ = useQuery({
+    queryKey: ["versions", itemId],
+    queryFn: () => api.listVersions(itemId as string),
+    enabled: frozen && !!itemId,
+  })
+  const openDraft = versionsQ.data?.find((v) => v.versionStatus === "draft" && !v.archivedAt)
+  const newVersion = useMutation({
+    mutationFn: () => api.newVersion(itemId as string),
+    onSuccess: (d) => navigate(recordHref(d.id)),
+  })
 
   const autosave = useDocAutosave(instanceId, fieldId, () => void instanceQ.refetch())
   // Keep the autosave's chained version in step with the server (also pre-arms
@@ -110,7 +154,7 @@ function DocumentEditor({
     if (version != null) autosave.bumpVersion(version)
   }, [version, autosave.bumpVersion])
 
-  if (instanceQ.isLoading || fieldsQ.isLoading) return <Spinner />
+  if (instanceQ.isLoading || fieldsQ.isLoading || conceptsQ.isLoading || !inst) return <Spinner />
   if (instanceQ.error)
     return <p className="text-sm text-muted-foreground">Record unavailable — pick another.</p>
   if (!field)
@@ -118,40 +162,67 @@ function DocumentEditor({
   if (field.kind !== "richtext")
     return <p className="text-sm text-muted-foreground">“{field.name}” isn’t a rich text field.</p>
 
-  // Synced fields are read-only (updateInstance would 403); show the editor inert.
+  // A writable rich-text surface: shows the editing chrome (toolbar + framed
+  // box) regardless of `interactive`, so the layout editor and the live page look
+  // the same. Synced (managed) fields and frozen published versions aren't
+  // writable — they get a footer banner instead. `canType` (writable + an
+  // interactive canvas) is the only thing that lets keystrokes land.
   const managed = field.managedBy != null
-  const canEdit = editable && !managed
-  const value = inst?.state[fieldId]
+  const writable = !managed && !frozen
+  const canType = writable && interactive
+  const value = inst.state[fieldId]
+  const empty = !isRichTextValue(value)
+
+  const goToDraft = () => (openDraft ? navigate(recordHref(openDraft.id)) : newVersion.mutate())
 
   return (
     <div className="flex h-full flex-col gap-1.5">
-      {!hideLabel && (
-        <div className="flex shrink-0 items-baseline justify-between gap-2">
-          <span className="text-xs font-medium text-muted-foreground">{field.name}</span>
-          {autosave.status === "error" ? (
-            <span className="text-xs text-destructive">{autosave.error ?? "Save failed"}</span>
-          ) : managed ? (
-            <span className="text-xs text-muted-foreground">Synced — read-only</span>
-          ) : (
-            STATUS_TEXT[autosave.status] && (
-              <span className="text-xs text-muted-foreground">{STATUS_TEXT[autosave.status]}</span>
-            )
-          )}
-        </div>
-      )}
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <RichTextEditor
-          value={value}
-          editable={canEdit}
-          placeholder={`Write ${field.name.toLowerCase()}…`}
-          onChange={autosave.onChange}
-          onBlur={autosave.onBlur}
-          fill
-        />
+      {/* Flex column so the editor's `fill` has a height to stretch over; it
+          scrolls its own content, so no scroll container here. */}
+      <div className="flex min-h-0 flex-1 flex-col">
+        {!writable && empty ? (
+          <div className="flex h-full flex-col items-center justify-center gap-1.5 text-center text-muted-foreground">
+            <FileText size={20} className="opacity-55" />
+            <span className="text-xs">Nothing written yet</span>
+          </div>
+        ) : (
+          <RichTextEditor
+            value={value}
+            editable={canType}
+            chrome={writable}
+            placeholder="Write…"
+            onChange={autosave.onChange}
+            onBlur={autosave.onBlur}
+            fill
+            toolbarRight={
+              writable ? <SaveStatus status={autosave.status} error={autosave.error} /> : undefined
+            }
+          />
+        )}
       </div>
-      {!canEdit && !isRichTextValue(value) && (
-        <p className="shrink-0 text-xs text-muted-foreground">No content.</p>
-      )}
+
+      {/* Read-only status banner, pinned under the content — a full-width bar,
+          only when the reason is worth stating (synced or frozen). A writable
+          surface has no banner; it surfaces its status in the toolbar instead. */}
+      {managed ? (
+        <div className="flex shrink-0 items-center gap-1.5 rounded-md border bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground">
+          <RefreshCw size={13} className="shrink-0" />
+          Synced from {sourceLabel(field.managedBy as string)} · read-only
+        </div>
+      ) : frozen ? (
+        <div className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1.5 rounded-md border bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground">
+          <Lock size={13} className="shrink-0" />
+          <span className="min-w-0 flex-1">Published version · read-only</span>
+          {/* Errors sit in the banner so it stays the one place the state is explained. */}
+          {newVersion.error && (
+            <span className="text-destructive">{(newVersion.error as Error).message}</span>
+          )}
+          <Button size="xs" variant="outline" onClick={goToDraft} disabled={newVersion.isPending}>
+            <GitBranch />
+            {openDraft ? "Open draft" : newVersion.isPending ? "Creating…" : "New draft"}
+          </Button>
+        </div>
+      ) : null}
     </div>
   )
 }

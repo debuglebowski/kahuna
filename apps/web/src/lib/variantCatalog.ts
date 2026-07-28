@@ -98,6 +98,7 @@ export const VARIANT_CATALOG: Record<WidgetType, readonly WidgetVariant[]> = {
   // keeps the picker hidden until then.
   breakdown: [{ id: "default", label: "Default" }],
   trend: [{ id: "default", label: "Default" }],
+  analytics: [{ id: "default", label: "Default" }],
   kanban: [{ id: "default", label: "Default" }],
   calendar: [{ id: "default", label: "Default" }],
   gantt: [{ id: "default", label: "Default" }],

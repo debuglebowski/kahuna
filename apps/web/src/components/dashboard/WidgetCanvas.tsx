@@ -11,6 +11,7 @@ import {
   type NormWidget,
   nodeStyle,
   subtreeIds,
+  TILE_PAD,
   type TilePx,
   tabTitle,
   tilePx,
@@ -40,6 +41,9 @@ const BreakdownWidget = lazy(() =>
   import("./BreakdownWidget").then((m) => ({ default: m.BreakdownWidget })),
 )
 const TrendWidget = lazy(() => import("./TrendWidget").then((m) => ({ default: m.TrendWidget })))
+const AnalyticsWidget = lazy(() =>
+  import("./AnalyticsWidget").then((m) => ({ default: m.AnalyticsWidget })),
+)
 
 /** Flex gap = the gutter between sibling tiles/groups (px). */
 const GAP = 16
@@ -230,6 +234,12 @@ function renderWidget(w: NormWidget, ctx: RenderCtx) {
       )
     case "activity":
       return <ActivityWidget widget={w} />
+    case "analytics":
+      return (
+        <Suspense fallback={<Spinner />}>
+          <AnalyticsWidget widget={w} record={ctx.record} />
+        </Suspense>
+      )
     case "tasks":
       return <TasksWidget widget={w} />
     case "members":
@@ -261,13 +271,14 @@ function renderWidget(w: NormWidget, ctx: RenderCtx) {
         />
       )
     case "document":
-      // Editable on the live page (and the editor's Preview), inert while tiles
-      // are arranged — `readOnly` is true exactly in those interactive contexts.
+      // Always renders its editing chrome so the layout editor and live page look
+      // the same; `interactive` (true on the live page + the editor's Preview,
+      // false while arranging tiles) only governs whether keystrokes land.
       // On a record dashboard the record supplies the instance when unset.
       return (
         <DocumentWidget
           widget={ctx.record && !w.instanceId ? { ...w, instanceId: ctx.record.instance.id } : w}
-          editable={ctx.readOnly}
+          interactive={ctx.readOnly}
         />
       )
     case "record-details":
@@ -289,21 +300,35 @@ function renderWidget(w: NormWidget, ctx: RenderCtx) {
 }
 
 /** A widget tile's header label (a list/metric/note render their own). Shows ONLY
- *  the explicit title — an empty title means no header (no concept/type fallback). */
-function headerLabel(w: NormNode): string {
-  if (w.type === "group" || w.type === "list") return ""
+ *  the explicit title — an empty title means no header (no concept/type fallback).
+ *  A tab's own `title` already labels its tab button, so the panel drops the
+ *  header rather than printing the same string twice. */
+function headerLabel(w: NormNode, inTabs: boolean): string {
+  if (w.type === "group" || w.type === "list" || inTabs) return ""
   return w.title ?? ""
 }
 
 /** A leaf widget tile — a measured card; content reads its box for variants. */
-function WidgetLeaf({ node, ctx }: { node: NormWidget; ctx: RenderCtx }) {
+function WidgetLeaf({
+  node,
+  ctx,
+  inTabs = false,
+}: {
+  node: NormWidget
+  ctx: RenderCtx
+  inTabs?: boolean
+}) {
   const [ref, size] = useElementSize()
-  const label = headerLabel(node)
+  const label = headerLabel(node, inTabs)
   const selected = !ctx.readOnly && ctx.selectedId === node.id
+  // Per-widget inner padding; absent = the tile default. 0 lets content (a
+  // document editor, a full-bleed chart) run right to the tile's edge.
+  const pad = node.padding ?? TILE_PAD
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: interactive only in edit mode (role/tabIndex/keydown set together); readOnly tiles are inert.
     <div
       ref={ref}
+      style={{ padding: pad }}
       role={ctx.readOnly ? undefined : "button"}
       tabIndex={ctx.readOnly ? undefined : 0}
       {...dragProps(ctx, node.id)}
@@ -326,7 +351,7 @@ function WidgetLeaf({ node, ctx }: { node: NormWidget; ctx: RenderCtx }) {
             }
       }
       className={cn(
-        "flex h-full min-h-0 flex-col overflow-hidden rounded-xl border bg-card p-3 shadow-sm",
+        "flex h-full min-h-0 flex-col overflow-hidden rounded-xl border bg-card shadow-sm",
         !ctx.readOnly &&
           "cursor-grab transition-shadow hover:border-foreground/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         selected && "ring-2 ring-primary",
@@ -355,12 +380,15 @@ function LayoutNode({
   parentId,
   nextId,
   ctx,
+  inTabs = false,
 }: {
   node: NormNode
   parentDir: "row" | "col"
   parentId: string | null
   nextId: string | null
   ctx: RenderCtx
+  /** This node IS a tabs group's panel — its tab button already shows its title. */
+  inTabs?: boolean
 }) {
   const style = nodeStyle(node, parentDir, ctx.tile)
   const drop = nodeDrop(ctx, node, parentId, parentDir, nextId)
@@ -434,7 +462,7 @@ function LayoutNode({
   return (
     <div style={style} className="relative min-h-0" {...drop.props}>
       <DropLine zone={drop.zone} parentDir={parentDir} />
-      <WidgetLeaf node={node} ctx={ctx} />
+      <WidgetLeaf node={node} ctx={ctx} inTabs={inTabs} />
     </div>
   )
 }
@@ -573,6 +601,7 @@ function TabsNode({
             parentId={node.id}
             nextId={null}
             ctx={ctx}
+            inTabs
           />
         ) : ctx.readOnly ? (
           <div className="flex flex-1 items-center justify-center p-6 text-center text-sm text-muted-foreground">

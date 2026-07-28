@@ -2,6 +2,7 @@ import {
   Activity,
   BarChart3,
   CalendarDays,
+  ChartSpline,
   Files,
   FileText,
   GanttChart,
@@ -200,6 +201,32 @@ const TrendPreview = () => (
           delay,
         )}
       />
+    ))}
+  </Frame>
+)
+
+/** Two stacked bands over a baseline — signals a multi-series external series,
+ *  distinct from Trend's single-metric bars. */
+const AnalyticsPreview = () => (
+  <Frame className="flex-row items-end gap-1">
+    {[
+      ["h-1/4", "h-1/5", "delay-0"],
+      ["h-1/3", "h-1/4", "delay-75"],
+      ["h-2/5", "h-1/5", "delay-100"],
+      ["h-1/2", "h-1/3", "delay-150"],
+      ["h-3/5", "h-1/4", "delay-200"],
+      ["h-2/3", "h-1/3", "delay-300"],
+    ].map(([top, bottom, delay]) => (
+      <div
+        key={`${top}-${bottom}`}
+        className={cn(
+          "flex w-full origin-bottom flex-col justify-end gap-0.5 transition-transform duration-300 ease-out group-hover:scale-y-110",
+          delay,
+        )}
+      >
+        <div className={cn("w-full rounded-t-sm bg-info/55", top)} />
+        <div className={cn("w-full bg-primary/60", bottom)} />
+      </div>
     ))}
   </Frame>
 )
@@ -514,6 +541,28 @@ export const WIDGET_CATALOG: ReadonlyArray<WidgetMeta> = [
     icon: TrendingUp,
     category: "Charts",
     Preview: TrendPreview,
+  },
+  {
+    type: "analytics",
+    label: "Analytics",
+    description: "Product metrics over time, from PostHog.",
+    keywords: [
+      "posthog",
+      "product analytics",
+      "active users",
+      "dau",
+      "wau",
+      "mau",
+      "events",
+      "pageviews",
+      "retention",
+      "usage",
+      "timeseries",
+      "external",
+    ],
+    icon: ChartSpline,
+    category: "Charts",
+    Preview: AnalyticsPreview,
   },
   {
     type: "activity",

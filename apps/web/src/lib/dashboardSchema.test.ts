@@ -61,6 +61,34 @@ describe("DashboardBody schema codec (recursive tree)", () => {
     expect(encoded).toEqual(tree)
   })
 
+  // Analytics is the one widget whose config is a provider query (not a
+  // conceptId), including the nested record-filter struct.
+  it("round-trips an analytics widget with a record filter losslessly", () => {
+    const body = {
+      direction: "col" as const,
+      children: [
+        {
+          id: "a1",
+          type: "analytics" as const,
+          title: null,
+          provider: "posthog" as const,
+          metric: "active_users" as const,
+          interval: "week" as const,
+          since: "30d" as const,
+          event: "$pageview",
+          breakdown: "plan",
+          chart: "area" as const,
+          showDelta: true,
+          recordFilter: { fieldId: "f1", property: "email" },
+          w: { unit: "fr" as const, value: 1 },
+          h: { unit: "fr" as const, value: 1 },
+        },
+      ],
+    }
+    const decoded = Schema.decodeUnknownSync(DashboardBody)(body)
+    expect(Schema.encodeSync(DashboardBody)(decoded)).toEqual(body)
+  })
+
   it("round-trips a tabs group (display/label/active/tabBar) losslessly", () => {
     const body = {
       direction: "col" as const,
@@ -141,6 +169,7 @@ describe("DashboardWidget union completeness (hand-sync guard)", () => {
     "attention",
     "trend",
     "activity",
+    "analytics",
     "tasks",
     "members",
     "welcome",

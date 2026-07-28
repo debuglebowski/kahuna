@@ -62,7 +62,7 @@ function RichTextField({ ctx, field }: { ctx: InstanceCtx; field: Field }) {
   const { onChange, onBlur, status, error } = useFieldAutosave(ctx, field.id)
   const value = ctx.instance.state[field.id]
   return (
-    <section className="flex flex-1 flex-col gap-1.5">
+    <section className="flex min-h-0 flex-1 flex-col gap-1.5">
       <div className="flex shrink-0 items-baseline justify-between gap-2">
         <span className="text-xs font-medium text-muted-foreground">{field.name}</span>
         {status === "error" ? (
@@ -89,12 +89,12 @@ function RichTextField({ ctx, field }: { ctx: InstanceCtx; field: Field }) {
 }
 
 /** Document tile: every rich text field as a full-width editor (autosaved),
- *  stretched over the tile's height (several fields split it; the tile's body
- *  scrolls when a doc outgrows the box). */
+ *  stretched over the tile's height (several fields split it evenly; each editor
+ *  scrolls its own content when a doc outgrows its share). */
 export function DocumentBody({ ctx }: { ctx: InstanceCtx }) {
   const richFields = ctx.fields.filter((f) => f.kind === "richtext")
   return (
-    <div className="flex min-h-full flex-col gap-4 p-4">
+    <div className="flex h-full min-h-0 flex-col gap-4 p-4">
       {richFields.map((f) => (
         <RichTextField key={f.id} ctx={ctx} field={f} />
       ))}

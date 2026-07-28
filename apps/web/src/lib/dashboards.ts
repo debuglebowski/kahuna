@@ -14,6 +14,11 @@ import type { DashboardBody, DashboardNode, DashboardWidget } from "./api"
 /** Window is GRID×GRID tiles. */
 export const GRID = 48
 
+/** Default inner padding of a widget tile (px). A widget's own `padding` overrides
+ *  it; 0 lets content run to the tile's edge. Shared so the canvas and the config
+ *  panel's placeholder can't drift apart. */
+export const TILE_PAD = 12
+
 export type Axis = "w" | "h"
 export type DimUnit = "tiles" | "fr" | "pct"
 /** A node's size on one axis. `min`/`max` are in tiles. */
@@ -410,6 +415,17 @@ export const newWidget = (type: DashboardWidget["type"]): NormWidget => {
       return { ...scoped, type: "trend", bucket: "day", since: "30d" } as NormWidget
     case "activity":
       return { ...scoped, type: "activity" } as NormWidget
+    // Analytics carries a query, not a conceptId — its numbers come from the
+    // provider, not from instances.
+    case "analytics":
+      return {
+        ...base,
+        type: "analytics",
+        provider: "posthog",
+        metric: "active_users",
+        interval: "week",
+        since: "30d",
+      } as NormWidget
     case "tasks":
       return { ...base, type: "tasks" } as NormWidget
     case "members":

@@ -139,6 +139,7 @@ const KNOWN_WIDGETS = new Set([
   "attention",
   "trend",
   "activity",
+  "analytics",
   "tasks",
   "members",
   "welcome",

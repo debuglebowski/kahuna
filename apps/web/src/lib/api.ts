@@ -170,6 +170,30 @@ export interface PosthogPerson {
   readonly synced_at: string | null
 }
 
+/** Structured analytics query — the `analytics` widget's config, with any
+ *  record-derived filter already resolved to a concrete value by the caller. */
+export interface AnalyticsQueryInput {
+  readonly provider?: "posthog"
+  readonly metric: "active_users" | "event_count"
+  readonly interval: "day" | "week" | "month"
+  readonly since: "7d" | "30d" | "90d"
+  readonly event?: string | null
+  readonly breakdown?: string | null
+  readonly recordProperty?: string | null
+  readonly recordValue?: string | null
+  readonly includePrior?: boolean
+}
+
+export interface AnalyticsSeries {
+  readonly name: string
+  readonly points: ReadonlyArray<{ readonly t: string; readonly value: number }>
+}
+
+export interface AnalyticsResult {
+  readonly series: ReadonlyArray<AnalyticsSeries>
+  readonly delta: { readonly cur: number; readonly prior: number } | null
+}
+
 export interface LinearStatus {
   /** Linear is key-based (no server OAuth creds), so this is always true. */
   readonly configured: boolean
@@ -641,6 +665,19 @@ export const api = {
     if (!res.ok) throw new Error("Failed to load PostHog persons")
     const body = (await res.json()) as { persons: ReadonlyArray<PosthogPerson> }
     return body.persons
+  },
+  // ── Analytics (aggregated queries for the `analytics` widget) ────────────────
+  runAnalyticsQuery: async (input: AnalyticsQueryInput): Promise<AnalyticsResult> => {
+    const res = await fetch("/api/integrations/analytics/query", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    })
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null
+      throw new Error(body?.error ?? "Failed to run analytics query")
+    }
+    return (await res.json()) as AnalyticsResult
   },
   // ── Linear integration ─────────────────────────────────────────────────────────
   getLinearStatus: async (): Promise<LinearStatus> => {

@@ -99,16 +99,49 @@ const AuthMiddlewareLive = Layer.succeed(AuthMiddleware, (options) =>
   }),
 )
 
+/** User-facing fallbacks for domain errors whose payload carries no human
+ *  `message` field. Effect renders such an error's `.message` as a JSON dump of
+ *  its props (e.g. `{"instanceId":"…"}`), which must never reach a user — these
+ *  override it with prose. Errors that DO carry a `message` (e.g.
+ *  FieldValidationError) keep their own, more specific text. */
+const ERROR_MESSAGE: Record<string, string> = {
+  VersionFrozen:
+    "This version is published and can't be edited — create a new draft to make changes.",
+  VersionConflict: "This record was changed elsewhere. Reload and try again.",
+  InstanceNotFound: "This record no longer exists.",
+  ConceptNotFound: "This concept no longer exists.",
+  FieldNotFound: "This field no longer exists.",
+  RelationNotFound: "That link no longer exists.",
+  LabelNotFound: "That label no longer exists.",
+  ItemNotFound: "This record no longer exists.",
+  ItemNotPublished: "This record has no published version yet.",
+}
+
+/** Effect's default `.message` for a fieldless TaggedError is a JSON dump of its
+ *  props — not user-facing. Detect it so we fall back to prose instead. */
+const isStructDump = (s: string): boolean => s.trimStart().startsWith("{")
+
+/** Last-resort humanization of a tag: "VersionFrozen" → "Version frozen". */
+const humanizeTag = (tag: string): string => {
+  const spaced = tag.replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+  return spaced.charAt(0) + spaced.slice(1).toLowerCase()
+}
+
 /** Map any engine failure to the single serializable RpcError (mirrors HTTP codes).
- *  Mapped (domain) errors pass their human message through (e.g. `field "title"
- *  is required`) — they're user-facing by construction; anything unmapped stays
- *  an opaque INTERNAL. */
+ *  Mapped (domain) errors are user-facing by construction: pass their human
+ *  message through (e.g. `field "title" is required`), but fall back to prose for
+ *  errors whose message is just a JSON dump of their props. Anything unmapped
+ *  stays an opaque INTERNAL. */
 const toRpcError = (e: unknown): RpcError => {
   const tag = typeof e === "object" && e !== null ? (e as { _tag?: string })._tag : undefined
   const mapped = tag ? ERROR_MAP[tag] : undefined
-  if (!mapped) return new RpcError({ code: "INTERNAL", message: "Internal error", status: 500 })
+  if (!mapped || !tag)
+    return new RpcError({ code: "INTERNAL", message: "Internal error", status: 500 })
   const detail = (e as { message?: unknown }).message
-  const message = typeof detail === "string" && detail.length > 0 ? detail : (tag ?? "error")
+  const message =
+    typeof detail === "string" && detail.length > 0 && !isStructDump(detail)
+      ? detail
+      : (ERROR_MESSAGE[tag] ?? humanizeTag(tag))
   return new RpcError({ code: mapped.code, message, status: mapped.status })
 }
 

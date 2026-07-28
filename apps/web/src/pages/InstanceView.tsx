@@ -164,6 +164,16 @@ export function InstanceView() {
                 <Pencil size={15} />
                 Edit concept
               </DropdownMenuItem>
+              {chosen && (
+                <DropdownMenuItem
+                  onSelect={() =>
+                    navigate(`/settings/dashboards/${chosen.id}?concept=${concept.id}&tab=layout`)
+                  }
+                >
+                  <LayoutDashboard size={15} />
+                  Edit layout
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem onSelect={() => setDialog("archive")}>
                 <Archive size={15} />
                 Archive

@@ -565,6 +565,9 @@ interface WidgetBase {
    *  widget type. Free-form by design: a new variant is a catalog edit, not a
    *  schema change. Absent = the type's default (first catalog entry). */
   readonly variant?: string
+  /** Inner padding of the widget's tile, in px. Absent = the canvas default.
+   *  0 lets content (a document editor, a chart) run to the tile's edge. */
+  readonly padding?: number
 }
 /** Metric — one number: count of matching instances, or sum/avg of a field. */
 export interface MetricWidget extends WidgetBase {
@@ -655,6 +658,30 @@ export interface TrendWidget extends WidgetBase {
   readonly chart?: "area" | "bars"
   /** Header verdict: % change vs the prior period of the same length. */
   readonly showDelta?: boolean
+}
+/** On a record dashboard, narrow an analytics query to the current record: match
+ *  the record's `fieldId` value against the provider's `property`. */
+export interface AnalyticsRecordFilter {
+  readonly fieldId: string
+  readonly property: string
+}
+/** Analytics — aggregated time-series from an external provider (PostHog). The
+ *  only data-bound widget not backed by concept instances: it carries a query
+ *  config the server translates and runs, instead of a `conceptId`. */
+export interface AnalyticsWidget extends WidgetBase {
+  readonly type: "analytics"
+  readonly provider: "posthog"
+  readonly metric: "active_users" | "event_count"
+  /** Restrict to one event name; absent = all events. */
+  readonly event?: string | null
+  readonly interval: "day" | "week" | "month"
+  readonly since: "7d" | "30d" | "90d"
+  /** Provider property to split into one series per value. */
+  readonly breakdown?: string | null
+  readonly chart?: "area" | "bars" | "table"
+  /** Header verdict: % change vs the prior period of the same length. */
+  readonly showDelta?: boolean
+  readonly recordFilter?: AnalyticsRecordFilter | null
 }
 /** Activity feed — recent events as a list. */
 export interface ActivityWidget extends WidgetBase {
@@ -843,6 +870,7 @@ export type DashboardWidget =
   | BreakdownWidget
   | AttentionWidget
   | TrendWidget
+  | AnalyticsWidget
   | ActivityWidget
   | TasksWidget
   | MembersWidget

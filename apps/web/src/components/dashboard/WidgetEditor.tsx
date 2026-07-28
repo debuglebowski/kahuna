@@ -14,7 +14,7 @@ import {
 import { KNOWN_EVENT_TYPES } from "@/lib/activity"
 import { api, type Concept, type DashboardWidget, type RichTextEnvelope } from "@/lib/api"
 import { taskStatusesCollection } from "@/lib/collections"
-import type { Dim, DimUnit, NormWidget } from "@/lib/dashboards"
+import { type Dim, type DimUnit, type NormWidget, TILE_PAD } from "@/lib/dashboards"
 import { capitalize } from "@/lib/fieldDisplay"
 import { resolveVariantId } from "@/lib/variantCatalog"
 import { WIDGET_CATALOG, WIDGET_CATEGORIES } from "@/lib/widgetCatalog"
@@ -365,6 +365,24 @@ export function WidgetEditor({
 
       <InspectorSection title="Size">
         <SizeControls node={widget} onChange={onChange} />
+      </InspectorSection>
+
+      <InspectorSection title="Style">
+        <FieldRow
+          label="Padding"
+          hint="Space between the tile's edge and its content, in px. Blank = the default; 0 lets content run to the edge."
+        >
+          <div className="flex items-center gap-2">
+            <NumberField
+              className="w-20"
+              ariaLabel="Tile padding"
+              placeholder={String(TILE_PAD)}
+              value={widget.padding != null ? String(widget.padding) : ""}
+              onCommit={(raw) => patch({ padding: raw.trim() === "" ? undefined : parseNum(raw) })}
+            />
+            <span className="text-xs text-muted-foreground">px</span>
+          </div>
+        </FieldRow>
       </InspectorSection>
 
       <InspectorSection title="Content">
@@ -855,6 +873,145 @@ export function WidgetEditor({
           </>
         )}
 
+        {widget.type === "analytics" && (
+          <>
+            <div className="grid grid-cols-2 gap-3">
+              <FieldRow label="Metric">
+                <Select
+                  value={widget.metric}
+                  onValueChange={(v) => patch({ metric: v as "active_users" | "event_count" })}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="active_users">Active people</SelectItem>
+                    <SelectItem value="event_count">Event count</SelectItem>
+                  </SelectContent>
+                </Select>
+              </FieldRow>
+              <FieldRow label="Per">
+                <Select
+                  value={widget.interval}
+                  onValueChange={(v) => patch({ interval: v as "day" | "week" | "month" })}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="day">Day</SelectItem>
+                    <SelectItem value="week">Week</SelectItem>
+                    <SelectItem value="month">Month</SelectItem>
+                  </SelectContent>
+                </Select>
+              </FieldRow>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <FieldRow label="Window">
+                <Select
+                  value={widget.since}
+                  onValueChange={(v) => patch({ since: v as "7d" | "30d" | "90d" })}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="7d">Last 7 days</SelectItem>
+                    <SelectItem value="30d">Last 30 days</SelectItem>
+                    <SelectItem value="90d">Last 90 days</SelectItem>
+                  </SelectContent>
+                </Select>
+              </FieldRow>
+              <FieldRow label="Chart">
+                <Select
+                  value={widget.chart ?? "area"}
+                  onValueChange={(v) => patch({ chart: v as "area" | "bars" | "table" })}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="area">Area</SelectItem>
+                    <SelectItem value="bars">Bars</SelectItem>
+                    <SelectItem value="table">Table</SelectItem>
+                  </SelectContent>
+                </Select>
+              </FieldRow>
+            </div>
+            <FieldRow label="Event (optional)">
+              <Input
+                value={widget.event ?? ""}
+                onChange={(e) => patch({ event: e.target.value || null })}
+                placeholder="All events (e.g. $pageview)"
+              />
+            </FieldRow>
+            <FieldRow label="Break down by (optional)">
+              <Input
+                value={widget.breakdown ?? ""}
+                onChange={(e) => patch({ breakdown: e.target.value || null })}
+                placeholder="PostHog property (e.g. plan)"
+              />
+            </FieldRow>
+            {/* Record dashboards: narrow the same query to THIS record by matching
+                one of its field values against a provider property. */}
+            {recordMode && (
+              <div className="grid grid-cols-2 gap-3">
+                <FieldRow label="Match record field">
+                  <Select
+                    value={widget.recordFilter?.fieldId ?? "__none"}
+                    onValueChange={(v) =>
+                      patch({
+                        recordFilter:
+                          v === "__none"
+                            ? null
+                            : {
+                                fieldId: v,
+                                property: widget.recordFilter?.property ?? "email",
+                              },
+                      })
+                    }
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none">Whole workspace</SelectItem>
+                      {(recordFields.data ?? [])
+                        .filter((f) => f.kind === "text" || f.kind === "user")
+                        .map((f) => (
+                          <SelectItem key={f.id} value={f.id}>
+                            {f.name}
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+                </FieldRow>
+                <FieldRow label="…against property">
+                  <Input
+                    value={widget.recordFilter?.property ?? ""}
+                    disabled={!widget.recordFilter}
+                    onChange={(e) =>
+                      widget.recordFilter &&
+                      patch({
+                        recordFilter: { ...widget.recordFilter, property: e.target.value },
+                      })
+                    }
+                    placeholder="email"
+                  />
+                </FieldRow>
+              </div>
+            )}
+            <FieldRow label="Header">
+              <ToggleChip
+                pressed={widget.showDelta ?? false}
+                onPressedChange={(p) => patch({ showDelta: p })}
+              >
+                Delta vs prior
+              </ToggleChip>
+            </FieldRow>
+          </>
+        )}
+
         {widget.type === "activity" && (
           <>
             <FieldRow label="Max items">
@@ -1227,90 +1384,79 @@ export function WidgetEditor({
           </>
         )}
 
-        {widget.type === "document" && (
-          <>
-            {recordMode ? (
-              // The record is the one being viewed — only the field is chosen,
-              // from the owning concept's rich text fields.
-              <FieldRow label="Rich text field" hint="Edited for whichever record is open.">
-                <Select
-                  value={widget.fieldId || "__none"}
-                  onValueChange={(v) =>
-                    patch({ fieldId: v === "__none" ? null : v, conceptId: recordConceptId })
-                  }
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder="Select a field…" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__none">Select a field…</SelectItem>
-                    {recordRichTextFields.map((f) => (
-                      <SelectItem key={f.id} value={f.id}>
-                        {f.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {recordRichTextFields.length === 0 && (
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    This concept has no rich text fields.
-                  </p>
-                )}
-              </FieldRow>
-            ) : (
-              <>
-                <FieldRow label="Record">
-                  <FilesInstancePicker
-                    instanceId={widget.instanceId ?? null}
-                    concepts={concepts}
-                    onPick={(instanceId, pickedConceptId) =>
-                      // A new record carries its concept (the field scope) and clears
-                      // the field; clearing the record clears both.
-                      patch({
-                        instanceId,
-                        conceptId: instanceId ? (pickedConceptId ?? null) : null,
-                        fieldId: null,
-                      })
-                    }
-                  />
-                </FieldRow>
-                {widget.instanceId && (
-                  <FieldRow label="Rich text field">
-                    <Select
-                      value={widget.fieldId || "__none"}
-                      onValueChange={(v) => patch({ fieldId: v === "__none" ? null : v })}
-                    >
-                      <SelectTrigger className="w-full">
-                        <SelectValue placeholder="Select a field…" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__none">Select a field…</SelectItem>
-                        {richTextFields.map((f) => (
-                          <SelectItem key={f.id} value={f.id}>
-                            {f.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    {richTextFields.length === 0 && (
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        This record’s concept has no rich text fields.
-                      </p>
-                    )}
-                  </FieldRow>
-                )}
-              </>
-            )}
-            <FieldRow label="Header">
-              <ToggleChip
-                pressed={!(widget.hideLabel ?? false)}
-                onPressedChange={(p) => patch({ hideLabel: !p })}
+        {widget.type === "document" &&
+          (recordMode ? (
+            // The record is the one being viewed — only the field is chosen,
+            // from the owning concept's rich text fields.
+            <FieldRow label="Rich text field" hint="Edited for whichever record is open.">
+              <Select
+                value={widget.fieldId || "__none"}
+                onValueChange={(v) =>
+                  patch({ fieldId: v === "__none" ? null : v, conceptId: recordConceptId })
+                }
               >
-                Field name
-              </ToggleChip>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Select a field…" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none">Select a field…</SelectItem>
+                  {recordRichTextFields.map((f) => (
+                    <SelectItem key={f.id} value={f.id}>
+                      {f.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {recordRichTextFields.length === 0 && (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  This concept has no rich text fields.
+                </p>
+              )}
             </FieldRow>
-          </>
-        )}
+          ) : (
+            <>
+              <FieldRow label="Record">
+                <FilesInstancePicker
+                  instanceId={widget.instanceId ?? null}
+                  concepts={concepts}
+                  onPick={(instanceId, pickedConceptId) =>
+                    // A new record carries its concept (the field scope) and clears
+                    // the field; clearing the record clears both.
+                    patch({
+                      instanceId,
+                      conceptId: instanceId ? (pickedConceptId ?? null) : null,
+                      fieldId: null,
+                    })
+                  }
+                />
+              </FieldRow>
+              {widget.instanceId && (
+                <FieldRow label="Rich text field">
+                  <Select
+                    value={widget.fieldId || "__none"}
+                    onValueChange={(v) => patch({ fieldId: v === "__none" ? null : v })}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Select a field…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none">Select a field…</SelectItem>
+                      {richTextFields.map((f) => (
+                        <SelectItem key={f.id} value={f.id}>
+                          {f.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {richTextFields.length === 0 && (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      This record’s concept has no rich text fields.
+                    </p>
+                  )}
+                </FieldRow>
+              )}
+            </>
+          ))}
 
         {widget.type === "kanban" && (
           <>

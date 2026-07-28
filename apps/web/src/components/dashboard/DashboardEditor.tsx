@@ -824,6 +824,8 @@ export function DashboardEditor({
       ? "This dashboard was changed elsewhere — close without saving and reopen to edit the latest."
       : (save.error as Error).message
     : null
+  // Saved-and-untouched: the Save button swaps its label for a check.
+  const saveConfirmed = !dirty && save.isSuccess
 
   return (
     <div className="relative flex h-full min-h-0 flex-col">
@@ -964,16 +966,23 @@ export function DashboardEditor({
                 </Button>
                 <Button
                   size="sm"
+                  className="relative"
                   onClick={() => save.mutate(draft)}
                   disabled={!dirty || save.isPending}
                 >
-                  {save.isPending ? "Saving…" : "Save"}
-                  {/* Check sits in a reserved slot (opacity-toggled) so confirming a
-                      save never changes the button's width. */}
-                  <Check
-                    size={14}
-                    className={!dirty && save.isSuccess ? "opacity-100" : "opacity-0"}
-                  />
+                  {/* Confirming a save swaps the label for a check in place: the label
+                      keeps its box (opacity only) and the check is absolute, so the
+                      button never changes width and reserves no empty slot. The check
+                      is wrapped so it isn't a direct svg child — that would trip the
+                      button's has-[>svg] padding rule and shift the width. */}
+                  <span className={cn(saveConfirmed && "opacity-0")}>
+                    {save.isPending ? "Saving…" : "Save"}
+                  </span>
+                  {saveConfirmed && (
+                    <span className="absolute inset-0 flex items-center justify-center">
+                      <Check size={14} />
+                    </span>
+                  )}
                 </Button>
               </>
             }

@@ -1,4 +1,5 @@
 import { and, eq, ilike } from "drizzle-orm"
+import { queryAnalytics } from "./analytics"
 import {
   apolloStatus,
   connectApollo,
@@ -101,6 +102,10 @@ export const handleApi = async (req: Request): Promise<Response | null> => {
     if (seg[3] === "gmail" && seg[4] === "threads" && seg[5] && m === "GET")
       return getGoogleThread(req, seg[5])
     if (seg[3] === "gmail" && seg[4] === "send" && m === "POST") return sendGoogleMail(req)
+  }
+
+  if (seg[1] === "integrations" && seg[2] === "analytics") {
+    if (seg[3] === "query" && m === "POST") return queryAnalytics(req)
   }
 
   if (seg[1] === "integrations" && seg[2] === "posthog") {

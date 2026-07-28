@@ -16,6 +16,7 @@ import {
   TextQuote,
   Undo2,
 } from "lucide-react"
+import type { ReactNode } from "react"
 import { cn } from "@/lib/utils"
 import { IconButton } from "../ui"
 
@@ -51,7 +52,7 @@ const Divider = () => <span className="mx-0.5 h-4 w-px self-center bg-border" />
 
 /** Fixed formatting bar for {@link RichTextEditor}. Link entry is a plain
  *  prompt for v1 (matches the minimal toolbar scope). */
-export function RichTextToolbar({ editor }: { editor: Editor }) {
+export function RichTextToolbar({ editor, right }: { editor: Editor; right?: ReactNode }) {
   const s = useEditorState({
     editor,
     selector: ({ editor: e }) => ({
@@ -163,6 +164,7 @@ export function RichTextToolbar({ editor }: { editor: Editor }) {
         disabled={!s.canRedo}
         onClick={() => chain().redo().run()}
       />
+      {right && <div className="ml-auto flex items-center self-center pr-0.5">{right}</div>}
     </div>
   )
 }
