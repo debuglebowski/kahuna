@@ -370,7 +370,7 @@ export function WidgetEditor({
       <InspectorSection title="Style">
         <FieldRow
           label="Padding"
-          hint="Space between the tile's edge and its content, in px. Blank = the default; 0 lets content run to the edge."
+          hint="Space between the tile's edge and its content, in px. Blank = the default; 0 goes full bleed — content runs to the edge and the tile drops its border and background."
         >
           <div className="flex items-center gap-2">
             <NumberField

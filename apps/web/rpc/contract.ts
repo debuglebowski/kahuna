@@ -441,7 +441,8 @@ const widgetBase = {
    *  catalog entry (its default). */
   variant: Schema.optional(Schema.String),
   /** Inner padding of the widget's tile, in px. Absent = the canvas default.
-   *  0 lets content (a document editor, a chart) run to the tile's edge. */
+   *  0 = full bleed: content runs to the tile's edge and the tile drops its card
+   *  chrome (border/background), for a widget that frames itself. */
   padding: Schema.optional(Schema.Number),
 }
 /** `conceptId` is optional on every concept-scoped widget so the same body can

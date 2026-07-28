@@ -15,8 +15,9 @@ import type { DashboardBody, DashboardNode, DashboardWidget } from "./api"
 export const GRID = 48
 
 /** Default inner padding of a widget tile (px). A widget's own `padding` overrides
- *  it; 0 lets content run to the tile's edge. Shared so the canvas and the config
- *  panel's placeholder can't drift apart. */
+ *  it; 0 means full bleed — content runs to the tile's edge AND the tile drops its
+ *  card chrome (border/background/shadow), so a widget that frames itself doesn't
+ *  double up. Shared so the canvas and the config panel's placeholder can't drift. */
 export const TILE_PAD = 12
 
 export type Axis = "w" | "h"

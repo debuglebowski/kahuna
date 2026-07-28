@@ -321,9 +321,12 @@ function WidgetLeaf({
   const [ref, size] = useElementSize()
   const label = headerLabel(node, inTabs)
   const selected = !ctx.readOnly && ctx.selectedId === node.id
-  // Per-widget inner padding; absent = the tile default. 0 lets content (a
-  // document editor, a full-bleed chart) run right to the tile's edge.
+  // Per-widget inner padding; absent = the tile default. 0 means FULL BLEED:
+  // the content *is* the tile, so the card chrome (border, background, shadow)
+  // comes off with the padding — otherwise a widget that frames itself (a
+  // document editor, a chart on its own surface) would show a double border.
   const pad = node.padding ?? TILE_PAD
+  const bleed = pad === 0
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: interactive only in edit mode (role/tabIndex/keydown set together); readOnly tiles are inert.
     <div
@@ -351,15 +354,25 @@ function WidgetLeaf({
             }
       }
       className={cn(
-        "flex h-full min-h-0 flex-col overflow-hidden rounded-xl border bg-card shadow-sm",
+        // The rounded clip stays either way — it's what keeps a full-bleed chart
+        // or editor from poking square corners out of the dashboard's grid.
+        "flex h-full min-h-0 flex-col overflow-hidden rounded-xl",
+        !bleed && "border bg-card shadow-sm",
         !ctx.readOnly &&
-          "cursor-grab transition-shadow hover:border-foreground/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          "cursor-grab transition-shadow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        // Arranging a chrome-less tile still needs an outline to see and grab it.
+        // An INSET ring draws one without nudging the content by a pixel, so the
+        // editor's geometry stays identical to the live render.
+        bleed && !ctx.readOnly && "ring-1 ring-border ring-inset hover:ring-foreground/20",
+        !bleed && !ctx.readOnly && "hover:border-foreground/20",
         selected && "ring-2 ring-primary",
         ctx.dragId === node.id && "opacity-40",
       )}
     >
       {label !== "" && (
-        <div className="mb-1 flex items-center gap-2">
+        // Full bleed drops the tile's padding, so a header would sit flush in the
+        // corner — inset it just enough to keep its own breathing room.
+        <div className={cn("mb-1 flex items-center gap-2", bleed && "px-3 pt-2")}>
           <span className="truncate text-xs font-medium text-muted-foreground">{label}</span>
         </div>
       )}

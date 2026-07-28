@@ -566,7 +566,8 @@ interface WidgetBase {
    *  schema change. Absent = the type's default (first catalog entry). */
   readonly variant?: string
   /** Inner padding of the widget's tile, in px. Absent = the canvas default.
-   *  0 lets content (a document editor, a chart) run to the tile's edge. */
+   *  0 = full bleed: content runs to the tile's edge and the tile drops its card
+   *  chrome (border/background), for a widget that frames itself. */
   readonly padding?: number
 }
 /** Metric — one number: count of matching instances, or sum/avg of a field. */
