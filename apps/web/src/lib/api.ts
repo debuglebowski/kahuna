@@ -170,18 +170,33 @@ export interface PosthogPerson {
   readonly synced_at: string | null
 }
 
-/** Structured analytics query — the `analytics` widget's config, with any
- *  record-derived filter already resolved to a concrete value by the caller. */
+/** Analytics query — the `analytics` widget's config, with any record-derived
+ *  filter already resolved to a concrete value by the caller. `metric: "custom"`
+ *  sends `query` (raw provider query) instead of the structured knobs. */
 export interface AnalyticsQueryInput {
   readonly provider?: "posthog"
-  readonly metric: "active_users" | "event_count"
+  readonly metric: "active_users" | "event_count" | "custom"
   readonly interval: "day" | "week" | "month"
   readonly since: "7d" | "30d" | "90d"
+  readonly query?: string | null
   readonly event?: string | null
   readonly breakdown?: string | null
   readonly recordProperty?: string | null
   readonly recordValue?: string | null
   readonly includePrior?: boolean
+}
+
+/** An analytics failure the widget renders inline. `message` is the server's
+ *  error CODE; `detail` is the human part (a HogQL parse error, the columns a
+ *  custom query actually returned) — the only debugging aid the author has. */
+export class AnalyticsQueryError extends Error {
+  constructor(
+    code: string,
+    readonly detail: string | null,
+  ) {
+    super(code)
+    this.name = "AnalyticsQueryError"
+  }
 }
 
 export interface AnalyticsSeries {
@@ -674,8 +689,14 @@ export const api = {
       body: JSON.stringify(input),
     })
     if (!res.ok) {
-      const body = (await res.json().catch(() => null)) as { error?: string } | null
-      throw new Error(body?.error ?? "Failed to run analytics query")
+      const body = (await res.json().catch(() => null)) as {
+        error?: string
+        detail?: string | null
+      } | null
+      throw new AnalyticsQueryError(
+        body?.error ?? "Failed to run analytics query",
+        body?.detail ?? null,
+      )
     }
     return (await res.json()) as AnalyticsResult
   },

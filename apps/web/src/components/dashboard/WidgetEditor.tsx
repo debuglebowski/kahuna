@@ -11,7 +11,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { Textarea } from "@/components/ui/textarea"
 import { KNOWN_EVENT_TYPES } from "@/lib/activity"
+import {
+  type AnalyticsMetric,
+  type AnalyticsProvider,
+  METRICS_BY_PROVIDER,
+  PROVIDERS,
+  QUERY_LANGUAGE,
+  QUERY_PLACEHOLDER,
+} from "@/lib/analyticsProviders"
 import { api, type Concept, type DashboardWidget, type RichTextEnvelope } from "@/lib/api"
 import { taskStatusesCollection } from "@/lib/collections"
 import { type Dim, type DimUnit, type NormWidget, TILE_PAD } from "@/lib/dashboards"
@@ -876,37 +885,85 @@ export function WidgetEditor({
         {widget.type === "analytics" && (
           <>
             <div className="grid grid-cols-2 gap-3">
-              <FieldRow label="Metric">
+              <FieldRow label="Provider">
                 <Select
-                  value={widget.metric}
-                  onValueChange={(v) => patch({ metric: v as "active_users" | "event_count" })}
+                  value={widget.provider}
+                  onValueChange={(v) => patch({ provider: v as AnalyticsProvider })}
                 >
                   <SelectTrigger className="w-full">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="active_users">Active people</SelectItem>
-                    <SelectItem value="event_count">Event count</SelectItem>
+                    {PROVIDERS.map((p) => (
+                      <SelectItem key={p.id} value={p.id}>
+                        {p.label}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </FieldRow>
-              <FieldRow label="Per">
+              {/* Metrics come FROM the provider, so a second provider brings its
+                  own list (including its own custom-query flavor). */}
+              <FieldRow label="Metric">
                 <Select
-                  value={widget.interval}
-                  onValueChange={(v) => patch({ interval: v as "day" | "week" | "month" })}
+                  value={widget.metric}
+                  onValueChange={(v) => patch({ metric: v as AnalyticsMetric })}
                 >
                   <SelectTrigger className="w-full">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="day">Day</SelectItem>
-                    <SelectItem value="week">Week</SelectItem>
-                    <SelectItem value="month">Month</SelectItem>
+                    {(METRICS_BY_PROVIDER[widget.provider] ?? []).map((m) => (
+                      <SelectItem key={m.id} value={m.id}>
+                        {m.label}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </FieldRow>
             </div>
+            {/* A custom query buckets, filters and splits itself, so the
+                structured knobs it subsumes (per/event/breakdown) hide. */}
+            {widget.metric === "custom" && (
+              <FieldRow label={`${QUERY_LANGUAGE[widget.provider]} query`}>
+                <Textarea
+                  value={widget.query ?? ""}
+                  onChange={(e) => patch({ query: e.target.value || null })}
+                  placeholder={QUERY_PLACEHOLDER[widget.provider]}
+                  spellCheck={false}
+                  className="min-h-[9rem] font-mono text-xs"
+                />
+                <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
+                  Return columns aliased <code>bucket</code>, <code>value</code>, and optionally{" "}
+                  <code>series</code> (one line per value). <code>{"{from}"}</code> and{" "}
+                  <code>{"{to}"}</code> are bound to the window below
+                  {recordMode && (
+                    <>
+                      , <code>{"{recordValue}"}</code> to the matched record field
+                    </>
+                  )}
+                  . Results are capped at 2000 rows.
+                </p>
+              </FieldRow>
+            )}
             <div className="grid grid-cols-2 gap-3">
+              {widget.metric !== "custom" && (
+                <FieldRow label="Per">
+                  <Select
+                    value={widget.interval}
+                    onValueChange={(v) => patch({ interval: v as "day" | "week" | "month" })}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="day">Day</SelectItem>
+                      <SelectItem value="week">Week</SelectItem>
+                      <SelectItem value="month">Month</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </FieldRow>
+              )}
               <FieldRow label="Window">
                 <Select
                   value={widget.since}
@@ -922,6 +979,8 @@ export function WidgetEditor({
                   </SelectContent>
                 </Select>
               </FieldRow>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
               <FieldRow label="Chart">
                 <Select
                   value={widget.chart ?? "area"}
@@ -937,26 +996,44 @@ export function WidgetEditor({
                   </SelectContent>
                 </Select>
               </FieldRow>
+              <FieldRow label="Header">
+                <ToggleChip
+                  pressed={widget.showDelta ?? false}
+                  onPressedChange={(p) => patch({ showDelta: p })}
+                >
+                  Delta vs prior
+                </ToggleChip>
+              </FieldRow>
             </div>
-            <FieldRow label="Event (optional)">
-              <Input
-                value={widget.event ?? ""}
-                onChange={(e) => patch({ event: e.target.value || null })}
-                placeholder="All events (e.g. $pageview)"
-              />
-            </FieldRow>
-            <FieldRow label="Break down by (optional)">
-              <Input
-                value={widget.breakdown ?? ""}
-                onChange={(e) => patch({ breakdown: e.target.value || null })}
-                placeholder="PostHog property (e.g. plan)"
-              />
-            </FieldRow>
+            {widget.metric !== "custom" && (
+              <>
+                <FieldRow label="Event (optional)">
+                  <Input
+                    value={widget.event ?? ""}
+                    onChange={(e) => patch({ event: e.target.value || null })}
+                    placeholder="All events (e.g. $pageview)"
+                  />
+                </FieldRow>
+                <FieldRow label="Break down by (optional)">
+                  <Input
+                    value={widget.breakdown ?? ""}
+                    onChange={(e) => patch({ breakdown: e.target.value || null })}
+                    placeholder="PostHog property (e.g. plan)"
+                  />
+                </FieldRow>
+              </>
+            )}
             {/* Record dashboards: narrow the same query to THIS record by matching
-                one of its field values against a provider property. */}
+                one of its field values against a provider property. A custom
+                query writes its own WHERE, so it only needs the field — the value
+                arrives as the `{recordValue}` param. */}
             {recordMode && (
               <div className="grid grid-cols-2 gap-3">
-                <FieldRow label="Match record field">
+                <FieldRow
+                  label={
+                    widget.metric === "custom" ? "Bind {recordValue} to" : "Match record field"
+                  }
+                >
                   <Select
                     value={widget.recordFilter?.fieldId ?? "__none"}
                     onValueChange={(v) =>
@@ -986,29 +1063,23 @@ export function WidgetEditor({
                     </SelectContent>
                   </Select>
                 </FieldRow>
-                <FieldRow label="…against property">
-                  <Input
-                    value={widget.recordFilter?.property ?? ""}
-                    disabled={!widget.recordFilter}
-                    onChange={(e) =>
-                      widget.recordFilter &&
-                      patch({
-                        recordFilter: { ...widget.recordFilter, property: e.target.value },
-                      })
-                    }
-                    placeholder="email"
-                  />
-                </FieldRow>
+                {widget.metric !== "custom" && (
+                  <FieldRow label="…against property">
+                    <Input
+                      value={widget.recordFilter?.property ?? ""}
+                      disabled={!widget.recordFilter}
+                      onChange={(e) =>
+                        widget.recordFilter &&
+                        patch({
+                          recordFilter: { ...widget.recordFilter, property: e.target.value },
+                        })
+                      }
+                      placeholder="email"
+                    />
+                  </FieldRow>
+                )}
               </div>
             )}
-            <FieldRow label="Header">
-              <ToggleChip
-                pressed={widget.showDelta ?? false}
-                onPressedChange={(p) => patch({ showDelta: p })}
-              >
-                Delta vs prior
-              </ToggleChip>
-            </FieldRow>
           </>
         )}
 

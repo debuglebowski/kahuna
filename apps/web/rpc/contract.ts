@@ -579,10 +579,17 @@ const AnalyticsWidget = Schema.Struct({
   /** Which provider answers the query. A union of one today; adding a provider
    *  is a new member + a server branch, never a new widget type. */
   provider: Schema.Literal("posthog"),
-  /** `active_users` = distinct people, `event_count` = raw event volume. */
-  metric: Schema.Literal("active_users", "event_count"),
-  /** Restrict to one event name; absent/null = all events. */
+  /** `active_users` = distinct people, `event_count` = raw event volume,
+   *  `custom` = the provider query in `query` answers instead. */
+  metric: Schema.Literal("active_users", "event_count", "custom"),
+  /** Raw provider query (HogQL), used only when `metric` is "custom". Must
+   *  return columns aliased `bucket`, `value` and optionally `series`; the
+   *  window (`{from}`/`{to}`) and the resolved record value (`{recordValue}`)
+   *  are bound as params, never interpolated. */
+  query: Schema.optional(Schema.NullOr(Schema.String)),
+  /** Restrict to one event name; absent/null = all events. Structured only. */
   event: Schema.optional(Schema.NullOr(Schema.String)),
+  /** Bucket width. Structured only — a custom query buckets itself. */
   interval: Schema.Literal("day", "week", "month"),
   since: Schema.Literal("7d", "30d", "90d"),
   /** Provider property to split into one series per value ("the label Y"). */

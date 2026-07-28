@@ -672,8 +672,11 @@ export interface AnalyticsRecordFilter {
 export interface AnalyticsWidget extends WidgetBase {
   readonly type: "analytics"
   readonly provider: "posthog"
-  readonly metric: "active_users" | "event_count"
-  /** Restrict to one event name; absent = all events. */
+  readonly metric: "active_users" | "event_count" | "custom"
+  /** Raw provider query (HogQL); only read when `metric` is "custom". Must
+   *  return columns aliased `bucket`, `value` and optionally `series`. */
+  readonly query?: string | null
+  /** Restrict to one event name; absent = all events. Structured only. */
   readonly event?: string | null
   readonly interval: "day" | "week" | "month"
   readonly since: "7d" | "30d" | "90d"

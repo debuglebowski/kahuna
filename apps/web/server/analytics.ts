@@ -5,11 +5,13 @@ import { resolveOrg } from "./session"
 /**
  * Aggregated analytics queries for the `analytics` dashboard widget.
  *
- * The widget sends a STRUCTURED query (metric + interval + window + optional
- * event/breakdown/record filter); this module translates it into HogQL and runs
- * it through the existing PostHog request helper. Structured-in/series-out keeps
- * the provider's query language out of saved dashboard bodies, so adding a
- * second provider is a branch here rather than a new widget type.
+ * Two shapes of the same request. Normally the widget sends a STRUCTURED query
+ * (metric + interval + window + optional event/breakdown/record filter) and this
+ * module translates it into HogQL — that keeps the provider's query language out
+ * of saved dashboard bodies, so a second provider is a branch here rather than a
+ * new widget type. `metric: "custom"` is the escape hatch: the caller's own
+ * HogQL, bounded and shape-checked below, for the questions two metrics can't
+ * ask. Both shapes return the same series contract.
  *
  * Results are cached in-process with a short TTL: a dashboard open in N tabs
  * would otherwise issue N identical queries against a rate-limited API.
@@ -17,7 +19,7 @@ import { resolveOrg } from "./session"
 
 const json = (body: unknown, status = 200) => Response.json(body, { status })
 
-export type AnalyticsMetric = "active_users" | "event_count"
+export type AnalyticsMetric = "active_users" | "event_count" | "custom"
 export type AnalyticsInterval = "day" | "week" | "month"
 export type AnalyticsSince = "7d" | "30d" | "90d"
 
@@ -26,6 +28,8 @@ export type AnalyticsQuery = {
   readonly metric: AnalyticsMetric
   readonly interval: AnalyticsInterval
   readonly since: AnalyticsSince
+  /** Caller-authored HogQL; read only when `metric` is "custom". */
+  readonly query?: string | null
   readonly event?: string | null
   readonly breakdown?: string | null
   /** Provider property to match, paired with `recordValue` (record dashboards). */
@@ -53,13 +57,19 @@ const BUCKET_FN: Record<AnalyticsInterval, string> = {
   month: "toStartOfMonth",
 }
 
+/** Metrics the server itself translates (i.e. everything but "custom"). */
+export type StructuredMetric = Exclude<AnalyticsMetric, "custom">
+
 /** The aggregate under the bucket. */
-const METRIC_EXPR: Record<AnalyticsMetric, string> = {
+const METRIC_EXPR: Record<StructuredMetric, string> = {
   active_users: "count(DISTINCT distinct_id)",
   event_count: "count()",
 }
 
 const DAY_MS = 86_400_000
+
+type Built = { readonly query: string; readonly params: Record<string, unknown> }
+type Window = { readonly from: Date; readonly to: Date }
 
 // ── query construction ────────────────────────────────────────────────────────
 
@@ -71,9 +81,9 @@ const DAY_MS = 86_400_000
  * resolved through a lookup table above.
  */
 export const buildPosthogQuery = (
-  q: AnalyticsQuery,
-  window: { readonly from: Date; readonly to: Date },
-): { readonly query: string; readonly params: Record<string, unknown> } => {
+  q: AnalyticsQuery & { readonly metric: StructuredMetric },
+  window: Window,
+): Built => {
   const bucket = `${BUCKET_FN[q.interval]}(timestamp)`
   const params: Record<string, unknown> = {
     from: window.from.toISOString(),
@@ -107,6 +117,60 @@ export const buildPosthogQuery = (
     "LIMIT 10000",
   ].join(" ")
   return { query, params }
+}
+
+/** Rows the outer wrap lets through. Far above any sane bucket count, but it
+ *  provably caps a `LIMIT 50000` written inside the caller's own query. */
+const CUSTOM_ROW_LIMIT = 2000
+
+/** A custom query the caller has to fix — a 400, never a 502. */
+export class CustomQueryError extends Error {
+  constructor(
+    readonly code: string,
+    readonly detail?: string,
+  ) {
+    super(detail ? `${code}: ${detail}` : code)
+  }
+}
+
+/**
+ * Wrap caller-authored HogQL so it can't outrun its bounds, and bind the same
+ * window params the structured path uses.
+ *
+ * The provider's parser is the actual injection defense — it rejects stacked
+ * statements and writes outright — so the job here is bounding the RESULT, not
+ * sanitizing the text: an inner `LIMIT 50000` really does return 50 000 rows
+ * unwrapped. `;` is rejected up front because it's the one thing that breaks the
+ * wrap (`(<q>; -- x)` won't parse), and a named error beats a parse error the
+ * user has to decode. The newlines around the subquery are load-bearing for the
+ * same reason: a trailing `-- comment` would otherwise swallow the closing paren.
+ */
+export const buildCustomQuery = (q: AnalyticsQuery, window: Window): Built => {
+  const raw = (q.query ?? "").trim().replace(/;+\s*$/, "")
+  if (!raw) throw new CustomQueryError("EMPTY_QUERY")
+  if (raw.includes(";")) throw new CustomQueryError("SEMICOLON_NOT_ALLOWED")
+  const params: Record<string, unknown> = {
+    from: window.from.toISOString(),
+    to: window.to.toISOString(),
+  }
+  // Bound even when unreferenced (HogQL tolerates unused values); the widget's
+  // own gate guarantees a record-scoped query never runs without a value.
+  if (q.recordValue) params.recordValue = q.recordValue
+  return { query: `SELECT * FROM (\n${raw}\n) LIMIT ${CUSTOM_ROW_LIMIT}`, params }
+}
+
+/** Columns `rowsToSeries` can shape. `series` is optional (single-series query). */
+const REQUIRED_COLUMNS = ["bucket", "value"] as const
+
+/**
+ * A custom query that returns the wrong aliases used to render as "No data in
+ * this window" — `rowsToSeries` drops every row whose bucket won't parse as a
+ * date. Fail loudly instead, naming what came back so the fix is obvious.
+ */
+export const validateCustomShape = (columns: string[] | undefined): string | null => {
+  const cols = columns ?? []
+  const missing = REQUIRED_COLUMNS.filter((c) => !cols.includes(c))
+  return missing.length === 0 ? null : cols.join(", ") || "(no columns)"
 }
 
 type HogQLResponse = { results?: unknown[][]; columns?: string[] }
@@ -156,7 +220,8 @@ const cache = new Map<string, { at: number; value: AnalyticsResult }>()
 /**
  * Cache key. MUST include the org AND the resolved record value — keying on the
  * query config alone would serve one record's numbers for another record's
- * widget (and one org's for another's).
+ * widget (and one org's for another's). Same rule covers the custom `query`
+ * text: two custom widgets differ in nothing else.
  */
 const cacheKeyFor = (orgId: string, q: AnalyticsQuery): string =>
   createHash("sha256")
@@ -167,6 +232,7 @@ const cacheKeyFor = (orgId: string, q: AnalyticsQuery): string =>
         q.metric,
         q.interval,
         q.since,
+        q.query ?? null,
         q.event ?? null,
         q.breakdown ?? null,
         q.recordProperty ?? null,
@@ -192,7 +258,7 @@ const runHogQL = async (
     }),
   })
 
-/** Run a structured query for an org, honoring the TTL cache. */
+/** Run a query for an org, honoring the TTL cache. */
 export const runAnalyticsQuery = async (
   orgId: string,
   q: AnalyticsQuery,
@@ -201,6 +267,10 @@ export const runAnalyticsQuery = async (
   const hit = cache.get(key)
   if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.value
 
+  const custom = q.metric === "custom"
+  // Fail on an unusable query before spending a connection lookup on it.
+  if (custom) buildCustomQuery(q, { from: new Date(0), to: new Date(0) })
+
   const connection = await posthogConnectionForOrg(orgId)
   if (!connection) return { error: "NO_POSTHOG_CONNECTION" }
   const ctx = posthogCtxFor(connection)
@@ -208,18 +278,41 @@ export const runAnalyticsQuery = async (
   const days = SINCE_DAYS[q.since]
   const to = new Date()
   const from = new Date(to.getTime() - days * DAY_MS)
-  const data = await runHogQL(ctx, connection.projectId, buildPosthogQuery(q, { from, to }))
-  const series = rowsToSeries(data, !!q.breakdown)
+  // `dropBreakdown` collapses the structured query to one cheap row for the
+  // prior-window total. It can't apply to a custom query — we won't rewrite the
+  // caller's SQL — so that prior run is the same query over a shifted window.
+  const build = (w: Window, dropBreakdown = false): Built =>
+    custom
+      ? buildCustomQuery(q, w)
+      : buildPosthogQuery(
+          {
+            ...q,
+            metric: q.metric as StructuredMetric,
+            breakdown: dropBreakdown ? null : q.breakdown,
+          },
+          w,
+        )
+
+  const data = await runHogQL(ctx, connection.projectId, build({ from, to }))
+  if (custom) {
+    const got = validateCustomShape(data.columns)
+    if (got !== null) throw new CustomQueryError("BAD_QUERY_SHAPE", got)
+  }
+  // A custom query buckets and splits itself, so its series count comes from
+  // whether it actually returned a `series` column.
+  const series = rowsToSeries(
+    data,
+    custom ? (data.columns ?? []).includes("series") : !!q.breakdown,
+  )
 
   let delta: AnalyticsResult["delta"] = null
   if (q.includePrior) {
     const priorTo = from
     const priorFrom = new Date(from.getTime() - days * DAY_MS)
-    // Prior-window totals only — drop the breakdown so this is a single cheap row.
     const priorData = await runHogQL(
       ctx,
       connection.projectId,
-      buildPosthogQuery({ ...q, breakdown: null }, { from: priorFrom, to: priorTo }),
+      build({ from: priorFrom, to: priorTo }, true),
     )
     const priorSeries = rowsToSeries(priorData, false)
     delta = {
@@ -251,18 +344,21 @@ export async function queryAnalytics(req: Request) {
   const body = (await req.json().catch(() => null)) as Record<string, unknown> | null
   if (!body) return json({ error: "INVALID_BODY" }, 400)
 
-  const metric = oneOf<AnalyticsMetric>(body.metric, ["active_users", "event_count"])
+  const metric = oneOf<AnalyticsMetric>(body.metric, ["active_users", "event_count", "custom"])
   const interval = oneOf<AnalyticsInterval>(body.interval, ["day", "week", "month"])
   const since = oneOf<AnalyticsSince>(body.since, ["7d", "30d", "90d"])
   if (!metric || !interval || !since) return json({ error: "INVALID_QUERY" }, 400)
   if (body.provider !== undefined && body.provider !== "posthog")
     return json({ error: "UNSUPPORTED_PROVIDER" }, 400)
+  const query = asString(body.query)
+  if (metric === "custom" && !query) return json({ error: "QUERY_REQUIRED" }, 400)
 
   const q: AnalyticsQuery = {
     provider: "posthog",
     metric,
     interval,
     since,
+    query,
     event: asString(body.event),
     breakdown: asString(body.breakdown),
     recordProperty: asString(body.recordProperty),
@@ -278,6 +374,33 @@ export async function queryAnalytics(req: Request) {
     if ("error" in result) return json(result, 404)
     return json(result)
   } catch (error) {
+    // Rejected before or after the provider call, by our own rules.
+    if (error instanceof CustomQueryError)
+      return json({ error: error.code, detail: error.detail ?? null }, 400)
+    // A provider 400 on a custom query is the author's mistake, not an outage —
+    // and HogQL's message (with char offsets) is the only debugging aid they
+    // have, so pass it through as a 400 rather than burying it in a 502.
+    const status = (error as { status?: number }).status
+    if (q.metric === "custom" && status === 400)
+      return json({ error: "ANALYTICS_QUERY_INVALID", detail: providerMessage(error) }, 400)
     return json({ error: "ANALYTICS_QUERY_FAILED", detail: String(error) }, 502)
   }
+}
+
+/**
+ * The human-readable part of a PostHog error. `posthogRequest` throws
+ * `PostHog API 400: <raw body>`, where the body is usually
+ * `{"type":"validation_error","detail":"Global variable not found: nope"}`.
+ */
+const providerMessage = (error: unknown): string => {
+  const raw = String((error as Error)?.message ?? error)
+  const at = raw.indexOf(": ")
+  const body = at === -1 ? raw : raw.slice(at + 2)
+  try {
+    const parsed = JSON.parse(body) as { detail?: unknown }
+    if (typeof parsed.detail === "string" && parsed.detail) return parsed.detail
+  } catch {
+    // Not JSON — fall through to the raw text.
+  }
+  return body || raw
 }

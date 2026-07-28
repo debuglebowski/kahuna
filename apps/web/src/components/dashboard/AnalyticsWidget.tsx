@@ -11,7 +11,13 @@ import {
   XAxis,
   YAxis,
 } from "recharts"
-import { type AnalyticsSeries, api, type DashboardWidget, type Instance } from "@/lib/api"
+import {
+  AnalyticsQueryError,
+  type AnalyticsSeries,
+  api,
+  type DashboardWidget,
+  type Instance,
+} from "@/lib/api"
 import { cn } from "@/lib/utils"
 
 type Analytics = Extract<DashboardWidget, { type: "analytics" }>
@@ -47,6 +53,38 @@ const toRows = (
   })
 }
 
+/** Prose for the error codes the analytics endpoint returns. */
+const ERROR_COPY: Record<string, string> = {
+  NO_POSTHOG_CONNECTION: "Connect PostHog in Settings → Integrations.",
+  QUERY_REQUIRED: "This widget needs a query.",
+  EMPTY_QUERY: "This widget needs a query.",
+  SEMICOLON_NOT_ALLOWED: "Remove the semicolon — one statement per query.",
+  BAD_QUERY_SHAPE: "The query must return columns aliased bucket and value (series is optional).",
+  ANALYTICS_QUERY_INVALID: "The provider rejected this query.",
+}
+
+/**
+ * A failed query, rendered where the chart would be — for a custom query this IS
+ * the debugging surface, so the provider's own message (parse error with char
+ * offsets, the columns that actually came back) is shown verbatim beneath it.
+ */
+function QueryError({ error }: { error: Error }) {
+  const code = error.message
+  const detail = error instanceof AnalyticsQueryError ? error.detail : null
+  return (
+    <div className="flex h-full w-full flex-col gap-1 overflow-auto">
+      <p className="text-sm text-muted-foreground">
+        {ERROR_COPY[code] ?? "Couldn't load analytics."}
+      </p>
+      {detail && (
+        <pre className="whitespace-pre-wrap break-words font-mono text-[11px] text-destructive">
+          {detail}
+        </pre>
+      )}
+    </div>
+  )
+}
+
 /**
  * Aggregated product metrics from an external analytics provider (PostHog).
  * The only data-bound widget that doesn't read concept instances — the server
@@ -70,6 +108,8 @@ export function AnalyticsWidget({
     rawValue == null ? null : typeof rawValue === "string" ? rawValue : String(rawValue)
   const showDelta = widget.showDelta ?? false
   const chart = widget.chart ?? "area"
+  const custom = widget.metric === "custom"
+  const query = widget.query?.trim() || null
 
   // A record-scoped widget can't resolve its value off a record dashboard (or
   // when the field is empty) — don't query, since the server would return empty.
@@ -82,19 +122,21 @@ export function AnalyticsWidget({
       widget.metric,
       widget.interval,
       widget.since,
+      query,
       widget.event ?? null,
       widget.breakdown ?? null,
       filter?.property ?? null,
       recordValue,
       showDelta,
     ],
-    enabled: !unresolved,
+    enabled: !unresolved && (!custom || !!query),
     queryFn: () =>
       api.runAnalyticsQuery({
         provider: widget.provider,
         metric: widget.metric,
         interval: widget.interval,
         since: widget.since,
+        query,
         event: widget.event ?? null,
         breakdown: widget.breakdown ?? null,
         recordProperty: filter?.property ?? null,
@@ -103,6 +145,10 @@ export function AnalyticsWidget({
       }),
   })
 
+  if (custom && !query)
+    return (
+      <p className="text-sm text-muted-foreground">No query yet — edit the widget to add one.</p>
+    )
   if (unresolved)
     return (
       <p className="text-sm text-muted-foreground">
@@ -110,14 +156,7 @@ export function AnalyticsWidget({
       </p>
     )
   if (q.isLoading) return <p className="text-sm text-muted-foreground">Loading…</p>
-  if (q.error)
-    return (
-      <p className="text-sm text-muted-foreground">
-        {String(q.error.message) === "NO_POSTHOG_CONNECTION"
-          ? "Connect PostHog in Settings → Integrations."
-          : "Couldn't load analytics."}
-      </p>
-    )
+  if (q.error) return <QueryError error={q.error} />
 
   const series = q.data?.series ?? []
   const rows = toRows(series)
@@ -134,7 +173,10 @@ export function AnalyticsWidget({
         <table className="w-full">
           <thead className="sticky top-0 bg-background">
             <tr className="text-left text-muted-foreground">
-              <th className="py-1 pr-2 font-medium">Per {INTERVAL_LABEL[widget.interval]}</th>
+              <th className="py-1 pr-2 font-medium">
+                {/* A custom query buckets itself, so `interval` says nothing about it. */}
+                {custom ? "Bucket" : `Per ${INTERVAL_LABEL[widget.interval]}`}
+              </th>
               {series.map((s) => (
                 <th key={s.name} className="py-1 pr-2 text-right font-medium">
                   {s.name === "value" ? "Value" : s.name}

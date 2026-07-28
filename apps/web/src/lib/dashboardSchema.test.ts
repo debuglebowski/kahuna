@@ -89,6 +89,32 @@ describe("DashboardBody schema codec (recursive tree)", () => {
     expect(Schema.encodeSync(DashboardBody)(decoded)).toEqual(body)
   })
 
+  // The custom-query escape hatch: raw provider SQL persisted in the body, with
+  // the structured knobs it subsumes left absent.
+  it("round-trips a custom-query analytics widget losslessly", () => {
+    const body = {
+      direction: "col" as const,
+      children: [
+        {
+          id: "a2",
+          type: "analytics" as const,
+          title: "Browsers",
+          provider: "posthog" as const,
+          metric: "custom" as const,
+          query:
+            "SELECT toStartOfDay(timestamp) AS bucket, count() AS value\nFROM events\nWHERE timestamp >= {from} AND timestamp < {to}\nGROUP BY bucket",
+          interval: "day" as const,
+          since: "7d" as const,
+          chart: "table" as const,
+          w: { unit: "fr" as const, value: 1 },
+          h: { unit: "fr" as const, value: 1 },
+        },
+      ],
+    }
+    const decoded = Schema.decodeUnknownSync(DashboardBody)(body)
+    expect(Schema.encodeSync(DashboardBody)(decoded)).toEqual(body)
+  })
+
   it("round-trips a tabs group (display/label/active/tabBar) losslessly", () => {
     const body = {
       direction: "col" as const,

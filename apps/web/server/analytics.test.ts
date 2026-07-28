@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import {
+  buildCustomQuery,
   buildPosthogQuery,
+  CustomQueryError,
   clearAnalyticsCacheForTest,
   queryAnalytics,
   rowsToSeries,
@@ -166,6 +168,53 @@ describe("analytics query translation", () => {
   })
 })
 
+describe("custom query construction", () => {
+  const CUSTOM = { ...BASE, metric: "custom" } as const
+  const W = { from: new Date("2026-07-01T00:00:00.000Z"), to: new Date("2026-07-28T00:00:00.000Z") }
+  const inner = "SELECT toStartOfDay(timestamp) AS bucket, count() AS value FROM events"
+
+  it("wraps the query in a bounded subquery", () => {
+    const built = buildCustomQuery({ ...CUSTOM, query: inner }, W)
+    expect(built.query).toBe(`SELECT * FROM (\n${inner}\n) LIMIT 2000`)
+  })
+
+  // A trailing `-- comment` would swallow the closing paren on one line, so the
+  // newlines around the subquery are load-bearing, not cosmetic.
+  it("delimits the wrap with newlines so a trailing comment can't eat the paren", () => {
+    const built = buildCustomQuery({ ...CUSTOM, query: `${inner} -- note` }, W)
+    expect(built.query).toContain("-- note\n)")
+  })
+
+  it("binds the window as params rather than interpolating it", () => {
+    const built = buildCustomQuery(
+      { ...CUSTOM, query: `${inner} WHERE timestamp >= {from} AND timestamp < {to}` },
+      W,
+    )
+    expect(built.params).toEqual({ from: W.from.toISOString(), to: W.to.toISOString() })
+    expect(built.query).not.toContain("2026-07-01T00:00:00.000Z")
+  })
+
+  it("binds a resolved record value as {recordValue}", () => {
+    const built = buildCustomQuery({ ...CUSTOM, query: inner, recordValue: "a@b.dev" }, W)
+    expect(built.params.recordValue).toBe("a@b.dev")
+    expect(built.query).not.toContain("a@b.dev")
+  })
+
+  it("rejects an embedded semicolon (it also breaks the wrap)", () => {
+    expect(() => buildCustomQuery({ ...CUSTOM, query: "SELECT 1; DROP TABLE x" }, W)).toThrow(
+      CustomQueryError,
+    )
+  })
+
+  it("tolerates a trailing semicolon", () => {
+    expect(buildCustomQuery({ ...CUSTOM, query: `${inner};` }, W).query).toContain(`${inner}\n)`)
+  })
+
+  it("rejects an empty query", () => {
+    expect(() => buildCustomQuery({ ...CUSTOM, query: "   " }, W)).toThrow(CustomQueryError)
+  })
+})
+
 describe("analytics query endpoint", () => {
   const oldEnv = { ...process.env }
 
@@ -285,5 +334,164 @@ describe("analytics query endpoint", () => {
     const res = await postQuery(actor, BASE)
     expect(res.status).toBe(502)
     expect(await res.json()).toMatchObject({ error: "ANALYTICS_QUERY_FAILED" })
+  })
+})
+
+describe("custom query endpoint", () => {
+  const oldEnv = { ...process.env }
+  const CUSTOM = {
+    ...BASE,
+    metric: "custom",
+    query: "SELECT toStartOfDay(timestamp) AS bucket, count() AS value FROM events",
+  } as const
+
+  beforeEach(() => {
+    process.env.INTEGRATION_TOKEN_ENCRYPTION_KEY =
+      "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+    clearAnalyticsCacheForTest()
+  })
+
+  afterEach(() => {
+    setPosthogFetchForTest(fetch)
+    process.env = { ...oldEnv }
+    clearAnalyticsCacheForTest()
+  })
+
+  /** Capture the HogQL text + values the provider was asked to run. */
+  const capture = (rows: unknown[][], columns: string[]) => {
+    const sent: { query: string; values: Record<string, unknown> }[] = []
+    setPosthogFetchForTest(async (_input, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as {
+        query?: { query?: string; values?: Record<string, unknown> }
+      }
+      sent.push({ query: String(body.query?.query ?? ""), values: body.query?.values ?? {} })
+      return hogqlResponse(rows, columns)
+    })
+    return sent
+  }
+
+  it("400s a custom query with no query text, before hitting the provider", async () => {
+    const actor = await signUpAndOrg()
+    await connectFor(actor)
+    const sent = capture([], [])
+    const res = await postQuery(actor, { ...CUSTOM, query: "" })
+    expect(res.status).toBe(400)
+    expect(await res.json()).toMatchObject({ error: "QUERY_REQUIRED" })
+    expect(sent).toHaveLength(0)
+  })
+
+  it("400s on an embedded semicolon, before hitting the provider", async () => {
+    const actor = await signUpAndOrg()
+    await connectFor(actor)
+    const sent = capture([], [])
+    const res = await postQuery(actor, { ...CUSTOM, query: "SELECT 1 AS bucket; SELECT 2" })
+    expect(res.status).toBe(400)
+    expect(await res.json()).toMatchObject({ error: "SEMICOLON_NOT_ALLOWED" })
+    expect(sent).toHaveLength(0)
+  })
+
+  it("runs the wrapped query with the window bound as params", async () => {
+    const actor = await signUpAndOrg()
+    await connectFor(actor)
+    const sent = capture([["2026-07-01T00:00:00Z", 5]], ["bucket", "value"])
+    const res = await postQuery(actor, CUSTOM)
+    expect(res.status).toBe(200)
+    expect(sent).toHaveLength(1)
+    expect(sent[0]?.query).toBe(`SELECT * FROM (\n${CUSTOM.query}\n) LIMIT 2000`)
+    expect(Object.keys(sent[0]?.values ?? {}).sort()).toEqual(["from", "to"])
+  })
+
+  it("splits into series when the query returns a series column", async () => {
+    const actor = await signUpAndOrg()
+    await connectFor(actor)
+    capture(
+      [
+        ["2026-07-01T00:00:00Z", 2, "chrome"],
+        ["2026-07-01T00:00:00Z", 9, "safari"],
+      ],
+      ["bucket", "value", "series"],
+    )
+    const res = await postQuery(actor, CUSTOM)
+    const body = (await res.json()) as { series: { name: string }[] }
+    expect(body.series.map((s) => s.name)).toEqual(["safari", "chrome"])
+  })
+
+  // Without shape validation a mis-aliased query renders as "No data in this
+  // window" — rowsToSeries silently drops rows whose bucket won't parse.
+  it("names the columns it got back when the aliases are wrong", async () => {
+    const actor = await signUpAndOrg()
+    await connectFor(actor)
+    capture([["$pageview", 5]], ["event", "value"])
+    const res = await postQuery(actor, CUSTOM)
+    expect(res.status).toBe(400)
+    expect(await res.json()).toMatchObject({ error: "BAD_QUERY_SHAPE", detail: "event, value" })
+  })
+
+  it("binds {recordValue} when a record filter resolves", async () => {
+    const actor = await signUpAndOrg()
+    await connectFor(actor)
+    const sent = capture([["2026-07-01T00:00:00Z", 1]], ["bucket", "value"])
+    await postQuery(actor, {
+      ...CUSTOM,
+      query: `${CUSTOM.query} WHERE properties.email = {recordValue}`,
+      recordProperty: "email",
+      recordValue: "a@b.dev",
+    })
+    expect(sent[0]?.values.recordValue).toBe("a@b.dev")
+    expect(sent[0]?.query).not.toContain("a@b.dev")
+  })
+
+  // Same bug class as the recordValue cache-key test: two custom widgets differ
+  // in nothing BUT their query text.
+  it("does NOT share cache entries across different query texts", async () => {
+    const actor = await signUpAndOrg()
+    await connectFor(actor)
+    const sent = capture([["2026-07-01T00:00:00Z", 1]], ["bucket", "value"])
+    await postQuery(actor, CUSTOM)
+    await postQuery(actor, { ...CUSTOM, query: `${CUSTOM.query} WHERE event = 'x'` })
+    expect(sent).toHaveLength(2)
+    expect(sent[0]?.query).not.toBe(sent[1]?.query)
+  })
+
+  it("re-runs the same query over the shifted window for a delta", async () => {
+    const actor = await signUpAndOrg()
+    await connectFor(actor)
+    const sent = capture([["2026-07-01T00:00:00Z", 3]], ["bucket", "value"])
+    await postQuery(actor, { ...CUSTOM, includePrior: true })
+    expect(sent).toHaveLength(2)
+    // Identical text (we never rewrite the caller's SQL), earlier window.
+    expect(sent[1]?.query).toBe(sent[0]?.query)
+    expect(String(sent[1]?.values.to)).toBe(String(sent[0]?.values.from))
+    expect(Number(new Date(String(sent[1]?.values.from)))).toBeLessThan(
+      Number(new Date(String(sent[0]?.values.from))),
+    )
+  })
+
+  it("400s with the provider's message when the provider rejects the query", async () => {
+    const actor = await signUpAndOrg()
+    await connectFor(actor)
+    setPosthogFetchForTest(
+      async () =>
+        new Response(JSON.stringify({ detail: "Global variable not found: nope" }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        }),
+    )
+    const res = await postQuery(actor, { ...CUSTOM, query: "SELECT {nope} AS bucket" })
+    expect(res.status).toBe(400)
+    expect(await res.json()).toMatchObject({
+      error: "ANALYTICS_QUERY_INVALID",
+      detail: "Global variable not found: nope",
+    })
+  })
+
+  // A structured query hitting the same 400 is an outage/bug on our side, not the
+  // author's mistake — it must keep its 502.
+  it("still 502s a provider 400 on a STRUCTURED query", async () => {
+    const actor = await signUpAndOrg()
+    await connectFor(actor)
+    setPosthogFetchForTest(async () => new Response("boom", { status: 400 }))
+    const res = await postQuery(actor, BASE)
+    expect(res.status).toBe(502)
   })
 })
