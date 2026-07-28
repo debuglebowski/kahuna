@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
+  ArrowUpRight,
   Check,
   ChevronDown,
   ChevronUp,
@@ -16,7 +17,6 @@ import {
 } from "lucide-react"
 import { type DragEvent as ReactDragEvent, useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
-import { ConceptSelectItems } from "@/components/ConceptSelectItems"
 import { IconPicker } from "@/components/IconPicker"
 import { usePageChrome } from "@/components/Layout"
 import { Button, ConfirmDialog, Field, Input, TabBar, TabBarItem } from "@/components/ui"
@@ -60,6 +60,7 @@ import {
   updateNode,
 } from "@/lib/dashboards"
 import { instanceLabel } from "@/lib/instanceLabel"
+import { recordHref } from "@/lib/recordHref"
 import { useInstanceCtx } from "@/lib/useInstanceCtx"
 import { useUnsavedGuard } from "@/lib/useUnsavedGuard"
 import { cn } from "@/lib/utils"
@@ -567,9 +568,6 @@ export function DashboardEditor({
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   // Deleting a non-empty group takes its contents with it — confirm first.
   const [confirmNodeDelete, setConfirmNodeDelete] = useState<string | null>(null)
-  // Record mode: the concept the user picked to repoint this view at, pending
-  // confirmation (repointing resets the layout — see `changeConcept`).
-  const [pendingConcept, setPendingConcept] = useState<string | null>(null)
   // Layers drag-and-drop: the dragged row + the current drop hint.
   const [layerDrag, setLayerDrag] = useState<string | null>(null)
   const [layerHint, setLayerHint] = useState<{ id: string; zone: DropZone } | null>(null)
@@ -740,34 +738,6 @@ export function DashboardEditor({
       navigate(LIST)
     },
   })
-  // Whether repointing the concept would discard widgets: anything bound to a
-  // concept (lists, metrics, related-record panels…) references the old schema's
-  // fields and can't carry over. A view of only record-scoped widgets survives.
-  const conceptBoundWidgets = referencedConceptIds(draft.body).length > 0
-  const changeConcept = useMutation({
-    mutationFn: (newConceptId: string) =>
-      api.updateDashboard({
-        id: dash.id,
-        conceptId: newConceptId,
-        // Wipe the layout only when something is actually bound to the old concept.
-        body: conceptBoundWidgets ? { widgets: [] } : serialize(draft.body),
-      }),
-    onSuccess: async (updated) => {
-      await qc.invalidateQueries({ queryKey: ["dashboards"] })
-      await qc.invalidateQueries({ queryKey: ["recordDashboards"] })
-      setPendingConcept(null)
-      // Repoint the URL → the parent remounts the editor with the reset body.
-      bypass()
-      setSearchParams(
-        (prev) => {
-          const p = new URLSearchParams(prev)
-          if (updated.conceptId) p.set("concept", updated.conceptId)
-          return p
-        },
-        { replace: true },
-      )
-    },
-  })
 
   const addWidgetOfType = (type: DashboardWidget["type"]) => {
     const node = newWidget(type)
@@ -839,24 +809,10 @@ export function DashboardEditor({
         </button>
         <span className="text-muted-foreground/50">/</span>
         <span className="min-w-0 truncate">{draft.name.trim() || "Untitled dashboard"}</span>
-        {/* Record views: which concept this template renders, pinned top-right above
-            the tab toolbar. Repointing resets the layout, so it's confirmed. */}
+        {/* Record views: the preview pickers plus a jump to the real record page,
+            pinned top-right above the tab toolbar. */}
         {recordMode && (
           <div className="ml-auto flex shrink-0 items-center gap-2 text-sm font-normal">
-            <span className="text-muted-foreground">Renders for</span>
-            <Select
-              value={recordConceptId ?? ""}
-              onValueChange={(v) => {
-                if (v && v !== recordConceptId) setPendingConcept(v)
-              }}
-            >
-              <SelectTrigger className="h-8 max-w-56" title="Concept this view renders">
-                <SelectValue placeholder="Concept" />
-              </SelectTrigger>
-              <SelectContent>
-                <ConceptSelectItems concepts={concepts} label={(c) => c.name} />
-              </SelectContent>
-            </Select>
             {sampleInstances.length > 0 && (
               <>
                 <span className="text-muted-foreground">Preview</span>
@@ -909,6 +865,25 @@ export function DashboardEditor({
                 )}
               </>
             )}
+            {/* Out of the config and into the real thing: the record page rendered
+                with this view (the version being previewed, when versioned). */}
+            <div className="mx-0.5 h-5 w-px shrink-0 bg-border" aria-hidden="true" />
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={!effectiveVersionId}
+              onClick={() =>
+                effectiveVersionId &&
+                navigate(recordHref(effectiveVersionId, { dashboard: dash.id }))
+              }
+              title={
+                effectiveVersionId
+                  ? "Open the record page rendered with this view"
+                  : "No record to open — this concept has no records yet."
+              }
+            >
+              Open record <ArrowUpRight size={14} />
+            </Button>
           </div>
         )}
       </div>
@@ -1402,22 +1377,6 @@ export function DashboardEditor({
             setConfirmNodeDelete(null)
           }}
           onCancel={() => setConfirmNodeDelete(null)}
-        />
-      )}
-      {pendingConcept && (
-        <ConfirmDialog
-          title="Change concept?"
-          message={
-            conceptBoundWidgets
-              ? `This view’s widgets are bound to ${cIndex.get(recordConceptId ?? "")?.name ?? "the current concept"} and can’t carry over. Switching to ${cIndex.get(pendingConcept)?.name ?? "another concept"} will clear the layout so you can rebuild it.`
-              : `Switch this view to ${cIndex.get(pendingConcept)?.name ?? "another concept"}? Its current widgets aren’t bound to a concept, so they’ll be kept.`
-          }
-          confirmLabel="Change concept"
-          confirmVariant={conceptBoundWidgets ? "danger" : "primary"}
-          pending={changeConcept.isPending}
-          error={changeConcept.error ? (changeConcept.error as Error).message : undefined}
-          onConfirm={() => changeConcept.mutate(pendingConcept)}
-          onCancel={() => setPendingConcept(null)}
         />
       )}
     </div>
