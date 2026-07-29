@@ -187,8 +187,27 @@ function RecordPanel({
   const content = TILE_CONTENTS[contentKey]
   if (content.available && !content.available(capsOf(record)))
     return <p className="text-sm text-muted-foreground">Not available for this record.</p>
-  const Body = content.Body
-  return <Body ctx={record} />
+  const { Body, Actions } = content
+  // A content's header actions get a row of their own. The tile's own header shows
+  // only the widget title, so dropping `Actions` here silently makes the panel
+  // read-only — Connections loses its "Add", Relationships its walk filter — and
+  // nothing in the Body offers them instead. In edit mode the canvas parks
+  // `pointer-events-none` over this whole subtree, so they stay inert while
+  // arranging, exactly like the rest of the widget's content.
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      {Actions && (
+        <div className="flex shrink-0 justify-end pb-1">
+          <Actions ctx={record} />
+        </div>
+      )}
+      {/* The tile clips (overflow-hidden), so the scroll has to live inside or a
+          long panel's tail is simply unreachable. */}
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <Body ctx={record} />
+      </div>
+    </div>
+  )
 }
 
 /** The widget content for a leaf node (the per-type renderer switch). */
