@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest"
 import { Effect } from "effect"
+import type { EditReach } from "../domain/types"
 import { ConceptService } from "../services/ConceptService"
 import { EventStore } from "../services/EventStore"
 import { FieldService } from "../services/FieldService"
@@ -8,9 +9,10 @@ import { QueryService } from "../services/QueryService"
 import { RelationService } from "../services/RelationService"
 import { newOrgId, testLayer } from "./harness"
 
-/** Flip a concept into versioned mode (description is a required update field). */
-const enableVersioning = (concepts: ConceptService, id: string) =>
-  concepts.update({ id, description: null, versioningEnabled: true })
+/** Flip a concept into versioned mode (description is a required update field).
+ *  `reach` defaults to today's behaviour: a published version is frozen. */
+const enableVersioning = (concepts: ConceptService, id: string, reach: EditReach = "draft") =>
+  concepts.update({ id, description: null, versioningEnabled: true, editReach: reach })
 
 describe("versioning", () => {
   it.effect("non-versioned concept is unchanged: published seq-1, 1 item per instance", () =>
@@ -374,6 +376,240 @@ describe("versioning", () => {
       const again = yield* instances.newVersion({ itemId: v1.itemId })
       expect(again.versionSeq).toBe(2)
       expect(again.versionStatus).toBe("draft")
+    }).pipe(Effect.provide(testLayer(newOrgId()))),
+  )
+
+  it.effect("reach 'any': a published version is amendable in place, seq unchanged", () =>
+    Effect.gen(function* () {
+      const concepts = yield* ConceptService
+      const fields = yield* FieldService
+      const instances = yield* InstanceService
+      const events = yield* EventStore
+
+      const c = yield* concepts.create({ name: "Spec" })
+      yield* enableVersioning(concepts, c.id, "any")
+      const title = yield* fields.addField({ conceptId: c.id, name: "title", kind: "text" })
+      const draft = yield* instances.create({ conceptId: c.id, fields: { [title.id]: "teh spec" } })
+      const v1 = yield* instances.publishVersion({
+        instanceId: draft.id,
+        expectedVersion: draft.version,
+      })
+
+      // The typo fix lands on v1 itself — no v2, same seq, still published.
+      const fixed = yield* instances.update({
+        instanceId: v1.id,
+        expectedVersion: v1.version,
+        patch: { [title.id]: "the spec" },
+      })
+      expect(fixed.state[title.id]).toBe("the spec")
+      expect(fixed.versionSeq).toBe(1)
+      expect(fixed.versionStatus).toBe("published")
+      expect(fixed.publishedAt).not.toBeNull()
+      expect(fixed.version).toBe(v1.version + 1)
+
+      // The write is tagged as an amendment, not an ordinary edit.
+      const stream = yield* events.readStream(v1.id)
+      expect(stream.some((e) => e.eventType === "VersionAmended")).toBe(true)
+      // The pre-publish draft edit is a plain InstanceUpdated; the amendment isn't.
+      expect(stream.filter((e) => e.eventType === "VersionAmended").length).toBe(1)
+    }).pipe(Effect.provide(testLayer(newOrgId()))),
+  )
+
+  it.effect("an amendment survives rebuild and getAsOf still shows the pre-fix value", () =>
+    Effect.gen(function* () {
+      const concepts = yield* ConceptService
+      const fields = yield* FieldService
+      const instances = yield* InstanceService
+      const events = yield* EventStore
+
+      const c = yield* concepts.create({ name: "Spec" })
+      yield* enableVersioning(concepts, c.id, "any")
+      const title = yield* fields.addField({ conceptId: c.id, name: "title", kind: "text" })
+      const draft = yield* instances.create({ conceptId: c.id, fields: { [title.id]: "old" } })
+      const v1 = yield* instances.publishVersion({
+        instanceId: draft.id,
+        expectedVersion: draft.version,
+      })
+      yield* instances.update({
+        instanceId: v1.id,
+        expectedVersion: v1.version,
+        patch: { [title.id]: "new" },
+      })
+
+      // The reducer must fold VersionAmended on replay too, or the row stops loading.
+      const rebuilt = yield* instances.rebuild(v1.id)
+      expect(rebuilt.state[title.id]).toBe("new")
+      expect(rebuilt.versionStatus).toBe("published")
+      expect(rebuilt.publishedAt).not.toBeNull()
+
+      // Amendments are recoverable history: as-of the publish, the old value stands.
+      const stream = yield* events.readStream(v1.id)
+      const publishEvent = stream.find((e) => e.eventType === "VersionPublished")
+      const asOf = yield* instances.getAsOf(v1.id, publishEvent!.id)
+      expect(asOf.state[title.id]).toBe("old")
+    }).pipe(Effect.provide(testLayer(newOrgId()))),
+  )
+
+  it.effect("amending a superseded version doesn't move the head", () =>
+    Effect.gen(function* () {
+      const concepts = yield* ConceptService
+      const fields = yield* FieldService
+      const instances = yield* InstanceService
+      const query = yield* QueryService
+
+      const c = yield* concepts.create({ name: "Spec" })
+      yield* enableVersioning(concepts, c.id, "any")
+      const title = yield* fields.addField({ conceptId: c.id, name: "title", kind: "text" })
+      const d1 = yield* instances.create({ conceptId: c.id, fields: { [title.id]: "v1" } })
+      const v1 = yield* instances.publishVersion({ instanceId: d1.id, expectedVersion: d1.version })
+      const d2 = yield* instances.newVersion({ itemId: v1.itemId })
+      const e2 = yield* instances.update({
+        instanceId: d2.id,
+        expectedVersion: d2.version,
+        patch: { [title.id]: "v2" },
+      })
+      const v2 = yield* instances.publishVersion({ instanceId: d2.id, expectedVersion: e2.version })
+
+      // Amend the OLD version: it's not the head, and amending must not make it one.
+      yield* instances.update({
+        instanceId: v1.id,
+        expectedVersion: v1.version,
+        patch: { [title.id]: "v1 fixed" },
+      })
+      const head = yield* instances.headOf(v1.itemId)
+      expect(head?.id).toBe(v2.id)
+      const live = yield* query.findInstances({ conceptId: c.id })
+      expect(live.map((x) => x.id)).toEqual([v2.id])
+    }).pipe(Effect.provide(testLayer(newOrgId()))),
+  )
+
+  it.effect("reach 'any' on a NON-versioned concept changes nothing (plain edit)", () =>
+    Effect.gen(function* () {
+      const concepts = yield* ConceptService
+      const fields = yield* FieldService
+      const instances = yield* InstanceService
+      const events = yield* EventStore
+
+      // Non-versioned rows are 'published' too, so the tag must key off versioning.
+      const c = yield* concepts.create({ name: "Lead" })
+      yield* concepts.update({ id: c.id, description: null, editReach: "any" })
+      const title = yield* fields.addField({ conceptId: c.id, name: "title", kind: "text" })
+      const inst = yield* instances.create({ conceptId: c.id, fields: { [title.id]: "a" } })
+      yield* instances.update({
+        instanceId: inst.id,
+        expectedVersion: inst.version,
+        patch: { [title.id]: "b" },
+      })
+      const stream = yield* events.readStream(inst.id)
+      expect(stream.some((e) => e.eventType === "InstanceUpdated")).toBe(true)
+      expect(stream.some((e) => e.eventType === "VersionAmended")).toBe(false)
+    }).pipe(Effect.provide(testLayer(newOrgId()))),
+  )
+
+  it.effect("reach 'any' → 'draft' re-freezes published versions", () =>
+    Effect.gen(function* () {
+      const concepts = yield* ConceptService
+      const fields = yield* FieldService
+      const instances = yield* InstanceService
+
+      const c = yield* concepts.create({ name: "Spec" })
+      yield* enableVersioning(concepts, c.id, "any")
+      const title = yield* fields.addField({ conceptId: c.id, name: "title", kind: "text" })
+      const d1 = yield* instances.create({ conceptId: c.id, fields: { [title.id]: "v1" } })
+      const v1 = yield* instances.publishVersion({ instanceId: d1.id, expectedVersion: d1.version })
+      const fixed = yield* instances.update({
+        instanceId: v1.id,
+        expectedVersion: v1.version,
+        patch: { [title.id]: "v1 fixed" },
+      })
+
+      // Downgrading reach is not "versioning in use" — that guard is versioning→off only.
+      yield* enableVersioning(concepts, c.id, "draft")
+      const frozen = yield* instances
+        .update({ instanceId: v1.id, expectedVersion: fixed.version, patch: { [title.id]: "x" } })
+        .pipe(Effect.flip)
+      expect(frozen._tag).toBe("VersionFrozen")
+    }).pipe(Effect.provide(testLayer(newOrgId()))),
+  )
+
+  it.effect(
+    "a published version's links follow reach: frozen under 'draft', open under 'any'",
+    () =>
+      Effect.gen(function* () {
+        const concepts = yield* ConceptService
+        const fields = yield* FieldService
+        const instances = yield* InstanceService
+        const relations = yield* RelationService
+
+        // Deal (versioned, the link SOURCE) → Account (the target).
+        const account = yield* concepts.create({ name: "Account" })
+        const deal = yield* concepts.create({ name: "Deal" })
+        yield* enableVersioning(concepts, deal.id)
+        const rel = yield* fields.addField({
+          conceptId: deal.id,
+          name: "account",
+          kind: "relation",
+          config: { target: account.id, cardinality: "many" },
+        })
+        const a = yield* instances.create({ conceptId: account.id, fields: {} })
+        const d1 = yield* instances.create({ conceptId: deal.id, fields: {} })
+        const v1 = yield* instances.publishVersion({
+          instanceId: d1.id,
+          expectedVersion: d1.version,
+        })
+
+        // Under 'draft' the published source's links are frozen — an API-level guard,
+        // not just a hidden button.
+        const err = yield* relations
+          .create({ fieldId: rel.id, fromId: v1.id, toItemId: a.itemId })
+          .pipe(Effect.flip)
+        expect(err._tag).toBe("VersionFrozen")
+
+        // Under 'any' the same calls go through, in both directions.
+        yield* enableVersioning(concepts, deal.id, "any")
+        const edge = yield* relations.create({
+          fieldId: rel.id,
+          fromId: v1.id,
+          toItemId: a.itemId,
+        })
+        yield* relations.remove({ relationId: edge.id })
+        const left = yield* relations.listFrom(v1.id)
+        expect(left.length).toBe(0)
+
+        // Flipping back re-freezes removal too.
+        const edge2 = yield* relations.create({
+          fieldId: rel.id,
+          fromId: v1.id,
+          toItemId: a.itemId,
+        })
+        yield* enableVersioning(concepts, deal.id, "draft")
+        const rmErr = yield* relations.remove({ relationId: edge2.id }).pipe(Effect.flip)
+        expect(rmErr._tag).toBe("VersionFrozen")
+      }).pipe(Effect.provide(testLayer(newOrgId()))),
+  )
+
+  it.effect("an amended version still can't be re-published", () =>
+    Effect.gen(function* () {
+      const concepts = yield* ConceptService
+      const fields = yield* FieldService
+      const instances = yield* InstanceService
+
+      const c = yield* concepts.create({ name: "Spec" })
+      yield* enableVersioning(concepts, c.id, "any")
+      const title = yield* fields.addField({ conceptId: c.id, name: "title", kind: "text" })
+      const d1 = yield* instances.create({ conceptId: c.id, fields: { [title.id]: "v1" } })
+      const v1 = yield* instances.publishVersion({ instanceId: d1.id, expectedVersion: d1.version })
+      const fixed = yield* instances.update({
+        instanceId: v1.id,
+        expectedVersion: v1.version,
+        patch: { [title.id]: "v1 fixed" },
+      })
+
+      // Amendable ≠ unpublished: publish stays once-only, so publishedAt is stable.
+      const err = yield* instances
+        .publishVersion({ instanceId: v1.id, expectedVersion: fixed.version })
+        .pipe(Effect.flip)
+      expect(err._tag).toBe("VersionFrozen")
     }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
 })

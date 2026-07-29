@@ -105,8 +105,9 @@ const AuthMiddlewareLive = Layer.succeed(AuthMiddleware, (options) =>
  *  override it with prose. Errors that DO carry a `message` (e.g.
  *  FieldValidationError) keep their own, more specific text. */
 const ERROR_MESSAGE: Record<string, string> = {
-  VersionFrozen:
-    "This version is published and can't be edited — create a new draft to make changes.",
+  // Deliberately prescribes no fix: whether a new draft is the only way out
+  // depends on the concept's edit-reach setting.
+  VersionFrozen: "This version is published and can't be edited.",
   VersionConflict: "This record was changed elsewhere. Reload and try again.",
   InstanceNotFound: "This record no longer exists.",
   ConceptNotFound: "This concept no longer exists.",
@@ -363,6 +364,7 @@ const HandlersLive = ServerRpcs.toLayer({
     icon,
     color,
     versioningEnabled,
+    editReach,
     staticLabelIds,
     defaultLabelIds,
   }) =>
@@ -374,6 +376,7 @@ const HandlersLive = ServerRpcs.toLayer({
         icon,
         color,
         versioningEnabled,
+        editReach,
         staticLabelIds,
         defaultLabelIds,
       }),

@@ -239,6 +239,13 @@
       "when": 1781823070299,
       "tag": "0033_illegal_mathemanic",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1785276918821,
+      "tag": "0034_dizzy_sugar_man",
+      "breakpoints": true
     }
   ]
 }

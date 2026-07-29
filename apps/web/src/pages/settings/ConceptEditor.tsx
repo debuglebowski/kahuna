@@ -32,6 +32,13 @@ import { useState } from "react"
 import { Link, useNavigate, useSearchParams } from "react-router-dom"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Tabs, TabsContent } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { IconPicker } from "../../components/IconPicker"
@@ -58,6 +65,7 @@ import {
   api,
   type Concept,
   type Dashboard,
+  type EditReach,
   type Field,
   type Instance,
   type Label,
@@ -228,6 +236,7 @@ interface Draft {
   staticLabelIds: string[]
   defaultLabelIds: string[]
   versioningEnabled: boolean
+  editReach: EditReach
 }
 
 /** Which destructive confirm dialog is open inside the modal (null = none). */
@@ -283,6 +292,7 @@ export function ConceptEditor({
     staticLabelIds: [...concept.staticLabelIds],
     defaultLabelIds: [...concept.defaultLabelIds],
     versioningEnabled: concept.versioningEnabled,
+    editReach: concept.editReach,
   }))
   const [dirty, setDirty] = useState(false)
   // Record-view deletion confirm (the Layout tab manages per-concept record views).
@@ -331,6 +341,7 @@ export function ConceptEditor({
         icon: draft.icon,
         color: draft.color,
         versioningEnabled: draft.versioningEnabled,
+        editReach: draft.editReach,
         staticLabelIds: draft.staticLabelIds,
         defaultLabelIds: draft.defaultLabelIds.filter((id) => !draft.staticLabelIds.includes(id)),
       }),
@@ -773,20 +784,48 @@ export function ConceptEditor({
                 />
               </div>
 
-              <div className="flex items-center gap-3 border-t border-border pt-4">
-                <Checkbox
-                  id="versioning-toggle"
-                  checked={draft.versioningEnabled}
-                  disabled={!admin}
-                  onCheckedChange={(v) => patch({ versioningEnabled: v === true })}
-                />
-                <label htmlFor="versioning-toggle" className="text-sm font-medium text-foreground">
-                  Enable versioning
-                </label>
-                <InfoHint
-                  text={`Items hold multiple draft → published versions. New items start as a draft and aren't shown or referenceable until published; lists show only the latest published version. Other items can reference "Latest" or pin a specific version.`}
-                  label="Enable versioning — more info"
-                />
+              <div className="space-y-3 border-t border-border pt-4">
+                <div className="flex items-center gap-3">
+                  <Checkbox
+                    id="versioning-toggle"
+                    checked={draft.versioningEnabled}
+                    disabled={!admin}
+                    onCheckedChange={(v) => patch({ versioningEnabled: v === true })}
+                  />
+                  <label
+                    htmlFor="versioning-toggle"
+                    className="text-sm font-medium text-foreground"
+                  >
+                    Enable versioning
+                  </label>
+                  <InfoHint
+                    text={`Items hold multiple draft → published versions. New items start as a draft and aren't shown or referenceable until published; lists show only the latest published version. Other items can reference "Latest" or pin a specific version.`}
+                    label="Enable versioning — more info"
+                  />
+                </div>
+
+                {/* Reach is subordinate to versioning — with versioning off every row
+                    is editable anyway, so the control is dead and reads disabled. */}
+                <div className="flex items-center gap-3 pl-7">
+                  <span className="text-sm text-muted-foreground">Editable versions</span>
+                  <Select
+                    value={draft.editReach}
+                    disabled={!admin || !draft.versioningEnabled}
+                    onValueChange={(v) => patch({ editReach: v as EditReach })}
+                  >
+                    <SelectTrigger className="w-64">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="draft">Draft only</SelectItem>
+                      <SelectItem value="any">Any version — allow amendments</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <InfoHint
+                    text={`"Draft only" freezes a version once published — changes need a new draft. "Any version" lets a published version be amended in place, e.g. to fix a typo. An amendment is live immediately to everyone referencing that version, including items pinned to it, and is recorded in the activity feed as "amended this version".`}
+                    label="Editable versions — more info"
+                  />
+                </div>
               </div>
 
               <div className="space-y-3 border-t border-border pt-4">

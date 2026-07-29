@@ -19,6 +19,13 @@ const State = Schema.Record({ key: Schema.String, value: Schema.Unknown })
 export const VersionStatus = Schema.Literal("draft", "published")
 export type VersionStatus = typeof VersionStatus.Type
 
+/** How far back edits reach on a versioned concept (mirrors the engine's
+ *  `EditReach`). `draft` = a published version is frozen, edits need a fresh
+ *  draft. `any` = any published version may be AMENDED in place, which everyone
+ *  referencing that version sees. Ignored when versioning is off. */
+export const EditReach = Schema.Literal("draft", "any")
+export type EditReach = typeof EditReach.Type
+
 const InstanceFields = {
   id: Schema.String,
   conceptId: Schema.String,
@@ -109,6 +116,9 @@ export const Concept = Schema.Struct({
   defaultLabelIds: Schema.Array(Schema.String),
   /** Opt-in per-concept versioning (draft→published versions + pinned references). */
   versioningEnabled: Schema.Boolean,
+  /** Which of this concept's versions are editable; only meaningful when
+   *  `versioningEnabled`. See {@link EditReach}. */
+  editReach: EditReach,
   /** Org-wide default instance-detail layout (a 12-col tile grid); null = the
    *  built-in default preset. Set in concept settings → Layout. */
   instanceView: Schema.NullOr(InstanceViewLayout),
@@ -1122,6 +1132,9 @@ export class KingsmakerRpcs extends RpcGroup.make(
       // Toggle per-concept versioning (admin). Disabling is rejected if any item
       // already has multiple versions or an open draft (VERSIONING_IN_USE).
       versioningEnabled: Schema.optional(Schema.Boolean),
+      // Allow amending published versions (admin). Needs no guard either way:
+      // tightening back to 'draft' just re-freezes them.
+      editReach: Schema.optional(EditReach),
       staticLabelIds: Schema.optional(Schema.Array(Schema.String)),
       defaultLabelIds: Schema.optional(Schema.Array(Schema.String)),
     },

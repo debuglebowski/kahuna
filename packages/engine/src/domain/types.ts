@@ -116,6 +116,10 @@ export interface Concept {
    *  published versions and references may pin a specific version. Default false
    *  ⇒ the plain 1-instance-per-item model (every item is a published seq-1 row). */
   readonly versioningEnabled: boolean
+  /** How far back edits reach; only meaningful when `versioningEnabled`.
+   *  'draft' (default) = a published version is frozen. 'any' = any published
+   *  version may be amended in place. See {@link EditReach}. */
+  readonly editReach: EditReach
   /** Org-wide default instance-detail layout for this concept (a 12-col tile
    *  grid, same shape as a view-prefs custom layout); null = render the built-in
    *  default preset. Set in concept settings; every instance renders it. */
@@ -191,6 +195,16 @@ export interface Item {
  *  immutable, referenceable `published`. One-shot (`published` is permanent). */
 export type VersionStatus = "draft" | "published"
 
+/** How far back edits reach on a versioned concept (per-concept setting; ignored
+ *  when versioning is off, where every instance is always editable).
+ *  - `draft`: only the open draft is editable — a published version is frozen and
+ *    changes need a fresh draft. The default, and the historical behaviour.
+ *  - `any`: any published version may be AMENDED in place. Pinned references point
+ *    at a version row, so an amendment reaches everyone referencing that version
+ *    (erratum semantics). Auditable — each amendment is an appended event, so
+ *    `getAsOf` still reconstructs the pre-amendment state. */
+export type EditReach = "draft" | "any"
+
 export interface Instance {
   readonly id: Id
   readonly orgId: OrgId
@@ -243,6 +257,12 @@ export type EventPayload =
       readonly versionStatus?: VersionStatus
     }
   | { readonly _tag: "InstanceUpdated"; readonly patch: InstanceState }
+  // An edit to an ALREADY-PUBLISHED version (only reachable on a versioned concept
+  // with `editReach: "any"`). Folds exactly like `InstanceUpdated` — the distinct
+  // tag exists so the activity feed can say "amended" instead of "edited", and so
+  // amendments are filterable. The pre-amendment state stays recoverable via
+  // `getAsOf` at the preceding event.
+  | { readonly _tag: "VersionAmended"; readonly patch: InstanceState }
   // Archive (soft, restorable). `InstanceDeleted` is the legacy archive tag kept
   // for replay; new archives emit `InstanceArchived`. Both fold to a set
   // `archivedAt`; `InstanceRestored` clears it again (see projection/reducer).
@@ -327,6 +347,7 @@ export type EventPayload =
       readonly icon?: string | null
       readonly color?: string | null
       readonly versioningEnabled?: boolean
+      readonly editReach?: EditReach
       readonly staticLabelIds?: ReadonlyArray<Id>
       readonly defaultLabelIds?: ReadonlyArray<Id>
     }

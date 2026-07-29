@@ -148,14 +148,32 @@ export const upsertInstanceByExternalId = async (
     readonly fields: Record<string, unknown>
   },
 ): Promise<UpsertResult> => {
-  const found = await pool.query<{ id: string; version: number }>(
-    `SELECT id, version FROM instances
-      WHERE org_id = $1 AND concept_id = $2 AND state->>$3 = $4 AND archived_at IS NULL
-      ORDER BY version_seq DESC
+  // Newest live row wins: on a versioned concept that's the open draft if one
+  // exists, else the published head.
+  const found = await pool.query<{
+    id: string
+    version: number
+    version_status: string
+    versioning_enabled: boolean
+  }>(
+    `SELECT i.id, i.version, i.version_status, c.versioning_enabled
+       FROM instances i JOIN concepts c ON c.id = i.concept_id AND c.org_id = i.org_id
+      WHERE i.org_id = $1 AND i.concept_id = $2 AND i.state->>$3 = $4 AND i.archived_at IS NULL
+      ORDER BY i.version_seq DESC
       LIMIT 1`,
     [scope.orgId, input.conceptId, input.externalFieldId, input.externalValue],
   )
   const existing = found.rows[0]
+  // A connector never amends a PUBLISHED version, even where the concept permits it
+  // (`editReach: "any"`). Amending is a human act of correcting the record; a
+  // connector inheriting that permission would rewrite published history on a timer,
+  // invisibly to whoever published it. Refuse instead — same outcome the engine's
+  // freeze gave before amendments existed, just no longer contingent on a setting.
+  if (existing?.versioning_enabled && existing.version_status !== "draft") {
+    throw new Error(
+      `refusing to sync into published version ${existing.id}: open a draft on this item first`,
+    )
+  }
   if (!existing) {
     const instance = await runEngineOrThrow(
       scope,

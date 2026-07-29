@@ -1,6 +1,6 @@
 import { PgClient } from "@effect/sql-pg"
 import { Effect } from "effect"
-import type { InstanceViewLayout } from "../domain/types"
+import type { EditReach, InstanceViewLayout } from "../domain/types"
 import {
   ConceptInUse,
   ConceptNameConflict,
@@ -151,6 +151,11 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
       // instances are already 1-version published items). Disabling is blocked
       // while any item holds >1 version or an open draft.
       readonly versioningEnabled?: boolean
+      // How far back edits reach ('draft' | 'any'); only meaningful when
+      // versioning is on. Unlike a versioning DISABLE this needs no guard in
+      // either direction: tightening back to 'draft' simply re-freezes published
+      // versions, which is always a legal state.
+      readonly editReach?: EditReach
     }) =>
       sql.withTransaction(
         Effect.gen(function* () {
@@ -161,6 +166,7 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
             input.versioningEnabled === undefined
               ? current.versioningEnabled
               : input.versioningEnabled
+          const editReach = input.editReach === undefined ? current.editReach : input.editReach
           // Guard a disable: refuse if any item has multiple versions or a draft,
           // which would otherwise orphan versions with no defined "latest".
           if (current.versioningEnabled && versioningEnabled === false) {
@@ -206,7 +212,7 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
             UPDATE concepts
             SET description = ${input.description}, name = ${finalName},
                 plural_name = ${pluralName}, icon = ${icon}, color = ${color},
-                versioning_enabled = ${versioningEnabled},
+                versioning_enabled = ${versioningEnabled}, edit_reach = ${editReach},
                 static_label_ids = ${JSON.stringify(staticIds)}::jsonb,
                 default_label_ids = ${JSON.stringify(defaultIds)}::jsonb
             WHERE org_id = ${orgId} AND id = ${input.id}
@@ -228,6 +234,7 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
               ...(input.versioningEnabled !== undefined
                 ? { versioningEnabled: concept.versioningEnabled }
                 : {}),
+              ...(input.editReach !== undefined ? { editReach: concept.editReach } : {}),
               ...(input.staticLabelIds ? { staticLabelIds: concept.staticLabelIds } : {}),
               ...(input.defaultLabelIds ? { defaultLabelIds: concept.defaultLabelIds } : {}),
             },

@@ -10,6 +10,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { api, type Concept, type Field, type RelatedInstance } from "../../lib/api"
+import { canEditPublished } from "../../lib/editability"
 import { recordHref } from "../../lib/recordHref"
 import { Badge, Button, IconButton, Input, Modal } from "../ui"
 import type { InstanceCtx } from "./types"
@@ -343,14 +344,14 @@ export function ConnectedBody({ ctx }: { ctx: InstanceCtx }) {
     onSuccess: () => ctx.refetch(),
   })
   // An edge is removable when its OWNING instance (the relation's `from`) is
-  // editable. Outbound: this instance (ctx.editable). Inbound: the source — it
-  // is always a published version (drafts never surface as inbound), so it's
-  // editable exactly when its concept is non-versioned.
+  // editable. Outbound: this instance (ctx.editable). Inbound: the source — always
+  // a published version (drafts never surface as inbound), so it's editable when
+  // its concept is non-versioned OR allows amending published versions.
   const conceptById = new Map(ctx.concepts.map((c) => [c.id, c]))
   const canRemove = (r: RelatedInstance) =>
     r.direction === "out"
       ? ctx.editable
-      : !!r.instance && !(conceptById.get(r.conceptId)?.versioningEnabled ?? false)
+      : !!r.instance && canEditPublished(conceptById.get(r.conceptId))
   // Outbound relation fields can pin which record dashboard their targets open
   // with (config.recordDashboardId names a dashboard of the field's target concept).
   const viewByField = new Map<string, string | null>(
@@ -373,8 +374,8 @@ export function ConnectedBody({ ctx }: { ctx: InstanceCtx }) {
 }
 
 /** Both sides' addable connection kinds. Outbound needs this instance editable;
- *  inbound needs an editable SOURCE, i.e. a non-versioned source concept (the
- *  picker only surfaces published heads, which are frozen when versioned). */
+ *  inbound needs an editable SOURCE. The picker only surfaces published heads, so
+ *  the source concept must be non-versioned or allow amending published versions. */
 function relationOptions(ctx: InstanceCtx): RelationOption[] {
   const conceptById = new Map(ctx.concepts.map((c) => [c.id, c]))
   const out: RelationOption[] = ctx.editable
@@ -389,7 +390,7 @@ function relationOptions(ctx: InstanceCtx): RelationOption[] {
         }))
     : []
   const inbound: RelationOption[] = ctx.inboundRelationFields
-    .filter((f) => !(conceptById.get(f.conceptId)?.versioningEnabled ?? false))
+    .filter((f) => canEditPublished(conceptById.get(f.conceptId)))
     .map((f) => ({
       key: `in:${f.id}`,
       field: f,

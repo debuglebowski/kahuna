@@ -116,8 +116,10 @@ export class ItemNotFound extends Schema.TaggedError<ItemNotFound>()("ItemNotFou
   itemId: Schema.String,
 }) {}
 
-/** A published version is frozen: it can't be edited or re-published. The
- *  operation needs an editable draft (create a new version first). */
+/** A published version is frozen: it can't be edited, re-published, or have its
+ *  links changed. Raised only on a versioned concept whose `editReach` is `draft`
+ *  — under `any`, published versions are amendable and this never fires for an
+ *  edit (it still guards re-publish). */
 export class VersionFrozen extends Schema.TaggedError<VersionFrozen>()("VersionFrozen", {
   instanceId: Schema.String,
 }) {}

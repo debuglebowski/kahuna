@@ -5,6 +5,7 @@ import { isAdminRole, useFullOrg } from "../pages/settings/SettingsLayout"
 import { api } from "./api"
 import { useSession } from "./auth-client"
 import { instanceDetail, KEY, useRegisterCollection } from "./collections"
+import { canEditVersion } from "./editability"
 
 /**
  * Assemble the full {@link InstanceCtx} for one record — the bundle every
@@ -29,8 +30,7 @@ export function useInstanceCtx(id: string): { ctx: InstanceCtx | null; loading: 
 
   const { instance, concept, fields, inboundRelationFields, related, staticLabels, labels } = detail
   const relationFields = fields.filter((f) => f.kind === "relation")
-  // Editable on a draft (versioned) or any non-versioned instance.
-  const editable = concept.versioningEnabled ? instance.versionStatus === "draft" : true
+  const editable = canEditVersion(concept, instance)
   const myRole = org.data?.members?.find((m) => m.userId === session?.user.id)?.role
   const ctx: InstanceCtx = {
     instance,

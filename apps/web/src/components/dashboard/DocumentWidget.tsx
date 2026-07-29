@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { api, type DashboardWidget } from "@/lib/api"
 import { type AutosaveStatus, createAutosave } from "@/lib/autosave"
+import { canEditVersion } from "@/lib/editability"
 import { recordHref } from "@/lib/recordHref"
 import { isRichTextValue, type RichTextValue } from "@/lib/richtext"
 import { useFields } from "../ConditionList"
@@ -128,11 +129,10 @@ function DocumentEditor({
   const conceptsQ = useQuery({ queryKey: ["concepts"], queryFn: () => api.listConcepts() })
   const concept = conceptsQ.data?.find((c) => c.id === inst?.conceptId)
 
-  // A published version on a versioned concept is frozen — updateInstance would
-  // reject every save (VersionFrozen), so the widget renders read-only with a
-  // jump to the draft instead. (Non-versioned instances are 'published' too but
-  // editable, so gate on versioningEnabled.)
-  const frozen = (concept?.versioningEnabled ?? false) && inst?.versionStatus === "published"
+  // A frozen version would reject every save (VersionFrozen), so the widget renders
+  // read-only with a jump to the draft instead. A published version on a concept
+  // that allows amendments is NOT frozen — it saves in place, so no strip.
+  const frozen = !!inst && !canEditVersion(concept, inst)
   const itemId = inst?.itemId
   // Only the frozen strip offers the draft jump, so only it needs the version list.
   const versionsQ = useQuery({

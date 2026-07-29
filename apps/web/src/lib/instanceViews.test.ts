@@ -15,6 +15,7 @@ const concept = (instanceView: InstanceViewLayout | null): Concept =>
     staticLabelIds: [],
     defaultLabelIds: [],
     versioningEnabled: false,
+    editReach: "draft",
     instanceView,
     titleFieldId: null,
     archivedAt: null,

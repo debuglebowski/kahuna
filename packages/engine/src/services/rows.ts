@@ -49,6 +49,7 @@ export interface ConceptRow {
   readonly static_label_ids: unknown
   readonly default_label_ids: unknown
   readonly versioning_enabled: boolean
+  readonly edit_reach: string | null
   /** Org-wide default instance-detail layout (`{ tiles }`); null = built-in preset. */
   readonly instance_view: unknown
   /** Field id used as the instance display label; null = first-text-field fallback. */
@@ -207,6 +208,9 @@ export const toConcept = (r: ConceptRow): Concept => ({
   staticLabelIds: toIdArray(r.static_label_ids),
   defaultLabelIds: toIdArray(r.default_label_ids),
   versioningEnabled: r.versioning_enabled ?? false,
+  // Exhaustive coercion (not a cast): a legacy/unknown value reads as the safe
+  // default, which is the historical freeze.
+  editReach: r.edit_reach === "any" ? "any" : "draft",
   instanceView: toInstanceViewLayout(r.instance_view),
   titleFieldId: r.title_field_id,
   createdAt: r.created_at,

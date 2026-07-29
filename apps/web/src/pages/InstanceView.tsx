@@ -1,6 +1,13 @@
 import { useLiveQuery } from "@tanstack/react-db"
 import { useMutation, useQuery } from "@tanstack/react-query"
-import { Archive, EllipsisVertical, LayoutDashboard, Pencil, Trash2 } from "lucide-react"
+import {
+  Archive,
+  EllipsisVertical,
+  LayoutDashboard,
+  Pencil,
+  Trash2,
+  TriangleAlert,
+} from "lucide-react"
 import { useMemo, useState } from "react"
 import { useNavigate, useParams, useSearchParams } from "react-router-dom"
 import {
@@ -19,6 +26,7 @@ import { useSession } from "../lib/auth-client"
 import { instanceDetail, KEY, useRegisterCollection } from "../lib/collections"
 import { conceptIndex, useConceptData } from "../lib/conceptData"
 import { migrate, referencedConceptIds } from "../lib/dashboards"
+import { canEditVersion, isAmending } from "../lib/editability"
 import { resolveRecordDashboard } from "../lib/recordDashboards"
 import { isRichTextEmpty, richTextPreview } from "../lib/richtext"
 import { isAdminRole, useFullOrg } from "./settings/SettingsLayout"
@@ -112,10 +120,11 @@ export function InstanceView() {
   if (detailQ.isLoading || !detail) return <Spinner />
 
   const { instance, concept, fields, inboundRelationFields, related, staticLabels, labels } = detail
-  // Fields and relations are editable on a draft (versioned) or any
-  // non-versioned instance — a published version is frozen, connections included.
   const relationFields = fields.filter((f) => f.kind === "relation")
-  const editable = concept.versioningEnabled ? instance.versionStatus === "draft" : true
+  const editable = canEditVersion(concept, instance)
+  // Editing a published version is an amendment: it reaches everyone referencing
+  // that version, so say so rather than letting it look like an ordinary edit.
+  const amending = isAmending(concept, instance)
 
   const ctx: InstanceCtx = {
     instance,
@@ -188,6 +197,19 @@ export function InstanceView() {
           </DropdownMenu>
         </div>
       </div>
+
+      {/* Amending is the one edit whose blast radius isn't obvious from the page:
+          a pinned reference points at THIS version row, so the change reaches
+          everyone referencing it rather than landing on a fresh version. */}
+      {amending && (
+        <div className="flex shrink-0 items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-xs text-muted-foreground">
+          <TriangleAlert size={13} className="shrink-0 text-amber-600 dark:text-amber-500" />
+          <span className="min-w-0 flex-1">
+            Editing published v{instance.versionSeq} — changes are live to everyone referencing this
+            version.
+          </span>
+        </div>
+      )}
 
       {loaders}
       {concept.managedBy ? (

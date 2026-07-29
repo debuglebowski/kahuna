@@ -9,6 +9,9 @@ const LABELS: Record<string, string> = {
   InstanceCreated: "created this item",
   VersionCreated: "started a new version",
   InstanceUpdated: "edited fields",
+  // An edit to an ALREADY-PUBLISHED version, distinct from an ordinary edit so the
+  // feed reads as a correction to history (see the concept's "edit reach" setting).
+  VersionAmended: "amended this version",
   InstanceArchived: "archived this item",
   InstanceRestored: "restored this item",
   InstancePurged: "deleted this item",
@@ -117,6 +120,7 @@ export const eventSnippet = (
   const p = rec(payload)
   switch (eventType) {
     case "InstanceUpdated":
+    case "VersionAmended":
       return fieldList(Object.keys(rec(p.patch)), r)
     case "ComputedBandChanged": {
       const field = str(p.field)
@@ -202,6 +206,7 @@ export const eventDetails = (
       // Initial state: skip the untouched (empty) fields, show what was set.
       return fieldRows(rec(p.fields), true)
     case "InstanceUpdated":
+    case "VersionAmended":
       // The patch: keep nulls — "Status: —" reads as "cleared".
       return fieldRows(rec(p.patch), false)
     case "ComputedBandChanged": {

@@ -94,9 +94,13 @@ export const applyEvent = (
   }
 
   switch (p._tag) {
+    // `VersionAmended` is an edit to an already-published version (a concept with
+    // `editReach: "any"`). It folds IDENTICALLY to an ordinary edit — the separate
+    // tag exists only so the activity feed can distinguish the two.
+    case "VersionAmended":
     case "InstanceUpdated":
-      // NB: "no edits to a published version" is enforced in InstanceService
-      // (which knows `versioningEnabled`) — NOT here, because a non-versioned
+      // NB: WHICH versions may be edited is enforced in InstanceService (which knows
+      // `versioningEnabled` + `editReach`) — NOT here, because a non-versioned
       // instance is also 'published' yet must stay editable.
       return Either.right({
         state: dropNulls({ ...acc.state, ...p.patch }),

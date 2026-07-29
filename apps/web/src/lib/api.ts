@@ -3,6 +3,7 @@ import { RpcClient, RpcSerialization } from "@effect/rpc"
 import { Context, Effect, Layer, ManagedRuntime } from "effect"
 import {
   type DashboardBody,
+  type EditReach,
   type FieldConfig,
   type FieldKind,
   type GraphLayout,
@@ -28,6 +29,7 @@ export type {
   DashboardNode,
   DashboardWidget,
   DeactivatedMember,
+  EditReach,
   FeedItem,
   Field,
   FieldConfig,
@@ -354,6 +356,7 @@ export const api = {
       icon?: string | null
       color?: string | null
       versioningEnabled?: boolean
+      editReach?: EditReach
       staticLabelIds?: ReadonlyArray<string>
       defaultLabelIds?: ReadonlyArray<string>
     },
@@ -367,6 +370,7 @@ export const api = {
         icon: patch.icon,
         color: patch.color,
         versioningEnabled: patch.versioningEnabled,
+        editReach: patch.editReach,
         staticLabelIds: patch.staticLabelIds,
         defaultLabelIds: patch.defaultLabelIds,
       }),

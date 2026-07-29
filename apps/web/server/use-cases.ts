@@ -9,6 +9,7 @@ import {
   ConceptService,
   type DashboardBody,
   DashboardService,
+  type EditReach,
   type EngineServices,
   EventStore,
   type FieldConfig,
@@ -349,6 +350,7 @@ export const updateConcept = (
     readonly icon?: string | null
     readonly color?: string | null
     readonly versioningEnabled?: boolean
+    readonly editReach?: EditReach
     readonly staticLabelIds?: ReadonlyArray<string>
     readonly defaultLabelIds?: ReadonlyArray<string>
   },
@@ -364,6 +366,7 @@ export const updateConcept = (
         icon: patch.icon,
         color: patch.color,
         versioningEnabled: patch.versioningEnabled,
+        editReach: patch.editReach,
         staticLabelIds: patch.staticLabelIds,
         defaultLabelIds: patch.defaultLabelIds,
       }),
@@ -946,8 +949,13 @@ export const getActivity = (subjectId: string, limit = 100): UC<ReadonlyArray<Fe
     const annotations = yield* AnnotationService
     const store = yield* EventStore
     const events = yield* annotations.readActivityForSubject(subjectId, { limit })
+    // An amendment (`VersionAmended`) is a field edit too, so it gets the same
+    // before/after treatment — and its patch must join the running fold, or a later
+    // event's `previous` would report a value the amendment had already replaced.
     const edited = events.filter(
-      (ev) => ev.subjectKind === "instance" && ev.payload._tag === "InstanceUpdated",
+      (ev) =>
+        ev.subjectKind === "instance" &&
+        (ev.payload._tag === "InstanceUpdated" || ev.payload._tag === "VersionAmended"),
     )
     const previousByEvent = new Map<number, Record<string, unknown>>()
     for (const instanceId of new Set(edited.map((ev) => ev.subjectId))) {
@@ -955,7 +963,7 @@ export const getActivity = (subjectId: string, limit = 100): UC<ReadonlyArray<Fe
       for (const ev of yield* store.readStream(instanceId)) {
         const p = ev.payload
         if (p._tag === "InstanceCreated") Object.assign(state, p.fields)
-        else if (p._tag === "InstanceUpdated") {
+        else if (p._tag === "InstanceUpdated" || p._tag === "VersionAmended") {
           previousByEvent.set(
             ev.id,
             Object.fromEntries(Object.keys(p.patch).map((k) => [k, state[k] ?? null])),

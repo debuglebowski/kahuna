@@ -1,6 +1,7 @@
 import { PgClient } from "@effect/sql-pg"
 import { Effect } from "effect"
 import type { Id } from "../domain/types"
+import { canEditVersion } from "../domain/versioning"
 import {
   FieldNotFound,
   FieldValidationError,
@@ -10,6 +11,7 @@ import {
   RelationNotFound,
   RelationPinToDraft,
   RelationTargetMismatch,
+  VersionFrozen,
 } from "../errors"
 import { EventStore } from "./EventStore"
 import { FieldService } from "./FieldService"
@@ -37,15 +39,45 @@ export class RelationService extends Effect.Service<RelationService>()("engine/R
     const events = yield* EventStore
     const fieldsSvc = yield* FieldService
 
-    const conceptIdOf = (orgId: string, instanceId: string) =>
+    /**
+     * The edge SOURCE: its concept plus what's needed to decide whether that
+     * version's links may be rewritten. Links hang off a specific version row
+     * (`relations.from_id`) and `newVersion` clones them onto each new draft, so a
+     * frozen version's edges must be frozen too — otherwise the freeze leaks.
+     *
+     * Joined here in raw SQL rather than taking a `ConceptService` dep: it matches
+     * this service's existing style and keeps it to one round-trip.
+     */
+    const sourceOf = (orgId: string, instanceId: string) =>
       Effect.gen(function* () {
-        const rows = yield* sql<{ readonly concept_id: string }>`
-          SELECT concept_id FROM instances
-          WHERE id = ${instanceId} AND org_id = ${orgId} AND archived_at IS NULL LIMIT 1`
+        const rows = yield* sql<{
+          readonly concept_id: string
+          readonly version_status: string
+          readonly versioning_enabled: boolean
+          readonly edit_reach: string | null
+        }>`
+          SELECT i.concept_id, i.version_status, c.versioning_enabled, c.edit_reach
+          FROM instances i JOIN concepts c ON c.id = i.concept_id AND c.org_id = i.org_id
+          WHERE i.id = ${instanceId} AND i.org_id = ${orgId} AND i.archived_at IS NULL LIMIT 1`
         const row = rows[0]
         if (!row) return yield* Effect.fail(new InstanceNotFound({ instanceId }))
-        return row.concept_id
+        return {
+          conceptId: row.concept_id,
+          editable: canEditVersion(
+            {
+              versioningEnabled: row.versioning_enabled ?? false,
+              editReach: row.edit_reach === "any" ? "any" : "draft",
+            },
+            { versionStatus: row.version_status === "draft" ? "draft" : "published" },
+          ),
+        }
       })
+
+    /** Fail unless the source version's links may be rewritten. */
+    const assertSourceEditable = (orgId: string, instanceId: string) =>
+      Effect.flatMap(sourceOf(orgId, instanceId), (src) =>
+        src.editable ? Effect.succeed(src) : Effect.fail(new VersionFrozen({ instanceId })),
+      )
 
     const nameOfConcept = (orgId: string, conceptId: string) =>
       sql<{ readonly name: string }>`
@@ -141,7 +173,8 @@ export class RelationService extends Effect.Service<RelationService>()("engine/R
               }),
             )
 
-          const fromConceptId = yield* conceptIdOf(orgId, input.fromId)
+          // Guard the SOURCE before the target: a frozen version accepts no new links.
+          const { conceptId: fromConceptId } = yield* assertSourceEditable(orgId, input.fromId)
           const target = yield* resolveTarget(orgId, input)
 
           // `from` must be an instance of the concept that declares this field.
@@ -204,8 +237,11 @@ export class RelationService extends Effect.Service<RelationService>()("engine/R
           const rows = yield* sql<RelationRow>`
             SELECT * FROM relations
             WHERE id = ${input.relationId} AND org_id = ${orgId} AND archived_at IS NULL FOR UPDATE`
-          if (!rows[0])
+          const existing = rows[0]
+          if (!existing)
             return yield* Effect.fail(new RelationNotFound({ relationId: input.relationId }))
+          // Removing an edge mutates the source version just as adding one does.
+          yield* assertSourceEditable(orgId, existing.from_id)
           const updated = yield* sql<RelationRow>`
             UPDATE relations SET archived_at = now()
             WHERE id = ${input.relationId} AND org_id = ${orgId} RETURNING *`

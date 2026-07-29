@@ -61,6 +61,13 @@ export const concepts = pgTable(
     // lineage), and references may pin a specific published version. When false
     // (default) the concept behaves exactly as the plain 1-instance-per-item model.
     versioningEnabled: boolean("versioning_enabled").notNull().default(false),
+    // How far back edits reach on a versioned concept ('draft' | 'any'); only
+    // meaningful when `versioning_enabled`. 'draft' (default) = a published
+    // version is frozen, edits need a fresh draft. 'any' = any published version
+    // may be AMENDED in place — a pinned reference points at a version row, so an
+    // amendment is visible to everyone referencing it (that's the point: an
+    // erratum). Amendments stay auditable: every write is an appended event.
+    editReach: text("edit_reach").notNull().default("draft"),
     // Org-wide default detail layout for this concept's instances: a 12-col grid
     // of tiles (`{ tiles: [...] }`), the same shape as the view-prefs custom
     // layouts. Null = render the built-in default preset. Set in concept

@@ -10,6 +10,7 @@ import {
   type InstanceState,
   LABELS_KEY,
 } from "../domain/types"
+import { canEditVersion, isAmendment } from "../domain/versioning"
 import {
   DraftAlreadyExists,
   FieldValidationError,
@@ -438,16 +439,21 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
           }
           const defs = yield* fields.listFields(current.conceptId)
           const concept = yield* concepts.getById(current.conceptId)
-          // A published version is frozen on a versioned concept — edits must go to
-          // a fresh draft (newVersion). Non-versioned instances are 'published' too
-          // but stay editable, so the guard is gated on `versioningEnabled`.
-          if (concept.versioningEnabled && current.versionStatus === "published") {
+          // On a versioned concept a published version is frozen by default — edits
+          // must go to a fresh draft (newVersion) — UNLESS the concept opts into
+          // amendments (`editReach: "any"`). Non-versioned instances are 'published'
+          // too but always stay editable; `canEditVersion` folds all three cases.
+          if (!canEditVersion(concept, current)) {
             return yield* Effect.fail(new VersionFrozen({ instanceId: current.id }))
           }
           const { rest, rawLabels } = splitLabels(input.patch)
           const validated = yield* validateFields(defs, rest)
           // Clear-protection only: a patch may not blank a required field, but
-          // rows that predate the rule stay editable on their other fields.
+          // rows that predate the rule stay editable on their other fields. Stays
+          // "present" for an amendment too: it already refuses to blank a required
+          // value, so an amendment can't INTRODUCE a gap — and escalating to "all"
+          // would make a pre-existing gap (from a field made required after publish)
+          // block the very edit that would fill it.
           yield* checkRequired(defs, validated, "present")
           yield* checkUnique(defs, validated, current.conceptId, current.itemId)
           yield* checkTransitions(defs, current.state, validated)
@@ -457,11 +463,15 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
             yield* assertLabelsExist(labelIds)
             patch = { ...validated, [LABELS_KEY]: [...labelIds] }
           }
+          // An edit to an already-published version is an AMENDMENT: same fold, but
+          // a distinct tag so the activity feed can say "amended" and amendments stay
+          // filterable. `getAsOf` at the preceding event still yields the old state.
+          const tag = isAmendment(concept, current) ? "VersionAmended" : "InstanceUpdated"
           const event = yield* events.append({
             subjectKind: "instance",
             subjectId: current.id,
-            eventType: "InstanceUpdated",
-            payload: { _tag: "InstanceUpdated", patch },
+            eventType: tag,
+            payload: { _tag: tag, patch },
             conceptName: concept.name,
           })
           const folded = applyEvent(seedFrom(current, null), event)
@@ -691,9 +701,11 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
           (d) => d.kind === "computed" && d.config.computedKind === "decay",
         )
         if (!decayField) return [] as EngineEvent[] // concept has no decay computed field
-        // On a versioned concept, a superseded published version is a frozen
-        // snapshot — never recompute (it would mutate a "frozen" row's `__bands`).
-        // The head published version and the open draft still decay normally.
+        // On a versioned concept, a superseded published version is a historical
+        // snapshot — never recompute, so the clock alone can't rewrite an old
+        // version's `__bands`. Deliberately NOT gated on `editReach`: amending is an
+        // intentional act, whereas decay is time passing. The head published version
+        // and the open draft still decay normally.
         const gateConcept = yield* concepts.getById(inst.conceptId)
         if (gateConcept.versioningEnabled && inst.versionStatus === "published") {
           const newer = yield* sql<{ readonly count: number | string }>`
