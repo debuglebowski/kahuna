@@ -1,3 +1,4 @@
+import { PgClient } from "@effect/sql-pg"
 import {
   type AnnotationField,
   AnnotationFieldService,
@@ -436,10 +437,60 @@ export const archiveConcept = (id: string): UC<unknown> =>
 export const restoreConcept = (id: string): UC<unknown> =>
   Effect.flatMap(ConceptService, (c) => c.restore(id))
 
-export const deleteConcept = (id: string): UC<unknown> =>
-  ensureUnmanagedConcept(id).pipe(
-    Effect.zipRight(Effect.flatMap(ConceptService, (c) => c.purge(id))),
-  )
+/**
+ * Delete a concept — and, for a single-record concept, its one record with it.
+ *
+ * The project convention is *block, never cascade*: `ConceptService.purge`
+ * refuses while any instance exists (`ConceptInUse`), and the UI offers "Archive
+ * instead". That stays exactly as it is — no `singleRecord` special-casing inside
+ * the engine. But a single-record concept can never reach zero instances (its
+ * record is created with the flag and protected while it's on), so "delete the
+ * concept" would be permanently impossible without this one composition.
+ *
+ * So the cascade lives HERE, at one call site, rather than becoming a general
+ * engine capability. It needs its own return type: `UC` excludes `PgClient`
+ * (`use-cases.ts` is otherwise non-transactional), and this must be one
+ * transaction — purging the record transiently breaks "always exactly one
+ * record", which must never be observable. Every inner `withTransaction` nests as
+ * a SAVEPOINT, so a failure at any step rolls the whole thing back and the flag
+ * stays on.
+ *
+ * `InstanceInUse` from step 2 is deliberately NOT forced through: if live
+ * relations point at the record, orphaning them is precisely what the convention
+ * exists to prevent. The caller gets the same 409 an ordinary record purge gives.
+ */
+export const deleteConcept = (
+  id: string,
+): Effect.Effect<unknown, unknown, OrgContext | EngineServices | PgClient.PgClient> =>
+  Effect.gen(function* () {
+    yield* ensureUnmanagedConcept(id)
+    const concepts = yield* ConceptService
+    const concept = yield* concepts.getById(id)
+    if (!concept.singleRecord) return yield* concepts.purge(id)
+
+    const sql = yield* PgClient.PgClient
+    const instances = yield* InstanceService
+    return yield* sql.withTransaction(
+      Effect.gen(function* () {
+        const record = yield* instances.singleRecordOf(id)
+        // 1. Clear the flag first — `SingleRecordProtected` would otherwise refuse
+        //    the record purge (that guard is the whole point of the flag).
+        yield* instances.setConceptSingleRecord({ conceptId: id, singleRecord: false })
+        // 2. The record's own versions: purge each, newest first. `purge` drops the
+        //    `items` lineage (and its files) with the last one, so the concept then
+        //    sees a genuinely empty table rather than an orphaned lineage.
+        if (record) {
+          const versions = yield* instances.listVersions(record.itemId)
+          for (const v of [...versions].reverse()) {
+            yield* instances.purge({ instanceId: v.id })
+          }
+        }
+        // 3. Unchanged engine purge — `instanceCount === 0` now, so it succeeds on
+        //    its ordinary path.
+        return yield* concepts.purge(id)
+      }),
+    )
+  })
 
 // ── labels (org-wide vocabulary) ───────────────────────────────────────────────
 

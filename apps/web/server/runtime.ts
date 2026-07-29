@@ -1,3 +1,4 @@
+import type { PgClient } from "@effect/sql-pg"
 import {
   EngineLive,
   type EngineServices,
@@ -103,15 +104,18 @@ export const toResult = <A, E>(exit: Exit.Exit<A, E>): UseCaseResult<A> => {
   return { ok: false, status: 500, code: "INTERNAL" }
 }
 
+/** What a runnable engine effect may require. `PgClient` is in here because
+ *  `EngineBase` uses `provideMerge` and so surfaces it — a use-case that owns its
+ *  own transaction (see `deleteConcept`) needs it, and the runtime already has it. */
+type Runnable<A, E> = Effect.Effect<A, E, OrgContext | EngineServices | PgClient.PgClient>
+
 /** Run an engine effect with a given org scope, mapping typed errors to a result. */
 export const runEngine = <A, E>(
   scope: OrgScope,
-  effect: Effect.Effect<A, E, OrgContext | EngineServices>,
+  effect: Runnable<A, E>,
 ): Promise<UseCaseResult<A>> =>
   AppRuntime.runPromiseExit(effect.pipe(Effect.provideService(OrgContext, scope))).then(toResult)
 
 /** Run an engine effect raw (throws on failure) — for scripts/seeds. */
-export const runEngineOrThrow = <A, E>(
-  scope: OrgScope,
-  effect: Effect.Effect<A, E, OrgContext | EngineServices>,
-): Promise<A> => AppRuntime.runPromise(effect.pipe(Effect.provideService(OrgContext, scope)))
+export const runEngineOrThrow = <A, E>(scope: OrgScope, effect: Runnable<A, E>): Promise<A> =>
+  AppRuntime.runPromise(effect.pipe(Effect.provideService(OrgContext, scope)))

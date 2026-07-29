@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto"
+import type { PgClient } from "@effect/sql-pg"
 import {
   ConceptService,
   type EngineServices,
@@ -35,6 +36,9 @@ import {
   listFields,
   listInstances,
   listLabels,
+  listVersions,
+  newVersion,
+  publishVersion,
   restoreConcept,
   restoreField,
   restoreInstance,
@@ -56,8 +60,12 @@ type Archivable = {
 const ids = (xs: unknown) => (xs as ReadonlyArray<WithId>).map((x) => x.id)
 const has = (xs: unknown, id: string) => ids(xs).includes(id)
 
-const run = <A, E>(orgId: string, eff: Effect.Effect<A, E, OrgContext | EngineServices>) =>
-  runEngineOrThrow({ orgId, actor: "system" }, eff)
+// `PgClient` because a use-case may own its own transaction (`deleteConcept`'s
+// single-record cascade); the runtime surfaces it either way.
+const run = <A, E>(
+  orgId: string,
+  eff: Effect.Effect<A, E, OrgContext | EngineServices | PgClient.PgClient>,
+) => runEngineOrThrow({ orgId, actor: "system" }, eff)
 
 /** The error code of a (failed) use-case result; undefined on success. */
 const codeOf = (r: { readonly ok: boolean; readonly code?: string }) => (r.ok ? undefined : r.code)
@@ -615,5 +623,92 @@ describe("single-record concepts (use-case layer)", () => {
       instance: { state: Record<string, unknown> }
     } | null
     expect(detail!.instance.state[ownerId]).toBe("Kalle")
+  })
+
+  // The cascade only exists here — `ConceptService.purge` still refuses on
+  // `instanceCount > 0` (block, never cascade), and a single-record concept can
+  // never reach zero records on its own. Without this, such a concept would be
+  // undeletable forever.
+  it("deleting a single-record concept takes its record with it", async () => {
+    const org = randomUUID()
+    await run(org, seedKingsmaker)
+
+    const concept = (await run(org, createConcept("Org Profile"))) as WithId
+    await run(org, setConceptSingleRecord(concept.id, true))
+    const detail = (await run(org, getSingleRecord(concept.id))) as { instance: WithId }
+    const recordId = detail.instance.id
+
+    await run(org, deleteConcept(concept.id))
+    expect(has(await run(org, listConcepts(true)), concept.id)).toBe(false)
+    // The record went with it — not left behind as an orphan pointing at a
+    // concept that no longer exists.
+    await expect(run(org, getInstanceDetail(recordId))).rejects.toThrow()
+  })
+
+  it("keeps the concept AND its record when a relation still points at the record", async () => {
+    const org = randomUUID()
+    await run(org, seedKingsmaker)
+
+    // A relation into the sole record is exactly what block-never-cascade exists
+    // to protect: forcing the delete through would orphan the edge. `InstanceInUse`
+    // surfaces from the record purge and rolls the whole transaction back.
+    const target = (await run(org, createConcept("Org Profile"))) as WithId
+    await run(org, setConceptSingleRecord(target.id, true))
+    const detail = (await run(org, getSingleRecord(target.id))) as { instance: WithId }
+
+    const source = (await run(org, createConcept("Deal"))) as WithId
+    const rel = (await run(
+      org,
+      addField({
+        conceptId: source.id,
+        name: "Profile",
+        kind: "relation",
+        config: { target: target.id },
+      }),
+    )) as WithId
+    const deal = (await run(org, createInstance(source.id, {}))) as WithId
+    await run(org, linkRelation(rel.id, deal.id, detail.instance.id))
+
+    await expect(run(org, deleteConcept(target.id))).rejects.toThrow(/relationCount/)
+
+    // Rolled back whole: the concept survives, the record survives, and — the
+    // part a non-transactional composition would get wrong — the flag is still on
+    // (step 1 cleared it before the purge failed at step 2).
+    const after = (await run(org, listConcepts(true))) as ReadonlyArray<{
+      id: string
+      singleRecord: boolean
+    }>
+    expect(after.find((c) => c.id === target.id)?.singleRecord).toBe(true)
+    expect(await run(org, getSingleRecord(target.id))).not.toBeNull()
+  })
+
+  it("deletes every version of the record, so a versioned concept purges too", async () => {
+    const org = randomUUID()
+    await run(org, seedKingsmaker)
+
+    // A versioned lineage holds N instance rows for ONE record. Purging only the
+    // resolved head would leave the others behind and `ConceptInUse` would refuse
+    // — so the cascade walks the whole lineage.
+    const concept = await run(
+      org,
+      Effect.flatMap(ConceptService, (c) => c.create({ name: "Charter" })),
+    )
+    await run(
+      org,
+      Effect.flatMap(ConceptService, (c) =>
+        c.update({ id: concept.id, description: null, versioningEnabled: true }),
+      ),
+    )
+    await run(org, setConceptSingleRecord(concept.id, true))
+    const detail = (await run(org, getSingleRecord(concept.id))) as {
+      instance: { id: string; itemId: string; version: number }
+    }
+    // Publish, then open a second version — two instance rows on one lineage.
+    await run(org, publishVersion(detail.instance.id, detail.instance.version))
+    await run(org, newVersion(detail.instance.itemId))
+    expect((await run(org, listVersions(detail.instance.itemId))).length).toBe(2)
+
+    await run(org, deleteConcept(concept.id))
+    expect(has(await run(org, listConcepts(true)), concept.id)).toBe(false)
   })
 })

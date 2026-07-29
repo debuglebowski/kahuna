@@ -1,5 +1,6 @@
 import { Etag, FileSystem, HttpPlatform, Path } from "@effect/platform"
 import { RpcMiddleware, RpcSerialization, RpcServer } from "@effect/rpc"
+import type { PgClient } from "@effect/sql-pg"
 import { type EngineServices, OrgContext, type OrgScope } from "@kingsmaker/engine"
 import { Effect, Layer } from "effect"
 import {
@@ -146,7 +147,9 @@ const toRpcError = (e: unknown): RpcError => {
   return new RpcError({ code: mapped.code, message, status: mapped.status })
 }
 
-const mapErr = <A, E>(eff: Effect.Effect<A, E, OrgContext | EngineServices>) =>
+// R-agnostic (it only rewraps the error channel), so it also passes through the
+// `PgClient` a self-transacting use-case carries — see `adminSql`.
+const mapErr = <A, E, R>(eff: Effect.Effect<A, E, R>) =>
   eff.pipe(Effect.catchAll((e) => Effect.fail(toRpcError(e))))
 
 /**
@@ -170,6 +173,22 @@ const requireAdmin: Effect.Effect<void, RpcError, OrgContext> = Effect.gen(funct
 /** Run an admin-only use-case behind the gate, mapping engine errors. */
 const admin = <A>(eff: Effect.Effect<unknown, unknown, OrgContext | EngineServices>) =>
   requireAdmin.pipe(Effect.zipRight(as<A>(eff)))
+
+/**
+ * `admin` for a use-case that opens its OWN transaction, so it also needs
+ * `PgClient` (only `deleteConcept`'s single-record cascade, so far). `EngineBase`
+ * is built with `provideMerge` and therefore surfaces `PgClient` — the extra
+ * requirement is satisfied by the same layer, it just can't be hidden behind
+ * `as`'s narrower cast.
+ */
+const adminSql = <A>(
+  eff: Effect.Effect<unknown, unknown, OrgContext | EngineServices | PgClient.PgClient>,
+) =>
+  requireAdmin.pipe(Effect.zipRight(mapErr(eff))) as Effect.Effect<
+    A,
+    RpcError,
+    OrgContext | EngineServices | PgClient.PgClient
+  >
 
 // Casting helper for the loosely-typed (UC<unknown>) use-cases — runtime values
 // already match the wire schema; this just informs the handler's return type.
@@ -418,7 +437,8 @@ const HandlersLive = ServerRpcs.toLayer({
     ) as Effect.Effect<Concept, RpcError, OrgContext | EngineServices>,
   archiveConcept: ({ id }) => admin<Concept>(uc.archiveConcept(id)),
   restoreConcept: ({ id }) => admin<Concept>(uc.restoreConcept(id)),
-  deleteConcept: ({ id }) => admin<Concept>(uc.deleteConcept(id)),
+  // Not `admin`: the single-record cascade needs its own transaction, hence PgClient.
+  deleteConcept: ({ id }) => adminSql<Concept>(uc.deleteConcept(id)),
   listLabels: ({ includeArchived }) => as<ReadonlyArray<Label>>(uc.listLabels(includeArchived)),
   createLabel: ({ name, color, primary }) => admin<Label>(uc.createLabel(name, color, primary)),
   renameLabel: ({ id, name, color, primary }) =>

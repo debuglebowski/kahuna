@@ -150,7 +150,16 @@ export function Concepts() {
         <ConfirmDialog
           title="Delete concept"
           message={
-            target.itemCount ? (
+            // A single-record concept always holds its one record, so the ordinary
+            // "delete its items first" route is closed to it — the record can't be
+            // deleted while the flag is on. Deleting the concept takes the record
+            // with it (one transaction), so the copy says so instead of refusing.
+            target.singleRecord ? (
+              <>
+                Permanently delete <strong>{target.name}</strong>, its fields, and its record? This
+                can't be undone.
+              </>
+            ) : target.itemCount ? (
               <>
                 <strong>{target.name}</strong> still has {target.itemCount} item
                 {target.itemCount === 1 ? "" : "s"}, so it can't be deleted. Archive it (its items
