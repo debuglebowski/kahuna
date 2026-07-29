@@ -73,6 +73,7 @@ import {
 import { ConceptIcon, DEFAULT_CONCEPT_ICON, DEFAULT_FIELD_ICON } from "../../lib/icons"
 import { useUnsavedGuard } from "../../lib/useUnsavedGuard"
 import { showValue } from "../../lib/utils"
+import { InstanceForm } from "../InstanceForm"
 import { FieldForm, type FieldFormValue, fieldKindLabel } from "./FieldForm"
 
 /** Map engine errors to a short message for the concept dialogs. */
@@ -86,6 +87,10 @@ export function msgOf(e: unknown): string {
     return "A concept with that name already exists."
   if (err?.message?.includes("FieldNameConflict"))
     return "A field with that name already exists on this concept."
+  if (err?.code === "SINGLE_RECORD_CONFLICT" || err?.message?.includes("SingleRecordConflict"))
+    return "Can't switch on single record: this concept has more than one item. Archive or delete all but the one you want to keep."
+  if (err?.code === "SINGLE_RECORD_PROTECTED" || err?.message?.includes("SingleRecordProtected"))
+    return "This concept's record can't be archived or deleted while single-record mode is on. Switch the mode off first."
   if (err?.code === "FORBIDDEN" || err?.message?.includes("Admin only")) return "Admins only."
   return err?.message ?? "Something went wrong."
 }
@@ -309,6 +314,10 @@ export function ConceptEditor({
     { mode: "add" } | { mode: "edit"; field: Field } | null
   >(null)
   const [dialog, setDialog] = useState<ModalDialog>(null)
+  // Switching single record ON with required fields needs the new record's initial
+  // values up front (the engine's `checkRequired` runs inside the same
+  // transaction) — collect them in a modal before firing the toggle.
+  const [seedModal, setSeedModal] = useState(false)
 
   const patch = (p: Partial<Draft>) => {
     setDraft((d) => ({ ...d, ...p }))
@@ -433,6 +442,21 @@ export function ConceptEditor({
     },
   })
 
+  // Single record is its own immediate RPC, NOT a Draft field: switching on also
+  // CREATES the concept's one record, so it can't ride the batched Save (which
+  // would flip a flag with no record behind it). Sits beside the Save, not inside.
+  const saveSingleRecord = useMutation({
+    mutationFn: (v: { on: boolean; fields?: Record<string, unknown> }) =>
+      api.setConceptSingleRecord(concept.id, v.on, v.fields),
+    onSuccess: () => {
+      setSeedModal(false)
+      qc.invalidateQueries({ queryKey: ["concepts"] })
+      // The record it just created (or released) changes both lists.
+      qc.invalidateQueries({ queryKey: ["instances", concept.id] })
+      refetchGraph()
+    },
+  })
+
   const refetchFields = () => {
     qc.invalidateQueries({ queryKey: ["fields", concept.id, "withArchived"] })
     // Keep the live list other views read (ConceptView columns) fresh too.
@@ -538,6 +562,16 @@ export function ConceptEditor({
     queryKey: ["instances", concept.id, "archived"],
     queryFn: () => api.listInstances(concept.id, { includeArchived: true }),
     select: (rows) => rows.filter((i) => i.archivedAt),
+  })
+  // The live side of the SAME fetch (one shared cache entry, two selects) — tells
+  // the single-record toggle whether a record already exists to adopt. Heads only,
+  // so a versioned concept whose only record is still a draft reads as 0 here; that
+  // just means we ask for seed values the engine then ignores (it counts item
+  // lineages, adopts the draft, and skips the create). Harmless, never wrong.
+  const liveItems = useQuery({
+    queryKey: ["instances", concept.id, "archived"],
+    queryFn: () => api.listInstances(concept.id, { includeArchived: true }),
+    select: (rows) => rows.filter((i) => !i.archivedAt),
   })
   const refetchArchived = () =>
     qc.invalidateQueries({ queryKey: ["instances", concept.id, "archived"] })
@@ -827,6 +861,54 @@ export function ConceptEditor({
                   />
                 </div>
               </div>
+
+              {/* Single record — an IMMEDIATE mutation, not part of the Save below:
+                  switching on also creates the concept's one record, in the same
+                  transaction, so it can't ride the batched patch. Managed concepts
+                  can't be single-record at all (an integration syncs N rows), so the
+                  control isn't offered there. */}
+              {!concept.managedBy && (
+                <div className="space-y-3 border-t border-border pt-4">
+                  <div className="flex items-center gap-3">
+                    <Checkbox
+                      id="single-record-toggle"
+                      checked={concept.singleRecord}
+                      disabled={!admin || saveSingleRecord.isPending}
+                      onCheckedChange={(v) => {
+                        if (v !== true) return saveSingleRecord.mutate({ on: false })
+                        // No record yet → collect its initial values first (required
+                        // fields are enforced inside the same transaction, so a short
+                        // payload would roll the whole toggle back). An existing
+                        // record is adopted as-is; nothing to fill in.
+                        if ((liveItems.data?.length ?? 0) === 0) setSeedModal(true)
+                        else saveSingleRecord.mutate({ on: true })
+                      }}
+                    />
+                    <label
+                      htmlFor="single-record-toggle"
+                      className="text-sm font-medium text-foreground"
+                    >
+                      Single record
+                    </label>
+                    <InfoHint
+                      text="This concept holds exactly ONE record instead of a list — for things there's only one of, like your company profile or a settings sheet. The record is created when you switch this on (or the existing one is adopted), and can't be archived or deleted while this stays on. Switching off makes the concept ordinary again and keeps the record."
+                      label="Single record — more info"
+                    />
+                    {concept.singleRecord && <Badge tone="blue">On</Badge>}
+                  </div>
+                  {/* Turning it on with >1 item is refused by the server; say so before
+                      they click rather than only in the error. */}
+                  {!concept.singleRecord && (liveItems.data?.length ?? 0) > 1 && (
+                    <p className="pl-7 text-xs text-muted-foreground">
+                      {liveItems.data!.length} items exist — switching on needs exactly one (or
+                      none). Archive or delete the rest first.
+                    </p>
+                  )}
+                  {saveSingleRecord.error && !seedModal && (
+                    <p className="pl-7 text-sm text-destructive">{msgOf(saveSingleRecord.error)}</p>
+                  )}
+                </div>
+              )}
 
               <div className="space-y-3 border-t border-border pt-4">
                 <span className="block text-sm leading-none font-medium text-foreground">
@@ -1260,6 +1342,28 @@ export function ConceptEditor({
             <p className="mt-3 text-sm text-destructive">
               {msgOf(addField.error ?? updateField.error ?? saveTitleField.error)}
             </p>
+          )}
+        </Modal>
+      )}
+
+      {/* Seed values for the record the toggle is about to create. `build()` already
+          emits a field-id-keyed payload — exactly what `setConceptSingleRecord`
+          takes — so no adapter. */}
+      {seedModal && (
+        <Modal title={`Create the ${concept.name} record`} onClose={() => setSeedModal(false)}>
+          <p className="mb-4 text-sm text-muted-foreground">
+            Single record mode needs one record to hold {concept.name}'s values. Fill in what you
+            know — you can edit it anytime afterwards.
+          </p>
+          <InstanceForm
+            fields={liveFields}
+            defaultLabelIds={concept.defaultLabelIds}
+            onSubmit={(fields) => saveSingleRecord.mutate({ on: true, fields })}
+            onCancel={() => setSeedModal(false)}
+            pending={saveSingleRecord.isPending}
+          />
+          {saveSingleRecord.error && (
+            <p className="mt-3 text-sm text-destructive">{msgOf(saveSingleRecord.error)}</p>
           )}
         </Modal>
       )}
