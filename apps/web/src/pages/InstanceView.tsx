@@ -22,26 +22,15 @@ import { ManagedInstanceView } from "../components/instance/ManagedInstanceView"
 import type { InstanceCtx } from "../components/instance/types"
 import { usePageChrome } from "../components/Layout"
 import { Badge, Button, ConfirmDialog, Spinner } from "../components/ui"
-import { api, type Field } from "../lib/api"
+import { api } from "../lib/api"
 import { useSession } from "../lib/auth-client"
 import { instanceDetail, KEY, useRegisterCollection } from "../lib/collections"
 import { conceptIndex, useConceptData } from "../lib/conceptData"
 import { migrate, referencedConceptIds } from "../lib/dashboards"
 import { canEditVersion, isAmending } from "../lib/editability"
+import { instanceLabel } from "../lib/instanceLabel"
 import { resolveRecordDashboard } from "../lib/recordDashboards"
-import { isRichTextEmpty, richTextPreview } from "../lib/richtext"
 import { isAdminRole, useFullOrg } from "./settings/SettingsLayout"
-
-/** A human label for an instance — its first non-empty text field, else its
- *  first non-empty rich text field, else untitled. State is keyed by field id,
- *  so the concept's field defs are required. */
-const labelOf = (state: Record<string, unknown>, fields: ReadonlyArray<Field>): string => {
-  const textField = fields.find((f) => f.kind === "text" && state[f.id])
-  const v = textField ? state[textField.id] : undefined
-  if (v) return String(v)
-  const rich = fields.find((f) => f.kind === "richtext" && !isRichTextEmpty(state[f.id]))
-  return rich ? richTextPreview(state[rich.id], 80) : "(untitled)"
-}
 
 /** Single-instance detail at `/instances/:id` — reads the id from the route and
  *  renders {@link InstanceViewBody}. */
@@ -151,6 +140,15 @@ export function InstanceViewBody({
 
   const { instance, concept, fields, inboundRelationFields, related, staticLabels, labels } = detail
   const relationFields = fields.filter((f) => f.kind === "relation")
+  // A single-record concept's record has no name of its own to fall back on — it
+  // IS the concept — so the concept's name stands in for "(untitled)" rather than
+  // the header reading "Company / (untitled)" until someone fills a field in.
+  const label = instanceLabel(
+    instance,
+    fields,
+    concept.titleFieldId,
+    concept.singleRecord ? concept.name : undefined,
+  )
   const editable = canEditVersion(concept, instance)
   // Editing a published version is an amendment: it reaches everyone referencing
   // that version, so say so rather than letting it look like an ordinary edit.
@@ -178,12 +176,19 @@ export function InstanceViewBody({
       <div className="flex shrink-0 items-center justify-between gap-3">
         <h2 className="flex min-w-0 items-center gap-1.5 text-base font-medium text-foreground">
           {/* Concepts have no page of their own (dashboards are the only view
-              surface), so the breadcrumb root is informational. */}
-          <span className="truncate text-muted-foreground">
-            {concept.pluralName || concept.name}
-          </span>
-          <span className="text-muted-foreground/50">/</span>
-          <span className="truncate">{labelOf(instance.state, fields)}</span>
+              surface), so the breadcrumb root is informational. A single-record
+              concept has no collection to root into — and its label already IS the
+              concept — so the crumb is dropped rather than reading "Company /
+              Company". */}
+          {!concept.singleRecord && (
+            <>
+              <span className="truncate text-muted-foreground">
+                {concept.pluralName || concept.name}
+              </span>
+              <span className="text-muted-foreground/50">/</span>
+            </>
+          )}
+          <span className="truncate">{label}</span>
           {concept.versioningEnabled &&
             (instance.versionStatus === "draft" ? (
               <Badge tone="amber">Draft v{instance.versionSeq}</Badge>
@@ -213,15 +218,24 @@ export function InstanceViewBody({
                   Edit layout
                 </DropdownMenuItem>
               )}
-              <DropdownMenuItem onSelect={() => setDialog("archive")}>
-                <Archive size={15} />
-                Archive
-              </DropdownMenuItem>
-              {admin && (
-                <DropdownMenuItem variant="destructive" onSelect={() => setDialog("delete")}>
-                  <Trash2 size={15} />
-                  Delete
-                </DropdownMenuItem>
+              {/* Neither action exists for a single-record concept's record: the
+                  engine refuses both with `SingleRecordProtected` (the flag promises
+                  the record exists), so offering them would only ever produce an
+                  error. Removing the mode, or deleting the concept, is the way out —
+                  both live in concept settings, one menu item up. */}
+              {!concept.singleRecord && (
+                <>
+                  <DropdownMenuItem onSelect={() => setDialog("archive")}>
+                    <Archive size={15} />
+                    Archive
+                  </DropdownMenuItem>
+                  {admin && (
+                    <DropdownMenuItem variant="destructive" onSelect={() => setDialog("delete")}>
+                      <Trash2 size={15} />
+                      Delete
+                    </DropdownMenuItem>
+                  )}
+                </>
               )}
             </DropdownMenuContent>
           </DropdownMenu>
@@ -267,13 +281,13 @@ export function InstanceViewBody({
           message={
             concept.versioningEnabled ? (
               <>
-                Archive <strong>{labelOf(instance.state, fields)}</strong> and all its versions?
-                It's hidden from lists but kept — restore it from "Show archived".
+                Archive <strong>{label}</strong> and all its versions? It's hidden from lists but
+                kept — restore it from "Show archived".
               </>
             ) : (
               <>
-                Archive <strong>{labelOf(instance.state, fields)}</strong>? It's hidden from lists
-                but kept — you can restore it from the {concept.name} view's "Show archived".
+                Archive <strong>{label}</strong>? It's hidden from lists but kept — you can restore
+                it from the {concept.name} view's "Show archived".
               </>
             )
           }
@@ -297,8 +311,8 @@ export function InstanceViewBody({
           title="Delete item"
           message={
             <>
-              Permanently delete <strong>{labelOf(instance.state, fields)}</strong>? This can't be
-              undone, and is refused while other items still link to it.
+              Permanently delete <strong>{label}</strong>? This can't be undone, and is refused
+              while other items still link to it.
             </>
           }
           confirmLabel="Delete"

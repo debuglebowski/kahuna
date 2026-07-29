@@ -225,12 +225,18 @@ export function ListWidget({
               <Lock size={13} fill="currentColor" fillOpacity={0.2} />
             )}
           </IconButton>
-          <IconButton
-            aria-label={`New ${concept?.name ?? "instance"}`}
-            onClick={() => setAdding(true)}
-          >
-            <Plus size={14} />
-          </IconButton>
+          {/* A single-record concept's one record already exists (the flag creates
+              it), and `create` would be refused with `SingleRecordConflict` — so
+              there's nothing to add. The list still renders: it's a legitimate way
+              to see that one row. */}
+          {!concept?.singleRecord && (
+            <IconButton
+              aria-label={`New ${concept?.name ?? "instance"}`}
+              onClick={() => setAdding(true)}
+            >
+              <Plus size={14} />
+            </IconButton>
+          )}
         </div>
       </div>
       <div className="-mx-1 min-h-0 flex-1 overflow-auto">{body}</div>

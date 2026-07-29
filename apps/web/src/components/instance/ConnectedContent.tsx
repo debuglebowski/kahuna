@@ -173,6 +173,11 @@ function AddConnectionModal({
 
   const option = options.find((o) => o.key === optionKey)
   const searchConcept = ctx.concepts.find((c) => c.id === option?.searchConceptId)
+  // A single-record concept has exactly one pickable record, so the search box is
+  // noise — the one row is the whole list. The pick stays explicit rather than
+  // auto-selecting: which end owns the edge and whether it pins a version are still
+  // real choices, and a silent selection would hide them.
+  const soleTarget = searchConcept?.singleRecord ?? false
   // Whether the REFERENCED side is versioned (out: the picked target; in: this item).
   const referencedVersioned =
     option?.dir === "out"
@@ -262,12 +267,14 @@ function AddConnectionModal({
             </div>
           ) : (
             <>
-              <Input
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search…"
-                autoFocus
-              />
+              {!soleTarget && (
+                <Input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Search…"
+                  autoFocus
+                />
+              )}
               <div className="max-h-48 space-y-0.5 overflow-y-auto">
                 {(results.data ?? []).map((r) => (
                   <button
@@ -286,7 +293,12 @@ function AddConnectionModal({
                 ))}
                 {results.data?.length === 0 && (
                   <p className="px-2 py-1.5 text-sm text-muted-foreground">
-                    No published items match.
+                    {soleTarget
+                      ? // The search is head-only, so a versioned single-record
+                        // concept whose record is still an unpublished draft has
+                        // nothing referenceable yet — say which, not "no match".
+                        `${searchConcept?.name ?? "It"} has no published record to link to yet.`
+                      : "No published items match."}
                   </p>
                 )}
               </div>

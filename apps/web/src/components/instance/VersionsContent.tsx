@@ -19,6 +19,11 @@ import type { InstanceCtx } from "./types"
 export function VersionsBody({ ctx }: { ctx: InstanceCtx }) {
   const { instance: current, refetch: onChanged } = ctx
   const itemId = current.itemId
+  // Every way to destroy a version is refused on a single-record concept
+  // (`SingleRecordProtected`): archiving the last live version, or discarding the
+  // only-ever draft, would take the record the flag promises exists. Publish, new
+  // version and restore stay — the lineage still grows and recovers normally.
+  const protectedRecord = ctx.concept.singleRecord
   const navigate = useNavigate()
   const versionsQ = useQuery({
     queryKey: ["versions", itemId],
@@ -128,15 +133,17 @@ export function VersionsBody({ ctx }: { ctx: InstanceCtx }) {
                     >
                       <Rocket size={14} />
                     </IconButton>
-                    <IconButton
-                      aria-label={`Discard v${v.versionSeq}`}
-                      title="Discard this draft"
-                      variant="danger"
-                      disabled={discard.isPending}
-                      onClick={() => discard.mutate({ id: v.id })}
-                    >
-                      <Trash2 size={14} />
-                    </IconButton>
+                    {!protectedRecord && (
+                      <IconButton
+                        aria-label={`Discard v${v.versionSeq}`}
+                        title="Discard this draft"
+                        variant="danger"
+                        disabled={discard.isPending}
+                        onClick={() => discard.mutate({ id: v.id })}
+                      >
+                        <Trash2 size={14} />
+                      </IconButton>
+                    )}
                   </>
                 ) : v.archivedAt ? (
                   <IconButton
@@ -148,14 +155,16 @@ export function VersionsBody({ ctx }: { ctx: InstanceCtx }) {
                     <ArchiveRestore size={14} />
                   </IconButton>
                 ) : (
-                  <IconButton
-                    aria-label={`Archive v${v.versionSeq}`}
-                    title="Archive this version"
-                    disabled={archiveVersion.isPending}
-                    onClick={() => archiveVersion.mutate({ id: v.id, version: v.version })}
-                  >
-                    <Archive size={14} />
-                  </IconButton>
+                  !protectedRecord && (
+                    <IconButton
+                      aria-label={`Archive v${v.versionSeq}`}
+                      title="Archive this version"
+                      disabled={archiveVersion.isPending}
+                      onClick={() => archiveVersion.mutate({ id: v.id, version: v.version })}
+                    >
+                      <Archive size={14} />
+                    </IconButton>
+                  )
                 )}
               </div>
             </div>
