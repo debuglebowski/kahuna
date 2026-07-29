@@ -7,6 +7,7 @@ import { type AutosaveStatus, createAutosave } from "@/lib/autosave"
 import { canEditVersion } from "@/lib/editability"
 import { recordHref } from "@/lib/recordHref"
 import { isRichTextValue, type RichTextValue } from "@/lib/richtext"
+import { useSingleRecord } from "@/lib/singleRecord"
 import { useFields } from "../ConditionList"
 import { RichTextEditor } from "../editor/RichTextEditor"
 import { Button, Spinner } from "../ui"
@@ -106,6 +107,24 @@ export function DocumentWidget({ widget, interactive }: { widget: Doc; interacti
       interactive={interactive}
     />
   )
+}
+
+/**
+ * `bindToConceptRecord` Document: resolves the single-record concept's record, then
+ * renders the ordinary widget against it. A wrapper, not a branch inside
+ * `DocumentWidget`, because the resolution is a hook and `WidgetCanvas`'s arm is a
+ * plain switch (see `ConceptRecordFilesWidget`).
+ */
+export function ConceptRecordDocumentWidget({
+  widget,
+  interactive,
+}: {
+  widget: Doc
+  interactive: boolean
+}) {
+  const { instanceId, loading } = useSingleRecord(widget.conceptId ?? "")
+  if (loading) return <Spinner />
+  return <DocumentWidget widget={{ ...widget, instanceId }} interactive={interactive} />
 }
 
 function DocumentEditor({

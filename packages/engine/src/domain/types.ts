@@ -871,6 +871,9 @@ export interface FilesWidget extends WidgetBase {
   readonly conceptId?: string | null
   readonly scope: "instance" | "concept" | "org" | "widget"
   readonly instanceId?: string | null
+  /** `scope: "instance"` only — take the record from `conceptId`'s single record
+   *  rather than a pinned `instanceId` (resolved client-side). */
+  readonly bindToConceptRecord?: boolean
   /** `scope: "widget"` only — the bucket owning this widget's files. */
   readonly bucketId?: string | null
   /** `scope: "widget"` only, default true: listable by an org-scope widget too. */
@@ -885,6 +888,9 @@ export interface DocumentWidget extends WidgetBase {
   readonly type: "document"
   readonly conceptId?: string | null
   readonly instanceId?: string | null
+  /** Take the record from `conceptId`'s single record rather than a pinned
+   *  `instanceId` (resolved client-side). */
+  readonly bindToConceptRecord?: boolean
   readonly fieldId?: string | null
   readonly hideLabel?: boolean
 }

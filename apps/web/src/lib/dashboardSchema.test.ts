@@ -7,6 +7,7 @@ import {
   migrate,
   type NormWidget,
   newWidget,
+  referencedConceptIds,
   retypeWidget,
 } from "./dashboards"
 
@@ -309,5 +310,70 @@ describe("Files widget bucket (widget scope)", () => {
     const asNote = retypeWidget(filesWidget({ bucketShared: false }) as NormWidget, "note")
     expect(bucketIdsIn([asNote])).toEqual([])
     expect(bucketIdsIn([retypeWidget(asNote, "files")])).toEqual([])
+  })
+})
+
+// `bindToConceptRecord` says "use whichever record this single-record concept
+// holds" instead of pinning an `instanceId`. It's a flag rather than a second
+// concept id so the bound record and the field-picker scope share one `conceptId`
+// and can't drift — which also means the codec must keep the flag and the id
+// together through a round-trip.
+describe("bindToConceptRecord (single-record binding)", () => {
+  it("round-trips on files, alongside its conceptId", () => {
+    const body = {
+      direction: "col" as const,
+      children: [
+        {
+          ...newWidget("files"),
+          scope: "instance" as const,
+          instanceId: null,
+          conceptId: "c1",
+          bindToConceptRecord: true,
+        },
+      ],
+    }
+    const decoded = Schema.decodeUnknownSync(DashboardBody)(body)
+    expect(decoded.children?.[0]).toMatchObject({
+      scope: "instance",
+      conceptId: "c1",
+      bindToConceptRecord: true,
+    })
+    expect(Schema.encodeSync(DashboardBody)(decoded).children?.[0]).toMatchObject({
+      conceptId: "c1",
+      bindToConceptRecord: true,
+    })
+  })
+
+  it("round-trips on document, keeping the field it scopes", () => {
+    const w = Schema.decodeUnknownSync(DashboardWidget)({
+      ...newWidget("document"),
+      conceptId: "c1",
+      fieldId: "f1",
+      bindToConceptRecord: true,
+    })
+    expect(w).toMatchObject({ conceptId: "c1", fieldId: "f1", bindToConceptRecord: true })
+    expect(Schema.encodeSync(DashboardWidget)(w)).toMatchObject({ bindToConceptRecord: true })
+  })
+
+  // Optional, so every widget saved before the flag existed still decodes — and
+  // reads as unbound, i.e. exactly what it did before.
+  it("is absent on a fresh widget", () => {
+    for (const t of ["files", "document"] as const)
+      expect(newWidget(t)).not.toHaveProperty("bindToConceptRecord")
+  })
+
+  // Binding does NOT make the dashboard load the concept's instances:
+  // files/document fetch their record through their own RPCs, so the concept ref
+  // here is a lookup key, not a scope to prefetch.
+  it("does not add the bound concept to referencedConceptIds", () => {
+    const body = migrate({
+      direction: "col",
+      children: [
+        { ...newWidget("files"), scope: "instance", conceptId: "c1", bindToConceptRecord: true },
+        { ...newWidget("document"), conceptId: "c2", bindToConceptRecord: true },
+        { ...newWidget("metric"), conceptId: "c3" },
+      ],
+    } as never)
+    expect(referencedConceptIds(body)).toEqual(["c3"])
   })
 })

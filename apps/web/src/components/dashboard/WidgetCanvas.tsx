@@ -22,8 +22,8 @@ import type { InstanceCtx } from "../instance/types"
 import { ActivityWidget } from "./ActivityWidget"
 import { AttentionWidget } from "./AttentionWidget"
 import { CalendarWidget } from "./CalendarWidget"
-import { DocumentWidget } from "./DocumentWidget"
-import { FilesWidget } from "./FilesWidget"
+import { ConceptRecordDocumentWidget, DocumentWidget } from "./DocumentWidget"
+import { ConceptRecordFilesWidget, FilesWidget } from "./FilesWidget"
 import { GanttWidget } from "./GanttWidget"
 import { GoalWidget } from "./GoalWidget"
 import { KanbanWidget } from "./KanbanWidget"
@@ -259,6 +259,11 @@ function renderWidget(w: NormWidget, ctx: RenderCtx) {
     case "gantt":
       return <GanttWidget widget={w} data={data} concept={concept} />
     case "files":
+      // A concept-record binding wins over the page's record: a widget configured
+      // to show one concept's record must mean the same thing on a page dashboard
+      // and inside somebody else's record dashboard.
+      if (w.scope === "instance" && w.bindToConceptRecord)
+        return <ConceptRecordFilesWidget widget={w} />
       // On a record dashboard an instance-scoped Files widget binds to the current
       // record when no explicit instance is set.
       return (
@@ -274,6 +279,8 @@ function renderWidget(w: NormWidget, ctx: RenderCtx) {
       // Always renders its editing chrome so the layout editor and live page look
       // the same; `interactive` (true on the live page + the editor's Preview,
       // false while arranging tiles) only governs whether keystrokes land.
+      if (w.bindToConceptRecord)
+        return <ConceptRecordDocumentWidget widget={w} interactive={ctx.readOnly} />
       // On a record dashboard the record supplies the instance when unset.
       return (
         <DocumentWidget

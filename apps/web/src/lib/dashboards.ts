@@ -314,6 +314,10 @@ export const referencedConceptIds = (body: NormBody): string[] => {
       n.children.forEach(walk)
       return
     }
+    // files/document skip even when they carry a `conceptId` — including a
+    // `bindToConceptRecord` one. Their concept ref is a lookup key (which single
+    // record? which fields?), resolved by their own RPCs; loading the concept's
+    // instance list would fetch rows nobody reads.
     if (
       n.type === "trend" ||
       n.type === "activity" ||

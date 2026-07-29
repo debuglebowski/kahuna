@@ -3,6 +3,7 @@ import { api, type DashboardWidget, type FileOwner } from "@/lib/api"
 import { KEY, useRegisterCollection } from "@/lib/collections"
 import { arrangeFiles } from "@/lib/files"
 import { queryClient } from "@/lib/queryClient"
+import { useSingleRecord } from "@/lib/singleRecord"
 import { FileDropZone, FileList } from "../files/FileList"
 import { Spinner } from "../ui"
 
@@ -108,4 +109,19 @@ export function FilesWidget({ widget }: { widget: Files }) {
       />
     </div>
   )
+}
+
+/**
+ * `bindToConceptRecord` Files: resolves the single-record concept's record, then
+ * renders the ordinary widget with that `instanceId`. A wrapper rather than a
+ * branch inside `FilesWidget` because the resolution is a hook — `WidgetCanvas`'s
+ * arm is a plain switch, and hooking there would make the hook count vary per
+ * widget config.
+ */
+export function ConceptRecordFilesWidget({ widget }: { widget: Files }) {
+  const { instanceId, loading } = useSingleRecord(widget.conceptId ?? "")
+  if (loading) return <Spinner />
+  // No record (flag switched off, or the concept is gone) falls through to the
+  // widget's own "pick a record" empty state.
+  return <FilesWidget widget={{ ...widget, instanceId }} />
 }

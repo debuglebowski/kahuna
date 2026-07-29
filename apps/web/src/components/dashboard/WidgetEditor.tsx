@@ -1456,34 +1456,73 @@ export function WidgetEditor({
         )}
 
         {widget.type === "document" &&
-          (recordMode ? (
+          (widget.bindToConceptRecord ? (
+            // Bound: the concept picks itself out one record; the field list is that
+            // concept's, read through the same `conceptId` the binding uses.
+            <>
+              <ConceptRecordBinding
+                conceptId={conceptId}
+                concepts={concepts}
+                onChange={patch}
+                what="document"
+              />
+              {conceptId && (
+                <FieldRow label="Rich text field">
+                  <Select
+                    value={widget.fieldId || "__none"}
+                    onValueChange={(v) => patch({ fieldId: v === "__none" ? null : v })}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Select a field…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none">Select a field…</SelectItem>
+                      {richTextFields.map((f) => (
+                        <SelectItem key={f.id} value={f.id}>
+                          {f.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {richTextFields.length === 0 && (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      This concept has no rich text fields.
+                    </p>
+                  )}
+                </FieldRow>
+              )}
+            </>
+          ) : recordMode ? (
             // The record is the one being viewed — only the field is chosen,
             // from the owning concept's rich text fields.
-            <FieldRow label="Rich text field" hint="Edited for whichever record is open.">
-              <Select
-                value={widget.fieldId || "__none"}
-                onValueChange={(v) =>
-                  patch({ fieldId: v === "__none" ? null : v, conceptId: recordConceptId })
-                }
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Select a field…" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none">Select a field…</SelectItem>
-                  {recordRichTextFields.map((f) => (
-                    <SelectItem key={f.id} value={f.id}>
-                      {f.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {recordRichTextFields.length === 0 && (
-                <p className="mt-1 text-xs text-muted-foreground">
-                  This concept has no rich text fields.
-                </p>
-              )}
-            </FieldRow>
+            <>
+              <FieldRow label="Rich text field" hint="Edited for whichever record is open.">
+                <Select
+                  value={widget.fieldId || "__none"}
+                  onValueChange={(v) =>
+                    patch({ fieldId: v === "__none" ? null : v, conceptId: recordConceptId })
+                  }
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Select a field…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none">Select a field…</SelectItem>
+                    {recordRichTextFields.map((f) => (
+                      <SelectItem key={f.id} value={f.id}>
+                        {f.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {recordRichTextFields.length === 0 && (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    This concept has no rich text fields.
+                  </p>
+                )}
+              </FieldRow>
+              <BindToConceptRecordButton concepts={concepts} onChange={patch} />
+            </>
           ) : (
             <>
               <FieldRow label="Record">
@@ -1501,7 +1540,7 @@ export function WidgetEditor({
                   }
                 />
               </FieldRow>
-              {widget.instanceId && (
+              {widget.instanceId ? (
                 <FieldRow label="Rich text field">
                   <Select
                     value={widget.fieldId || "__none"}
@@ -1525,6 +1564,8 @@ export function WidgetEditor({
                     </p>
                   )}
                 </FieldRow>
+              ) : (
+                <BindToConceptRecordButton concepts={concepts} onChange={patch} />
               )}
             </>
           ))}
@@ -1843,7 +1884,10 @@ export function WidgetEditor({
                   const scope = v as "instance" | "concept" | "org" | "widget"
                   // Clear the other scopes' keys so a stale ref can't linger; the
                   // two uploadable scopes default the drop-zone on.
-                  if (scope === "concept") patch({ scope, instanceId: null })
+                  // `bindToConceptRecord` is instance-scope only — every other scope
+                  // clears it, or the flag would silently outlive its meaning.
+                  if (scope === "concept")
+                    patch({ scope, instanceId: null, bindToConceptRecord: false })
                   else if (scope === "instance")
                     patch({ scope, conceptId: null, allowUpload: widget.allowUpload ?? true })
                   else if (scope === "widget")
@@ -1851,12 +1895,14 @@ export function WidgetEditor({
                       scope,
                       conceptId: null,
                       instanceId: null,
+                      bindToConceptRecord: false,
                       // One bucket per widget, minted once and kept for its life —
                       // reusing the widget id would make two dashboards share files.
                       bucketId: widget.bucketId ?? crypto.randomUUID(),
                       allowUpload: widget.allowUpload ?? true,
                     })
-                  else patch({ scope, conceptId: null, instanceId: null })
+                  else
+                    patch({ scope, conceptId: null, instanceId: null, bindToConceptRecord: false })
                 }}
               >
                 <SelectTrigger className="w-full">
@@ -1914,18 +1960,33 @@ export function WidgetEditor({
               </FieldRow>
             )}
             {widget.scope === "instance" &&
-              (recordMode ? (
-                <p className="px-1 text-xs text-muted-foreground">
-                  Shows files for whichever record is open.
-                </p>
+              (widget.bindToConceptRecord ? (
+                <ConceptRecordBinding
+                  conceptId={conceptId}
+                  concepts={concepts}
+                  onChange={patch}
+                  what="files"
+                />
+              ) : recordMode ? (
+                <>
+                  <p className="px-1 text-xs text-muted-foreground">
+                    Shows files for whichever record is open.
+                  </p>
+                  <BindToConceptRecordButton concepts={concepts} onChange={patch} />
+                </>
               ) : (
-                <FieldRow label="Record">
-                  <FilesInstancePicker
-                    instanceId={widget.instanceId ?? null}
-                    concepts={concepts}
-                    onPick={(instanceId) => patch({ instanceId })}
-                  />
-                </FieldRow>
+                <>
+                  <FieldRow label="Record">
+                    <FilesInstancePicker
+                      instanceId={widget.instanceId ?? null}
+                      concepts={concepts}
+                      onPick={(instanceId) => patch({ instanceId })}
+                    />
+                  </FieldRow>
+                  {!widget.instanceId && (
+                    <BindToConceptRecordButton concepts={concepts} onChange={patch} />
+                  )}
+                </>
               ))}
             <FieldRow label="Sort">
               <Select
@@ -2020,6 +2081,105 @@ function PickedInstanceLabel({ instanceId }: { instanceId: string }) {
   if (detail.error)
     return <span className="text-muted-foreground">Record unavailable — pick another.</span>
   return <span className="truncate">{ref.data?.[0]?.label ?? "…"}</span>
+}
+
+/** The single-record concepts a widget can bind to — the only ones with a record
+ *  that's resolvable from a concept id alone. */
+const bindableConcepts = (concepts: readonly Concept[]) =>
+  concepts.filter((c) => c.singleRecord && !c.archivedAt)
+
+/** Opt into `bindToConceptRecord`, offered beside the explicit record picker.
+ *  Hidden entirely when the org has no single-record concept — there'd be nothing
+ *  to bind to, and the flag is meaningless without one. */
+function BindToConceptRecordButton({
+  concepts,
+  onChange,
+}: {
+  concepts: readonly Concept[]
+  onChange: (patch: Partial<NormWidget>) => void
+}) {
+  const bindable = bindableConcepts(concepts)
+  if (bindable.length === 0) return null
+  return (
+    <ToggleChip
+      pressed={false}
+      onPressedChange={() =>
+        onChange({
+          bindToConceptRecord: true,
+          instanceId: null,
+          conceptId: bindable.length === 1 ? bindable[0]!.id : null,
+        } as Partial<NormWidget>)
+      }
+    >
+      Use a single-record concept’s record
+    </ToggleChip>
+  )
+}
+
+/** The bound state: pick WHICH single-record concept, or drop back to an explicit
+ *  record. The record itself isn't chosen — the concept has exactly one. */
+function ConceptRecordBinding({
+  conceptId,
+  concepts,
+  onChange,
+  what,
+}: {
+  conceptId: string
+  concepts: readonly Concept[]
+  onChange: (patch: Partial<NormWidget>) => void
+  /** What the bound record supplies, for the hint copy. */
+  what: "files" | "document"
+}) {
+  const bindable = bindableConcepts(concepts)
+  return (
+    <>
+      <FieldRow
+        label="Record"
+        hint={
+          what === "files"
+            ? "Shows the files of a single-record concept's one record. Follows that record wherever it goes — including a new version, which an explicit record wouldn't."
+            : "Edits the field on a single-record concept's one record. Follows that record across versions, which an explicit record wouldn't."
+        }
+      >
+        <Select
+          value={conceptId || "__none"}
+          onValueChange={(v) =>
+            // Switching the bound concept invalidates a Document field pick (the
+            // field belongs to the old concept); Files has no field to clear.
+            onChange({
+              conceptId: v === "__none" ? null : v,
+              ...(what === "document" ? { fieldId: null } : {}),
+            } as Partial<NormWidget>)
+          }
+        >
+          <SelectTrigger className="w-full">
+            <SelectValue placeholder="Single-record concept…" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__none">Single-record concept…</SelectItem>
+            <ConceptSelectItems concepts={bindable} label={(c) => c.name} />
+          </SelectContent>
+        </Select>
+      </FieldRow>
+      {bindable.length === 0 && (
+        <p className="px-1 text-xs text-muted-foreground">
+          No concept is in single-record mode yet — turn it on in the concept’s settings.
+        </p>
+      )}
+      <ToggleChip
+        pressed
+        onPressedChange={() =>
+          onChange({
+            bindToConceptRecord: false,
+            conceptId: null,
+            ...(what === "document" ? { fieldId: null } : {}),
+          } as Partial<NormWidget>)
+        }
+      >
+        Bound to a single-record concept
+      </ToggleChip>
+    </>
+  )
 }
 
 /** Concept + search → one instance ref (the Shortcuts picker pattern), with the

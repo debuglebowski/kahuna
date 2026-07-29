@@ -769,6 +769,10 @@ const FilesWidget = Schema.Struct({
   scope: Schema.Literal("instance", "concept", "org", "widget"),
   /** Instance id for `scope: "instance"` on a dashboard (no implicit context). */
   instanceId: Schema.optional(Schema.NullOr(Schema.String)),
+  /** `scope: "instance"` only — resolve the record from a single-record concept
+   *  instead of pinning one `instanceId`. A boolean, not a second concept id: the
+   *  concept is the one already in `conceptId`, so the two can't drift. */
+  bindToConceptRecord: Schema.optional(Schema.Boolean),
   /** `scope: "widget"` only — the bucket owning this widget's files. Minted on
    *  switching to that scope; must be a fresh uuid, never a widget `id` (those
    *  repeat across dashboards, so two widgets would share one file set). */
@@ -792,6 +796,10 @@ const DocumentWidget = Schema.Struct({
   ...ConceptScoped,
   type: Schema.Literal("document"),
   instanceId: Schema.optional(Schema.NullOr(Schema.String)),
+  /** Resolve the record from `conceptId`'s single record instead of pinning one
+   *  `instanceId`. `conceptId` is already the field picker's scope, so binding
+   *  reuses it — one id, no drift between the record and the field list. */
+  bindToConceptRecord: Schema.optional(Schema.Boolean),
   fieldId: Schema.optional(Schema.NullOr(Schema.String)),
   /** Hide the field-name header above the editor. */
   hideLabel: Schema.optional(Schema.Boolean),
