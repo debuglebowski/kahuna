@@ -4,32 +4,46 @@ import { CSS } from "@dnd-kit/utilities"
 import { GripVertical, Plus, Trash2, X } from "lucide-react"
 import type { ReactNode } from "react"
 import { createPortal } from "react-dom"
-import type { Dashboard, SidebarSection } from "../../lib/api"
-import { ConceptIcon } from "../../lib/icons"
-import { globalNavFor, isGlobalEntryId } from "../../lib/sidebarViews"
+import type { Concept, Dashboard, SidebarSection } from "../../lib/api"
+import { ConceptIcon, DEFAULT_CONCEPT_ICON } from "../../lib/icons"
+import { conceptIdOfEntry, globalNavFor, isGlobalEntryId } from "../../lib/sidebarViews"
 import { cn } from "../../lib/utils"
 import { IconPicker } from "../IconPicker"
 import { Badge, IconButton, Input } from "../ui"
 import { AddEntryPopover } from "./AddEntryPopover"
 import { dropUid, patchSections, sectionsCollision, secUid, useSectionsDnd } from "./sectionsDnd"
 
+/** One resolved entry row. `missingLabel` overrides the placeholder shown when the
+ *  target is gone (a concept's is not "deleted dashboard"). */
+interface Chip {
+  name: string | undefined
+  icon: ReactNode
+  hidden: boolean
+  missing: boolean
+  missingLabel?: string
+}
+
 /**
  * Flat, fully-visible editor for a view's sections (Settings → Sidebar modal):
- * every section card shows its entries inline — global nav items and dashboards
- * alike. Drag rows within/between cards, drag cards to reorder, edit title/icon
- * in place, "+" to add, × to remove. Controlled: `onChange(next, commit)`
- * mirrors the sectionsDnd contract (commit=false for mid-drag previews/reverts).
+ * every section card shows its entries inline — global nav items, dashboards and
+ * single-record concept pages alike. Drag rows within/between cards, drag cards to
+ * reorder, edit title/icon in place, "+" to add, × to remove. Controlled:
+ * `onChange(next, commit)` mirrors the sectionsDnd contract (commit=false for
+ * mid-drag previews/reverts).
  */
 export function SectionsEditor({
   sections,
   dashboards,
+  concepts,
   onChange,
 }: {
   sections: readonly SidebarSection[]
   dashboards: readonly Dashboard[]
+  concepts: readonly Concept[]
   onChange: (next: readonly SidebarSection[], commit: boolean) => void
 }) {
   const byId = new Map(dashboards.map((d) => [d.id, d] as const))
+  const cById = new Map(concepts.map((c) => [c.id, c] as const))
   const dnd = useSectionsDnd(sections, onChange)
   const commit = (next: readonly SidebarSection[]) => onChange(next, true)
 
@@ -39,9 +53,23 @@ export function SectionsEditor({
       ? (sections.find((s) => s.id === dnd.drag?.sectionId) ?? null)
       : null
 
-  const chipFor = (entryId: string) => {
+  // Mirrors resolveEntry's order and its notion of "unavailable" — a concept that
+  // left single-record mode has no page, so the row reads as gone here too.
+  const chipFor = (entryId: string): Chip => {
     const g = globalNavFor(entryId)
     if (g) return { name: g.label, icon: g.icon, hidden: false, missing: false }
+    const conceptId = conceptIdOfEntry(entryId)
+    if (conceptId !== undefined) {
+      const c = cById.get(conceptId)
+      const live = c && !c.archivedAt && c.singleRecord
+      return {
+        name: live ? c.name : undefined,
+        icon: <ConceptIcon value={c?.icon || DEFAULT_CONCEPT_ICON} size={15} />,
+        hidden: false,
+        missing: !live,
+        missingLabel: c ? "(no record page)" : "(deleted concept)",
+      }
+    }
     const d = byId.get(entryId)
     return {
       name: d?.name,
@@ -72,6 +100,7 @@ export function SectionsEditor({
                 section={section}
                 chipFor={chipFor}
                 dashboards={dashboards}
+                concepts={concepts}
                 uidFor={dnd.uidFor}
                 onPatch={(patch) =>
                   commit(patchSections(sections, section.id, (s) => ({ ...s, ...patch })))
@@ -120,18 +149,15 @@ function SectionCard({
   section,
   chipFor,
   dashboards,
+  concepts,
   uidFor,
   onPatch,
   onDelete,
 }: {
   section: SidebarSection
-  chipFor: (entryId: string) => {
-    name: string | undefined
-    icon: ReactNode
-    hidden: boolean
-    missing: boolean
-  }
+  chipFor: (entryId: string) => Chip
   dashboards: readonly Dashboard[]
+  concepts: readonly Concept[]
   uidFor: (sectionId: string, entryId: string) => string
   onPatch: (patch: Partial<SidebarSection>) => void
   onDelete: () => void
@@ -165,6 +191,7 @@ function SectionCard({
         />
         <AddEntryPopover
           dashboards={dashboards}
+          concepts={concepts}
           excludeIds={section.entryIds}
           onPick={(id) => onPatch({ entryIds: [...section.entryIds, id] })}
         >
@@ -197,15 +224,7 @@ function SectionCard({
   )
 }
 
-function EntryCard({
-  uid,
-  chip,
-  onRemove,
-}: {
-  uid: string
-  chip: { name: string | undefined; icon: ReactNode; hidden: boolean; missing: boolean }
-  onRemove: () => void
-}) {
+function EntryCard({ uid, chip, onRemove }: { uid: string; chip: Chip; onRemove: () => void }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: uid,
     data: { type: "entry" },
@@ -241,14 +260,11 @@ function EntryChip({
   icon,
   hidden,
   missing,
+  missingLabel,
   grip,
   onRemove,
   dragging,
-}: {
-  name: string | undefined
-  icon: ReactNode
-  hidden?: boolean
-  missing?: boolean
+}: Chip & {
   grip?: ReactNode
   onRemove?: () => void
   dragging?: boolean
@@ -264,7 +280,9 @@ function EntryChip({
       <span className="flex h-4 w-4 shrink-0 items-center justify-center">{icon}</span>
       <span className="min-w-0 flex-1 truncate text-sm text-foreground">
         {missing || !name ? (
-          <span className="text-muted-foreground italic">(deleted dashboard)</span>
+          <span className="text-muted-foreground italic">
+            {missingLabel ?? "(deleted dashboard)"}
+          </span>
         ) : (
           name
         )}

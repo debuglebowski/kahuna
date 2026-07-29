@@ -47,7 +47,7 @@ import {
 import { api, type SidebarSection, type SidebarView as SidebarViewModel } from "../../lib/api"
 import { sidebarViewsCollection } from "../../lib/collections"
 import { ConceptIcon } from "../../lib/icons"
-import { globalsSection, resolveView, useDashboards } from "../../lib/sidebarViews"
+import { globalsSection, resolveView, useConcepts, useDashboards } from "../../lib/sidebarViews"
 import { useUnsavedGuard } from "../../lib/useUnsavedGuard"
 
 const refetchViews = () => sidebarViewsCollection.utils.refetch()
@@ -220,6 +220,7 @@ function SidebarView({ view, canDelete }: { view: SidebarViewModel; canDelete: b
 
   // Sections edit in place (dnd previews don't dirty the draft; commits do).
   const dashboards = useDashboards()
+  const concepts = useConcepts()
   const applySections = (next: readonly SidebarSection[], commit: boolean) => {
     setSections([...next])
     if (commit) setDirty(true)
@@ -227,8 +228,8 @@ function SidebarView({ view, canDelete }: { view: SidebarViewModel; canDelete: b
   // Live preview of the draft, rendered exactly like the sidebar. The neutral
   // pathname keeps every entry inactive.
   const previewSections = useMemo(
-    () => resolveView({ sections }, { dashboards, pathname: "" }),
-    [sections, dashboards],
+    () => resolveView({ sections }, { dashboards, concepts, pathname: "" }),
+    [sections, dashboards, concepts],
   )
 
   const save = useMutation({
@@ -352,6 +353,7 @@ function SidebarView({ view, canDelete }: { view: SidebarViewModel; canDelete: b
               <SectionsEditor
                 sections={sections}
                 dashboards={dashboards}
+                concepts={concepts}
                 onChange={applySections}
               />
             </div>

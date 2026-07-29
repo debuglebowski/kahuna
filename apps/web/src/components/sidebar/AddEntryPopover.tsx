@@ -8,19 +8,20 @@ import {
   CommandList,
 } from "@/components/ui/command"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import type { Dashboard } from "../../lib/api"
-import { ConceptIcon } from "../../lib/icons"
-import { GLOBAL_NAV, globalEntryId } from "../../lib/sidebarViews"
+import type { Concept, Dashboard } from "../../lib/api"
+import { ConceptIcon, DEFAULT_CONCEPT_ICON } from "../../lib/icons"
+import { conceptEntryId, GLOBAL_NAV, globalEntryId } from "../../lib/sidebarViews"
 
 /**
  * Searchable entry picker (shadcn Popover + Command) for placing entries into
- * a sidebar section: global nav items and non-hidden dashboards not yet in the
- * section. Picking one appends it and keeps the popover open for multi-add
- * (the picked item drops out of the list). Used by the inline sidebar and the
- * settings SectionsEditor.
+ * a sidebar section: global nav items, non-hidden dashboards, and single-record
+ * concepts not yet in the section. Picking one appends it and keeps the popover
+ * open for multi-add (the picked item drops out of the list). Used by the inline
+ * sidebar and the settings SectionsEditor.
  */
 export function AddEntryPopover({
   dashboards,
+  concepts,
   excludeIds,
   onPick,
   open,
@@ -29,6 +30,7 @@ export function AddEntryPopover({
   children,
 }: {
   dashboards: readonly Dashboard[]
+  concepts: readonly Concept[]
   excludeIds: ReadonlyArray<string>
   onPick: (entryId: string) => void
   open?: boolean
@@ -41,6 +43,11 @@ export function AddEntryPopover({
   const globals = GLOBAL_NAV.filter((g) => !excluded.has(globalEntryId(g.key)))
   const dashboardOptions = dashboards
     .filter((d) => !d.hidden && !excluded.has(d.id))
+    .sort((a, b) => a.name.localeCompare(b.name))
+  // Only single-record concepts are offered: a list concept has no one record to
+  // land on, so it has no `/c/<slug>` page to link to.
+  const conceptOptions = concepts
+    .filter((c) => c.singleRecord && !c.archivedAt && !excluded.has(conceptEntryId(c.id)))
     .sort((a, b) => a.name.localeCompare(b.name))
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
@@ -70,6 +77,20 @@ export function AddEntryPopover({
                   <CommandItem key={d.id} value={d.name} onSelect={() => onPick(d.id)}>
                     <ConceptIcon value={d.icon || "lucide:LayoutDashboard"} size={15} />
                     <span className="min-w-0 flex-1 truncate">{d.name}</span>
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            )}
+            {conceptOptions.length > 0 && (
+              <CommandGroup heading="Records">
+                {conceptOptions.map((c) => (
+                  <CommandItem
+                    key={c.id}
+                    value={c.name}
+                    onSelect={() => onPick(conceptEntryId(c.id))}
+                  >
+                    <ConceptIcon value={c.icon || DEFAULT_CONCEPT_ICON} size={15} />
+                    <span className="min-w-0 flex-1 truncate">{c.name}</span>
                   </CommandItem>
                 ))}
               </CommandGroup>
