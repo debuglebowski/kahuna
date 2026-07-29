@@ -1,15 +1,19 @@
 /**
- * End-to-end verification of the widget-owned files feature against a throwaway
- * API on :3199. Signs up a fresh user + org, then drives the REAL surfaces the
- * widget uses: the bucket upload route, listFiles at every scope, download, and
- * purgeBucket — the RPCs through the same Effect client the browser builds.
+ * End-to-end verification of the widget-owned files feature. Signs up a fresh user
+ * + org, then drives the REAL surfaces the widget uses: the bucket upload route,
+ * listFiles at every scope, download, and purgeBucket — the RPCs through the same
+ * Effect client the browser builds.
+ *
+ * Defaults to the throwaway stack (API :3199) so a run can't disturb the
+ * slay-managed one; point API/ORIGIN at :3100/:5100 to verify the managed stack.
  */
 import { FetchHttpClient } from "@effect/platform"
 import { RpcClient, RpcSerialization } from "@effect/rpc"
 import { Context, Effect, Layer, ManagedRuntime } from "effect"
 import { KingsmakerRpcs } from "../rpc/contract"
 
-const API = "http://localhost:3199"
+const API = process.env.API ?? "http://localhost:3199"
+const ORIGIN = process.env.ORIGIN ?? "http://localhost:5199"
 let cookie = ""
 
 const req = async (path: string, init: RequestInit = {}) => {
@@ -18,7 +22,7 @@ const req = async (path: string, init: RequestInit = {}) => {
     headers: {
       ...(init.headers ?? {}),
       ...(cookie ? { cookie } : {}),
-      origin: "http://localhost:5199",
+      origin: ORIGIN,
     },
   })
   const setC = res.headers.getSetCookie?.() ?? []

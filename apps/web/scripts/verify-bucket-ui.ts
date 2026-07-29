@@ -179,30 +179,59 @@ async function clickReal(needle: string, sel = "[role=option], button") {
  *  tooltip, so their text isn't in the DOM at all until the trigger is hovered —
  *  asserting the copy means hovering first. */
 async function hoverReal(sel: string) {
-  // The inspector scrolls, so the trigger may be outside the viewport — bring it
-  // into view before measuring, or the coordinates point at nothing.
-  const box = await evaljs(`(() => {
-    const el = document.querySelector(${JSON.stringify(sel)})
-    if (!el) return null
-    el.scrollIntoView({ block: "center" })
-    const r = el.getBoundingClientRect()
-    return JSON.stringify({ x: r.left + r.width / 2, y: r.top + r.height / 2 })
-  })()`)
-  if (!box) return false
-  const { x, y } = JSON.parse(box) as { x: number; y: number }
-  // Radix opens on a pointermove that *enters* the trigger, so approach from a
-  // neighbouring point first — a single move to the target can arrive as the very
-  // first pointer event and never reads as an enter.
-  await send(
-    "Input.dispatchMouseEvent",
-    { type: "mouseMoved", x: x - 40, y, buttons: 0 },
-    sessionId,
-  )
-  await sleep(60)
-  await send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y, buttons: 0 }, sessionId)
-  await sleep(60)
-  await send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y: y + 1, buttons: 0 }, sessionId)
-  return true
+  for (let attempt = 0; attempt < 6; attempt++) {
+    // Radix parks `pointer-events: none` on <body> while a just-closed Select's
+    // popper animates out. While it's there the cursor resolves to the document,
+    // not the trigger, so no pointerenter ever fires and the tooltip stays shut.
+    // Measure and hover only once the page is taking pointer input again.
+    const box = await evaljs(`(() => {
+      const el = document.querySelector(${JSON.stringify(sel)})
+      if (!el) return null
+      if (document.body.style.pointerEvents === "none") return "blocked"
+      // The inspector scrolls, so the trigger may be outside the viewport — bring
+      // it into view before measuring, or the coordinates point at nothing.
+      el.scrollIntoView({ block: "center" })
+      const r = el.getBoundingClientRect()
+      const x = r.left + r.width / 2
+      const y = r.top + r.height / 2
+      // Confirm the coordinates actually resolve to the trigger. An overlay or a
+      // stale rect would otherwise send the hover somewhere harmless and the
+      // assertion would blame the copy for a driver miss.
+      const hit = document.elementFromPoint(x, y)
+      if (!hit || !(el === hit || el.contains(hit) || hit.contains(el))) {
+        return "covered:" + (hit ? hit.tagName + "." + hit.className : "nothing")
+      }
+      return JSON.stringify({ x, y })
+    })()`)
+    if (!box) return false
+    if (typeof box === "string" && !box.startsWith("{")) {
+      if (attempt === 5) {
+        console.log(`    ! hover blocked at ${sel}: ${box}`)
+        return false
+      }
+      await sleep(250)
+      continue
+    }
+    const { x, y } = JSON.parse(box as string) as { x: number; y: number }
+    // Radix opens on a pointermove that *enters* the trigger, so approach from a
+    // neighbouring point first — a single move to the target can arrive as the very
+    // first pointer event and never reads as an enter.
+    await send(
+      "Input.dispatchMouseEvent",
+      { type: "mouseMoved", x: x - 40, y, buttons: 0 },
+      sessionId,
+    )
+    await sleep(60)
+    await send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y, buttons: 0 }, sessionId)
+    await sleep(60)
+    await send(
+      "Input.dispatchMouseEvent",
+      { type: "mouseMoved", x, y: y + 1, buttons: 0 },
+      sessionId,
+    )
+    return true
+  }
+  return false
 }
 const drain = (label: string) => {
   const msgs = consoleBuf
@@ -498,6 +527,21 @@ drain("delete")
 
 console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILED`)
 ws.close()
-proc.kill()
+// `kill()` only *asks*, and Chrome takes a moment to reap its helper processes.
+// Exiting immediately used to leave a headless Chrome (plus its GPU/renderer
+// helpers) running, and since it outlived the rmSync below it recreated the
+// profile dir afterwards — two stray browsers per two runs. Wait for the exit,
+// SIGKILL if it stalls, and only then delete the profile.
+await new Promise<void>((resolve) => {
+  const done = setTimeout(() => {
+    proc.kill("SIGKILL")
+    resolve()
+  }, 5000)
+  proc.once("exit", () => {
+    clearTimeout(done)
+    resolve()
+  })
+  proc.kill()
+})
 rmSync(PROFILE, { recursive: true, force: true })
 process.exit(failures === 0 ? 0 : 1)
