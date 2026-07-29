@@ -19,6 +19,8 @@ import {
   InstanceNotFound,
   ItemNotFound,
   ItemNotPublished,
+  SingleRecordConflict,
+  SingleRecordProtected,
   VersionConflict,
   VersionFrozen,
 } from "../errors"
@@ -347,6 +349,36 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
         return toInstance(row)
       })
 
+    /** Live (non-archived) `items` lineages of a concept. The single-record
+     *  invariant is defined on ITEMS, not `instances`: a versioned concept
+     *  legitimately holds N version rows on one lineage, so counting instances
+     *  would refuse the second version of a perfectly valid single record. */
+    const liveItemCountOf = (conceptId: string) =>
+      Effect.gen(function* () {
+        const { orgId } = yield* OrgContext
+        const rows = yield* sql<{ readonly count: number | string }>`
+          SELECT COUNT(*)::int AS count FROM items
+          WHERE org_id = ${orgId} AND concept_id = ${conceptId} AND archived_at IS NULL`
+        return Number(rows[0]?.count ?? 0)
+      })
+
+    /** Refuse a destructive write against the sole record of a single-record
+     *  concept — the concept guarantees the record exists, so archiving or
+     *  purging it would break the invariant.
+     *
+     *  Deliberately BLUNT: it refuses on the flag alone, without checking whether
+     *  this is the lineage's last live version. Being exact would mean modelling
+     *  "is this the last thing standing" across four call paths (per-version
+     *  archive, purge, lineage archive, draft discard) for a case the UI already
+     *  hides. Turn the flag off to archive; delete the concept to delete both. */
+    const assertRecordUnprotected = (conceptId: string, instanceId: string) =>
+      Effect.gen(function* () {
+        const concept = yield* concepts.getById(conceptId)
+        if (concept.singleRecord) {
+          return yield* Effect.fail(new SingleRecordProtected({ conceptId, instanceId }))
+        }
+      })
+
     const create = (input: ConceptRef & { readonly fields: Record<string, unknown> }) =>
       sql.withTransaction(
         Effect.gen(function* () {
@@ -355,6 +387,17 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
             "conceptId" in input
               ? yield* concepts.getById(input.conceptId)
               : yield* concepts.getByName(input.conceptName)
+          // A single-record concept admits exactly one lineage. This is the guard
+          // integrations hit too (they call the engine directly, bypassing the
+          // use-case layer), which is why it lives here and not in a use-case.
+          if (concept.singleRecord) {
+            const liveItems = yield* liveItemCountOf(concept.id)
+            if (liveItems > 0) {
+              return yield* Effect.fail(
+                new SingleRecordConflict({ conceptId: concept.id, liveItemCount: liveItems }),
+              )
+            }
+          }
           const defs = yield* fields.listFields(concept.id)
           const { rest, rawLabels } = splitLabels(input.fields)
           const validated = yield* validateFields(defs, rest)
@@ -519,6 +562,11 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
             )
           }
           const concept = yield* concepts.getById(current.conceptId)
+          if (concept.singleRecord) {
+            return yield* Effect.fail(
+              new SingleRecordProtected({ conceptId: concept.id, instanceId: current.id }),
+            )
+          }
           const event = yield* events.append({
             subjectKind: "instance",
             subjectId: current.id,
@@ -604,6 +652,7 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
                 new InstanceInUse({ instanceId: instance.id, relationCount }),
               )
             }
+            yield* assertRecordUnprotected(instance.conceptId, instance.id)
             const concept = yield* concepts.getById(instance.conceptId)
             yield* sql`DELETE FROM instances WHERE org_id = ${orgId} AND id = ${instance.id}`
             // Remove the lineage row when this was its last version — otherwise an
@@ -922,6 +971,12 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
             if (instance.versionStatus !== "draft") {
               return yield* Effect.fail(new VersionFrozen({ instanceId: instance.id }))
             }
+            // Discarding the only-ever draft purges the empty lineage below — which
+            // on a single-record concept would delete the record the flag promises
+            // exists. Freshly toggling a VERSIONED concept produces exactly that
+            // state (its new record is a draft), so this is the common path, not a
+            // corner: without this guard the record is one click from gone.
+            yield* assertRecordUnprotected(instance.conceptId, instance.id)
             const concept = yield* concepts.getById(instance.conceptId)
             yield* sql`DELETE FROM relations WHERE org_id = ${orgId} AND from_id = ${instance.id}`
             yield* sql`DELETE FROM instances WHERE org_id = ${orgId} AND id = ${instance.id}`
@@ -954,6 +1009,19 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
       sql.withTransaction(
         Effect.gen(function* () {
           const { orgId } = yield* OrgContext
+          // Read the lineage BEFORE writing: this is the guarded path for a
+          // versioned single record (the header "Archive" archives the whole
+          // lineage, not one version), and it's the one destructive path that
+          // otherwise never loads the concept at all.
+          const existing = yield* sql<ItemRow>`
+            SELECT * FROM items WHERE org_id = ${orgId} AND id = ${input.itemId} LIMIT 1`
+          if (!existing[0]) return yield* Effect.fail(new ItemNotFound({ itemId: input.itemId }))
+          const concept = yield* concepts.getById(existing[0].concept_id)
+          if (concept.singleRecord) {
+            return yield* Effect.fail(
+              new SingleRecordProtected({ conceptId: concept.id, instanceId: input.itemId }),
+            )
+          }
           const rows = yield* sql<ItemRow>`
             UPDATE items SET archived_at = COALESCE(archived_at, now())
             WHERE org_id = ${orgId} AND id = ${input.itemId} RETURNING *`
@@ -1015,6 +1083,93 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
         return rows[0] ? toInstance(rows[0]) : null
       })
 
+    /**
+     * The sole record of a single-record concept — its live lineage's current
+     * version — or null if the concept has none.
+     *
+     * NOT `headOf` alone, and NOT `QueryService.findInstances(...)[0]`: both are
+     * head-only (`version_status = 'published'`), so a freshly toggled VERSIONED
+     * concept — whose one record is still a draft — would resolve to null and the
+     * route would render "record missing" for a record that plainly exists. Step 3
+     * exists for exactly that case; don't "simplify" it away.
+     *
+     * Oldest live lineage wins, so if the invariant is ever breached (a restore
+     * racing a toggle) resolution stays deterministic rather than flip-flopping
+     * with creation order.
+     */
+    const singleRecordOf = (conceptId: string) =>
+      Effect.gen(function* () {
+        const { orgId } = yield* OrgContext
+        const itemRows = yield* sql<ItemRow>`
+          SELECT * FROM items
+          WHERE org_id = ${orgId} AND concept_id = ${conceptId} AND archived_at IS NULL
+          ORDER BY created_at ASC LIMIT 1`
+        const item = itemRows[0]
+        if (!item) return null
+        const head = yield* headOf(item.id)
+        if (head) return head
+        // Fall back to the newest version of ANY status (the draft-only case).
+        const anyRows = yield* sql<InstanceRow>`
+          SELECT * FROM instances
+          WHERE org_id = ${orgId} AND item_id = ${item.id} AND archived_at IS NULL
+          ORDER BY version_seq DESC LIMIT 1`
+        return anyRows[0] ? toInstance(anyRows[0]) : null
+      })
+
+    /**
+     * Flip a concept's `singleRecord` flag, creating its record when switching on.
+     *
+     * Lives HERE, not on ConceptService (which can't call InstanceService — it's
+     * already a dependency of this one) and not in a use-case (where composition
+     * is NOT transactional: `UC`'s requirements exclude `PgClient`, so two service
+     * calls are two independent transactions). One `withTransaction` here makes
+     * the flag and the record atomic: the concept is never briefly "single-record
+     * with nothing in it", and a rejected record leaves the flag untouched.
+     *
+     * `fields` supplies the new record's values, needed when the concept has
+     * required fields — `create` runs the ordinary `checkRequired`, so a short
+     * payload rolls the whole transaction back rather than getting a bypass.
+     */
+    const setConceptSingleRecord = (input: {
+      readonly conceptId: string
+      readonly singleRecord: boolean
+      readonly fields?: Record<string, unknown>
+    }) =>
+      sql.withTransaction(
+        Effect.gen(function* () {
+          const { orgId } = yield* OrgContext
+          // Lock the concept row first: two concurrent toggles-on would otherwise
+          // both read zero items and both create a record.
+          yield* sql`
+            SELECT id FROM concepts
+            WHERE org_id = ${orgId} AND id = ${input.conceptId} FOR UPDATE`
+          const concept = yield* concepts.getById(input.conceptId) // 404 / cross-org
+          // Idempotent: re-toggling on must NOT create a second record.
+          if (concept.singleRecord === input.singleRecord) return concept
+          // Turning it OFF is always legal — the concept just becomes ordinary and
+          // its record stays as a normal record.
+          if (!input.singleRecord) {
+            return yield* concepts.setSingleRecord(concept.id, false)
+          }
+          const liveItems = yield* liveItemCountOf(concept.id)
+          // Which of several records would be "the" one isn't ours to guess.
+          if (liveItems > 1) {
+            return yield* Effect.fail(
+              new SingleRecordConflict({ conceptId: concept.id, liveItemCount: liveItems }),
+            )
+          }
+          // Flag BEFORE create, deliberately: `create` reads it to enforce the
+          // one-lineage rule, and this ordering means the very first record is
+          // written under the same guard as every later attempt. Reversing these
+          // two statements silently disables the guard for the initial record.
+          const updated = yield* concepts.setSingleRecord(concept.id, true)
+          if (liveItems === 0) {
+            yield* create({ conceptId: concept.id, fields: input.fields ?? {} })
+          }
+          return updated
+        }),
+      )
+
     /** All versions of an item (draft + published, including per-version archived),
      *  oldest first — for the item-detail version history panel. */
     const listVersions = (itemId: string) =>
@@ -1045,6 +1200,8 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
       restoreItem,
       getItem,
       headOf,
+      singleRecordOf,
+      setConceptSingleRecord,
       listVersions,
     } as const
   }),

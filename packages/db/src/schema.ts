@@ -69,6 +69,13 @@ export const concepts = pgTable(
     // amendment is visible to everyone referencing it (that's the point: an
     // erratum). Amendments stay auditable: every write is an appended event.
     editReach: text("edit_reach").notNull().default("draft"),
+    // Opt-in "single record": when true this concept holds exactly ONE record —
+    // always present (created in the same transaction that flips the flag) and
+    // neither archivable nor purgeable while the flag is on. Enforced at the ITEM
+    // level (at most one live `items` lineage), which keeps it orthogonal to
+    // `versioning_enabled`, where one lineage legitimately holds N version rows.
+    // Makes the concept addressable without a uuid (routed at /c/<slug>).
+    singleRecord: boolean("single_record").notNull().default(false),
     // Org-wide default detail layout for this concept's instances: a 12-col grid
     // of tiles (`{ tiles: [...] }`), the same shape as the view-prefs custom
     // layouts. Null = render the built-in default preset. Set in concept

@@ -156,6 +156,22 @@ export class VersioningInUse extends Schema.TaggedError<VersioningInUse>()("Vers
   multiVersionItemCount: Schema.Number,
 }) {}
 
+/** A single-record concept can hold only ONE record. Raised two ways: creating a
+ *  second record on one, and switching the flag on while >1 live item exists
+ *  (which one would survive is not ours to guess — archive the rest first). */
+export class SingleRecordConflict extends Schema.TaggedError<SingleRecordConflict>()(
+  "SingleRecordConflict",
+  { conceptId: Schema.String, liveItemCount: Schema.Number },
+) {}
+
+/** The sole record of a single-record concept can't be archived or purged — the
+ *  concept guarantees it always exists. Turn the flag off first, or delete the
+ *  whole concept (which cascades to the record at the use-case layer). */
+export class SingleRecordProtected extends Schema.TaggedError<SingleRecordProtected>()(
+  "SingleRecordProtected",
+  { conceptId: Schema.String, instanceId: Schema.String },
+) {}
+
 export class SidebarViewNotFound extends Schema.TaggedError<SidebarViewNotFound>()(
   "SidebarViewNotFound",
   { id: Schema.String },
@@ -278,6 +294,8 @@ export type EngineError =
   | RelationPinToDraft
   | ItemNotPublished
   | VersioningInUse
+  | SingleRecordConflict
+  | SingleRecordProtected
   | SidebarViewNotFound
   | SidebarViewProtected
   | DashboardNotFound

@@ -120,6 +120,12 @@ export interface Concept {
    *  'draft' (default) = a published version is frozen. 'any' = any published
    *  version may be amended in place. See {@link EditReach}. */
   readonly editReach: EditReach
+  /** Opt-in "single record": this concept holds exactly ONE record, which always
+   *  exists and can be neither archived nor purged while the flag is on. Enforced
+   *  at the ITEM level (≤1 live lineage), so it composes with `versioningEnabled`
+   *  — a versioned single record still holds N versions on its one lineage.
+   *  Default false ⇒ an ordinary many-record concept. */
+  readonly singleRecord: boolean
   /** Org-wide default instance-detail layout for this concept (a 12-col tile
    *  grid, same shape as a view-prefs custom layout); null = render the built-in
    *  default preset. Set in concept settings; every instance renders it. */
@@ -356,6 +362,7 @@ export type EventPayload =
       readonly color?: string | null
       readonly versioningEnabled?: boolean
       readonly editReach?: EditReach
+      readonly singleRecord?: boolean
       readonly staticLabelIds?: ReadonlyArray<Id>
       readonly defaultLabelIds?: ReadonlyArray<Id>
     }

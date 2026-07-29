@@ -66,6 +66,8 @@ export const ERROR_MAP: Record<string, { status: number; code: string }> = {
   RelationPinToDraft: { status: 422, code: "RELATION_PIN_TO_DRAFT" },
   ItemNotPublished: { status: 422, code: "ITEM_NOT_PUBLISHED" },
   VersioningInUse: { status: 409, code: "VERSIONING_IN_USE" },
+  SingleRecordConflict: { status: 409, code: "SINGLE_RECORD_CONFLICT" },
+  SingleRecordProtected: { status: 409, code: "SINGLE_RECORD_PROTECTED" },
   SidebarViewNotFound: { status: 404, code: "NOT_FOUND" },
   SidebarViewProtected: { status: 409, code: "SIDEBAR_VIEW_PROTECTED" },
   DashboardNotFound: { status: 404, code: "NOT_FOUND" },

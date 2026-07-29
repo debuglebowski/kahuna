@@ -119,6 +119,11 @@ export const Concept = Schema.Struct({
   /** Which of this concept's versions are editable; only meaningful when
    *  `versioningEnabled`. See {@link EditReach}. */
   editReach: EditReach,
+  /** Opt-in "single record": the concept holds exactly ONE record, always
+   *  present and neither archivable nor purgeable while on. Reachable at
+   *  `/c/<slug>`. Toggled ONLY via `setConceptSingleRecord` (never
+   *  `updateConcept` — the toggle also creates/guards the record). */
+  singleRecord: Schema.Boolean,
   /** Org-wide default instance-detail layout (a 12-col tile grid); null = the
    *  built-in default preset. Set in concept settings → Layout. */
   instanceView: Schema.NullOr(InstanceViewLayout),

@@ -290,6 +290,45 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
         }),
       )
 
+    /** Flip the "single record" flag. NARROW BY DESIGN: it only writes the column
+     *  and appends the event. The invariant it implies — that the one record
+     *  always EXISTS — is not enforceable here, because creating a record needs
+     *  InstanceService, which depends on this service (a layer cycle). So the
+     *  only caller is `InstanceService.setConceptSingleRecord`, which owns the
+     *  transaction that flips the flag and creates/guards the record together.
+     *
+     *  Do NOT call this directly from a use-case and do NOT re-expose the flag
+     *  through `update()`: either would flip the flag without the record, leaving
+     *  a "single-record" concept with nothing in it.
+     *
+     *  Unlike `setTitleField`/`setInstanceView` this DOES emit `ConceptUpdated` —
+     *  it's a behavioural change, not presentation, and the event is what nudges
+     *  the client's concept cache so sidebars/editors see the flip live. */
+    const setSingleRecord = (id: string, singleRecord: boolean) =>
+      sql.withTransaction(
+        Effect.gen(function* () {
+          const { orgId } = yield* OrgContext
+          yield* getById(id) // 404 if missing / cross-org
+          const rows = yield* sql<ConceptRow>`
+            UPDATE concepts SET single_record = ${singleRecord}
+            WHERE org_id = ${orgId} AND id = ${id} RETURNING *`
+          const row = rows[0]
+          if (!row) return yield* Effect.fail(new ConceptNotFound({ concept: id }))
+          const concept = toConcept(row)
+          yield* events.append({
+            subjectKind: "concept",
+            subjectId: concept.id,
+            eventType: "ConceptUpdated",
+            payload: {
+              _tag: "ConceptUpdated",
+              description: concept.description,
+              singleRecord: concept.singleRecord,
+            },
+          })
+          return concept
+        }),
+      )
+
     /** Archive a concept (soft, restorable): hides it from the live list but keeps
      *  the row and its fields/instances intact. Idempotent on an archived concept. */
     const archive = (id: string) =>
@@ -377,6 +416,7 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
       update,
       setInstanceView,
       setTitleField,
+      setSingleRecord,
       archive,
       restore,
       purge,

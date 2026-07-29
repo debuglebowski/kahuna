@@ -1,0 +1,1 @@
+ALTER TABLE "concepts" ADD COLUMN "single_record" boolean DEFAULT false NOT NULL;
