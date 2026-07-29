@@ -404,6 +404,18 @@ const HandlersLive = ServerRpcs.toLayer({
     as<Concept>(uc.setConceptInstanceView(id, instanceView)),
   setConceptTitleField: ({ id, titleFieldId }) =>
     admin<Concept>(uc.setConceptTitleField(id, titleFieldId)),
+  // Admin + the member check `createInstance` does: `fields` seeds a real record,
+  // so any `user`-kind value in it must be an actual org member. Without this the
+  // toggle would be a hole in a rule every other write path enforces.
+  setConceptSingleRecord: ({ conceptId, singleRecord, fields }) =>
+    requireAdmin.pipe(
+      Effect.zipRight(
+        checkThen(
+          (orgId) => assertMembers(orgId, conceptId, fields ?? {}),
+          uc.setConceptSingleRecord(conceptId, singleRecord, fields),
+        ),
+      ),
+    ) as Effect.Effect<Concept, RpcError, OrgContext | EngineServices>,
   archiveConcept: ({ id }) => admin<Concept>(uc.archiveConcept(id)),
   restoreConcept: ({ id }) => admin<Concept>(uc.restoreConcept(id)),
   deleteConcept: ({ id }) => admin<Concept>(uc.deleteConcept(id)),
@@ -436,6 +448,7 @@ const HandlersLive = ServerRpcs.toLayer({
       uc.listInstances(conceptId, { decorate: true, includeArchived, limit: LIST_INSTANCES_LIMIT }),
     ),
   getInstance: ({ id }) => as<InstanceDetail>(uc.getInstanceDetail(id)),
+  getSingleRecord: ({ conceptId }) => as<InstanceDetail | null>(uc.getSingleRecord(conceptId)),
   getChanged: () => mapErr(uc.getChanged),
   listEvents: ({ conceptId, since, limit }) => mapErr(uc.listEvents({ conceptId, since, limit })),
   createInstance: ({ conceptId, fields }) =>

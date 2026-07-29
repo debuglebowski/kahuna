@@ -1174,6 +1174,21 @@ export class KingsmakerRpcs extends RpcGroup.make(
     success: Concept,
     error: RpcError,
   }),
+  // Turn "single record" mode on or off. Admin-gated, and applied IMMEDIATELY —
+  // NOT part of `updateConcept`'s batched patch, because switching on also creates
+  // the concept's one record in the same transaction. `fields` seeds that record;
+  // it is required in practice whenever the concept has required fields (the
+  // engine runs the ordinary `checkRequired`, so a short payload rolls the whole
+  // toggle back). Rejected for managed concepts.
+  Rpc.make("setConceptSingleRecord", {
+    payload: {
+      conceptId: Schema.String,
+      singleRecord: Schema.Boolean,
+      fields: Schema.optional(Fields),
+    },
+    success: Concept,
+    error: RpcError,
+  }),
   Rpc.make("archiveConcept", {
     payload: { id: Schema.String },
     success: Concept,
@@ -1310,6 +1325,15 @@ export class KingsmakerRpcs extends RpcGroup.make(
   Rpc.make("getInstance", {
     payload: { id: Schema.String },
     success: InstanceDetail,
+    error: RpcError,
+  }),
+  // The sole record of a single-record concept, in the SAME shape as `getInstance`
+  // so `/c/<slug>` renders through the ordinary record view. Null means the concept
+  // has no record — impossible while the flag is on, so the client treats it as a
+  // recoverable fault rather than an empty state.
+  Rpc.make("getSingleRecord", {
+    payload: { conceptId: Schema.String },
+    success: Schema.NullOr(InstanceDetail),
     error: RpcError,
   }),
   Rpc.make("getChanged", { success: Schema.Array(FeedItem), error: RpcError }),

@@ -390,6 +390,13 @@ export const api = {
     call((c) => c.setConceptInstanceView({ id, instanceView })),
   setConceptTitleField: (id: string, titleFieldId: string | null) =>
     call((c) => c.setConceptTitleField({ id, titleFieldId })),
+  /** Toggle single-record mode. `fields` seeds the record created when switching
+   *  on — pass the concept's required-field values, or the whole call rolls back. */
+  setConceptSingleRecord: (
+    conceptId: string,
+    singleRecord: boolean,
+    fields?: Record<string, unknown>,
+  ) => call((c) => c.setConceptSingleRecord({ conceptId, singleRecord, fields })),
   archiveConcept: (id: string) => call((c) => c.archiveConcept({ id })),
   restoreConcept: (id: string) => call((c) => c.restoreConcept({ id })),
   deleteConcept: (id: string) => call((c) => c.deleteConcept({ id })),
@@ -435,6 +442,7 @@ export const api = {
   listInstances: (conceptId: string, opts?: { includeArchived?: boolean }) =>
     call((c) => c.listInstances({ conceptId, includeArchived: opts?.includeArchived })),
   getInstance: (id: string) => call((c) => c.getInstance({ id })),
+  getSingleRecord: (conceptId: string) => call((c) => c.getSingleRecord({ conceptId })),
   getChanged: () => call((c) => c.getChanged()),
   listEvents: (input?: { conceptId?: string | null; since?: number; limit?: number }) =>
     call((c) =>

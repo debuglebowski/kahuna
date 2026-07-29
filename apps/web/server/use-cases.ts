@@ -386,6 +386,48 @@ export const setConceptTitleField = (id: string, titleFieldId: string | null): U
     Effect.zipRight(Effect.flatMap(ConceptService, (c) => c.setTitleField(id, titleFieldId))),
   )
 
+/**
+ * Turn a concept's "single record" mode on or off. Rejected for a managed concept
+ * — an integration syncs N rows into its concepts, so the one-record rule can
+ * never hold there.
+ *
+ * Deliberately NOT folded into `updateConcept`'s batched patch: switching on also
+ * CREATES the record, atomically, and `fields` carries that record's initial
+ * values (required when the concept has required fields). A second setter on the
+ * batch path would flip the flag without the record and without the guard.
+ */
+export const setConceptSingleRecord = (
+  conceptId: string,
+  singleRecord: boolean,
+  fields?: Record<string, unknown>,
+): UC<unknown> =>
+  ensureUnmanagedConcept(conceptId).pipe(
+    Effect.zipRight(
+      Effect.flatMap(InstanceService, (i) =>
+        i.setConceptSingleRecord({ conceptId, singleRecord, fields }),
+      ),
+    ),
+  )
+
+/**
+ * The sole record of a single-record concept, as the SAME `InstanceDetail` shape
+ * `getInstance` returns — so `/c/<slug>` can render through the ordinary record
+ * view with no second assembly to keep in sync. Null when the concept has no
+ * record (which shouldn't happen while the flag is on: that's the leak detector,
+ * not a normal state).
+ *
+ * Resolution is `singleRecordOf`, NOT `listInstances(...)[0]` — see its doc
+ * comment: a versioned concept's first record is a draft and is invisible to
+ * every head-only query.
+ */
+export const getSingleRecord = (conceptId: string): UC<unknown> =>
+  Effect.gen(function* () {
+    const instances = yield* InstanceService
+    const record = yield* instances.singleRecordOf(conceptId)
+    if (!record) return null
+    return yield* getInstanceDetail(record.id)
+  })
+
 export const archiveConcept = (id: string): UC<unknown> =>
   ensureUnmanagedConcept(id).pipe(
     Effect.zipRight(Effect.flatMap(ConceptService, (c) => c.archive(id))),

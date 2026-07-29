@@ -29,6 +29,7 @@ import {
   getInstanceDetail,
   getInstanceGraphLayout,
   getInstanceViewPrefs,
+  getSingleRecord,
   linkRelation,
   listConcepts,
   listFields,
@@ -40,6 +41,7 @@ import {
   restoreLabel,
   saveGraphLayout,
   saveInstanceGraphLayout,
+  setConceptSingleRecord,
   updateField,
   updateInstance,
   updateInstanceViewPrefs,
@@ -447,5 +449,171 @@ describe("managed concepts: field-level read-only guard", () => {
       (await runEngine(scope, updateInstance(inst.id, inst.version, { [field.id]: "y" }))).ok,
     ).toBe(true)
     expect((await runEngine(scope, deleteInstance(inst.id))).ok).toBe(true)
+  })
+})
+
+// The engine's own guards are covered in packages/engine's single-record suite;
+// these cover what only exists at THIS layer: the managed-concept gate, the
+// ERROR_MAP wiring, and `getSingleRecord` returning the shared
+// `getInstanceDetail` shape.
+describe("single-record concepts (use-case layer)", () => {
+  it("toggling single-record on creates the record and resolves it with full detail", async () => {
+    const org = randomUUID()
+    await run(org, seedKingsmaker)
+
+    const concept = (await run(org, createConcept("Org Profile"))) as WithId
+    const field = (await run(
+      org,
+      addField({ conceptId: concept.id, name: "Mission", kind: "text" }),
+    )) as WithId
+
+    // No record before the toggle.
+    expect(await run(org, getSingleRecord(concept.id))).toBeNull()
+
+    const flipped = (await run(
+      org,
+      setConceptSingleRecord(concept.id, true, { [field.id]: "Ship it" }),
+    )) as { singleRecord: boolean }
+    expect(flipped.singleRecord).toBe(true)
+
+    // Resolves as the SAME shape getInstance returns (concept + field defs +
+    // related + labels), not a bespoke payload — that's what lets /c/<slug>
+    // render through the ordinary record view.
+    const detail = (await run(org, getSingleRecord(concept.id))) as {
+      instance: { id: string; state: Record<string, unknown> }
+      concept: { id: string; singleRecord: boolean }
+      fields: ReadonlyArray<FieldRow>
+      related: ReadonlyArray<unknown>
+      staticLabels: ReadonlyArray<unknown>
+      labels: ReadonlyArray<unknown>
+    }
+    expect(detail.concept.id).toBe(concept.id)
+    expect(detail.concept.singleRecord).toBe(true)
+    expect(detail.instance.state[field.id]).toBe("Ship it")
+    expect(ids(detail.fields)).toContain(field.id)
+    expect(detail.related).toEqual([])
+    expect(detail.staticLabels).toEqual([])
+    expect(detail.labels).toEqual([])
+
+    // Same id as the detail route would fetch directly.
+    const direct = (await run(org, getInstanceDetail(detail.instance.id))) as {
+      instance: { id: string }
+    }
+    expect(direct.instance.id).toBe(detail.instance.id)
+
+    // Turning it back off leaves the record in place as an ordinary record.
+    const off = (await run(org, setConceptSingleRecord(concept.id, false))) as {
+      singleRecord: boolean
+    }
+    expect(off.singleRecord).toBe(false)
+    expect(ids(await run(org, listInstances(concept.id)))).toContain(detail.instance.id)
+  })
+
+  it("resolves a VERSIONED concept's record while it is still an unpublished draft", async () => {
+    const org = randomUUID()
+    await run(org, seedKingsmaker)
+
+    // The regression this guards: a draft is invisible to every head-only query,
+    // so a naive listInstances[0] resolution renders "no record" for the very
+    // first state of every versioned single-record concept.
+    const concept = await run(
+      org,
+      Effect.flatMap(ConceptService, (c) => c.create({ name: "Charter" })),
+    )
+    await run(
+      org,
+      Effect.flatMap(ConceptService, (c) =>
+        c.update({ id: concept.id, description: null, versioningEnabled: true }),
+      ),
+    )
+    await run(org, setConceptSingleRecord(concept.id, true))
+
+    // Head-only listing sees nothing...
+    expect(ids(await run(org, listInstances(concept.id)))).toEqual([])
+    // ...but the record plainly exists and resolves.
+    const detail = (await run(org, getSingleRecord(concept.id))) as {
+      instance: { versionStatus: string }
+    } | null
+    expect(detail).not.toBeNull()
+    expect(detail!.instance.versionStatus).toBe("draft")
+  })
+
+  it("refuses the toggle on a managed concept (the integration owns its records)", async () => {
+    const org = randomUUID()
+    const scope = { orgId: org, actor: "u" }
+    await run(org, seedKingsmaker)
+
+    const concept = await run(
+      org,
+      Effect.flatMap(ConceptService, (c) => c.create({ name: "Email", managedBy: "google.gmail" })),
+    )
+    expect(codeOf(await runEngine(scope, setConceptSingleRecord(concept.id, true)))).toBe(
+      "MANAGED_READONLY",
+    )
+    // And the refusal left no record behind.
+    expect(await run(org, getSingleRecord(concept.id))).toBeNull()
+  })
+
+  it("surfaces SINGLE_RECORD_CONFLICT (not a 500) when the concept already has two records", async () => {
+    const org = randomUUID()
+    const scope = { orgId: org, actor: "u" }
+    await run(org, seedKingsmaker)
+
+    const concept = (await run(org, createConcept("Team"))) as WithId
+    await run(org, createInstance(concept.id, {}))
+    await run(org, createInstance(concept.id, {}))
+
+    // Guards the ERROR_MAP wiring: an unmapped _tag degrades to 500 silently.
+    expect(codeOf(await runEngine(scope, setConceptSingleRecord(concept.id, true)))).toBe(
+      "SINGLE_RECORD_CONFLICT",
+    )
+  })
+
+  it("rolls the flag back when a required field is missing from the toggle payload", async () => {
+    const org = randomUUID()
+    const scope = { orgId: org, actor: "u" }
+    await run(org, seedKingsmaker)
+
+    const concept = (await run(org, createConcept("Settings"))) as WithId
+    await run(
+      org,
+      addField({
+        conceptId: concept.id,
+        name: "Owner",
+        kind: "text",
+        config: { requirement: "required" },
+      }),
+    )
+
+    const flagOf = async () => {
+      const all = (await run(org, listConcepts())) as ReadonlyArray<{
+        id: string
+        singleRecord: boolean
+      }>
+      return all.find((c) => c.id === concept.id)!.singleRecord
+    }
+    const owner = (await run(org, listFields(concept.id))) as ReadonlyArray<FieldRow>
+    const ownerId = owner.find((f) => f.name === "Owner")!.id
+
+    // Server-enforced, so "Cancel" in the modal can't be worked around: the
+    // record creation fails checkRequired and takes the flag flip down with it.
+    expect(codeOf(await runEngine(scope, setConceptSingleRecord(concept.id, true)))).toBe(
+      "VALIDATION",
+    )
+    expect(await flagOf()).toBe(false)
+    expect(await run(org, getSingleRecord(concept.id))).toBeNull()
+
+    // Same call, same concept, values supplied → succeeds. This half is what
+    // makes the half above meaningful: it proves the rejection came from the
+    // missing value, not from the toggle being broken for this concept outright
+    // (a bug that would leave the assertions above passing vacuously).
+    expect(
+      (await runEngine(scope, setConceptSingleRecord(concept.id, true, { [ownerId]: "Kalle" }))).ok,
+    ).toBe(true)
+    expect(await flagOf()).toBe(true)
+    const detail = (await run(org, getSingleRecord(concept.id))) as {
+      instance: { state: Record<string, unknown> }
+    } | null
+    expect(detail!.instance.state[ownerId]).toBe("Kalle")
   })
 })
