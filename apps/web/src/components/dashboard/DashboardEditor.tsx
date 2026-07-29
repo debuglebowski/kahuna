@@ -37,6 +37,7 @@ import { Tabs, TabsContent } from "@/components/ui/tabs"
 import { api, type Concept, type Dashboard, type DashboardWidget } from "@/lib/api"
 import { useConceptData } from "@/lib/conceptData"
 import {
+  bucketsIn,
   findNode,
   insertNode,
   isGroup,
@@ -568,6 +569,24 @@ export function DashboardEditor({
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   // Deleting a non-empty group takes its contents with it — confirm first.
   const [confirmNodeDelete, setConfirmNodeDelete] = useState<string | null>(null)
+  // Deleting a Files widget with its own file store (or a dashboard holding one)
+  // would strand the uploads, so we count them and ask. `proceed` is the deletion
+  // itself, run once the files question is settled.
+  const [bucketPrompt, setBucketPrompt] = useState<{
+    count: number
+    buckets: string[]
+    /** Any bucket at stake is private — "keep" would leave its files unreachable. */
+    anyPrivate: boolean
+    scope: "widget" | "dashboard"
+    proceed: () => void
+  } | null>(null)
+  // Counting (delete dialog) then purging (files dialog) — never both at once.
+  const [bucketBusy, setBucketBusy] = useState(false)
+  const [bucketError, setBucketError] = useState<string | null>(null)
+  // The save landed, but pushing a Files widget's sharing setting onto the files
+  // already in its bucket didn't — worth saying, since the widget now claims a
+  // privacy its existing files don't have.
+  const [shareError, setShareError] = useState(false)
   // Layers drag-and-drop: the dragged row + the current drop hint.
   const [layerDrag, setLayerDrag] = useState<string | null>(null)
   const [layerHint, setLayerHint] = useState<{ id: string; zone: DropZone } | null>(null)
@@ -711,8 +730,9 @@ export function DashboardEditor({
   const hasNodes = draft.body.children.length > 0
 
   const save = useMutation({
-    mutationFn: (d: Draft) =>
-      api.updateDashboard({
+    mutationFn: async (d: Draft) => {
+      setShareError(false)
+      const updated = await api.updateDashboard({
         id: dash.id,
         name: d.name.trim(),
         icon: d.icon,
@@ -720,7 +740,19 @@ export function DashboardEditor({
         hidden: d.hidden,
         body: serialize(d.body),
         expectedUpdatedAt: savedAt ?? undefined,
-      }),
+      })
+      // Each file row carries the sharing flag it was uploaded under, so the
+      // toggle only governs future uploads until it's pushed onto the existing
+      // rows — without this, a bucket just switched to private would keep listing
+      // its current files org-wide. The body is already saved at this point, so a
+      // failure here isn't a failed save: it's a body that promises privacy the
+      // files don't have yet. That has to be said out loud, not swallowed.
+      const stamped = await Promise.allSettled(
+        bucketsIn(d.body.children).map((b) => api.setBucketShared(b.id, b.shared)),
+      )
+      setShareError(stamped.some((r) => r.status === "rejected"))
+      return updated
+    },
     // Save stays in the editor (no navigate): the just-saved draft becomes the new
     // Restore baseline and the returned updatedAt is the next write's token.
     onSuccess: async (updated, d) => {
@@ -759,11 +791,71 @@ export function DashboardEditor({
     patchBody((b) => removeNode(b, id))
     if (id === editingId) setEditingId(null)
   }
-  // Delete immediately, but confirm when it would take a group's contents with it.
+
+  /**
+   * Ask about widget-owned files before a deletion that would strand them, then
+   * run `proceed`. Nothing to strand (no buckets, or all empty) → straight through.
+   * A failed count doesn't block the deletion: the prompt just offers "keep".
+   */
+  const withBucketPrompt = async (
+    nodes: ReadonlyArray<NormNode>,
+    scope: "widget" | "dashboard",
+    proceed: () => void,
+  ) => {
+    const buckets = bucketsIn(nodes)
+    if (buckets.length === 0) return proceed()
+    setBucketBusy(true)
+    const counts = await Promise.all(
+      buckets.map((b) =>
+        api
+          .listFiles({ bucketId: b.id, includeArchived: true })
+          .then((files) => files.length)
+          .catch(() => 0),
+      ),
+    )
+    setBucketBusy(false)
+    // Only the non-empty buckets are at stake — an empty private one can't
+    // strand anything, so it must not colour the wording either.
+    const held = buckets.filter((_, i) => (counts[i] ?? 0) > 0)
+    const count = counts.reduce((a, b) => a + b, 0)
+    if (count === 0) return proceed()
+    setBucketError(null)
+    setBucketPrompt({
+      count,
+      buckets: held.map((b) => b.id),
+      anyPrivate: held.some((b) => !b.shared),
+      scope,
+      proceed,
+    })
+  }
+
+  /** Answer the files prompt: purge the buckets first (or don't), then delete. */
+  const resolveBucketPrompt = async (purge: boolean) => {
+    if (!bucketPrompt) return
+    if (purge) {
+      setBucketBusy(true)
+      setBucketError(null)
+      try {
+        await Promise.all(bucketPrompt.buckets.map((b) => api.purgeBucket(b)))
+      } catch (e) {
+        // Deleting the widget now would strand the files after all — stop here.
+        setBucketBusy(false)
+        setBucketError((e as Error).message)
+        return
+      }
+      setBucketBusy(false)
+    }
+    const { proceed } = bucketPrompt
+    setBucketPrompt(null)
+    proceed()
+  }
+
+  // Delete immediately, but confirm when it would take a group's contents or a
+  // Files widget's own uploads with it.
   const requestRemove = (id: string) => {
     const n = findNode(draft.body, id)
     if (n && isGroup(n) && n.children.length > 0) setConfirmNodeDelete(id)
-    else removeSelected(id)
+    else if (n) void withBucketPrompt([n], "widget", () => removeSelected(id))
   }
 
   // Drag-and-drop wiring for the Layers tree (reparent + reorder via moveNode).
@@ -793,7 +885,9 @@ export function DashboardEditor({
     ? isConflictError(save.error)
       ? "This dashboard was changed elsewhere — close without saving and reopen to edit the latest."
       : (save.error as Error).message
-    : null
+    : shareError
+      ? "Saved, but a Files widget's sharing setting couldn't be applied to the files already in it — save again to retry."
+      : null
   // Saved-and-untouched: the Save button swaps its label for a check.
   const saveConfirmed = !dirty && save.isSuccess
 
@@ -1239,13 +1333,19 @@ export function DashboardEditor({
                                     updateNode(b, editing.id, (n) => ({ ...n, ...p }) as NormNode),
                                   )
                                 }
-                                onChangeType={(type) =>
-                                  patchBody((b) =>
-                                    updateNode(b, editing.id, () =>
-                                      retypeWidget(editing as NormWidget, type),
-                                    ),
-                                  )
-                                }
+                                onChangeType={(type) => {
+                                  const retype = () =>
+                                    patchBody((b) =>
+                                      updateNode(b, editing.id, () =>
+                                        retypeWidget(editing as NormWidget, type),
+                                      ),
+                                    )
+                                  // Retyping a Files widget to something else drops
+                                  // its bucket (the new type has nowhere to keep
+                                  // it), so it strands files just like a delete.
+                                  if (type === "files") return retype()
+                                  void withBucketPrompt([editing], "widget", retype)
+                                }}
                               />
                             )}
                           </div>
@@ -1255,11 +1355,11 @@ export function DashboardEditor({
                               <Button
                                 variant="outline"
                                 size="sm"
-                                onClick={() =>
-                                  isGroup(editing)
-                                    ? requestRemove(editing.id)
-                                    : removeSelected(editing.id)
-                                }
+                                // Always via requestRemove — it asks about a group's
+                                // contents AND about a Files widget's own uploads.
+                                // Calling removeSelected here would delete a bucket
+                                // widget without the prompt the Layers tree gives.
+                                onClick={() => requestRemove(editing.id)}
                                 className="w-full justify-center gap-1.5 px-2 text-destructive hover:bg-destructive/10 hover:text-destructive"
                               >
                                 <Trash2 size={14} />
@@ -1360,9 +1460,12 @@ export function DashboardEditor({
           message={`"${draft.name.trim() || dash.name}" and its layout will be permanently deleted.`}
           confirmLabel="Delete"
           confirmVariant="danger"
-          pending={del.isPending}
+          pending={del.isPending || bucketBusy}
           error={del.error ? (del.error as Error).message : undefined}
-          onConfirm={() => del.mutate()}
+          onConfirm={() => {
+            setConfirmingDelete(false)
+            void withBucketPrompt(draft.body.children, "dashboard", () => del.mutate())
+          }}
           onCancel={() => setConfirmingDelete(false)}
         />
       )}
@@ -1372,11 +1475,45 @@ export function DashboardEditor({
           message="The group and everything inside it will be removed. To keep the contents, use “Unwrap” instead."
           confirmLabel="Delete group + contents"
           confirmVariant="danger"
+          pending={bucketBusy}
           onConfirm={() => {
-            removeSelected(confirmNodeDelete)
+            const id = confirmNodeDelete
+            const node = findNode(draft.body, id)
             setConfirmNodeDelete(null)
+            void withBucketPrompt(node ? [node] : [], "widget", () => removeSelected(id))
           }}
           onCancel={() => setConfirmNodeDelete(null)}
+        />
+      )}
+      {bucketPrompt && (
+        <ConfirmDialog
+          title={bucketPrompt.count === 1 ? "Delete the file too?" : "Delete these files too?"}
+          message={
+            <>
+              {bucketPrompt.scope === "widget"
+                ? `This Files widget holds ${bucketPrompt.count} uploaded ${bucketPrompt.count === 1 ? "file" : "files"} of its own.`
+                : `Files widgets on this dashboard hold ${bucketPrompt.count} uploaded ${bucketPrompt.count === 1 ? "file" : "files"} of their own.`}{" "}
+              Deleting {bucketPrompt.count === 1 ? "it" : "them"} is permanent. Keeping{" "}
+              {bucketPrompt.count === 1 ? "it" : "them"} leaves the{" "}
+              {bucketPrompt.count === 1 ? "file" : "files"} in the workspace
+              {bucketPrompt.anyPrivate
+                ? // Private buckets aren't listed anywhere else, so "keep" here
+                  // means the files survive with nothing left pointing at them.
+                  " — but this widget was the only place listing them, so nothing will show them any more."
+                : ", reachable from a “Whole org” Files widget."}
+            </>
+          }
+          confirmLabel={`Delete ${bucketPrompt.count === 1 ? "file" : "files"}`}
+          confirmVariant="danger"
+          secondaryLabel="Keep files"
+          onSecondary={() => void resolveBucketPrompt(false)}
+          pending={bucketBusy}
+          error={bucketError ?? undefined}
+          onConfirm={() => void resolveBucketPrompt(true)}
+          onCancel={() => {
+            setBucketPrompt(null)
+            setBucketError(null)
+          }}
         />
       )}
     </div>

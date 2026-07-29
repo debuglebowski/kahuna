@@ -73,6 +73,7 @@ export const ERROR_MAP: Record<string, { status: number; code: string }> = {
   DashboardConflict: { status: 409, code: "DASHBOARD_CONFLICT" },
   AnnotationNotFound: { status: 404, code: "NOT_FOUND" },
   AttachmentNotFound: { status: 404, code: "NOT_FOUND" },
+  AttachmentTooLarge: { status: 413, code: "ATTACHMENT_TOO_LARGE" },
   BlobError: { status: 500, code: "BLOB_ERROR" },
   TaskStatusNotFound: { status: 404, code: "NOT_FOUND" },
   TaskStatusNameConflict: { status: 409, code: "CONFLICT" },

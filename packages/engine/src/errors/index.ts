@@ -105,6 +105,13 @@ export class AttachmentNotFound extends Schema.TaggedError<AttachmentNotFound>()
   { attachmentId: Schema.String },
 ) {}
 
+/** Upload exceeded `MAX_UPLOAD_BYTES`. Raised before the blob write, so nothing
+ *  is stored — the route buffers the whole body in memory, hence the cap. */
+export class AttachmentTooLarge extends Schema.TaggedError<AttachmentTooLarge>()(
+  "AttachmentTooLarge",
+  { sizeBytes: Schema.Number, maxBytes: Schema.Number },
+) {}
+
 export class EventCorruption extends Schema.TaggedError<EventCorruption>()("EventCorruption", {
   reason: Schema.String,
   eventId: Schema.Number,
@@ -263,6 +270,7 @@ export type EngineError =
   | RelationNotFound
   | OrgScopeViolation
   | AttachmentNotFound
+  | AttachmentTooLarge
   | EventCorruption
   | ItemNotFound
   | VersionFrozen

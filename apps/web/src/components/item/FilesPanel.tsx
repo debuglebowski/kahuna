@@ -33,7 +33,7 @@ export function FilesPanel({
   return (
     <div>
       <div className="p-4">
-        <FileDropZone itemId={subjectId} onUploaded={refetch} />
+        <FileDropZone owner={{ itemId: subjectId }} onUploaded={refetch} />
       </div>
       {archivedCount > 0 && (
         <button

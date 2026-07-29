@@ -293,6 +293,24 @@ async function assertCanMutateAttachment(orgId: string, actor: string, id: strin
   })
 }
 
+/** Same rule as one file, applied to a whole widget bucket: you may discard it if
+ *  you uploaded everything in it, otherwise it takes an admin. An empty bucket
+ *  passes (the purge is then a no-op). */
+async function assertCanPurgeBucket(orgId: string, actor: string, bucketId: string): Promise<void> {
+  const r = await pool.query<{ created_by: string | null }>(
+    "SELECT DISTINCT created_by FROM attachments WHERE bucket_id = $1 AND org_id = $2",
+    [bucketId, orgId],
+  )
+  if (r.rows.every((row) => row.created_by === actor)) return
+  const role = await roleOf(actor, orgId)
+  if (role && can(role, "admin")) return
+  throw new RpcError({
+    code: "FORBIDDEN",
+    message: "This widget holds files uploaded by someone else — only an admin may delete them",
+    status: 403,
+  })
+}
+
 /** Run an async (orgId, actor) precheck, then the use-case. Generalises `checkThen`
  *  for annotation writes that gate on author/assignee/admin. */
 const guarded = <A>(
@@ -592,9 +610,9 @@ const HandlersLive = ServerRpcs.toLayer({
   // ── annotation layer: files ─────────────────────────────────────────────────────
   // Reads are open to any member; archive/restore/purge gate on uploader/admin
   // (upload itself is the plain-HTTP multipart route, open like createNote).
-  listFiles: ({ itemId, instanceId, conceptId, includeArchived, limit }) =>
+  listFiles: ({ itemId, instanceId, bucketId, conceptId, includeArchived, limit }) =>
     as<ReadonlyArray<Attachment>>(
-      uc.listFiles({ itemId, instanceId, conceptId, includeArchived, limit }),
+      uc.listFiles({ itemId, instanceId, bucketId, conceptId, includeArchived, limit }),
     ),
   archiveFile: ({ id }) =>
     guarded<Attachment>(
@@ -611,6 +629,18 @@ const HandlersLive = ServerRpcs.toLayer({
       (orgId, actor) => assertCanMutateAttachment(orgId, actor, id),
       uc.deleteFile(id),
     ),
+  purgeBucket: ({ bucketId }) =>
+    guarded<ReadonlyArray<Attachment>>(
+      (orgId, actor) => assertCanPurgeBucket(orgId, actor, bucketId),
+      uc.purgeBucket(bucketId),
+    ),
+  // Any member, deliberately: this only mirrors the widget's own toggle onto the
+  // rows, and saving that toggle into the dashboard body is already open to any
+  // member. A stricter gate here would let the body and the rows disagree — the
+  // very drift this call exists to prevent. Nothing is destroyed or exposed that
+  // editing the widget didn't already decide.
+  setBucketShared: ({ bucketId, shared }) =>
+    as<ReadonlyArray<Attachment>>(uc.setBucketShared(bucketId, shared)),
   // ── annotation layer: task statuses + custom-field defs (admin) ────────────────
   listTaskStatuses: ({ includeArchived }) =>
     as<ReadonlyArray<TaskStatus>>(uc.listTaskStatuses(includeArchived)),

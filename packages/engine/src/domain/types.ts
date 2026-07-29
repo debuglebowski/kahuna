@@ -294,29 +294,37 @@ export type EventPayload =
   // host item lineage so the per-item feed can match purge tombstones. Legacy
   // AttachmentAdded events (pre-item era) sit on instance streams without
   // `subjectId` — the reducer folds them as a no-op.
+  //
+  // `subjectId` is optional on all four because a bucket-owned file has no host
+  // item; those carry `bucketId` instead (exactly one of the two is present).
+  // No per-item feed matches them — there is no widget feed today.
   | {
       readonly _tag: "AttachmentAdded"
       readonly attachmentId: Id
       readonly filename: string
       readonly subjectId?: Id
+      readonly bucketId?: Id
     }
   | {
       readonly _tag: "AttachmentArchived"
       readonly attachmentId: Id
       readonly filename: string
-      readonly subjectId: Id
+      readonly subjectId?: Id
+      readonly bucketId?: Id
     }
   | {
       readonly _tag: "AttachmentRestored"
       readonly attachmentId: Id
       readonly filename: string
-      readonly subjectId: Id
+      readonly subjectId?: Id
+      readonly bucketId?: Id
     }
   | {
       readonly _tag: "AttachmentPurged"
       readonly attachmentId: Id
       readonly filename: string
-      readonly subjectId: Id
+      readonly subjectId?: Id
+      readonly bucketId?: Id
     }
   | { readonly _tag: "ConceptCreated"; readonly name: string }
   | {
@@ -472,8 +480,14 @@ export type EventPayload =
 export interface Attachment {
   readonly id: Id
   readonly orgId: OrgId
-  /** Host item lineage (items.id) — files survive re-publishes, like notes. */
-  readonly itemId: Id
+  /** Host item lineage (items.id) — files survive re-publishes, like notes.
+   *  null ⇔ `bucketId` is set (the DB CHECK enforces exactly one owner). */
+  readonly itemId: Id | null
+  /** Owning dashboard-widget bucket, for files that belong to no record. */
+  readonly bucketId: Id | null
+  /** Bucket files only: may an org-scope Files widget list this row? Gates
+   *  listing, not access — a direct download URL stays member-reachable. */
+  readonly bucketShared: boolean
   readonly filename: string
   readonly contentRef: string
   readonly mimeType: string | null
@@ -843,12 +857,17 @@ export interface GanttWidget extends WidgetBase {
   readonly showTodayLine?: boolean
   readonly window?: "fit" | "90d" | "quarter"
 }
-/** Files — uploads attached to instances, browsed at a scope. */
+/** Files — uploads browsed at a scope. The first three read files owned by
+ *  records; `widget` owns its own bucket, attached to no record. */
 export interface FilesWidget extends WidgetBase {
   readonly type: "files"
   readonly conceptId?: string | null
-  readonly scope: "instance" | "concept" | "org"
+  readonly scope: "instance" | "concept" | "org" | "widget"
   readonly instanceId?: string | null
+  /** `scope: "widget"` only — the bucket owning this widget's files. */
+  readonly bucketId?: string | null
+  /** `scope: "widget"` only, default true: listable by an org-scope widget too. */
+  readonly bucketShared?: boolean
   readonly allowUpload?: boolean
   readonly sort?: "newest" | "name" | "size"
   readonly limit?: number | null

@@ -60,6 +60,17 @@ export type {
   VersionStatus,
 } from "../../rpc/contract"
 
+/** Who a new upload belongs to: a record's item lineage, or a Files widget's own
+ *  bucket (`shared: false` hides it from org-scope widgets). Mirrors the engine's
+ *  `UploadOwner` — the two upload routes take exactly one of these. */
+export type FileOwner =
+  | { readonly itemId: string }
+  | { readonly bucketId: string; readonly shared?: boolean }
+
+/** The server's cap, in MB, for the one message the user can act on. Kept in sync
+ *  with `MAX_UPLOAD_BYTES` (the engine can't be imported into the browser bundle). */
+export const MAX_UPLOAD_MB = 25
+
 /** Computed-field shapes (carried inside an instance's `state`). */
 export interface DecayValue {
   readonly days: number | null
@@ -575,6 +586,7 @@ export const api = {
   listFiles: (filter?: {
     itemId?: string
     instanceId?: string
+    bucketId?: string
     conceptId?: string
     includeArchived?: boolean
     limit?: number
@@ -582,14 +594,28 @@ export const api = {
   archiveFile: (id: string) => call((c) => c.archiveFile({ id })),
   restoreFile: (id: string) => call((c) => c.restoreFile({ id })),
   deleteFile: (id: string) => call((c) => c.deleteFile({ id })),
-  /** Multipart upload onto an item lineage. Callers refetch their list — the
-   *  raw JSON body isn't schema-decoded like RPC results, so don't return it. */
-  uploadFile: async (itemId: string, file: File): Promise<void> => {
+  /** Discard every file in a Files widget's bucket (widget/dashboard deletion). */
+  purgeBucket: (bucketId: string) => call((c) => c.purgeBucket({ bucketId })),
+  /** Push the widget's "Also list elsewhere" setting onto the files already in the
+   *  bucket. New uploads carry the flag themselves; this catches the existing rows,
+   *  so turning sharing off actually hides what's already there. */
+  setBucketShared: (bucketId: string, shared: boolean) =>
+    call((c) => c.setBucketShared({ bucketId, shared })),
+  /** Multipart upload onto a record's item lineage or into a Files widget's own
+   *  bucket. Callers refetch their list — the raw JSON body isn't schema-decoded
+   *  like RPC results, so don't return it. */
+  uploadFile: async (owner: FileOwner, file: File): Promise<void> => {
     const form = new FormData()
     form.append("file", file)
-    const res = await fetch(`/api/items/${itemId}/attachments`, { method: "POST", body: form })
+    const url =
+      "itemId" in owner
+        ? `/api/items/${owner.itemId}/attachments`
+        : `/api/buckets/${owner.bucketId}/attachments?shared=${owner.shared === false ? "false" : "true"}`
+    const res = await fetch(url, { method: "POST", body: form })
     if (!res.ok) {
       const body = (await res.json().catch(() => null)) as { error?: string } | null
+      if (body?.error === "ATTACHMENT_TOO_LARGE")
+        throw new Error(`"${file.name}" is too large — the limit is ${MAX_UPLOAD_MB} MB`)
       throw new Error(body?.error ? `Upload failed: ${body.error}` : "Upload failed")
     }
   },

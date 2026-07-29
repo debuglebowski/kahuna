@@ -31,7 +31,7 @@ import { ConceptSelectItems } from "../ConceptSelectItems"
 import { ConditionList, useFields } from "../ConditionList"
 import { RichTextEditor } from "../editor/RichTextEditor"
 import { MultiCombobox } from "../MultiCombobox"
-import { Field as FieldRow, IconButton, Input, ToggleChip } from "../ui"
+import { Field as FieldRow, HintList, IconButton, Input, ToggleChip } from "../ui"
 import { CalendarSourcesEditor } from "./CalendarSourcesEditor"
 import { InspectorSection } from "./InspectorSection"
 import { ShortcutItemsEditor } from "./ShortcutItemsEditor"
@@ -1814,16 +1814,48 @@ export function WidgetEditor({
 
         {widget.type === "files" && (
           <>
-            <FieldRow label="Scope">
+            <FieldRow
+              label="Scope"
+              hint={
+                <HintList
+                  lead="Which files this widget lists."
+                  items={[
+                    {
+                      term: "This widget",
+                      desc: "Files that belong to the widget itself — upload straight in, no record needed.",
+                    },
+                    {
+                      term: "One record",
+                      desc: "Files attached to a single record. You can upload into it too.",
+                    },
+                    {
+                      term: "A concept",
+                      desc: "The most recent files across all records of that concept. Browse only.",
+                    },
+                    { term: "Whole org", desc: "Every file in the workspace. Browse only." },
+                  ]}
+                />
+              }
+            >
               <Select
                 value={widget.scope}
                 onValueChange={(v) => {
-                  const scope = v as "instance" | "concept" | "org"
-                  // Clear the other scope's key so a stale ref can't linger; give
-                  // instance scope a usable default (the drop-zone on).
+                  const scope = v as "instance" | "concept" | "org" | "widget"
+                  // Clear the other scopes' keys so a stale ref can't linger; the
+                  // two uploadable scopes default the drop-zone on.
                   if (scope === "concept") patch({ scope, instanceId: null })
                   else if (scope === "instance")
                     patch({ scope, conceptId: null, allowUpload: widget.allowUpload ?? true })
+                  else if (scope === "widget")
+                    patch({
+                      scope,
+                      conceptId: null,
+                      instanceId: null,
+                      // One bucket per widget, minted once and kept for its life —
+                      // reusing the widget id would make two dashboards share files.
+                      bucketId: widget.bucketId ?? crypto.randomUUID(),
+                      allowUpload: widget.allowUpload ?? true,
+                    })
                   else patch({ scope, conceptId: null, instanceId: null })
                 }}
               >
@@ -1831,12 +1863,40 @@ export function WidgetEditor({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="widget">This widget (its own files)</SelectItem>
                   <SelectItem value="instance">One record</SelectItem>
                   <SelectItem value="concept">A concept (recent uploads)</SelectItem>
                   <SelectItem value="org">Whole org</SelectItem>
                 </SelectContent>
               </Select>
             </FieldRow>
+            {widget.scope === "widget" && (
+              <FieldRow
+                label="Also list elsewhere"
+                hint={
+                  <HintList
+                    lead="Whether a “Whole org” Files widget shows these files."
+                    items={[
+                      {
+                        term: "On",
+                        desc: "They appear in org-wide file lists, like files on a record do.",
+                      },
+                      {
+                        term: "Off",
+                        desc: "Only this widget lists them. Anyone with a file's link can still open it — this hides files from other lists, it doesn't lock them.",
+                      },
+                    ]}
+                  />
+                }
+              >
+                <ToggleChip
+                  pressed={widget.bucketShared !== false}
+                  onPressedChange={(p) => patch({ bucketShared: p })}
+                >
+                  Visible to org-wide widgets
+                </ToggleChip>
+              </FieldRow>
+            )}
             {widget.scope === "concept" && (
               <FieldRow label="Concept">
                 <Select
@@ -1908,11 +1968,11 @@ export function WidgetEditor({
                   min={1}
                   value={widget.limit ?? ""}
                   onChange={(e) => patch({ limit: e.target.value ? Number(e.target.value) : null })}
-                  className="w-28"
+                  className="w-full"
                 />
               </FieldRow>
             </div>
-            {widget.scope === "instance" && (
+            {(widget.scope === "instance" || widget.scope === "widget") && (
               <FieldRow label="Show">
                 <ToggleChip
                   pressed={widget.allowUpload ?? false}

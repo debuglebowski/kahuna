@@ -3,6 +3,7 @@ import {
   bigint,
   bigserial,
   boolean,
+  check,
   index,
   integer,
   jsonb,
@@ -432,21 +433,35 @@ export const instanceGraphLayouts = pgTable(
 )
 
 /**
- * Files on items — the binary side of the annotation substrate. Bytes live in
- * the BlobStore under `content_ref`; this row is the org-scoped metadata.
- * `item_id` targets the **item lineage** (like `annotations.subject_id`), so a
- * file survives re-publishes. `created_by` is a logical fk → bauth_user.id
- * (drives mutate rights at the RPC boundary). Archive hides, purge deletes the
- * row + blob but keeps the event tombstone.
+ * Files — the binary side of the annotation substrate. Bytes live in the
+ * BlobStore under `content_ref`; this row is the org-scoped metadata.
+ * `created_by` is a logical fk → bauth_user.id (drives mutate rights at the RPC
+ * boundary). Archive hides, purge deletes the row + blob but keeps the event
+ * tombstone.
+ *
+ * **Exactly one owner**, enforced by the `attachments_one_owner` CHECK:
+ * - `item_id` — a file on a record. Targets the **item lineage** (like
+ *   `annotations.subject_id`), so it survives re-publishes.
+ * - `bucket_id` — a file owned by a dashboard Files widget (`scope: "widget"`),
+ *   belonging to no record at all. A logical id only: buckets are not an entity,
+ *   the uuid is minted client-side and lives in the widget's JSON, so there is
+ *   nothing to reference. Widget/dashboard deletion prompts the user to purge or
+ *   keep (the body is opaque server-side — no cascade can exist here).
+ *
+ * `bucket_shared` = may an org-scope Files widget list this row (default yes).
+ * Denormalised onto the row, not a bucket table, so the org-scope list filters
+ * without a join. It gates *listing* only — a direct download URL is reachable by
+ * any member, exactly as for item files.
  */
 export const attachments = pgTable(
   "attachments",
   {
     id: uuid("id").primaryKey().defaultRandom(),
     orgId: text("org_id").notNull(),
-    itemId: uuid("item_id")
-      .notNull()
-      .references(() => items.id),
+    // Nullable since 0035: null ⇒ bucket-owned (see the CHECK below).
+    itemId: uuid("item_id").references(() => items.id),
+    bucketId: uuid("bucket_id"),
+    bucketShared: boolean("bucket_shared").notNull().default(true),
     filename: text("filename").notNull(),
     contentRef: text("content_ref").notNull(),
     mimeType: text("mime_type"),
@@ -458,8 +473,14 @@ export const attachments = pgTable(
   (t) => [
     // Per-item Files panel (newest first via id).
     index("attachments_item_idx").on(t.orgId, t.itemId, t.id),
+    // One widget's bucket, newest first — the item index's counterpart.
+    index("attachments_bucket_idx")
+      .on(t.orgId, t.bucketId, t.id)
+      .where(sql`${t.bucketId} IS NOT NULL`),
     // Concept/org-scope "recent uploads" lists.
     index("attachments_org_idx").on(t.orgId, t.id),
+    // Exactly one owner — never both, never neither.
+    check("attachments_one_owner", sql`(${t.itemId} IS NULL) <> (${t.bucketId} IS NULL)`),
   ],
 )
 

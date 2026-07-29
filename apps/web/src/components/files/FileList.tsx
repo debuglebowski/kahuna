@@ -11,7 +11,7 @@ import {
 } from "lucide-react"
 import { type ReactNode, useRef, useState } from "react"
 import { relativeTime } from "../../lib/activity"
-import { type Attachment, api } from "../../lib/api"
+import { type Attachment, api, type FileOwner } from "../../lib/api"
 import { fileKind, formatBytes } from "../../lib/files"
 import { MemberAvatar, memberLabel, type OrgMember } from "../item/AssigneePicker"
 import { ConfirmDialog, IconButton } from "../ui"
@@ -193,11 +193,12 @@ export function FileList({
  * Uploads sequentially (small N), then signals the host once to refetch.
  */
 export function FileDropZone({
-  itemId,
+  owner,
   onUploaded,
   children,
 }: {
-  itemId: string
+  /** A record's item lineage, or a Files widget's own bucket. */
+  owner: FileOwner
   onUploaded: () => void
   /** Custom idle content; default is the "drop files" hint. */
   children?: ReactNode
@@ -207,7 +208,7 @@ export function FileDropZone({
   const [error, setError] = useState<string | null>(null)
   const upload = useMutation({
     mutationFn: async (files: File[]) => {
-      for (const file of files) await api.uploadFile(itemId, file)
+      for (const file of files) await api.uploadFile(owner, file)
     },
     onSuccess: () => {
       setError(null)

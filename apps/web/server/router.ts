@@ -1,3 +1,4 @@
+import { MAX_UPLOAD_BYTES, type UploadOwner } from "@kingsmaker/engine"
 import { and, eq, ilike } from "drizzle-orm"
 import { queryAnalytics } from "./analytics"
 import {
@@ -72,6 +73,32 @@ import { downloadAttachment, purgeMemberData, uploadAttachment } from "./use-cas
 
 const json = (r: UseCaseResult<unknown>) =>
   Response.json(r.ok ? r.data : { error: r.code, detail: r.detail }, { status: r.status })
+
+/**
+ * The two multipart upload routes, sharing everything but the owner. Content-Length
+ * is checked BEFORE `formData()` so an oversized body is refused without buffering
+ * it; the engine re-checks the real byte count (this header is client-supplied, and
+ * multipart framing inflates it slightly).
+ */
+const uploadRoute = async (req: Request, owner: UploadOwner): Promise<Response> => {
+  const declared = Number(req.headers.get("content-length") ?? 0)
+  if (declared > MAX_UPLOAD_BYTES)
+    return Response.json(
+      {
+        error: "ATTACHMENT_TOO_LARGE",
+        detail: { sizeBytes: declared, maxBytes: MAX_UPLOAD_BYTES },
+      },
+      { status: 413 },
+    )
+  const form = await req.formData().catch(() => null)
+  const file = form?.get("file")
+  if (!(file instanceof File))
+    return Response.json({ error: "file field required" }, { status: 400 })
+  const data = new Uint8Array(await file.arrayBuffer())
+  return json(
+    await runScoped(req, uploadAttachment(owner, file.name, file.type || undefined, data)),
+  )
+}
 
 /**
  * Plain-HTTP routes that don't fit JSON-RPC: binary attachment upload/download.
@@ -168,18 +195,17 @@ export const handleApi = async (req: Request): Promise<Response | null> => {
     if (seg[3] === "callback" && m === "POST") return handleClayCallback(req)
   }
 
-  // Multipart upload of a file onto an item lineage (reads/mutations of the
-  // metadata are typed RPCs — listFiles/archiveFile/restoreFile/deleteFile).
-  if (seg[1] === "items" && seg[2] && seg[3] === "attachments" && m === "POST") {
-    const form = await req.formData().catch(() => null)
-    const file = form?.get("file")
-    if (!(file instanceof File))
-      return Response.json({ error: "file field required" }, { status: 400 })
-    const data = new Uint8Array(await file.arrayBuffer())
-    return json(
-      await runScoped(req, uploadAttachment(seg[2], file.name, file.type || undefined, data)),
-    )
-  }
+  // Multipart upload onto an item lineage, or into a Files widget's own bucket
+  // (reads/mutations of the metadata are typed RPCs — listFiles/archiveFile/
+  // restoreFile/deleteFile/purgeBucket).
+  if (seg[1] === "items" && seg[2] && seg[3] === "attachments" && m === "POST")
+    return uploadRoute(req, { itemId: seg[2] })
+  if (seg[1] === "buckets" && seg[2] && seg[3] === "attachments" && m === "POST")
+    return uploadRoute(req, {
+      bucketId: seg[2],
+      // Anything but an explicit shared=false means listable at org scope.
+      shared: new URL(req.url).searchParams.get("shared") !== "false",
+    })
 
   // Team management (admin-only): add an EXISTING user to the active org by email.
   // No invitation/email flow — the user must already have an account.

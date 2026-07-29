@@ -40,6 +40,7 @@ import {
   type TaskStatus,
   type TaskStatusCategory,
   TaskStatusService,
+  type UploadOwner,
 } from "@kingsmaker/engine"
 import { Effect } from "effect"
 
@@ -775,17 +776,19 @@ export const createRelation = (input: {
 export const removeRelation = (relationId: string): UC<unknown> =>
   Effect.flatMap(RelationService, (r) => r.remove({ relationId }))
 
+/** `owner` is a record's item lineage or a Files widget's bucket — see UploadOwner. */
 export const uploadAttachment = (
-  itemId: string,
+  owner: UploadOwner,
   filename: string,
   mimeType: string | undefined,
   data: Uint8Array,
 ): UC<Attachment> =>
-  Effect.flatMap(AttachmentService, (a) => a.upload({ itemId, filename, mimeType, data }))
+  Effect.flatMap(AttachmentService, (a) => a.upload({ owner, filename, mimeType, data }))
 
 export const listFiles = (filter: {
   readonly itemId?: string
   readonly instanceId?: string
+  readonly bucketId?: string
   readonly conceptId?: string
   readonly includeArchived?: boolean
   readonly limit?: number
@@ -799,6 +802,15 @@ export const restoreFile = (id: string): UC<Attachment> =>
 
 export const deleteFile = (id: string): UC<Attachment> =>
   Effect.flatMap(AttachmentService, (a) => a.purge(id))
+
+/** Purge every file in a widget bucket (widget/dashboard deletion). */
+export const purgeBucket = (bucketId: string): UC<ReadonlyArray<Attachment>> =>
+  Effect.flatMap(AttachmentService, (a) => a.purgeBucket(bucketId))
+
+/** Re-stamp a bucket's sharing flag onto the files already in it (the widget's
+ *  "Also list elsewhere" toggle — new uploads carry it, existing rows need this). */
+export const setBucketShared = (bucketId: string, shared: boolean): UC<ReadonlyArray<Attachment>> =>
+  Effect.flatMap(AttachmentService, (a) => a.setBucketShared(bucketId, shared))
 
 export const downloadAttachment = (
   attachmentId: string,

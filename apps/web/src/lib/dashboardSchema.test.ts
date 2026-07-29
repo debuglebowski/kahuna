@@ -1,7 +1,14 @@
 import { Schema } from "effect"
 import { describe, expect, it } from "vitest"
 import { DashboardBody, DashboardWidget } from "../../rpc/contract"
-import { newWidget } from "./dashboards"
+import {
+  bucketIdsIn,
+  bucketsIn,
+  migrate,
+  type NormWidget,
+  newWidget,
+  retypeWidget,
+} from "./dashboards"
 
 // Proves the RECURSIVE contract schema (the actual codec the RPC layer runs on
 // save/read) round-trips a nested group tree — the highest-risk piece, since a
@@ -235,5 +242,72 @@ describe("DashboardWidget union completeness (hand-sync guard)", () => {
     // Each widget's discriminant survives the round-trip.
     const types = new Set((encoded.children ?? []).map((c) => (c as { type: string }).type))
     for (const t of ALL_WIDGET_TYPES) expect(types.has(t)).toBe(true)
+  })
+})
+
+// The Files widget's own file store: a `widget`-scope widget carries a `bucketId`
+// that must survive the codec and every body-level operation, since losing it
+// strands the uploads (nothing else records the bucket).
+describe("Files widget bucket (widget scope)", () => {
+  const filesWidget = (over: Record<string, unknown> = {}) => ({
+    ...newWidget("files"),
+    scope: "widget" as const,
+    bucketId: "b1",
+    ...over,
+  })
+
+  it("round-trips widget scope with its bucket", () => {
+    const body = { direction: "col" as const, children: [filesWidget({ bucketShared: false })] }
+    const decoded = Schema.decodeUnknownSync(DashboardBody)(body)
+    const w = decoded.children?.[0] as { scope: string; bucketId: string; bucketShared: boolean }
+    expect(w.scope).toBe("widget")
+    expect(w.bucketId).toBe("b1")
+    expect(w.bucketShared).toBe(false)
+    const encoded = Schema.encodeSync(DashboardBody)(decoded)
+    expect(encoded.children?.[0]).toMatchObject({ scope: "widget", bucketId: "b1" })
+  })
+
+  it("finds buckets anywhere in the tree, ignoring other scopes", () => {
+    const body = migrate({
+      direction: "col",
+      children: [
+        filesWidget({ id: "f1", bucketId: "b1" }),
+        // A bucket nested in a group is still at stake on delete…
+        {
+          id: "g1",
+          type: "group",
+          direction: "row",
+          children: [filesWidget({ id: "f2", bucketId: "b2" })],
+        },
+        // …while these hold no files of their own.
+        filesWidget({ id: "f3", scope: "org", bucketId: null }),
+        newWidget("note"),
+      ],
+    } as never)
+    expect(bucketIdsIn(body.children).sort()).toEqual(["b1", "b2"])
+  })
+
+  // The delete prompt's wording turns on this: keeping a shared bucket's files
+  // leaves them listable org-wide, keeping a private one's leaves them orphaned.
+  it("reports each bucket's sharing (absent flag = shared)", () => {
+    const nodes = migrate({
+      direction: "col",
+      children: [
+        filesWidget({ id: "f1", bucketId: "b1" }),
+        filesWidget({ id: "f2", bucketId: "b2", bucketShared: false }),
+      ],
+    } as never).children
+    expect([...bucketsIn(nodes)].sort((a, b) => a.id.localeCompare(b.id))).toEqual([
+      { id: "b1", shared: true },
+      { id: "b2", shared: false },
+    ])
+  })
+
+  // The editor must prompt before this happens (withBucketPrompt) — retyping
+  // drops the bucket, and nothing else records it.
+  it("retyping away loses the bucket (why the editor asks first)", () => {
+    const asNote = retypeWidget(filesWidget({ bucketShared: false }) as NormWidget, "note")
+    expect(bucketIdsIn([asNote])).toEqual([])
+    expect(bucketIdsIn([retypeWidget(asNote, "files")])).toEqual([])
   })
 })

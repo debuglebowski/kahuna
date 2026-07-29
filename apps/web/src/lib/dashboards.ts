@@ -332,6 +332,32 @@ export const referencedConceptIds = (body: NormBody): string[] => {
   return [...ids]
 }
 
+/** A widget-owned file bucket: its id, and whether other widgets may list it. */
+export type WidgetBucket = { readonly id: string; readonly shared: boolean }
+
+/** Widget-owned file buckets anywhere in a subtree (a node, or a whole body's
+ *  `children`). Deleting such a widget would strand its files, so the editor asks
+ *  what to do with them first — this finds the buckets at stake. `shared` decides
+ *  what "keep" means: a shared bucket's files stay reachable from a whole-org
+ *  Files widget, a private one's become unreachable. */
+export const bucketsIn = (nodes: ReadonlyArray<NormNode>): WidgetBucket[] => {
+  const found = new Map<string, WidgetBucket>()
+  const walk = (n: NormNode) => {
+    if (isGroup(n)) {
+      n.children.forEach(walk)
+      return
+    }
+    if (n.type === "files" && n.scope === "widget" && n.bucketId)
+      found.set(n.bucketId, { id: n.bucketId, shared: n.bucketShared !== false })
+  }
+  nodes.forEach(walk)
+  return [...found.values()]
+}
+
+/** Just the ids — what the purge calls take. */
+export const bucketIdsIn = (nodes: ReadonlyArray<NormNode>): string[] =>
+  bucketsIn(nodes).map((b) => b.id)
+
 /** Record-view ids this dashboard "uses" — the record view its list/kanban widgets
  *  open rows with. An explicit `recordDashboardId` wins; otherwise the rows open the
  *  concept's DEFAULT view (its first by order, what "Open rows with: Default record
@@ -470,7 +496,10 @@ export const newWidget = (type: DashboardWidget["type"]): NormWidget => {
 }
 
 /** Recast a widget to a different type, keeping id, size, and title (and concept
- *  when both types are concept-scoped). */
+ *  when both types are concept-scoped). Everything else is reset to the new type's
+ *  defaults — including a files widget's `bucketId`, which the target type has
+ *  nowhere to store. Retyping away therefore strands that widget's files, so the
+ *  editor prompts about them first (see `withBucketPrompt`). */
 export const retypeWidget = (existing: NormWidget, type: DashboardWidget["type"]): NormWidget => {
   const fresh = newWidget(type)
   const carryConcept =

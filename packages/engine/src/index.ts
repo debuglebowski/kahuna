@@ -36,7 +36,9 @@ export { AnnotationService, type ListTasksFilter } from "./services/AnnotationSe
 export {
   AttachmentService,
   type ListFilesFilter,
+  MAX_UPLOAD_BYTES,
   type UploadInput,
+  type UploadOwner,
 } from "./services/AttachmentService"
 export { ComputedFields } from "./services/ComputedFields"
 export { ConceptService } from "./services/ConceptService"

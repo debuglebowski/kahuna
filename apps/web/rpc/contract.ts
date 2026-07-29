@@ -217,12 +217,14 @@ export const Field = Schema.Struct({
 })
 export type Field = typeof Field.Type
 
-/** A file on an item (the binary side of the annotation substrate). Bytes move
- *  over plain HTTP (multipart up, binary down — see server/router.ts); this is
- *  the metadata the RPCs list and mutate. `itemId` = the host lineage. */
+/** A file (the binary side of the annotation substrate). Bytes move over plain
+ *  HTTP (multipart up, binary down — see server/router.ts); this is the metadata
+ *  the RPCs list and mutate. Exactly one owner: `itemId` = the host lineage of a
+ *  record, `bucketId` = a Files widget that owns its files outright. */
 export const Attachment = Schema.Struct({
   id: Schema.String,
-  itemId: Schema.String,
+  itemId: Schema.NullOr(Schema.String),
+  bucketId: Schema.NullOr(Schema.String),
   filename: Schema.String,
   mimeType: Schema.NullOr(Schema.String),
   sizeBytes: Schema.NullOr(Schema.Number),
@@ -751,15 +753,25 @@ const GanttWidget = Schema.Struct({
   showTodayLine: Schema.optional(Schema.Boolean),
   window: Schema.optional(Schema.Literal("fit", "90d", "quarter")),
 })
-// Files — uploads attached to instances, browsed at a scope (renderer: P4).
+// Files — uploads browsed at a scope (renderer: P4). Three scopes read files that
+// belong to records; `widget` owns its own, attached to no record at all.
 const FilesWidget = Schema.Struct({
   ...widgetBase,
   ...ConceptScoped,
   type: Schema.Literal("files"),
-  /** instance = one record's files; concept = recent across its instances; org = all. */
-  scope: Schema.Literal("instance", "concept", "org"),
+  /** instance = one record's files; concept = recent across its instances; org =
+   *  all; widget = this widget's own `bucketId` files (no record involved). */
+  scope: Schema.Literal("instance", "concept", "org", "widget"),
   /** Instance id for `scope: "instance"` on a dashboard (no implicit context). */
   instanceId: Schema.optional(Schema.NullOr(Schema.String)),
+  /** `scope: "widget"` only — the bucket owning this widget's files. Minted on
+   *  switching to that scope; must be a fresh uuid, never a widget `id` (those
+   *  repeat across dashboards, so two widgets would share one file set). */
+  bucketId: Schema.optional(Schema.NullOr(Schema.String)),
+  /** `scope: "widget"` only, default true: may an org-scope Files widget list
+   *  this bucket? False keeps the files to this widget. Gates listing, not
+   *  access — a direct download URL stays reachable by any member. */
+  bucketShared: Schema.optional(Schema.Boolean),
   /** Off = read-only browse (no drop-zone). */
   allowUpload: Schema.optional(Schema.Boolean),
   sort: Schema.optional(Schema.Literal("newest", "name", "size")),
@@ -1656,14 +1668,16 @@ export class KingsmakerRpcs extends RpcGroup.make(
   }),
   // ── annotation layer: files ───────────────────────────────────────────────────
   // Metadata only — the bytes ride plain HTTP (multipart POST /api/items/:id/
-  // attachments, binary GET /api/attachments/:id/download). Exactly one scope:
-  // itemId (or instanceId, resolved to its lineage server-side — the Files
-  // widget stores an instance ref) = one record; conceptId = recent across its
-  // items; none = org-wide recent.
+  // attachments or /api/buckets/:id/attachments, binary GET /api/attachments/:id/
+  // download). Exactly one scope: itemId (or instanceId, resolved to its lineage
+  // server-side — the Files widget stores an instance ref) = one record;
+  // bucketId = one widget's own files; conceptId = recent across its items;
+  // none = org-wide recent, which omits files in a non-shared bucket.
   Rpc.make("listFiles", {
     payload: {
       itemId: Schema.optional(Schema.String),
       instanceId: Schema.optional(Schema.String),
+      bucketId: Schema.optional(Schema.String),
       conceptId: Schema.optional(Schema.String),
       includeArchived: Schema.optional(Schema.Boolean),
       limit: Schema.optional(Schema.Number),
@@ -1685,6 +1699,23 @@ export class KingsmakerRpcs extends RpcGroup.make(
   Rpc.make("deleteFile", {
     payload: { id: Schema.String },
     success: Attachment,
+    error: RpcError,
+  }),
+  // Purge a whole widget bucket — used when a Files widget or its dashboard is
+  // deleted and the user chooses to discard the files. An empty/unknown bucket
+  // returns []; a bucket holding another member's upload needs admin.
+  Rpc.make("purgeBucket", {
+    payload: { bucketId: Schema.String },
+    success: Schema.Array(Attachment),
+    error: RpcError,
+  }),
+  // Apply the widget's "Also list elsewhere" toggle to the files already in the
+  // bucket — the flag is stamped per row at upload, so without this a bucket the
+  // user just made private would keep listing its existing files org-wide.
+  // Returns only the rows that changed ([] when already in that state).
+  Rpc.make("setBucketShared", {
+    payload: { bucketId: Schema.String, shared: Schema.Boolean },
+    success: Schema.Array(Attachment),
     error: RpcError,
   }),
   // ── annotation layer: task statuses (admin) ───────────────────────────────────

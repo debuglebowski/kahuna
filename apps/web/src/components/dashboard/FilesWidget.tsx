@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query"
-import { api, type DashboardWidget } from "@/lib/api"
+import { api, type DashboardWidget, type FileOwner } from "@/lib/api"
 import { KEY, useRegisterCollection } from "@/lib/collections"
 import { arrangeFiles } from "@/lib/files"
 import { queryClient } from "@/lib/queryClient"
@@ -18,43 +18,69 @@ const filesRefetchShim = {
 
 /**
  * Files — uploads browsed at a scope: one record (`instanceId`, resolved to its
- * item lineage), a concept (recent across its records), or the whole org. A
- * consumer of the same RPCs as the instance tile's Files panel; the drop-zone
- * only renders on instance scope (the other scopes have no upload target).
+ * item lineage), a concept (recent across its records), the whole org, or this
+ * widget's own `bucketId` (files owned by no record). A consumer of the same RPCs
+ * as the instance tile's Files panel. Uploads land on the record or the bucket;
+ * concept/org scope have no single target, so they browse only.
  */
 export function FilesWidget({ widget }: { widget: Files }) {
   const scope = widget.scope
   const configured =
-    scope === "org" || (scope === "concept" ? !!widget.conceptId : !!widget.instanceId)
+    scope === "org" ||
+    (scope === "concept"
+      ? !!widget.conceptId
+      : scope === "widget"
+        ? !!widget.bucketId
+        : !!widget.instanceId)
 
   useRegisterCollection(KEY.filesGlobal, filesRefetchShim)
 
   const filesQ = useQuery({
-    queryKey: ["files", scope, widget.conceptId ?? null, widget.instanceId ?? null],
+    queryKey: [
+      "files",
+      scope,
+      widget.conceptId ?? null,
+      widget.instanceId ?? null,
+      widget.bucketId ?? null,
+    ],
     queryFn: () =>
       api.listFiles(
         scope === "concept"
           ? { conceptId: widget.conceptId ?? undefined }
           : scope === "instance"
             ? { instanceId: widget.instanceId ?? undefined }
-            : {},
+            : scope === "widget"
+              ? { bucketId: widget.bucketId ?? undefined }
+              : {},
       ),
     enabled: configured,
   })
-  // The upload target: files hang off the item lineage, the widget stores an
-  // instance ref — resolve once (only when the drop-zone will render).
-  const wantsUpload = scope === "instance" && !!widget.allowUpload && !!widget.instanceId
+  // Upload targets. A bucket IS the target, so it needs no resolution; a record
+  // stores an instance ref while files hang off the item lineage — resolve that
+  // one hop, and only when the drop-zone will actually render.
+  const wantsUpload =
+    !!widget.allowUpload &&
+    ((scope === "instance" && !!widget.instanceId) || (scope === "widget" && !!widget.bucketId))
   const itemQ = useQuery({
     queryKey: ["instanceItem", widget.instanceId],
     queryFn: () => api.getInstance(widget.instanceId ?? ""),
-    enabled: wantsUpload,
+    enabled: wantsUpload && scope === "instance",
   })
-  const itemId = itemQ.data?.instance.itemId
+  const owner: FileOwner | null =
+    scope === "widget"
+      ? widget.bucketId
+        ? { bucketId: widget.bucketId, shared: widget.bucketShared !== false }
+        : null
+      : itemQ.data
+        ? { itemId: itemQ.data.instance.itemId }
+        : null
 
   if (!configured)
     return (
       <p className="text-sm text-muted-foreground">
-        Pick a {scope === "concept" ? "concept" : "record"} in the widget settings.
+        {scope === "widget"
+          ? "Re-pick the Widget scope in the widget settings to give this widget its own file store."
+          : `Pick a ${scope === "concept" ? "concept" : "record"} in the widget settings.`}
       </p>
     )
   if (filesQ.isLoading) return <Spinner />
@@ -69,16 +95,16 @@ export function FilesWidget({ widget }: { widget: Files }) {
 
   return (
     <div className="flex h-full flex-col overflow-y-auto">
-      {wantsUpload && itemId && (
+      {wantsUpload && owner && (
         <div className="pb-2">
-          <FileDropZone itemId={itemId} onUploaded={() => filesQ.refetch()} />
+          <FileDropZone owner={owner} onUploaded={() => filesQ.refetch()} />
         </div>
       )}
       <FileList
         files={files}
         variant={widget.variant === "gallery" ? "gallery" : "list"}
         onChanged={() => filesQ.refetch()}
-        emptyText="No files at this scope yet."
+        emptyText={scope === "widget" ? "No files here yet." : "No files at this scope yet."}
       />
     </div>
   )

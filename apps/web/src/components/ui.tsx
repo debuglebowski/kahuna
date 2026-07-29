@@ -175,6 +175,33 @@ export function InfoHint({ text, label }: { text: ReactNode; label?: string }) {
   )
 }
 
+/**
+ * Structured body for an {@link InfoHint} on a multi-choice setting: an optional
+ * lead sentence, then one row per option (its name + what it does). Styled for
+ * the tooltip's inverted surface, so it belongs inside a hint — not on a page.
+ */
+export function HintList({
+  lead,
+  items,
+}: {
+  lead?: string
+  items: { term: string; desc: string }[]
+}) {
+  return (
+    <div className="w-60 py-0.5 text-left">
+      {lead && <p className="text-background/70">{lead}</p>}
+      <dl className={cn("space-y-2", lead && "mt-2 border-t border-background/15 pt-2")}>
+        {items.map((i) => (
+          <div key={i.term}>
+            <dt className="font-medium text-background">{i.term}</dt>
+            <dd className="mt-0.5 leading-snug text-background/70">{i.desc}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  )
+}
+
 export function Field({
   label,
   hint,
@@ -182,7 +209,7 @@ export function Field({
   children,
 }: {
   label: string
-  hint?: string
+  hint?: ReactNode
   className?: string
   children: ReactNode
 }) {

@@ -280,7 +280,10 @@ export const toRelation = (r: RelationRow): Relation => ({
 export interface AttachmentRow {
   readonly id: string
   readonly org_id: string
-  readonly item_id: string
+  /** null ⇔ `bucket_id` is set (DB CHECK `attachments_one_owner`). */
+  readonly item_id: string | null
+  readonly bucket_id: string | null
+  readonly bucket_shared: boolean
   readonly filename: string
   readonly content_ref: string
   readonly mime_type: string | null
@@ -294,6 +297,8 @@ export const toAttachment = (r: AttachmentRow): Attachment => ({
   id: r.id,
   orgId: r.org_id,
   itemId: r.item_id,
+  bucketId: r.bucket_id,
+  bucketShared: r.bucket_shared,
   filename: r.filename,
   contentRef: r.content_ref,
   mimeType: r.mime_type,
