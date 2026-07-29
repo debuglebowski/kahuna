@@ -16,6 +16,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import type { InstanceDetail } from "../../rpc/contract"
 import { WidgetCanvas } from "../components/dashboard/WidgetCanvas"
 import { ManagedInstanceView } from "../components/instance/ManagedInstanceView"
 import type { InstanceCtx } from "../components/instance/types"
@@ -42,19 +43,48 @@ const labelOf = (state: Record<string, unknown>, fields: ReadonlyArray<Field>): 
   return rich ? richTextPreview(state[rich.id], 80) : "(untitled)"
 }
 
-/** Single-instance detail: all of its own data plus everything connected to it,
- *  rendered through the concept's default layout (set in concept settings). */
+/** Single-instance detail at `/instances/:id` — reads the id from the route and
+ *  renders {@link InstanceViewBody}. */
 export function InstanceView() {
-  usePageChrome({ fullWidth: true, fillHeight: true }) // tile grid fills the viewport
   const { id = "" } = useParams()
-
   const collection = instanceDetail(id)
   useRegisterCollection(KEY.detail(id), collection)
   const detailQ = useLiveQuery(
     (q) => (id ? q.from({ d: collection }) : undefined),
     [id, collection],
   )
-  const detail = detailQ.data?.[0]
+  return (
+    <InstanceViewBody
+      detail={detailQ.data?.[0]}
+      loading={detailQ.isLoading}
+      refetch={() => collection.utils.refetch()}
+    />
+  )
+}
+
+/**
+ * The record page proper: all of an instance's own data plus everything connected
+ * to it, rendered through the concept's record view (a per-concept dashboard set
+ * in concept settings).
+ *
+ * Takes the resolved detail rather than an id so the two routes that reach a
+ * record can share it: `/instances/:id` looks the instance up directly, while
+ * `/c/<slug>` resolves a single-record concept to its one record first (a
+ * different collection, keyed by concept id — see `singleRecordOfConcept`).
+ * `refetch` is the caller's collection refetch, threaded into `InstanceCtx` so
+ * widget writes still refresh through whichever collection owns the data.
+ */
+export function InstanceViewBody({
+  detail,
+  loading,
+  refetch,
+}: {
+  detail: InstanceDetail | undefined
+  loading: boolean
+  /** Defaults to a no-op only if the caller has nothing to refetch. */
+  refetch?: () => void
+}) {
+  usePageChrome({ fullWidth: true, fillHeight: true }) // tile grid fills the viewport
 
   // A hard delete is admin-only; archive is an ordinary item write.
   const navigate = useNavigate()
@@ -117,7 +147,7 @@ export function InstanceView() {
       backToConcept()
     },
   })
-  if (detailQ.isLoading || !detail) return <Spinner />
+  if (loading || !detail) return <Spinner />
 
   const { instance, concept, fields, inboundRelationFields, related, staticLabels, labels } = detail
   const relationFields = fields.filter((f) => f.kind === "relation")
@@ -140,7 +170,7 @@ export function InstanceView() {
     myUserId: session?.user.id,
     members: org.data?.members ?? [],
     concepts: allConcepts.data ?? [],
-    refetch: () => collection.utils.refetch(),
+    refetch: () => refetch?.(),
   }
 
   return (

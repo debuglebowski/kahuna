@@ -41,6 +41,10 @@ export const KEY = {
   instances: (concept: string) => `instances:${concept}`,
   /** A single instance's detail view (its own data + connected instances). */
   detail: (id: string) => `detail:${id}`,
+  /** A single-record concept's record, resolved concept id → instance id. Keyed by
+   *  CONCEPT id, not instance id: for a versioned concept the instance id changes
+   *  every time a version is published, and this is the thing that must notice. */
+  singleRecord: (conceptId: string) => `singleRecord:${conceptId}`,
   /** Sidebar Views — not driven by engine events (no envelope routes here);
    *  refreshed on the caller's own mutations and by the safety-refetch sweep. */
   views: "views",
@@ -111,6 +115,10 @@ export const routeEnvelope = (env: LiveEnvelope, mounted: ReadonlyArray<string>)
     // instance / item — nudge its concept's list and any open detail pages.
     if (env.conceptId) candidates.add(KEY.instances(env.conceptId))
     for (const k of details) candidates.add(k)
+    // A single-record concept resolves concept id → its one record; publishing a
+    // new version changes which instance id that is, so the resolution itself has
+    // to re-run, not just the detail it points at.
+    if (env.conceptId) candidates.add(KEY.singleRecord(env.conceptId))
     // An instance edit also surfaces in its item's activity feed.
     for (const k of byPrefix("activity:")) candidates.add(k)
   }

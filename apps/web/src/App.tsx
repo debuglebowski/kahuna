@@ -4,6 +4,7 @@ import { Layout } from "./components/Layout"
 import { ErrorScreen, Spinner } from "./components/ui"
 import { useSession } from "./lib/auth-client"
 import { AuthPage } from "./pages/AuthPage"
+import { ConceptRecordView } from "./pages/ConceptRecordView"
 import { Dashboards } from "./pages/Dashboards"
 import { InstanceView } from "./pages/InstanceView"
 import { MemberProfile } from "./pages/MemberProfile"
@@ -70,6 +71,9 @@ export function App() {
           <Route path="dashboards/:id" element={<DashboardsSettings />} />
         </Route>
         <Route path="/instances/:id" element={<InstanceView />} />
+        {/* A single-record concept's one record, addressed by slug — no instance
+            id, because there's only ever one. Renders the same record page. */}
+        <Route path="/c/:slug" element={<ConceptRecordView />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Layout>

@@ -74,6 +74,24 @@ describe("routeEnvelope", () => {
     expect(keys).toEqual(new Set([KEY.changed, KEY.detail("acc1")]))
   })
 
+  it("instance/item change nudges the concept's mounted single-record resolution", () => {
+    // `/c/<slug>` resolves concept id → its one record, so a publish (which moves
+    // the lineage head to a NEW instance id) has to re-run the resolution, not just
+    // refetch the detail the old id pointed at.
+    const mounted = [KEY.changed, KEY.singleRecord("company-id")]
+    const keys = new Set(
+      routeEnvelope(env({ conceptId: "company-id", subjectId: "inst1" }), mounted),
+    )
+    expect(keys).toEqual(new Set([KEY.changed, KEY.singleRecord("company-id")]))
+  })
+
+  it("does not nudge another concept's single-record resolution", () => {
+    const mounted = [KEY.changed, KEY.singleRecord("company-id")]
+    expect(routeEnvelope(env({ conceptId: "other-id", subjectId: "x" }), mounted)).toEqual([
+      KEY.changed,
+    ])
+  })
+
   it("does not nudge a detail key that isn't mounted", () => {
     expect(routeEnvelope(env({ conceptId: "c", subjectId: "x" }), [KEY.changed])).toEqual([
       KEY.changed,

@@ -144,6 +144,37 @@ export const instanceDetail = (id: string) => {
   return c
 }
 
+// A single-record concept's one record, keyed by CONCEPT id — the same
+// `InstanceDetail` shape `instanceDetail` yields, so `/c/<slug>` renders through
+// the ordinary record view. Keyed by concept rather than instance because that's
+// the only id the caller has: which instance is "the" record moves on every
+// publish, and the server's `singleRecordOf` (not `listInstances[0]`) is what
+// knows, including for a versioned concept whose record is still a draft.
+const singleRecordCollections = new Map<string, ReturnType<typeof makeSingleRecord>>()
+const makeSingleRecord = (conceptId: string) =>
+  createCollection(
+    queryCollectionOptions({
+      queryKey: ["live", "singleRecord", conceptId],
+      queryFn: async (): Promise<Array<InstanceDetail & { id: string }>> => {
+        const d = await api.getSingleRecord(conceptId)
+        // Null = the flag is on with no record behind it, which shouldn't happen.
+        // An empty collection lets the page say so instead of spinning forever.
+        return d ? [{ id: conceptId, ...d }] : []
+      },
+      queryClient,
+      getKey: (d) => d.id,
+    }),
+  )
+
+export const singleRecordOfConcept = (conceptId: string) => {
+  let c = singleRecordCollections.get(conceptId)
+  if (!c) {
+    c = makeSingleRecord(conceptId)
+    singleRecordCollections.set(conceptId, c)
+  }
+  return c
+}
+
 // ── annotation layer (per-item: subjectId = the item lineage id) ───────────────
 
 const notesCollections = new Map<string, ReturnType<typeof makeNotes>>()
