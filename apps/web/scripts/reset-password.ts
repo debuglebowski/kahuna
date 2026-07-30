@@ -2,7 +2,7 @@ import "../server/env"
 
 import { hashPassword } from "better-auth/crypto"
 import { and, eq } from "drizzle-orm"
-import * as schema from "../server/auth-schema"
+import * as schema from "#db"
 import { db } from "../server/db"
 
 /**

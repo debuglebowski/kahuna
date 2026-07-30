@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto"
-import type { OrgScope } from "@kingsmaker/engine"
+import type { OrgScope } from "#engine"
 import { and, eq } from "drizzle-orm"
 import {
   googleAuditLog,
@@ -11,7 +11,7 @@ import {
   googleGmailThread,
   googleNotification,
   googleOAuthState,
-} from "./auth-schema"
+} from "#db"
 import { db, pool } from "./db"
 import { decryptToken, encryptToken } from "./integrations/crypto"
 import {

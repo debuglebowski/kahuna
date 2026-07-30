@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto"
 import { eq } from "drizzle-orm"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { auth } from "./auth"
-import { posthogConnection, posthogPersonMetric } from "./auth-schema"
+import { posthogConnection, posthogPersonMetric } from "#db"
 import { db } from "./db"
 import { decryptToken, encryptToken } from "./integrations/crypto"
 import {

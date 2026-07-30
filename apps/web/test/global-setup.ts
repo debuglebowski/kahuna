@@ -15,7 +15,14 @@ const applyMigrations = async (client: Client, dir: string) => {
   }
 }
 
-/** Recreate the test DB and apply BOTH the engine and the BetterAuth migrations. */
+/**
+ * Recreate the test DB and apply the migrations.
+ *
+ * This is the only global setup for the whole suite (engine + server + client).
+ * It applies the raw `.sql` itself rather than shelling out to `drizzle-kit`, so
+ * it deliberately does NOT exercise the deploy path or write a ledger — that is
+ * what `server/migrate-fresh.test.ts` is for.
+ */
 export default async function setup(): Promise<void> {
   const testUrl = process.env.TEST_DATABASE_URL
   if (!testUrl) throw new Error("TEST_DATABASE_URL must be set (see .env)")
@@ -31,7 +38,6 @@ export default async function setup(): Promise<void> {
 
   const db = new Client({ connectionString: testUrl })
   await db.connect()
-  await applyMigrations(db, path.resolve(import.meta.dirname, "../../../packages/db/migrations"))
-  await applyMigrations(db, path.resolve(import.meta.dirname, "../server/migrations"))
+  await applyMigrations(db, path.resolve(import.meta.dirname, "../db/migrations"))
   await db.end()
 }

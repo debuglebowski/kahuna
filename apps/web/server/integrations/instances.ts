@@ -1,3 +1,4 @@
+import { Effect } from "effect"
 import {
   ConceptService,
   type FieldConfig,
@@ -6,8 +7,7 @@ import {
   type Instance,
   InstanceService,
   type OrgScope,
-} from "@kingsmaker/engine"
-import { Effect } from "effect"
+} from "#engine"
 import { pool } from "../db"
 import { runEngineOrThrow } from "../runtime"
 

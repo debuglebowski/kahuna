@@ -9,7 +9,7 @@ import {
   rowsToSeries,
 } from "./analytics"
 import { auth } from "./auth"
-import { posthogConnection } from "./auth-schema"
+import { posthogConnection } from "#db"
 import { db } from "./db"
 import { encryptToken } from "./integrations/crypto"
 import { setPosthogFetchForTest } from "./posthog"

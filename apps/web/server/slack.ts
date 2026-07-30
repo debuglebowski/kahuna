@@ -7,7 +7,7 @@ import {
   slackEvent,
   slackOAuthState,
   slackUserConnection,
-} from "./auth-schema"
+} from "#db"
 import { db } from "./db"
 import { decryptToken, encryptToken } from "./integrations/crypto"
 import { resolveOrg } from "./session"

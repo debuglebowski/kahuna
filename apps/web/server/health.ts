@@ -1,4 +1,4 @@
-import { healthCheck, PgLive } from "@kingsmaker/engine"
+import { healthCheck, PgLive } from "#engine"
 import { Effect } from "effect"
 
 /**

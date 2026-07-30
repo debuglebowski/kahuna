@@ -45,9 +45,13 @@ jobs:
 
       - run: bun run check
 
-      # Includes migrate-fresh.test.ts, which drives the real `drizzle-kit
-      # migrate` deploy path against empty scratch databases. The rest of the
-      # suite applies migrations itself and so cannot catch ledger regressions.
+      # Validates the migration snapshots + detects duplicate journal ids. ~1s.
+      - run: bun run db:check
+
+      # Includes server/migrations.test.ts, which drives the real `drizzle-kit`
+      # deploy path against an empty scratch database and asserts completeness,
+      # idempotency, journal monotonicity, and schema drift. The rest of the suite
+      # applies the raw .sql itself and so cannot catch ledger regressions.
       - run: bun run test
 
   image:
@@ -114,20 +118,21 @@ jobs:
           docker run --rm --network ci-net -e DATABASE_URL="$DB" kingsmaker:ci migrate
           echo "::endgroup::"
 
-          # Assert against the database, not the migrate exit code: the ledger
-          # bug this guards against exited 0 while applying nothing.
-          engine=$(docker exec ci-pg psql -U kingsmaker -d kingsmaker -tAc \
-            "select count(*) from drizzle.__drizzle_migrations_engine")
-          auth=$(docker exec ci-pg psql -U kingsmaker -d kingsmaker -tAc \
-            "select count(*) from drizzle.__drizzle_migrations_auth")
+          # Assert against the DATABASE, not the migrate exit code: the bug this
+          # guards against exited 0 while applying nothing. With one migration set
+          # the ledger count no longer distinguishes which half landed, so probe
+          # both an auth table and an engine table directly.
+          rows=$(docker exec ci-pg psql -U kingsmaker -d kingsmaker -tAc \
+            "select count(*) from drizzle.__drizzle_migrations")
           bauth=$(docker exec ci-pg psql -U kingsmaker -d kingsmaker -tAc \
             "select count(*) from information_schema.tables where table_schema='public' and table_name='bauth_user'")
-          engine_expected=$(jq '.entries | length' packages/db/migrations/meta/_journal.json)
-          auth_expected=$(jq '.entries | length' apps/web/server/migrations/meta/_journal.json)
-          echo "engine=$engine/$engine_expected auth=$auth/$auth_expected bauth_user=$bauth"
-          test "$engine" = "$engine_expected"
-          test "$auth" = "$auth_expected"
+          events=$(docker exec ci-pg psql -U kingsmaker -d kingsmaker -tAc \
+            "select count(*) from information_schema.tables where table_schema='public' and table_name='events'")
+          expected=$(jq '.entries | length' apps/web/db/migrations/meta/_journal.json)
+          echo "ledger=$rows/$expected bauth_user=$bauth events=$events"
+          test "$rows" = "$expected"
           test "$bauth" = "1"
+          test "$events" = "1"
 
           docker run -d --name ci-app --network ci-net -p 3100:3100 \
             -e DATABASE_URL="$DB" \

@@ -42,7 +42,7 @@ import {
   type TaskStatusCategory,
   TaskStatusService,
   type UploadOwner,
-} from "@kingsmaker/engine"
+} from "#engine"
 import { Effect } from "effect"
 
 /** All use-cases return engine effects (R = OrgContext | EngineServices) for runScoped. */

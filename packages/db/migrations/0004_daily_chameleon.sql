@@ -1,1 +1,0 @@
-ALTER TABLE "concepts" ADD COLUMN "plural_name" text;

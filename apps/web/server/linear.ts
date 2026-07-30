@@ -1,7 +1,7 @@
 import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto"
-import type { OrgScope } from "@kingsmaker/engine"
+import type { OrgScope } from "#engine"
 import { and, eq } from "drizzle-orm"
-import { linearAuditLog, linearConnection, linearIssue, linearWebhookEvent } from "./auth-schema"
+import { linearAuditLog, linearConnection, linearIssue, linearWebhookEvent } from "#db"
 import { db, pool } from "./db"
 import { decryptToken, encryptToken } from "./integrations/crypto"
 import {

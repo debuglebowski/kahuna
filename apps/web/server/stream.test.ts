@@ -1,4 +1,4 @@
-import type { EventEnvelope } from "@kingsmaker/engine"
+import type { EventEnvelope } from "#engine"
 import { describe, expect, it } from "vitest"
 import { dispatch, subscribe } from "./stream"
 

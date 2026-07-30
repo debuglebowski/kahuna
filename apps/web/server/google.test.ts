@@ -7,7 +7,7 @@ import {
   googleCalendarSync,
   googleConnection,
   googleOAuthState,
-} from "./auth-schema"
+} from "#db"
 import { db, pool } from "./db"
 import {
   decryptToken,

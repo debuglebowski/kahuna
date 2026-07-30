@@ -1,5 +1,5 @@
 import { and, eq, gt } from "drizzle-orm"
-import { apolloAuditLog, apolloConnection, apolloEnrichmentCache } from "./auth-schema"
+import { apolloAuditLog, apolloConnection, apolloEnrichmentCache } from "#db"
 import { db } from "./db"
 import { decryptToken, encryptToken } from "./integrations/crypto"
 import { runEngine } from "./runtime"

@@ -1,5 +1,5 @@
 import { PgClient } from "@effect/sql-pg"
-import { InstanceService, OrgContext, QueryService } from "@kingsmaker/engine"
+import { InstanceService, OrgContext, QueryService } from "#engine"
 import { Duration, Effect, Schedule } from "effect"
 import { AppRuntime } from "./runtime"
 

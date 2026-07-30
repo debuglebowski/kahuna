@@ -33,8 +33,13 @@ fi
 BLOB_DIR="${BLOB_LOCAL_DIR:-./.blobstore}"
 case "$BLOB_DIR" in
   /*) ;;                                  # already absolute
-  *) BLOB_DIR="$ROOT/${BLOB_DIR#./}" ;;   # resolve relative to repo root
+  # A relative BLOB_LOCAL_DIR is resolved by the SERVER against its own CWD, and
+  # the server runs from apps/web (`bun run serve`/`dev` are filtered scripts) —
+  # so `./.blobstore` means apps/web/.blobstore, not the repo root. Resolving it
+  # against $ROOT here silently snapshotted the wrong (nearly empty) directory.
+  *) BLOB_DIR="$ROOT/apps/web/${BLOB_DIR#./}" ;;
 esac
+[ -d "$BLOB_DIR" ] || echo "⚠ blob dir $BLOB_DIR does not exist — snapshot will carry no blobs" >&2
 
 utc_now() { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
 die() { echo "✗ $*" >&2; exit 1; }
@@ -50,8 +55,16 @@ case "$cmd" in
     dest="$SNAP_DIR/$name"
     mkdir -p "$dest"
 
+    # --exclude-schema=drizzle: a snapshot carries DATA, never migration state.
+    # Without it the dump included the `drizzle` ledger and, because of --clean,
+    # dropped and recreated it on import — so restoring an older snapshot
+    # installed a stale ledger whose hashes match no migration file, after which
+    # `drizzle-kit migrate` skips the baseline and silently applies nothing.
+    # Excluding it means an import leaves the live ledger untouched, which is what
+    # makes snapshots portable across schema changes.
     echo "→ dumping database → $dest/data.sql.gz"
-    pg_dump --format=plain --clean --if-exists --no-owner --no-privileges "$DATABASE_URL" \
+    pg_dump --format=plain --clean --if-exists --no-owner --no-privileges \
+      --exclude-schema=drizzle "$DATABASE_URL" \
       | gzip > "$dest/data.sql.gz"
 
     echo "→ copying blobs from $BLOB_DIR"

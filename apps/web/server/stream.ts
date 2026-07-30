@@ -1,5 +1,5 @@
 import { PgClient } from "@effect/sql-pg"
-import { EVENT_CHANNEL, type EventEnvelope, type SubjectKind } from "@kingsmaker/engine"
+import { EVENT_CHANNEL, type EventEnvelope, type SubjectKind } from "#engine"
 import { Duration, Effect, Schedule, Stream } from "effect"
 import { AppRuntime } from "./runtime"
 import { resolveOrg } from "./session"

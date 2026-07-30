@@ -1,1 +1,0 @@
-ALTER TABLE "concepts" ADD COLUMN "instance_view" jsonb;

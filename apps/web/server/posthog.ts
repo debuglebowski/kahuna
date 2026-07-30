@@ -5,7 +5,7 @@ import {
   posthogConnection,
   posthogPersonMetric,
   posthogWebhookEvent,
-} from "./auth-schema"
+} from "#db"
 import { db, pool } from "./db"
 import { decryptToken, encryptToken } from "./integrations/crypto"
 import { resolveOrg } from "./session"

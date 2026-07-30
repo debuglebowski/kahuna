@@ -17,15 +17,15 @@
     "format": "biome format --write .",
     "check": "biome check .",
     "health": "bun apps/web/server/health.ts",
-    "db:generate": "bun run --filter @kingsmaker/db generate",
-    "db:migrate": "bun run --filter @kingsmaker/db migrate",
+    "db:generate": "bun run --filter @kingsmaker/web db:generate",
+    "db:migrate": "bun run --filter @kingsmaker/web db:migrate",
+    "db:check": "bun run --filter @kingsmaker/web db:check",
     "snapshot": "bash scripts/snapshot.sh",
     "dev:web": "bun run --filter @kingsmaker/web dev",
     "serve:web": "bun run --filter @kingsmaker/web serve"
   },
   "type": "module",
   "workspaces": [
-    "packages/*",
     "apps/*"
   ]
 }

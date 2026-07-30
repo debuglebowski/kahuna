@@ -1,6 +1,6 @@
 import "./env" // Load repo-root .env into process.env before any DB-touching import.
 import path from "node:path"
-import { healthCheck } from "@kingsmaker/engine"
+import { healthCheck } from "#engine"
 import { auth } from "./auth"
 import { startDecayTick } from "./decay-tick"
 import { startGoogleWatchRenewal } from "./google"

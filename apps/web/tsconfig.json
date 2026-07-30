@@ -5,17 +5,20 @@
     "jsx": "react-jsx",
     "types": ["@types/bun"],
     "paths": {
-      "@/*": ["./src/*"],
-      "@kingsmaker/engine": ["../../packages/engine/src/index.ts"],
-      "@kingsmaker/engine/*": ["../../packages/engine/src/*"],
-      "@kingsmaker/db": ["../../packages/db/src/index.ts"],
-      "@kingsmaker/db/*": ["../../packages/db/src/*"]
+      "@/*": ["./src/*"]
+      // `#engine` and `#db` (the former packages/engine + packages/db) resolve
+      // through the `imports` field in package.json, not through `paths` — that
+      // works for tsc, Bun, and vitest without needing the deprecated `baseUrl`,
+      // and it keeps working on a fresh clone with no node_modules symlink.
+      // `engine/index.ts` is still the seam into the domain core.
     }
   },
   "include": [
     "src",
     "server",
     "rpc",
+    "engine",
+    "db",
     "test",
     "vite.config.ts",
     "vitest.config.ts",

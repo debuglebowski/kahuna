@@ -4,7 +4,7 @@ import {
   type EngineServices,
   FieldService,
   type OrgContext,
-} from "@kingsmaker/engine"
+} from "#engine"
 import { Effect } from "effect"
 import { describe, expect, it } from "vitest"
 import { runEngineOrThrow } from "../runtime"

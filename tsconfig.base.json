@@ -18,12 +18,6 @@
     "noEmit": true,
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": false,
-    "forceConsistentCasingInFileNames": true,
-    "paths": {
-      "@kingsmaker/engine": ["./packages/engine/src/index.ts"],
-      "@kingsmaker/engine/*": ["./packages/engine/src/*"],
-      "@kingsmaker/db": ["./packages/db/src/index.ts"],
-      "@kingsmaker/db/*": ["./packages/db/src/*"]
-    }
+    "forceConsistentCasingInFileNames": true
   }
 }

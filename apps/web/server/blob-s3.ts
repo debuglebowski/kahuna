@@ -1,4 +1,4 @@
-import { BlobError, BlobStore } from "@kingsmaker/engine"
+import { BlobError, BlobStore } from "#engine"
 import { Effect, Layer } from "effect"
 
 export interface S3Config {

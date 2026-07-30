@@ -1,4 +1,4 @@
-import { ConceptService } from "@kingsmaker/engine"
+import { ConceptService } from "#engine"
 import { Effect } from "effect"
 import { runEngineOrThrow } from "../runtime"
 

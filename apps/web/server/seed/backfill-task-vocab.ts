@@ -1,5 +1,5 @@
 import "../env"
-import { TaskPriorityService, TaskStatusService } from "@kingsmaker/engine"
+import { TaskPriorityService, TaskStatusService } from "#engine"
 import { Effect } from "effect"
 import { runEngineOrThrow } from "../runtime"
 import { defaultTaskPriorities, defaultTaskStatuses } from "./spec"

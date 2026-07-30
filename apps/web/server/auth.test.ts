@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto"
-import { ConceptService, FieldService, InstanceService } from "@kingsmaker/engine"
+import { ConceptService, FieldService, InstanceService } from "#engine"
 import { Effect } from "effect"
 import { describe, expect, it } from "vitest"
 import { auth } from "./auth"

@@ -11,7 +11,7 @@ import {
   setApolloFetchForTest,
 } from "./apollo"
 import { auth } from "./auth"
-import { apolloConnection } from "./auth-schema"
+import { apolloConnection } from "#db"
 import { db } from "./db"
 import { decryptToken, encryptToken } from "./integrations/crypto"
 import { runEngineOrThrow } from "./runtime"

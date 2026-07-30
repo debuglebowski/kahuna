@@ -1,4 +1,4 @@
-import type { FieldConfig, FieldKind, TaskPrioritySpec, TaskStatusSpec } from "@kingsmaker/engine"
+import type { FieldConfig, FieldKind, TaskPrioritySpec, TaskStatusSpec } from "#engine"
 
 /**
  * Default task statuses seeded for every new org (the annotation layer). Editable

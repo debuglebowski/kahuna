@@ -1,6 +1,6 @@
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto"
 import { and, eq } from "drizzle-orm"
-import { clayAuditLog, clayConnection, clayJob, clayNotification } from "./auth-schema"
+import { clayAuditLog, clayConnection, clayJob, clayNotification } from "#db"
 import { db } from "./db"
 import { decryptToken, encryptToken } from "./integrations/crypto"
 import { runEngine } from "./runtime"
