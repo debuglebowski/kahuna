@@ -9,7 +9,7 @@ import { runEngineOrThrow } from "../runtime"
  * through ConceptService.update, so each assignment is event-sourced.
  *
  * The 20 regular pill hexes (spectral order) from the web palette
- * (`PILL_COLORS` in apps/web/src/components/ui.tsx) — regulars only, so
+ * (`PILL_COLORS` in app/src/components/ui.tsx) — regulars only, so
  * backfilled sets read as one rainbow run; deep variants stay hand-pickable.
  */
 const PALETTE = [

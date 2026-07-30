@@ -8,8 +8,8 @@
  * skipped. Managed concepts are skipped (they bypass to ManagedInstanceView).
  *
  * Dry-run by default (prints what it would do); pass `--apply` to write.
- *   bun apps/web/scripts/migrate-instance-views.ts          # dry run
- *   bun apps/web/scripts/migrate-instance-views.ts --apply  # write
+ *   bun app/scripts/migrate-instance-views.ts          # dry run
+ *   bun app/scripts/migrate-instance-views.ts --apply  # write
  */
 import { pool } from "../server/db"
 import { tilesToBody, type ViewTileLike } from "../src/lib/recordDashboards"

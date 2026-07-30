@@ -3,7 +3,7 @@ import path from "node:path"
 import { defineConfig } from "vitest/config"
 
 // Load repo-root .env (vitest workers don't inherit bun's --filter env).
-const envPath = path.resolve(import.meta.dirname, "../../.env")
+const envPath = path.resolve(import.meta.dirname, "../.env")
 if (existsSync(envPath)) {
   for (const line of readFileSync(envPath, "utf8").split("\n")) {
     const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/)

@@ -6,7 +6,7 @@ import { defineConfig } from "drizzle-kit"
  * The ONE drizzle config. Do not add a second.
  *
  * This repo previously had two — one for the engine tables (packages/db) and one
- * for the BetterAuth + integration tables (apps/web) — both pointed at the same
+ * for the BetterAuth + integration tables (app) — both pointed at the same
  * database. They shared drizzle's default `__drizzle_migrations` ledger, and the
  * migrator gates each migration on the SINGLE NEWEST `created_at` in that table.
  * Because the two journals interleaved, whichever set ran first parked a
@@ -22,12 +22,12 @@ import { defineConfig } from "drizzle-kit"
  * interleave with itself; `server/migrate-fresh.test.ts` now asserts
  * monotonicity so a future hand-edit cannot reintroduce it.
  *
- * ALWAYS INVOKE VIA `bun run db:*` FROM THE REPO ROOT (or with CWD=apps/web).
+ * ALWAYS INVOKE VIA `bun run db:*` FROM THE REPO ROOT (or with CWD=app).
  * drizzle-kit resolves `schema` and `out` against `process.cwd()`, not against
  * this file, so the paths below are relative and the CWD matters. Absolute paths
  * are not an option: `migrate` accepts them, but `generate` prepends "./" and
  * then fails with `ENOENT .//Users/...` when reading the snapshot. The npm
- * scripts (`bun run --filter @kingsmaker/web db:generate`) set CWD to apps/web,
+ * scripts (`bun run db:generate`) set CWD to app,
  * which is why they are the supported entry point.
  *
  * Guard below: if `out` resolved to somewhere without a journal, drizzle-kit
@@ -38,7 +38,7 @@ const MIGRATIONS_DIR = "./db/migrations"
 
 if (!existsSync(path.join(MIGRATIONS_DIR, "meta/_journal.json"))) {
   throw new Error(
-    `drizzle-kit must run with CWD=apps/web — no journal at ${MIGRATIONS_DIR}/meta/_journal.json ` +
+    `drizzle-kit must run with CWD=app — no journal at ${MIGRATIONS_DIR}/meta/_journal.json ` +
       `(cwd is ${process.cwd()}). Use \`bun run db:migrate\` from the repo root.`,
   )
 }

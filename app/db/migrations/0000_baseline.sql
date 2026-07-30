@@ -1,6 +1,6 @@
 -- Squashed baseline. Replaces the 48 migrations that existed before the workspace
 -- collapse (37 engine + 11 BetterAuth/integration), which lived in
--- packages/db/migrations and apps/web/server/migrations. Both sets are reachable
+-- packages/db/migrations and app/server/migrations. Both sets are reachable
 -- in git history at 8ad39b1; the ledger post-mortem that motivated the squash is
 -- at e4dc17a and summarised in ../../drizzle.config.ts.
 --

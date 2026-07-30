@@ -10,8 +10,8 @@
         "typescript": "6.0.3",
       },
     },
-    "apps/web": {
-      "name": "@kingsmaker/web",
+    "app": {
+      "name": "@kingsmaker/app",
       "version": "0.0.0",
       "dependencies": {
         "@dagrejs/dagre": "3.0.0",
@@ -218,7 +218,7 @@
 
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.31", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.1.0", "@jridgewell/sourcemap-codec": "^1.4.14" } }, "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw=="],
 
-    "@kingsmaker/web": ["@kingsmaker/web@workspace:apps/web"],
+    "@kingsmaker/app": ["@kingsmaker/app@workspace:app"],
 
     "@msgpackr-extract/msgpackr-extract-darwin-arm64": ["@msgpackr-extract/msgpackr-extract-darwin-arm64@3.0.4", "", { "os": "darwin", "cpu": "arm64" }, "sha512-LCkGo6JDfaBhgST7UpPWgNgLINpcpabaHfyz5OBx75nUYxBsaEPxjnyNjWpeb/xBup/682QnBfRBy2/LvPutZQ=="],
 

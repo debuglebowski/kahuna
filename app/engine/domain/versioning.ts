@@ -11,7 +11,7 @@ import type { EditReach, VersionStatus } from "./types"
  *  - it's the open draft;
  *  - the concept allows amending published versions (`editReach: "any"`).
  *
- * The web client mirrors this in `apps/web/src/lib/editability.ts` (it can't
+ * The web client mirrors this in `app/src/lib/editability.ts` (it can't
  * import the engine); keep the two in step.
  */
 export const canEditVersion = (

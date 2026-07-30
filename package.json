@@ -16,16 +16,16 @@
     "lint": "biome lint .",
     "format": "biome format --write .",
     "check": "biome check .",
-    "health": "bun apps/web/server/health.ts",
-    "db:generate": "bun run --filter @kingsmaker/web db:generate",
-    "db:migrate": "bun run --filter @kingsmaker/web db:migrate",
-    "db:check": "bun run --filter @kingsmaker/web db:check",
+    "health": "bun app/server/health.ts",
+    "db:generate": "bun run --filter @kingsmaker/app db:generate",
+    "db:migrate": "bun run --filter @kingsmaker/app db:migrate",
+    "db:check": "bun run --filter @kingsmaker/app db:check",
     "snapshot": "bash scripts/snapshot.sh",
-    "dev:web": "bun run --filter @kingsmaker/web dev",
-    "serve:web": "bun run --filter @kingsmaker/web serve"
+    "dev": "bun run --filter @kingsmaker/app dev",
+    "serve": "bun run --filter @kingsmaker/app serve"
   },
   "type": "module",
   "workspaces": [
-    "apps/*"
+    "app"
   ]
 }

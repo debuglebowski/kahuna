@@ -16,7 +16,7 @@ const exec = promisify(execFile)
  * deploy path actually produces.
  *
  * History, because it explains why these specific things are asserted. There
- * used to be TWO migration sets (engine in packages/db, auth in apps/web)
+ * used to be TWO migration sets (engine in packages/db, auth in app)
  * against one database, sharing drizzle's default ledger. The migrator gates
  * each migration on the single newest `created_at` in that table, so the
  * interleaved journals swallowed each other: on an empty DB, engine-then-auth
@@ -29,8 +29,8 @@ const exec = promisify(execFile)
  * which is exactly why these tests exist — to keep it that way.
  */
 
-const WEB_DIR = path.resolve(import.meta.dirname, "..")
-const MIGRATIONS_DIR = path.join(WEB_DIR, "db/migrations")
+const APP_DIR = path.resolve(import.meta.dirname, "..")
+const MIGRATIONS_DIR = path.join(APP_DIR, "db/migrations")
 
 interface JournalEntry {
   readonly tag: string
@@ -80,12 +80,12 @@ const dropScratchDb = async (name: string): Promise<void> => {
 }
 
 /**
- * Run the real migrate command against `url`. CWD must be apps/web — drizzle-kit
+ * Run the real migrate command against `url`. CWD must be app/ — drizzle-kit
  * resolves `out`/`schema` against process.cwd() (the config asserts this too).
  */
 const migrate = async (url: string): Promise<void> => {
   await exec("bunx", ["drizzle-kit", "migrate"], {
-    cwd: WEB_DIR,
+    cwd: APP_DIR,
     env: { ...process.env, DATABASE_URL: url },
   })
 }
@@ -200,12 +200,12 @@ describe("migrations", () => {
     // Catches "edited db/schema.ts and forgot to generate". Generates into a
     // COPY of the migrations dir so a failure can't dirty the working tree.
     //
-    // The copy must live INSIDE apps/web under a relative path: drizzle-kit
+    // The copy must live INSIDE app under a relative path: drizzle-kit
     // prepends "./" to whatever `--out` it is given, so an absolute path
     // becomes `.//tmp/...` and dies with ENOENT reading the snapshot. Same
     // reason drizzle.config.ts uses relative paths.
     const rel = `.drift-${process.pid}`
-    const tmp = path.join(WEB_DIR, rel)
+    const tmp = path.join(APP_DIR, rel)
     try {
       rmSync(tmp, { recursive: true, force: true })
       cpSync(MIGRATIONS_DIR, tmp, { recursive: true })
@@ -217,7 +217,7 @@ describe("migrations", () => {
       const { stdout } = await exec(
         "bunx",
         ["drizzle-kit", "generate", "--dialect", "postgresql", "--schema", "./db", "--out", rel],
-        { cwd: WEB_DIR },
+        { cwd: APP_DIR },
       )
 
       const after = readdirSync(tmp).filter((f) => f.endsWith(".sql")).length

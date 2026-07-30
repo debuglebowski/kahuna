@@ -94,6 +94,12 @@ const uploadRoute = async (req: Request, owner: UploadOwner): Promise<Response> 
   const file = form?.get("file")
   if (!(file instanceof File))
     return Response.json({ error: "file field required" }, { status: 400 })
+  // Bun hands back a plain Blob (no `name`) for a zero-byte multipart part, and it
+  // still passes `instanceof File` — so an empty file reached the insert with
+  // filename undefined, tripping the NOT NULL and surfacing as an opaque 500.
+  // Refuse it here: a nameless or empty upload is a client mistake, not a defect.
+  if (!file.name) return Response.json({ error: "file name required" }, { status: 400 })
+  if (file.size === 0) return Response.json({ error: "file is empty" }, { status: 400 })
   const data = new Uint8Array(await file.arrayBuffer())
   return json(
     await runScoped(req, uploadAttachment(owner, file.name, file.type || undefined, data)),

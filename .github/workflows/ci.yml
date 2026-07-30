@@ -128,7 +128,7 @@ jobs:
             "select count(*) from information_schema.tables where table_schema='public' and table_name='bauth_user'")
           events=$(docker exec ci-pg psql -U kingsmaker -d kingsmaker -tAc \
             "select count(*) from information_schema.tables where table_schema='public' and table_name='events'")
-          expected=$(jq '.entries | length' apps/web/db/migrations/meta/_journal.json)
+          expected=$(jq '.entries | length' app/db/migrations/meta/_journal.json)
           echo "ledger=$rows/$expected bauth_user=$bauth events=$events"
           test "$rows" = "$expected"
           test "$bauth" = "1"

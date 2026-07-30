@@ -1,7 +1,7 @@
 /**
  * Whose data may be written — the client mirror of the engine's version freeze.
  *
- * `apps/web/src/` imports zero engine modules (types are hand-mirrored through
+ * `app/src/` imports zero engine modules (types are hand-mirrored through
  * `rpc/contract.ts`), so this duplicates `packages/engine/src/domain/versioning.ts`
  * on purpose. Keep the two in step: the server is authoritative and answers
  * `VersionFrozen` on a mismatch, so drift shows up as a UI that offers an edit the
