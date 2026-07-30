@@ -25,7 +25,6 @@ export type LayoutKind =
   | "circle"
   | "concentric"
   | "radial"
-  | "elk-radial"
   | "elk-mrtree"
   | "grid"
 
@@ -62,7 +61,6 @@ export const LAYOUT_GROUPS: ReadonlyArray<{
       { kind: "circle", name: "Circle" },
       { kind: "concentric", name: "Concentric by degree" },
       { kind: "radial", name: "Radial tree" },
-      { kind: "elk-radial", name: "Radial (ELK)" },
     ],
   },
   {
@@ -266,7 +264,7 @@ function layoutForce(input: LayoutInput): Positions {
   return new Map(simNodes.map((n) => [n.id, center(n.x ?? 0, n.y ?? 0, w, h)]))
 }
 
-/** ELK algorithms (layered / stress / radial / mrtree) via the bundled build.
+/** ELK algorithms (layered / stress / mrtree) via the bundled build.
  *  Imported lazily — ELK is ~1.3MB and only needed once an ELK layout is picked. */
 async function layoutElk(input: LayoutInput, algorithm: string): Promise<Positions> {
   const { w, h } = sizeOf(input)
@@ -310,8 +308,6 @@ export function computeLayout(kind: LayoutKind, input: LayoutInput): Promise<Pos
       return layoutElk(input, "layered")
     case "elk-stress":
       return layoutElk(input, "stress")
-    case "elk-radial":
-      return layoutElk(input, "radial")
     case "elk-mrtree":
       return layoutElk(input, "mrtree")
   }
