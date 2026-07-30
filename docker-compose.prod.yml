@@ -1,0 +1,66 @@
+# Production / self-host stack. Spin up a new project with:
+#
+#   cp .env.production.example .env.production   # then fill it in
+#   docker compose -f docker-compose.prod.yml run --rm app migrate
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# `migrate` is a separate one-shot command by design — see docker-entrypoint.sh.
+#
+# Differs from the dev docker-compose.yml in three ways that matter on a public
+# host: Postgres is bound to loopback (dev publishes 0.0.0.0:5544), the password
+# comes from the environment instead of being hardcoded, and the app's blob
+# storage is on a named volume.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-kingsmaker}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      POSTGRES_DB: ${POSTGRES_DB:-kingsmaker}
+    # Loopback only. Publishing 5432/5544 on a public IP exposes the database.
+    # Drop this block entirely if nothing outside the compose network needs it —
+    # `app` reaches Postgres over the internal network regardless.
+    ports:
+      - "127.0.0.1:5544:5432"
+    volumes:
+      - kingsmaker_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-kingsmaker} -d ${POSTGRES_DB:-kingsmaker}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  app:
+    image: ${KINGSMAKER_IMAGE:-ghcr.io/debuglebowski/kingsmaker:latest}
+    restart: unless-stopped
+    env_file: .env.production
+    environment:
+      # Overrides whatever .env.production says: inside the compose network the
+      # host is the service name, not localhost.
+      DATABASE_URL: postgresql://${POSTGRES_USER:-kingsmaker}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-kingsmaker}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      # Loopback: terminate TLS in a reverse proxy on the host (see Caddyfile).
+      - "127.0.0.1:3100:3100"
+    volumes:
+      # Uploaded files live ONLY here — pg_dump does not capture them. Back this
+      # up alongside the database, or switch to BLOB_DRIVER=s3.
+      - kingsmaker_blobs:/data
+    # The server installs its own graceful-shutdown sequence with a 10s internal
+    # deadline; give Docker more than that before SIGKILL.
+    stop_grace_period: 20s
+    healthcheck:
+      test: ["CMD", "bun", "-e", "process.exit(await fetch('http://127.0.0.1:3100/api/health').then(r => r.ok ? 0 : 1).catch(() => 1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  kingsmaker_pgdata:
+  kingsmaker_blobs:

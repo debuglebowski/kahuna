@@ -1,0 +1,19 @@
+# Keep the build context small and never ship local state or secrets.
+node_modules
+**/node_modules
+dist
+**/dist
+build
+.git
+.env
+*.local
+*.log
+.blobstore
+snapshots
+screenshots
+coverage
+.vite
+*.tsbuildinfo
+.claude
+.agents
+docs

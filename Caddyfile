@@ -1,0 +1,40 @@
+# Reverse proxy for the self-host stack. Caddy handles TLS automatically.
+#
+#   caddy run --config Caddyfile
+#
+# Replace the hostname and email. Point DNS at the host first, or the ACME
+# challenge fails.
+
+{
+	email admin@example.com
+}
+
+kingsmaker.example.com {
+	# 25MB is the engine's MAX_UPLOAD_BYTES; a tighter proxy limit turns a valid
+	# upload into an opaque 413 that never reaches the engine's own check, so
+	# leave headroom for multipart overhead.
+	request_body {
+		max_size 30MB
+	}
+
+	reverse_proxy 127.0.0.1:3100 {
+		# BetterAuth's rate limiting is SILENTLY INERT without a client IP — it
+		# logs "Rate limiting skipped: could not determine client IP address"
+		# once at startup and then never throttles. Verified: 12 rapid failed
+		# sign-ins all returned 401 with no client IP, versus 429 after 3 once
+		# X-Forwarded-For was present. Since sign-up is open by default, this
+		# header is what stands between the deploy and unlimited password
+		# guessing. Caddy sets X-Forwarded-For by default; stated explicitly
+		# because removing it silently disables throttling.
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Real-IP {remote_host}
+
+		# The live-sync SSE stream (/api/stream) heartbeats every 25s and the
+		# server's own idleTimeout is 60s. Caddy streams responses and has no
+		# default response timeout, so this works untouched — but do NOT add
+		# flush_interval 0 or a read timeout below ~60s here.
+		#
+		# nginx instead of Caddy needs: proxy_buffering off, proxy_cache off,
+		# proxy_read_timeout 120s. Without them live sync reconnects in a loop.
+	}
+}

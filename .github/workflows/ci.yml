@@ -1,0 +1,183 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: typecheck + lint + test
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: kingsmaker
+          POSTGRES_PASSWORD: kingsmaker
+          POSTGRES_DB: kingsmaker
+        ports:
+          - 5544:5432
+        options: >-
+          --health-cmd "pg_isready -U kingsmaker -d kingsmaker"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      # The suites create/drop their own test databases off this connection.
+      DATABASE_URL: postgresql://kingsmaker:kingsmaker@localhost:5544/kingsmaker
+      TEST_DATABASE_URL: postgresql://kingsmaker:kingsmaker@localhost:5544/kingsmaker_test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.6
+
+      - run: bun install --frozen-lockfile
+
+      - run: bun run typecheck
+
+      - run: bun run check
+
+      # Includes migrate-fresh.test.ts, which drives the real `drizzle-kit
+      # migrate` deploy path against empty scratch databases. The rest of the
+      # suite applies migrations itself and so cannot catch ledger regressions.
+      - run: bun run test
+
+  image:
+    name: build + verify image
+    runs-on: ubuntu-latest
+    needs: check
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        # Skipped on PRs from forks, which have no package-write token.
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,format=long
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      # Build and load locally first so the smoke test runs against the exact
+      # image that gets pushed.
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: kingsmaker:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # A pushed image that can't migrate an empty database or serve a request is
+      # worse than no image: `docker compose run app migrate` is the one step a
+      # new deploy cannot skip, and drizzle-kit has exited 0 having applied
+      # nothing before. Verify both before publishing.
+      - name: Smoke test — migrate an empty DB, then serve
+        run: |
+          set -euo pipefail
+          docker network create ci-net
+          docker run -d --name ci-pg --network ci-net \
+            -e POSTGRES_USER=kingsmaker -e POSTGRES_PASSWORD=ci \
+            -e POSTGRES_DB=kingsmaker postgres:16-alpine
+          for _ in $(seq 1 40); do
+            docker exec ci-pg pg_isready -U kingsmaker -d kingsmaker && break
+            sleep 2
+          done
+
+          DB="postgresql://kingsmaker:ci@ci-pg:5432/kingsmaker"
+
+          echo "::group::migrate"
+          docker run --rm --network ci-net -e DATABASE_URL="$DB" kingsmaker:ci migrate
+          echo "::endgroup::"
+
+          # Assert against the database, not the migrate exit code: the ledger
+          # bug this guards against exited 0 while applying nothing.
+          engine=$(docker exec ci-pg psql -U kingsmaker -d kingsmaker -tAc \
+            "select count(*) from drizzle.__drizzle_migrations_engine")
+          auth=$(docker exec ci-pg psql -U kingsmaker -d kingsmaker -tAc \
+            "select count(*) from drizzle.__drizzle_migrations_auth")
+          bauth=$(docker exec ci-pg psql -U kingsmaker -d kingsmaker -tAc \
+            "select count(*) from information_schema.tables where table_schema='public' and table_name='bauth_user'")
+          engine_expected=$(jq '.entries | length' packages/db/migrations/meta/_journal.json)
+          auth_expected=$(jq '.entries | length' apps/web/server/migrations/meta/_journal.json)
+          echo "engine=$engine/$engine_expected auth=$auth/$auth_expected bauth_user=$bauth"
+          test "$engine" = "$engine_expected"
+          test "$auth" = "$auth_expected"
+          test "$bauth" = "1"
+
+          docker run -d --name ci-app --network ci-net -p 3100:3100 \
+            -e DATABASE_URL="$DB" \
+            -e BETTER_AUTH_SECRET=ci-secret-not-for-real-use-000000 \
+            -e BETTER_AUTH_URL=http://localhost:3100 \
+            kingsmaker:ci
+
+          # -s without -S: connection-refused retries while the server boots are
+          # expected, so don't print them. The `if` keeps `set -e` from aborting.
+          for _ in $(seq 1 30); do
+            if curl -fs http://localhost:3100/api/health 2>/dev/null | grep -q '"ok":true'; then
+              ok=1; break
+            fi
+            sleep 2
+          done
+          if [ "${ok:-0}" != "1" ]; then
+            echo "health check never went green"; docker logs ci-app; exit 1
+          fi
+
+          # The SPA must be present and its hashed asset resolvable — a missing
+          # `vite build` or a mis-copied dist would still pass /api/health.
+          curl -fsS http://localhost:3100/ -o /tmp/index.html
+          asset=$(grep -oE '/assets/index-[A-Za-z0-9_-]+\.js' /tmp/index.html | head -1)
+          test -n "$asset"
+          curl -fsS "http://localhost:3100$asset" -o /dev/null
+
+          # Sign-up exercises BetterAuth against the auth tables that the ledger
+          # bug used to omit entirely.
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+            http://localhost:3100/api/auth/sign-up/email \
+            -H 'Content-Type: application/json' \
+            -H 'Origin: http://localhost:3100' \
+            -d '{"email":"ci@test.dev","password":"password12345","name":"CI"}')
+          test "$code" = "200"
+
+          echo "smoke test passed"
+
+      - name: Tear down smoke-test containers
+        if: always()
+        run: |
+          docker rm -f ci-app ci-pg 2>/dev/null || true
+          docker network rm ci-net 2>/dev/null || true
+
+      - name: Push image
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
