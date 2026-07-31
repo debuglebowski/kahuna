@@ -249,6 +249,10 @@ export const decayTone = (band?: string): Tone =>
 export const momentumTone = (label?: string): Tone =>
   label === "heating" ? "green" : label === "cooling" ? "red" : "gray"
 
+/** Badge tone for an org membership role. */
+export const roleTone = (role: string): Tone =>
+  role === "owner" ? "blue" : role === "admin" ? "amber" : "gray"
+
 /** Parse a #rgb / #rrggbb hex into [r,g,b] (0-255), or null if unparseable. */
 function parseHex(hex: string): [number, number, number] | null {
   const m = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(hex.trim())

@@ -6,7 +6,7 @@ import { useNavigate, useParams } from "react-router-dom"
 import { EventRows } from "@/components/dashboard/ActivityWidget"
 import { isOverdue } from "@/components/item/DueDateControl"
 import { Dot } from "@/components/item/StatusSelect"
-import { Badge, Card, Spinner } from "@/components/ui"
+import { Badge, Card, roleTone, Spinner } from "@/components/ui"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { api, type Task } from "@/lib/api"
 import {
@@ -20,8 +20,6 @@ import { memberLabel, useMembers } from "@/lib/members"
 import { recordHref } from "@/lib/recordHref"
 import { isSnoozed } from "@/lib/taskGroups"
 import { initialsOf } from "@/lib/utils"
-
-const roleTone = (role: string) => (role === "owner" ? "blue" : role === "admin" ? "amber" : "gray")
 
 /** How many of the member's open tasks / authored events the page shows. */
 const TASK_LIMIT = 5

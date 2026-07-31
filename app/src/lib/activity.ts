@@ -53,6 +53,19 @@ export const eventLabel = (eventType: string): string =>
  *  event-type filter options. */
 export const KNOWN_EVENT_TYPES: ReadonlyArray<string> = Object.keys(LABELS)
 
+/**
+ * Title-case an event type for display: "InstanceCreated" → "Instance created".
+ *
+ * The blunt sibling of `eventLabel` above: that one renders a *phrase* from the
+ * curated `LABELS` map ("created this item"), this one just splits the camel
+ * case. Used where the raw type is the label — the widget's filter list and the
+ * dashboard timeline rows.
+ */
+export const humanizeEventType = (t: string): string => {
+  const spaced = t.replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1).toLowerCase()
+}
+
 // ── payload-derived metadata ────────────────────────────────────────────────
 
 /** Id → display-name lookups the feed wires in from whatever reference data it

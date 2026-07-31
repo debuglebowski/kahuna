@@ -1,16 +1,12 @@
 import { useQuery } from "@tanstack/react-query"
+import { Area, AreaChart, Bar, BarChart, Legend, Tooltip } from "recharts"
 import {
-  Area,
-  AreaChart,
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Legend,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts"
+  CHART_MARGIN,
+  ChartAxes,
+  ChartFrame,
+  ChartGrid,
+  DeltaHeader,
+} from "@/components/dashboard/chartChrome"
 import {
   AnalyticsQueryError,
   type AnalyticsSeries,
@@ -18,7 +14,6 @@ import {
   type DashboardWidget,
   type Instance,
 } from "@/lib/api"
-import { cn } from "@/lib/utils"
 
 type Analytics = Extract<DashboardWidget, { type: "analytics" }>
 
@@ -164,8 +159,6 @@ export function AnalyticsWidget({
   if (total === 0) return <p className="text-sm text-muted-foreground">No data in this window.</p>
 
   const delta = q.data?.delta ?? null
-  const pctChange =
-    delta && delta.prior > 0 ? Math.round(((delta.cur - delta.prior) / delta.prior) * 100) : null
 
   if (chart === "table")
     return (
@@ -201,14 +194,9 @@ export function AnalyticsWidget({
     )
 
   const multi = series.length > 1
-  const margin = { top: 8, right: 8, bottom: 0, left: -16 }
-  const grid = <CartesianGrid strokeDasharray="3 3" className="stroke-border" vertical={false} />
-  const axes = (
-    <>
-      <XAxis dataKey="bucket" tick={{ fontSize: 10 }} minTickGap={24} />
-      <YAxis allowDecimals={false} tick={{ fontSize: 10 }} width={28} />
-    </>
-  )
+  const margin = CHART_MARGIN
+  const grid = <ChartGrid />
+  const axes = <ChartAxes />
 
   const body =
     chart === "bars" ? (
@@ -250,33 +238,10 @@ export function AnalyticsWidget({
     )
 
   return (
-    <div className="flex h-full w-full flex-col text-xs">
-      {delta && (
-        <div className="flex shrink-0 items-baseline gap-2 pb-1">
-          <span
-            className={cn(
-              "text-sm font-semibold tabular-nums",
-              pctChange == null
-                ? "text-muted-foreground"
-                : pctChange >= 0
-                  ? "text-success"
-                  : "text-destructive",
-            )}
-          >
-            {pctChange == null
-              ? delta.cur > 0
-                ? "new"
-                : "—"
-              : `${pctChange >= 0 ? "+" : ""}${pctChange}%`}
-          </span>
-          <span className="text-muted-foreground">vs prior {widget.since}</span>
-        </div>
-      )}
-      <div className="min-h-0 flex-1">
-        <ResponsiveContainer width="100%" height="100%">
-          {body}
-        </ResponsiveContainer>
-      </div>
-    </div>
+    <ChartFrame
+      header={delta && <DeltaHeader cur={delta.cur} prior={delta.prior} since={widget.since} />}
+    >
+      {body}
+    </ChartFrame>
   )
 }

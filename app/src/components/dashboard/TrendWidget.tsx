@@ -1,18 +1,14 @@
 import { useQuery } from "@tanstack/react-query"
 import { useMemo } from "react"
+import { Area, AreaChart, Bar, BarChart, Tooltip } from "recharts"
 import {
-  Area,
-  AreaChart,
-  Bar,
-  BarChart,
-  CartesianGrid,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts"
+  CHART_MARGIN,
+  ChartAxes,
+  ChartFrame,
+  ChartGrid,
+  DeltaHeader,
+} from "@/components/dashboard/chartChrome"
 import { api, type DashboardWidget } from "@/lib/api"
-import { cn } from "@/lib/utils"
 import { sinceDays, timeBucket } from "@/lib/widgetAggregations"
 
 type Trend = Extract<DashboardWidget, { type: "trend" }>
@@ -62,23 +58,18 @@ export function TrendWidget({ widget }: { widget: Trend }) {
   const total = data.reduce((s, p) => s + p.count, 0)
   if (total === 0 && !delta) return <p className="text-sm text-muted-foreground">No activity.</p>
 
-  const pctChange =
-    delta && delta.prev > 0 ? Math.round(((delta.cur - delta.prev) / delta.prev) * 100) : null
-
   const chart =
     widget.chart === "bars" ? (
-      <BarChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: -16 }}>
-        <CartesianGrid strokeDasharray="3 3" className="stroke-border" vertical={false} />
-        <XAxis dataKey="bucket" tick={{ fontSize: 10 }} minTickGap={24} />
-        <YAxis allowDecimals={false} tick={{ fontSize: 10 }} width={28} />
+      <BarChart data={data} margin={CHART_MARGIN}>
+        <ChartGrid />
+        <ChartAxes />
         <Tooltip />
         <Bar dataKey="count" fill="#6366f1" radius={[2, 2, 0, 0]} />
       </BarChart>
     ) : (
-      <AreaChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: -16 }}>
-        <CartesianGrid strokeDasharray="3 3" className="stroke-border" vertical={false} />
-        <XAxis dataKey="bucket" tick={{ fontSize: 10 }} minTickGap={24} />
-        <YAxis allowDecimals={false} tick={{ fontSize: 10 }} width={28} />
+      <AreaChart data={data} margin={CHART_MARGIN}>
+        <ChartGrid />
+        <ChartAxes />
         <Tooltip />
         <Area
           type="monotone"
@@ -93,33 +84,10 @@ export function TrendWidget({ widget }: { widget: Trend }) {
     )
 
   return (
-    <div className="flex h-full w-full flex-col text-xs">
-      {delta && (
-        <div className="flex shrink-0 items-baseline gap-2 pb-1">
-          <span
-            className={cn(
-              "text-sm font-semibold tabular-nums",
-              pctChange == null
-                ? "text-muted-foreground"
-                : pctChange >= 0
-                  ? "text-success"
-                  : "text-destructive",
-            )}
-          >
-            {pctChange == null
-              ? delta.cur > 0
-                ? "new"
-                : "—"
-              : `${pctChange >= 0 ? "+" : ""}${pctChange}%`}
-          </span>
-          <span className="text-muted-foreground">vs prior {widget.since}</span>
-        </div>
-      )}
-      <div className="min-h-0 flex-1">
-        <ResponsiveContainer width="100%" height="100%">
-          {chart}
-        </ResponsiveContainer>
-      </div>
-    </div>
+    <ChartFrame
+      header={delta && <DeltaHeader cur={delta.cur} prior={delta.prev} since={widget.since} />}
+    >
+      {chart}
+    </ChartFrame>
   )
 }

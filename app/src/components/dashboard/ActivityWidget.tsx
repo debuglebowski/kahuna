@@ -3,19 +3,19 @@ import { useQuery } from "@tanstack/react-query"
 import { useNavigate } from "react-router-dom"
 import { useFields } from "@/components/ConditionList"
 import { MemberAvatar, memberLabel, type OrgMember } from "@/components/item/AssigneePicker"
-import { type ActivityResolvers, eventLabel, eventSnippet, relativeTime } from "@/lib/activity"
+import {
+  type ActivityResolvers,
+  eventLabel,
+  eventSnippet,
+  humanizeEventType,
+  relativeTime,
+} from "@/lib/activity"
 import { api, type DashboardWidget, type FeedItem } from "@/lib/api"
 import { taskStatusesCollection } from "@/lib/collections"
 import { recordHref } from "@/lib/recordHref"
 import { useFullOrg } from "@/pages/settings/SettingsLayout"
 
 type Activity = Extract<DashboardWidget, { type: "activity" }>
-
-/** "InstanceCreated" → "Instance created". */
-const humanize = (t: string): string => {
-  const spaced = t.replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-  return spaced.charAt(0).toUpperCase() + spaced.slice(1).toLowerCase()
-}
 
 /** Compact "5m / 3h / 2d / date" relative time. */
 const relTime = (d: Date | string): string => {
@@ -47,7 +47,7 @@ export function EventRows({ events }: { events: readonly FeedItem[] }) {
               onClick={() => toInstance && navigate(recordHref(e.subjectId))}
               className="truncate text-left text-foreground enabled:hover:underline disabled:cursor-default"
             >
-              {humanize(e.eventType)}
+              {humanizeEventType(e.eventType)}
             </button>
             <span className="shrink-0 text-xs text-muted-foreground">{relTime(e.occurredAt)}</span>
           </li>

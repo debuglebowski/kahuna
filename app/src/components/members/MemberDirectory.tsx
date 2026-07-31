@@ -10,6 +10,7 @@ import {
   Field,
   Input,
   Modal,
+  roleTone,
   Spinner,
   ToggleChip,
   Toolbar,
@@ -41,8 +42,6 @@ import {
 import { initialsOf } from "@/lib/utils"
 import { Feedback } from "@/pages/settings/parts"
 import { isAdminRole } from "@/pages/settings/SettingsLayout"
-
-const roleTone = (role: string) => (role === "owner" ? "blue" : role === "admin" ? "amber" : "gray")
 
 export type MemberField = "role" | "email" | "joined"
 export type MemberSort = "name" | "role" | "joined"

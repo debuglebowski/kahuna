@@ -12,7 +12,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
-import { KNOWN_EVENT_TYPES } from "@/lib/activity"
+import { humanizeEventType, KNOWN_EVENT_TYPES } from "@/lib/activity"
 import {
   type AnalyticsMetric,
   type AnalyticsProvider,
@@ -36,12 +36,6 @@ import { CalendarSourcesEditor } from "./CalendarSourcesEditor"
 import { InspectorSection } from "./InspectorSection"
 import { ShortcutItemsEditor } from "./ShortcutItemsEditor"
 import { VariantPicker } from "./VariantPicker"
-
-/** "InstanceCreated" → "Instance created" (the event-type filter options). */
-const humanizeType = (t: string): string => {
-  const spaced = t.replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-  return spaced.charAt(0).toUpperCase() + spaced.slice(1).toLowerCase()
-}
 
 /** Widget types whose filter block renders (attention's conditions are optional
  *  — a fresh widget lacks the key, so a plain `in` check would hide it). */
@@ -1096,7 +1090,7 @@ export function WidgetEditor({
             </FieldRow>
             <FieldRow label="Event types (optional)">
               <MultiCombobox
-                options={KNOWN_EVENT_TYPES.map((t) => ({ id: t, label: humanizeType(t) }))}
+                options={KNOWN_EVENT_TYPES.map((t) => ({ id: t, label: humanizeEventType(t) }))}
                 selectedIds={widget.eventTypes ?? []}
                 onChange={(ids) => patch({ eventTypes: ids })}
                 placeholder="All events"
