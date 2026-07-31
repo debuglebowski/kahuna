@@ -772,7 +772,8 @@ export function DashboardEditor({
   })
 
   const addWidgetOfType = (type: DashboardWidget["type"]) => {
-    const node = newWidget(type)
+    // On a record dashboard the open record is the obvious subject — see newWidget.
+    const node = newWidget(type, recordMode)
     patchBody((b) => insertNode(b, targetParent, node))
     setEditingId(node.id)
     setGalleryOpen(false)

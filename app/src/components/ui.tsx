@@ -475,21 +475,57 @@ export function ErrorScreen({
  * A centered modal dialog. Mount it to open; it calls `onClose` on Escape,
  * backdrop click, or the close button. Built on the shadcn {@link Dialog}
  * (Radix), so focus trapping and layered Escape handling come for free.
+ *
+ * `size` widens it for content that needs the room — `wide` for a file or image
+ * preview, which fills 90% of the viewport in both axes: a page scan or a
+ * spreadsheet is only legible at something near full size. Forms stay at the
+ * default; don't reach for `wide` to fit more fields.
+ *
+ * `actions` sits in the title row, left of the close button — for controls that act
+ * on what's being shown (download, open elsewhere) rather than on a form. A form's
+ * submit still belongs at the bottom, next to what it's confirming.
  */
 export function Modal({
   title,
   onClose,
+  size = "default",
+  actions,
   children,
 }: {
   title: ReactNode
   onClose: () => void
+  size?: "default" | "wide"
+  /** Header controls, placed before the close button. */
+  actions?: ReactNode
   children: ReactNode
 }) {
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent aria-describedby={undefined} className="max-h-[85vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>{title}</DialogTitle>
+      <DialogContent
+        aria-describedby={undefined}
+        className={
+          size === "wide"
+            ? // A fixed 90vw × 90vh frame, with the body scrolling inside it. `h`
+              // (not just `max-h`) so the pane has a definite height to fill —
+              // sized by content, a small image collapses the frame to a sliver.
+              // No overflow here: nesting a scroll inside another leaves the image
+              // scrollable while the frame stays put.
+              "flex h-[90vh] w-[90vw] max-w-none flex-col gap-3 sm:max-w-none"
+            : "max-h-[85vh] overflow-y-auto"
+        }
+      >
+        <DialogHeader
+          className={
+            // The close button is positioned absolutely at top-4 right-4, so the row
+            // has to keep clear of it — hence the right padding, and more of it when
+            // actions share the row.
+            actions ? "flex-row items-center gap-3 pr-9" : undefined
+          }
+        >
+          {/* min-w-0 so a long filename truncates instead of shoving the actions
+              under the close button. */}
+          <DialogTitle className={actions ? "min-w-0 flex-1" : undefined}>{title}</DialogTitle>
+          {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
         </DialogHeader>
         {children}
       </DialogContent>

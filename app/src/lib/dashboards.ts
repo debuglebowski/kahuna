@@ -423,8 +423,16 @@ export const newTabs = (): NormGroup => ({
   children: [],
 })
 
-/** A blank widget of the given type — fills its slot; the editor sets concept/config. */
-export const newWidget = (type: DashboardWidget["type"]): NormWidget => {
+/**
+ * A blank widget of the given type — fills its slot; the editor sets concept/config.
+ *
+ * `recordMode` = being added to a RECORD dashboard, where the open record is the
+ * obvious subject. It only changes defaults that would otherwise land useless
+ * there: a Files widget defaulting to whole-org scope browses every file in the
+ * org and offers no upload, so "add Files to a record view" produced a tile with
+ * no drop target at all.
+ */
+export const newWidget = (type: DashboardWidget["type"], recordMode = false): NormWidget => {
   const base = { id: crypto.randomUUID(), title: null, w: { ...NEW }, h: { ...NEW } } as const
   const scoped = { ...base, conceptId: null } as const
   switch (type) {
@@ -482,7 +490,18 @@ export const newWidget = (type: DashboardWidget["type"]): NormWidget => {
         startField: "",
       } as NormWidget
     case "files":
-      return { ...scoped, type: "files", scope: "org" } as NormWidget
+      // On a record dashboard: this record's files, uploadable. `instanceId` stays
+      // null — WidgetCanvas fills it from the open record, so one template serves
+      // every record of the concept.
+      return recordMode
+        ? ({
+            ...scoped,
+            type: "files",
+            scope: "instance",
+            instanceId: null,
+            allowUpload: true,
+          } as NormWidget)
+        : ({ ...scoped, type: "files", scope: "org" } as NormWidget)
     case "document":
       return { ...scoped, type: "document", instanceId: null, fieldId: null } as NormWidget
     // Record-scoped widgets carry no config — the current record is supplied by

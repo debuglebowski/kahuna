@@ -282,7 +282,7 @@ function renderWidget(w: NormWidget, ctx: RenderCtx) {
       // to show one concept's record must mean the same thing on a page dashboard
       // and inside somebody else's record dashboard.
       if (w.scope === "instance" && w.bindToConceptRecord)
-        return <ConceptRecordFilesWidget widget={w} />
+        return <ConceptRecordFilesWidget widget={w} interactive={ctx.readOnly} />
       // On a record dashboard an instance-scoped Files widget binds to the current
       // record when no explicit instance is set.
       return (
@@ -292,6 +292,16 @@ function renderWidget(w: NormWidget, ctx: RenderCtx) {
               ? { ...w, instanceId: ctx.record.instance.id }
               : w
           }
+          // Same contract as `document` below: the drop zone always renders so the
+          // editor and the live page look alike, but uploads only work where the
+          // canvas takes pointer input (live page + Preview, not while arranging).
+          interactive={ctx.readOnly}
+          // A wide-scope widget (whole org / a concept) has no single owner of its
+          // own, so it used to be browse-only — but on a RECORD dashboard there is
+          // an obvious place for a dropped file to go: this record. Files land on
+          // it and then show up in the list like any other. Already the lineage id
+          // (files hang off `itemId`), so no extra round-trip.
+          recordItemId={ctx.record?.instance.itemId}
         />
       )
     case "document":

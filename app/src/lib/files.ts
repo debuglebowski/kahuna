@@ -8,6 +8,16 @@ import type { Attachment } from "./api"
 
 export type FileKind = "image" | "pdf" | "doc" | "other"
 
+/**
+ * May this viewer archive/restore/delete this file? Uploader-or-admin, mirroring
+ * the server's own gate (`assertCanMutateAttachment`) so the UI offers exactly
+ * what the API will allow — a button that 403s is worse than no button.
+ */
+export const canMutateFile = (
+  file: Pick<Attachment, "createdBy">,
+  viewer: { userId: string | undefined; admin: boolean },
+): boolean => viewer.admin || (!!viewer.userId && file.createdBy === viewer.userId)
+
 const DOC_MIME =
   /^(text\/|application\/(msword|vnd\.openxmlformats|vnd\.ms-|vnd\.oasis\.opendocument|rtf|json|csv))/
 const DOC_EXT = /\.(docx?|xlsx?|pptx?|odt|ods|odp|txt|md|csv|json|rtf)$/i
@@ -39,6 +49,51 @@ export const formatBytes = (n: number | null): string => {
 
 export type FileSort = "newest" | "name" | "size"
 export type FileTypeFilter = "all" | "image" | "doc" | "pdf" | "other"
+
+/**
+ * Where a dropped file goes, for a Files widget in a given place — the one rule
+ * behind whether a drop zone appears at all. Pure, because it decides a surface a
+ * person is looking for and got wrong twice; a React-internal condition can't be
+ * pinned by a test.
+ *
+ * - Own bucket / one record → that is the owner.
+ * - A wide scope (whole org, a concept) owns nothing, BUT on a record page the open
+ *   record is an unambiguous destination, so it takes the drop and the file
+ *   attaches there ("widened"). Off a record page it stays browse-only.
+ * - `allowUpload: false` is honoured everywhere; absent means yes. It used to be
+ *   opt-in, which shipped upload surfaces that silently refused uploads.
+ */
+export type UploadTarget =
+  /** The widget's own bucket — usable as-is. */
+  | { kind: "bucket"; bucketId: string; shared: boolean }
+  /** The open record, because the widget's scope owns nothing of its own. The
+   *  copy has to name the destination: "uploads to the org" is meaningless. */
+  | { kind: "record"; itemId: string }
+  /** A pinned record — needs the id → item-lineage hop before uploading. */
+  | { kind: "instance"; instanceId: string }
+  /** Browse only: nowhere for a file to go. */
+  | null
+
+export const uploadTarget = (
+  widget: {
+    scope: "instance" | "concept" | "org" | "widget"
+    instanceId?: string | null
+    bucketId?: string | null
+    bucketShared?: boolean
+    allowUpload?: boolean
+  },
+  /** The open record's item lineage, when rendering on a record dashboard. */
+  recordItemId?: string,
+): UploadTarget => {
+  if (widget.allowUpload === false) return null
+  if (widget.scope === "widget")
+    return widget.bucketId
+      ? { kind: "bucket", bucketId: widget.bucketId, shared: widget.bucketShared !== false }
+      : null
+  if (widget.scope === "instance")
+    return widget.instanceId ? { kind: "instance", instanceId: widget.instanceId } : null
+  return recordItemId ? { kind: "record", itemId: recordItemId } : null
+}
 
 /** Apply the widget's display knobs: type filter → sort → limit. */
 export const arrangeFiles = (

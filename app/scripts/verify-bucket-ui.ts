@@ -404,7 +404,7 @@ const runtime = ManagedRuntime.make(
   Layer.scoped(ApiClient, makeClient).pipe(Layer.provide(ProtocolLive)),
 )
 const dashboards = (await runtime.runPromise(
-  Effect.flatMap(ApiClient, (c) => c.listDashboards({})) as Effect.Effect<
+  Effect.flatMap(ApiClient, (c) => c.listDashboards()) as unknown as Effect.Effect<
     ReadonlyArray<{ id: string; body: unknown }>,
     unknown,
     never
@@ -432,7 +432,23 @@ ok(
 )
 
 // ── upload through the widget's drop zone (the real <input type=file>) ──
-console.log("step: upload a PDF into the widget")
+// The zone only exists where the canvas takes pointer input, so this runs in
+// Preview, not on the arranging canvas: while arranging, the widget deliberately
+// renders an inert placeholder instead of a zone that would swallow the click.
+console.log("step: upload a PDF into the widget (via Preview)")
+const inPreview = await evaljs(`(() => {
+  const press = ${POINTER}
+  const b = [...document.querySelectorAll("button")]
+    .find((e) => (e.getAttribute("aria-label") ?? "") === "Preview")
+  if (!b) return false
+  press(b); return true
+})()`)
+ok("Preview toggle found", inPreview === true)
+await until("preview drop zone", 15000, async () =>
+  (await text()).includes("Drop files or click to upload"),
+).catch(async () => {
+  console.log("  page in preview:", (await text()).slice(0, 500).replace(/\n/g, " | "))
+})
 const uploaded = await evaljs(`(async () => {
   const input = document.querySelector('input[type=file]')
   if (!input) return "no file input — drop zone missing"
@@ -453,13 +469,66 @@ await until("file listed in the widget", 20000, async () =>
 ok("uploaded file is listed by its own widget", (await text()).includes("handbook.pdf"))
 drain("upload")
 
+// ── can a REAL drag even reach the zone? ──
+// Dispatching a DragEvent straight at the button skips hit-testing, so it proves
+// the handler works *if* an event arrives — not that one ever does. A real OS drag
+// is routed by coordinates, so ask the page what actually sits at the zone's
+// centre. `pointer-events: none` anywhere up the tree makes the zone unreachable
+// no matter how correct its handlers are.
+console.log("step: can a real drag reach the drop zone?")
+const HIT_TEST = `(() => {
+  const zone = [...document.querySelectorAll("button")]
+    .find((b) => (b.textContent ?? "").includes("Drop files or click to upload"))
+  if (!zone) return JSON.stringify({ found: false })
+  const r = zone.getBoundingClientRect()
+  const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)
+  // Walk up from the zone looking for the computed style that would block a drag.
+  let blocker = null
+  for (let el = zone; el && el !== document.documentElement; el = el.parentElement) {
+    if (getComputedStyle(el).pointerEvents === "none") {
+      blocker = el.tagName.toLowerCase() + "." + String(el.className).slice(0, 60)
+      break
+    }
+  }
+  return JSON.stringify({
+    found: true,
+    reachable: !!hit && (zone === hit || zone.contains(hit)),
+    hit: hit ? hit.tagName.toLowerCase() + "." + String(hit.className).slice(0, 60) : null,
+    blocker,
+  })
+})()`
+type Hit = { found: boolean; reachable?: boolean; hit?: string | null; blocker?: string | null }
+// Still in Preview from the upload above — the surface where the zone is supposed
+// to be live. (scripts/verify-drop-reach.ts covers all four surfaces, including
+// that the ARRANGING canvas deliberately shows no zone at all.)
+const previewHit = JSON.parse(String(await evaljs(HIT_TEST))) as Hit
+ok("drop zone is present in Preview", previewHit.found === true, JSON.stringify(previewHit))
+ok(
+  "a real drag can reach the drop zone in Preview",
+  previewHit.reachable === true,
+  previewHit.blocker
+    ? `blocked by pointer-events:none on ${previewHit.blocker}`
+    : `hit=${previewHit.hit}`,
+)
+drain("drag-reach")
+// Back to arranging for the privacy toggle + delete prompt below, which live in
+// the inspector rather than on the canvas.
+await evaljs(`(() => {
+  const press = ${POINTER}
+  const b = [...document.querySelectorAll("button")]
+    .find((e) => (e.getAttribute("aria-label") ?? "") === "Exit preview")
+  if (!b) return false
+  press(b); return true
+})()`)
+await sleep(600)
+
 // ── privacy: turning the toggle off must hide the ALREADY-uploaded file org-wide ──
 // (the flag is stamped per row at upload, so the save has to re-stamp the bucket)
 console.log("step: make the bucket private, check org scope")
 const bucket = filesNode?.bucketId ?? ""
 const orgHasIt = async () => {
   const ids = (await runtime.runPromise(
-    Effect.flatMap(ApiClient, (c) => c.listFiles({})) as Effect.Effect<
+    Effect.flatMap(ApiClient, (c) => c.listFiles({})) as unknown as Effect.Effect<
       ReadonlyArray<{ id: string; filename: string }>,
       unknown,
       never
@@ -488,21 +557,24 @@ drain("privacy")
 console.log("step: delete the widget")
 const removed = await clickText("Remove widget", "button")
 ok("remove-widget control found", removed)
-await until("files prompt", 15000, async () =>
-  (await text()).includes("Delete the file too?"),
-).catch(async () => {
+// The title pluralizes on the file count, so match either wording rather than
+// pinning one and breaking the moment the count changes.
+const asksAboutFiles = (t: string) =>
+  t.includes("Delete the file too?") || t.includes("Delete these files too?")
+await until("files prompt", 15000, async () => asksAboutFiles(await text())).catch(async () => {
   failures++
   console.log("FAIL  delete prompts about the widget's files")
   console.log("  page after remove:", (await text()).slice(0, 800).replace(/\n/g, " | "))
 })
 const promptText = await text()
-ok("delete asks about the widget's own files", promptText.includes("Delete the file too?"))
+ok("delete asks about the widget's own files", asksAboutFiles(promptText))
 ok(
   "prompt says a private bucket's files would be left unreachable",
   promptText.includes("nothing will show them any more"),
   promptText.includes("reachable from") ? "showed the SHARED wording instead" : "",
 )
 ok("prompt offers keeping them", promptText.includes("Keep files"))
+// Confirm label is "Delete file"/"Delete files" by count — the prefix covers both.
 ok("prompt offers deleting them", promptText.includes("Delete file"))
 // Choose delete — the bucket must actually be purged.
 await clickText("Delete file", "button")

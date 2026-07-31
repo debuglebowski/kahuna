@@ -249,6 +249,40 @@ describe("DashboardWidget union completeness (hand-sync guard)", () => {
 // The Files widget's own file store: a `widget`-scope widget carries a `bucketId`
 // that must survive the codec and every body-level operation, since losing it
 // strands the uploads (nothing else records the bucket).
+// A Files widget added to a RECORD dashboard has to default to the open record,
+// uploadable. Defaulting to whole-org scope (the page-dashboard default) yields a
+// browse-only tile with no drop target at all — it renders "no files" and silently
+// ignores every drag, which is what shipped on record views before.
+describe("Files widget defaults by dashboard kind", () => {
+  it("record mode: this record's files, uploadable, record supplied by context", () => {
+    const w = newWidget("files", true) as {
+      scope: string
+      instanceId: string | null
+      allowUpload: boolean
+    }
+    expect(w.scope).toBe("instance")
+    expect(w.allowUpload).toBe(true)
+    // Null on purpose: WidgetCanvas fills it from the open record, so one template
+    // serves every record of the concept.
+    expect(w.instanceId).toBeNull()
+  })
+
+  it("page mode: whole-org browse, unchanged", () => {
+    const w = newWidget("files") as { scope: string; allowUpload?: boolean }
+    expect(w.scope).toBe("org")
+    expect(w.allowUpload).toBeUndefined()
+  })
+
+  it("record-mode default survives the codec", () => {
+    const body = { direction: "col" as const, children: [newWidget("files", true)] }
+    const decoded = Schema.decodeUnknownSync(DashboardBody)(body)
+    expect(decoded.children?.[0]).toMatchObject({
+      scope: "instance",
+      allowUpload: true,
+    })
+  })
+})
+
 describe("Files widget bucket (widget scope)", () => {
   const filesWidget = (over: Record<string, unknown> = {}) => ({
     ...newWidget("files"),

@@ -1,7 +1,7 @@
 import { useLiveQuery } from "@tanstack/react-db"
 import { useState } from "react"
 import { filesBySubject, KEY, useRegisterCollection } from "../../lib/collections"
-import { FileDropZone, FileList } from "../files/FileList"
+import { FileDropSurface, FileDropZone, FileList } from "../files/FileList"
 import type { OrgMember } from "./AssigneePicker"
 
 /** Files for an item (subjectId = item lineage id). Any member may upload; the
@@ -30,28 +30,32 @@ export function FilesPanel({
   const files = showArchived ? all : all.filter((f) => !f.archivedAt)
   const archivedCount = all.filter((f) => f.archivedAt).length
 
+  // The whole panel takes a file drop, not just the dashed strip — dropping onto
+  // the file list below it is the same intent. The strip stays as the visible
+  // affordance and the click-to-browse target.
+  // Files first, upload chrome last — same order as the dashboard widget, so the
+  // two Files surfaces don't disagree about where the drop zone lives.
   return (
-    <div>
-      <div className="p-4">
-        <FileDropZone owner={{ itemId: subjectId }} onUploaded={refetch} />
-      </div>
+    <FileDropSurface owner={{ itemId: subjectId }} onUploaded={refetch}>
+      <FileList
+        files={files}
+        byUser={byUser}
+        canMutate={(f) => isAdmin || (!!myUserId && f.createdBy === myUserId)}
+        onChanged={refetch}
+      />
       {archivedCount > 0 && (
         <button
           type="button"
           onClick={() => setShowArchived((s) => !s)}
-          className="px-4 pb-1 text-xs text-muted-foreground hover:text-foreground"
+          className="px-4 py-1.5 text-xs text-muted-foreground hover:text-foreground"
         >
           {showArchived ? "Hide" : "Show"} {archivedCount} archived
         </button>
       )}
-      <div className="border-t border-border">
-        <FileList
-          files={files}
-          byUser={byUser}
-          canMutate={(f) => isAdmin || (!!myUserId && f.createdBy === myUserId)}
-          onChanged={refetch}
-        />
+      {/* No rule above it — the zone's dashed outline is separation enough. */}
+      <div className="p-4">
+        <FileDropZone owner={{ itemId: subjectId }} onUploaded={refetch} />
       </div>
-    </div>
+    </FileDropSurface>
   )
 }
