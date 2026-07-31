@@ -34,7 +34,7 @@ BLOB_DIR="${BLOB_LOCAL_DIR:-./.blobstore}"
 case "$BLOB_DIR" in
   /*) ;;                                  # already absolute
   # A relative BLOB_LOCAL_DIR is resolved by the SERVER against its own CWD, and
-  # the server runs from app (`bun run serve`/`dev` are filtered scripts) —
+  # the server runs from app (`bun run serve`/`dev` both `cd app` first) —
   # so `./.blobstore` means app/.blobstore, not the repo root. Resolving it
   # against $ROOT here silently snapshotted the wrong (nearly empty) directory.
   *) BLOB_DIR="$ROOT/app/${BLOB_DIR#./}" ;;

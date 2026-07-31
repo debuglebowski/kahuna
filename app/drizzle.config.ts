@@ -26,9 +26,9 @@ import { defineConfig } from "drizzle-kit"
  * drizzle-kit resolves `schema` and `out` against `process.cwd()`, not against
  * this file, so the paths below are relative and the CWD matters. Absolute paths
  * are not an option: `migrate` accepts them, but `generate` prepends "./" and
- * then fails with `ENOENT .//Users/...` when reading the snapshot. The npm
- * scripts (`bun run db:generate`) set CWD to app,
- * which is why they are the supported entry point.
+ * then fails with `ENOENT .//Users/...` when reading the snapshot. The root
+ * scripts (`bun run db:generate`) `cd app` first, which is why they are the
+ * supported entry point.
  *
  * Guard below: if `out` resolved to somewhere without a journal, drizzle-kit
  * would silently treat the folder as empty and "apply" nothing — so assert the

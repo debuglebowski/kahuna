@@ -1,3 +1,4 @@
+import "../env" // Load repo-root .env before the engine reads DATABASE_URL.
 import { runEngineOrThrow } from "../runtime"
 import { seedKingsmaker } from "./seed"
 

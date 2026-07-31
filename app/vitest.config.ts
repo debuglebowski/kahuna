@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs"
 import path from "node:path"
 import { defineConfig } from "vitest/config"
 
-// Load repo-root .env (vitest workers don't inherit bun's --filter env).
+// Load repo-root .env (vitest runs with CWD=app, which has no .env of its own).
 const envPath = path.resolve(import.meta.dirname, "../.env")
 if (existsSync(envPath)) {
   for (const line of readFileSync(envPath, "utf8").split("\n")) {

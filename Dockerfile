@@ -9,18 +9,24 @@
 # Three stages. `build` does a full install and runs Vite. `prod-deps` does a
 # separate --production install, because a full node_modules is ~580MB and most
 # of it is build/lint tooling the runtime never loads (biome alone is 95MB across
-# two platform binaries, plus typescript and rolldown). `drizzle-kit` is the one
-# devDependency the runtime genuinely needs — it's the migrate entrypoint — so it
-# gets copied back in explicitly.
+# two platform binaries, plus typescript and rolldown).
+#
+# `drizzle-kit` is a runtime `dependency`, not a devDependency: it IS the migrate
+# entrypoint. It used to be a devDependency copied back in by hand from Bun's
+# isolated store, which worked only because the workspace layout nested
+# drizzle-kit's own esbuild/tsx inside the store entry. With one manifest the
+# install is flat, those deps hoist to siblings, and copying the package alone
+# fails at runtime with `Cannot find module 'esbuild'`. Declaring it costs ~40MB
+# in the runtime image and buys a migrate path that cannot silently reach for the
+# network.
 
 # ---- deps + build ----------------------------------------------------------
 FROM oven/bun:1.3.6-alpine AS build
 
 WORKDIR /srv/kingsmaker
 
-# Manifests first so `bun install` caches independently of source edits.
+# Manifest first so `bun install` caches independently of source edits.
 COPY package.json bun.lock ./
-COPY app/package.json ./app/
 
 RUN bun install --frozen-lockfile
 
@@ -28,7 +34,7 @@ COPY tsconfig.base.json tsconfig.json biome.json ./
 COPY app ./app
 
 # Emits app/dist, which server/index.ts resolves as `../dist`.
-RUN bun run --filter @kingsmaker/app build
+RUN bun run build
 
 # ---- production dependencies ----------------------------------------------
 FROM oven/bun:1.3.6-alpine AS prod-deps
@@ -36,7 +42,6 @@ FROM oven/bun:1.3.6-alpine AS prod-deps
 WORKDIR /srv/kingsmaker
 
 COPY package.json bun.lock ./
-COPY app/package.json ./app/
 
 RUN bun install --frozen-lockfile --production
 
@@ -57,34 +62,21 @@ ENV NODE_ENV=production \
 RUN apk add --no-cache tini
 
 COPY --from=prod-deps /srv/kingsmaker/node_modules ./node_modules
-# drizzle-kit is a devDependency but `migrate` needs it. Bun's isolated layout
-# keeps the real package in node_modules/.bun and symlinks to it per workspace,
-# so copy the store entry (self-contained, ~10MB — it bundles its own
-# esbuild/tsx) and re-create the links below.
-COPY --from=build /srv/kingsmaker/node_modules/.bun/drizzle-kit@0.31.10 ./node_modules/.bun/drizzle-kit@0.31.10
+# The root manifest carries the `imports` map (#engine, #db) that every server
+# module resolves through, so it is required at runtime, not just at build time.
 COPY --from=build /srv/kingsmaker/package.json /srv/kingsmaker/bun.lock ./
 COPY --from=build /srv/kingsmaker/tsconfig.base.json /srv/kingsmaker/tsconfig.json ./
-
-COPY --from=prod-deps /srv/kingsmaker/app/node_modules ./app/node_modules
-COPY --from=build /srv/kingsmaker/app/package.json ./app/
 COPY --from=build /srv/kingsmaker/app/tsconfig.json ./app/
 COPY --from=build /srv/kingsmaker/app/drizzle.config.ts ./app/
 
-# Re-create the drizzle-kit links the --production install omitted, pointing at
-# the store entry copied above. app is the only workspace now.
-#
-# The `.bin` entry matters as much as the package link: without a local .bin,
-# `bunx drizzle-kit` silently falls back to DOWNLOADING drizzle-kit at runtime
-# (and then fails on a drizzle-orm version mismatch). A migrate command must
-# never depend on network access, so both are created explicitly and asserted.
+# `bunx drizzle-kit` resolves upward from app/ into the root node_modules/.bin.
+# Assert it rather than trust it: with no local binary, bunx silently falls back
+# to DOWNLOADING drizzle-kit at runtime (and then fails on a drizzle-orm version
+# mismatch). A migrate command must never depend on network access.
 RUN set -eux; \
-    mkdir -p app/node_modules/.bin; \
-    ln -sfn ../../node_modules/.bun/drizzle-kit@0.31.10/node_modules/drizzle-kit \
-      app/node_modules/drizzle-kit; \
-    ln -sfn ../../../node_modules/.bun/drizzle-kit@0.31.10/node_modules/.bin/drizzle-kit \
-      app/node_modules/.bin/drizzle-kit; \
-    test -e app/node_modules/drizzle-kit/package.json; \
-    test -x app/node_modules/.bin/drizzle-kit
+    test -x node_modules/.bin/drizzle-kit; \
+    test -e node_modules/drizzle-kit/package.json; \
+    test -e node_modules/esbuild/package.json
 
 # `engine/` is the domain core (TS source, imported as `#engine`); `db/` holds the
 # drizzle schema AND the migrations that `migrate` applies; `rpc/` holds the RPC
