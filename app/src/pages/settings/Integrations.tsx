@@ -20,12 +20,104 @@ import {
 } from "./integrationLogos"
 import { Feedback } from "./parts"
 
-const connectUrl = () => {
-  const u = new URL("/api/integrations/google/connect", window.location.origin)
-  // Absolute origin so the post-OAuth bounce returns to the origin the user
-  // started from (e.g. the Vite dev server), not the API server's :3100.
+/**
+ * An OAuth connect URL carrying a `returnTo`. Absolute origin so the post-OAuth
+ * bounce returns to the origin the user started from (e.g. the Vite dev server),
+ * not the API server's :3100.
+ */
+const connectUrl = (path: string) => {
+  const u = new URL(path, window.location.origin)
   u.searchParams.set("returnTo", `${window.location.origin}/settings/integrations`)
   return u.pathname + u.search
+}
+
+/**
+ * A connected card's header actions: Sync (when the connector has one) and
+ * Disconnect. Identical in every card that has it — google, posthog, linear and
+ * slack shared it verbatim; apollo and clay have no sync, so they omit `onSync`.
+ */
+function ConnectedActions({
+  onSync,
+  syncing,
+  onDisconnect,
+  disconnecting,
+  extra,
+}: {
+  onSync?: () => void
+  syncing?: boolean
+  onDisconnect: () => void
+  disconnecting: boolean
+  /** Slack's per-user disconnect sits alongside the org one. */
+  extra?: ReactNode
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      {extra}
+      {onSync && (
+        <Button type="button" variant="outline" onClick={onSync} disabled={syncing}>
+          <RefreshCw size={15} />
+          {syncing ? "Syncing..." : "Sync"}
+        </Button>
+      )}
+      <Button type="button" variant="outline" onClick={onDisconnect} disabled={disconnecting}>
+        <Unplug size={15} />
+        Disconnect
+      </Button>
+    </div>
+  )
+}
+
+/** A not-yet-connected card's header actions: the data disclosure + Connect. */
+function ConnectAction({
+  name,
+  dataImported,
+  onConnect,
+}: {
+  name: string
+  dataImported: ReactNode
+  onConnect: () => void
+}) {
+  return (
+    <div className="flex items-center gap-1">
+      <DataImportInfo name={name}>{dataImported}</DataImportInfo>
+      <Button type="button" onClick={onConnect}>
+        <PlugZap size={15} />
+        Connect
+      </Button>
+    </div>
+  )
+}
+
+/**
+ * A connect form's footer: the error line, Cancel, and the submit button.
+ * Identical in all four key/URL-based cards apart from the submit predicate
+ * (posthog/linear/apollo gate on their API key, clay on its webhook URL).
+ */
+function ConnectFormFooter({
+  error,
+  onCancel,
+  pending,
+  disabled,
+}: {
+  error?: unknown
+  onCancel: () => void
+  pending: boolean
+  disabled: boolean
+}) {
+  return (
+    <div className="flex items-center gap-3">
+      <Feedback error={error} />
+      <div className="ml-auto flex items-center gap-2">
+        <Button type="button" variant="outline" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button type="submit" disabled={pending || disabled}>
+          <PlugZap size={15} />
+          {pending ? "Connecting..." : "Connect"}
+        </Button>
+      </div>
+    </div>
+  )
 }
 
 /** Collapsible "Required permissions" disclosure shown on a connect form / card. */
@@ -194,7 +286,25 @@ const INTEGRATION_INFO = {
   },
 } satisfies Record<string, { name: string; permissions: ReactNode; dataImported: ReactNode }>
 
+/**
+ * The integrations page: one card per connector, each owning its own query and
+ * failing in isolation. Google used to live inline here, which meant a failed
+ * `googleStatus` early-returned and took all six cards down with it.
+ */
 export function Integrations() {
+  return (
+    <div className="space-y-5">
+      <GoogleCard />
+      <PosthogCard />
+      <LinearCard />
+      <SlackCard />
+      <ApolloCard />
+      <ClayCard />
+    </div>
+  )
+}
+
+function GoogleCard() {
   const qc = useQueryClient()
   const status = useQuery({ queryKey: ["googleStatus"], queryFn: api.getGoogleStatus })
   const disconnect = useMutation({
@@ -214,115 +324,67 @@ export function Integrations() {
   const connected = data.connected
 
   return (
-    <div className="space-y-5">
-      <Card className={!configured ? "opacity-60" : undefined}>
-        <CardHeader
-          className={!configured ? "min-h-16 border-b-0" : undefined}
-          title={
-            <span className="flex items-center gap-2">
-              <GoogleLogo />
-              Google
-              {configured && (
-                <Badge tone={connected ? "green" : "gray"}>
-                  {connected ? "Connected" : "Not connected"}
-                </Badge>
+    <IntegrationCard
+      name="Google"
+      icon={<GoogleLogo />}
+      configured={configured}
+      connected={connected}
+      disabledHint="Google is not configured on this server. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to enable it."
+      action={
+        connected ? (
+          <ConnectedActions
+            onSync={() => sync.mutate()}
+            syncing={sync.isPending}
+            onDisconnect={() => disconnect.mutate()}
+            disconnecting={disconnect.isPending}
+          />
+        ) : (
+          <ConnectAction
+            name={INTEGRATION_INFO.google.name}
+            dataImported={INTEGRATION_INFO.google.dataImported}
+            onConnect={() => {
+              window.location.href = connectUrl("/api/integrations/google/connect")
+            }}
+          />
+        )
+      }
+    >
+      {connected ? (
+        <div className="space-y-4 p-6">
+          {(data.email || data.lastSyncAt) && (
+            <div className="flex flex-wrap items-center gap-2">
+              {data.email && <span className="text-sm text-muted-foreground">{data.email}</span>}
+              {data.lastSyncAt && (
+                <span className="text-sm text-muted-foreground">
+                  Synced {new Date(data.lastSyncAt).toLocaleString()}
+                </span>
               )}
-            </span>
-          }
-          action={
-            !configured ? (
-              <span title="Google is not configured on this server. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to enable it.">
-                <Badge tone="gray">Disabled</Badge>
-              </span>
-            ) : connected ? (
-              <div className="flex items-center gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => sync.mutate()}
-                  disabled={sync.isPending}
-                >
-                  <RefreshCw size={15} />
-                  {sync.isPending ? "Syncing..." : "Sync"}
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => disconnect.mutate()}
-                  disabled={disconnect.isPending}
-                >
-                  <Unplug size={15} />
-                  Disconnect
-                </Button>
-              </div>
-            ) : (
-              <div className="flex items-center gap-1">
-                <DataImportInfo name="Google">
-                  {INTEGRATION_INFO.google.dataImported}
-                </DataImportInfo>
-                <Button type="button" onClick={() => (window.location.href = connectUrl())}>
-                  Connect
-                </Button>
-              </div>
-            )
-          }
-        />
-        {connected ? (
-          <div className="space-y-4 p-6">
-            {(data.email || data.lastSyncAt) && (
-              <div className="flex flex-wrap items-center gap-2">
-                {data.email && <span className="text-sm text-muted-foreground">{data.email}</span>}
-                {data.lastSyncAt && (
-                  <span className="text-sm text-muted-foreground">
-                    Synced {new Date(data.lastSyncAt).toLocaleString()}
-                  </span>
-                )}
-              </div>
-            )}
-            <div className="grid gap-2 text-sm text-muted-foreground sm:grid-cols-2">
-              <div>
-                Calendar watch:{" "}
-                {data.calendarWatchExpiresAt
-                  ? new Date(data.calendarWatchExpiresAt).toLocaleString()
-                  : "not active"}
-              </div>
-              <div>
-                Gmail watch:{" "}
-                {data.gmailWatchExpiresAt
-                  ? new Date(data.gmailWatchExpiresAt).toLocaleString()
-                  : "not active"}
-              </div>
             </div>
-            {data.lastError && <p className="text-sm text-destructive">{data.lastError}</p>}
-            <Feedback error={disconnect.error ?? sync.error} />
+          )}
+          <div className="grid gap-2 text-sm text-muted-foreground sm:grid-cols-2">
+            <div>
+              Calendar watch:{" "}
+              {data.calendarWatchExpiresAt
+                ? new Date(data.calendarWatchExpiresAt).toLocaleString()
+                : "not active"}
+            </div>
+            <div>
+              Gmail watch:{" "}
+              {data.gmailWatchExpiresAt
+                ? new Date(data.gmailWatchExpiresAt).toLocaleString()
+                : "not active"}
+            </div>
           </div>
-        ) : configured ? (
-          <div className="p-6">
-            <RequiredPermissions>{INTEGRATION_INFO.google.permissions}</RequiredPermissions>
-          </div>
-        ) : null}
-      </Card>
-      <PosthogCard />
-      <LinearCard />
-      <SlackCard />
-      <ApolloCard />
-      <ClayCard />
-    </div>
+          {data.lastError && <p className="text-sm text-destructive">{data.lastError}</p>}
+          <Feedback error={disconnect.error ?? sync.error} />
+        </div>
+      ) : (
+        <div className="p-6">
+          <RequiredPermissions>{INTEGRATION_INFO.google.permissions}</RequiredPermissions>
+        </div>
+      )}
+    </IntegrationCard>
   )
-}
-
-/** Absolute-origin connect URL so the post-OAuth bounce returns to this origin. */
-const slackConnectUrl = () => {
-  const u = new URL("/api/integrations/slack/connect", window.location.origin)
-  u.searchParams.set("returnTo", `${window.location.origin}/settings/integrations`)
-  return u.pathname + u.search
-}
-
-/** Per-user (xoxp) connect URL — grants a user token layered on the org bot. */
-const slackUserConnectUrl = () => {
-  const u = new URL("/api/integrations/slack/user/connect", window.location.origin)
-  u.searchParams.set("returnTo", `${window.location.origin}/settings/integrations`)
-  return u.pathname + u.search
 }
 
 /**
@@ -433,34 +495,18 @@ function PosthogCard() {
       connected={connected}
       action={
         connected ? (
-          <div className="flex items-center gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => sync.mutate()}
-              disabled={sync.isPending}
-            >
-              <RefreshCw size={15} />
-              {sync.isPending ? "Syncing..." : "Sync"}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => disconnect.mutate()}
-              disabled={disconnect.isPending}
-            >
-              <Unplug size={15} />
-              Disconnect
-            </Button>
-          </div>
+          <ConnectedActions
+            onSync={() => sync.mutate()}
+            syncing={sync.isPending}
+            onDisconnect={() => disconnect.mutate()}
+            disconnecting={disconnect.isPending}
+          />
         ) : connecting ? undefined : (
-          <div className="flex items-center gap-1">
-            <DataImportInfo name={detail.name}>{detail.dataImported}</DataImportInfo>
-            <Button type="button" onClick={() => setConnecting(true)}>
-              <PlugZap size={15} />
-              Connect
-            </Button>
-          </div>
+          <ConnectAction
+            name={detail.name}
+            dataImported={detail.dataImported}
+            onConnect={() => setConnecting(true)}
+          />
         )
       }
     >
@@ -543,18 +589,12 @@ function PosthogCard() {
               />
             </Field>
           )}
-          <div className="flex items-center gap-3">
-            <Feedback error={connect.error} />
-            <div className="ml-auto flex items-center gap-2">
-              <Button type="button" variant="outline" onClick={() => setConnecting(false)}>
-                Cancel
-              </Button>
-              <Button type="submit" disabled={connect.isPending || !apiKey.trim()}>
-                <PlugZap size={15} />
-                {connect.isPending ? "Connecting..." : "Connect"}
-              </Button>
-            </div>
-          </div>
+          <ConnectFormFooter
+            error={connect.error}
+            onCancel={() => setConnecting(false)}
+            pending={connect.isPending}
+            disabled={!apiKey.trim()}
+          />
         </form>
       )}
     </IntegrationCard>
@@ -605,34 +645,18 @@ function LinearCard() {
       connected={connected}
       action={
         connected ? (
-          <div className="flex items-center gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => sync.mutate()}
-              disabled={sync.isPending}
-            >
-              <RefreshCw size={15} />
-              {sync.isPending ? "Syncing..." : "Sync"}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => disconnect.mutate()}
-              disabled={disconnect.isPending}
-            >
-              <Unplug size={15} />
-              Disconnect
-            </Button>
-          </div>
+          <ConnectedActions
+            onSync={() => sync.mutate()}
+            syncing={sync.isPending}
+            onDisconnect={() => disconnect.mutate()}
+            disconnecting={disconnect.isPending}
+          />
         ) : connecting ? undefined : (
-          <div className="flex items-center gap-1">
-            <DataImportInfo name={detail.name}>{detail.dataImported}</DataImportInfo>
-            <Button type="button" onClick={() => setConnecting(true)}>
-              <PlugZap size={15} />
-              Connect
-            </Button>
-          </div>
+          <ConnectAction
+            name={detail.name}
+            dataImported={detail.dataImported}
+            onConnect={() => setConnecting(true)}
+          />
         )
       }
     >
@@ -688,18 +712,12 @@ function LinearCard() {
               autoComplete="off"
             />
           </Field>
-          <div className="flex items-center gap-3">
-            <Feedback error={connect.error} />
-            <div className="ml-auto flex items-center gap-2">
-              <Button type="button" variant="outline" onClick={() => setConnecting(false)}>
-                Cancel
-              </Button>
-              <Button type="submit" disabled={connect.isPending || !apiKey.trim()}>
-                <PlugZap size={15} />
-                {connect.isPending ? "Connecting..." : "Connect"}
-              </Button>
-            </div>
-          </div>
+          <ConnectFormFooter
+            error={connect.error}
+            onCancel={() => setConnecting(false)}
+            pending={connect.isPending}
+            disabled={!apiKey.trim()}
+          />
         </form>
       )}
     </IntegrationCard>
@@ -739,30 +757,19 @@ function SlackCard() {
       disabledHint="Slack is not configured on this server. Set SLACK_CLIENT_ID, SLACK_CLIENT_SECRET and SLACK_SIGNING_SECRET to enable it."
       action={
         connected ? (
-          <div className="flex items-center gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => sync.mutate()}
-              disabled={sync.isPending}
-            >
-              <RefreshCw size={15} />
-              {sync.isPending ? "Syncing..." : "Sync"}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => disconnect.mutate()}
-              disabled={disconnect.isPending}
-            >
-              <Unplug size={15} />
-              Disconnect
-            </Button>
-          </div>
+          <ConnectedActions
+            onSync={() => sync.mutate()}
+            syncing={sync.isPending}
+            onDisconnect={() => disconnect.mutate()}
+            disconnecting={disconnect.isPending}
+          />
         ) : (
           <div className="flex items-center gap-1">
             <DataImportInfo name="Slack">{INTEGRATION_INFO.slack.dataImported}</DataImportInfo>
-            <Button type="button" onClick={() => (window.location.href = slackConnectUrl())}>
+            <Button
+              type="button"
+              onClick={() => (window.location.href = connectUrl("/api/integrations/slack/connect"))}
+            >
               <PlugZap size={15} />
               Connect
             </Button>
@@ -818,7 +825,9 @@ function SlackCard() {
                   type="button"
                   variant="outline"
                   size="sm"
-                  onClick={() => (window.location.href = slackUserConnectUrl())}
+                  onClick={() =>
+                    (window.location.href = connectUrl("/api/integrations/slack/user/connect"))
+                  }
                 >
                   <PlugZap size={14} />
                   Connect my account
@@ -879,23 +888,16 @@ function ApolloCard() {
       connected={connected}
       action={
         connected ? (
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => disconnect.mutate()}
-            disabled={disconnect.isPending}
-          >
-            <Unplug size={15} />
-            Disconnect
-          </Button>
+          <ConnectedActions
+            onDisconnect={() => disconnect.mutate()}
+            disconnecting={disconnect.isPending}
+          />
         ) : connecting ? undefined : (
-          <div className="flex items-center gap-1">
-            <DataImportInfo name={detail.name}>{detail.dataImported}</DataImportInfo>
-            <Button type="button" onClick={() => setConnecting(true)}>
-              <PlugZap size={15} />
-              Connect
-            </Button>
-          </div>
+          <ConnectAction
+            name={detail.name}
+            dataImported={detail.dataImported}
+            onConnect={() => setConnecting(true)}
+          />
         )
       }
     >
@@ -934,18 +936,12 @@ function ApolloCard() {
               autoComplete="off"
             />
           </Field>
-          <div className="flex items-center gap-3">
-            <Feedback error={connect.error} />
-            <div className="ml-auto flex items-center gap-2">
-              <Button type="button" variant="outline" onClick={() => setConnecting(false)}>
-                Cancel
-              </Button>
-              <Button type="submit" disabled={connect.isPending || !apiKey.trim()}>
-                <PlugZap size={15} />
-                {connect.isPending ? "Connecting..." : "Connect"}
-              </Button>
-            </div>
-          </div>
+          <ConnectFormFooter
+            error={connect.error}
+            onCancel={() => setConnecting(false)}
+            pending={connect.isPending}
+            disabled={!apiKey.trim()}
+          />
         </form>
       )}
     </IntegrationCard>
@@ -1001,23 +997,16 @@ function ClayCard() {
       connected={connected}
       action={
         connected ? (
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => disconnect.mutate()}
-            disabled={disconnect.isPending}
-          >
-            <Unplug size={15} />
-            Disconnect
-          </Button>
+          <ConnectedActions
+            onDisconnect={() => disconnect.mutate()}
+            disconnecting={disconnect.isPending}
+          />
         ) : connecting ? undefined : (
-          <div className="flex items-center gap-1">
-            <DataImportInfo name={detail.name}>{detail.dataImported}</DataImportInfo>
-            <Button type="button" onClick={() => setConnecting(true)}>
-              <PlugZap size={15} />
-              Connect
-            </Button>
-          </div>
+          <ConnectAction
+            name={detail.name}
+            dataImported={detail.dataImported}
+            onConnect={() => setConnecting(true)}
+          />
         )
       }
     >
@@ -1076,18 +1065,12 @@ function ClayCard() {
             both the URL and key are stored encrypted. After connecting, paste the callback URL
             shown here into Clay's result action.
           </p>
-          <div className="flex items-center gap-3">
-            <Feedback error={connect.error} />
-            <div className="ml-auto flex items-center gap-2">
-              <Button type="button" variant="outline" onClick={() => setConnecting(false)}>
-                Cancel
-              </Button>
-              <Button type="submit" disabled={connect.isPending || !tableWebhookUrl.trim()}>
-                <PlugZap size={15} />
-                {connect.isPending ? "Connecting..." : "Connect"}
-              </Button>
-            </div>
-          </div>
+          <ConnectFormFooter
+            error={connect.error}
+            onCancel={() => setConnecting(false)}
+            pending={connect.isPending}
+            disabled={!tableWebhookUrl.trim()}
+          />
         </form>
       )}
     </IntegrationCard>
