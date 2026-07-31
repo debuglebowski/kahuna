@@ -67,7 +67,9 @@ import {
   Lock,
   type LucideIcon,
   Mail,
-  Map,
+  // Aliased: the bare name shadows the global `Map`. The registry KEY below
+  // stays "Map" — it is the persisted icon ref (`lucide:Map`).
+  Map as MapIcon,
   MapPin,
   Medal,
   Megaphone,
@@ -195,7 +197,7 @@ export const ICONS: Record<string, LucideIcon> = {
   Link,
   Globe,
   MapPin,
-  Map,
+  Map: MapIcon,
   Compass,
   Rocket,
   Zap,

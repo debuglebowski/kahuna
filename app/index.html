@@ -7,11 +7,12 @@
     <!-- Apply the saved theme before first paint to avoid a light flash.
          Mirrors src/lib/theme.ts (same key + system fallback). -->
     <script>
+      var t = null
       try {
-        var t = localStorage.getItem("km.theme")
-        if (t === "dark" || (t !== "light" && matchMedia("(prefers-color-scheme: dark)").matches))
-          document.documentElement.classList.add("dark")
+        t = localStorage.getItem("km.theme")
       } catch (_) {}
+      if (t === "dark" || (t !== "light" && matchMedia("(prefers-color-scheme: dark)").matches))
+        document.documentElement.classList.add("dark")
     </script>
   </head>
   <body>

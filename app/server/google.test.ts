@@ -1,13 +1,8 @@
 import { randomUUID } from "node:crypto"
 import { and, eq } from "drizzle-orm"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
+import { googleCalendarEvent, googleCalendarSync, googleConnection, googleOAuthState } from "#db"
 import { auth } from "./auth"
-import {
-  googleCalendarEvent,
-  googleCalendarSync,
-  googleConnection,
-  googleOAuthState,
-} from "#db"
 import { db, pool } from "./db"
 import {
   decryptToken,

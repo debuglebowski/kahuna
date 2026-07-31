@@ -1,11 +1,6 @@
 import { createHash, randomUUID } from "node:crypto"
 import { and, eq } from "drizzle-orm"
-import {
-  posthogAuditLog,
-  posthogConnection,
-  posthogPersonMetric,
-  posthogWebhookEvent,
-} from "#db"
+import { posthogAuditLog, posthogConnection, posthogPersonMetric, posthogWebhookEvent } from "#db"
 import { db, pool } from "./db"
 import { decryptToken, encryptToken } from "./integrations/crypto"
 import { resolveOrg } from "./session"

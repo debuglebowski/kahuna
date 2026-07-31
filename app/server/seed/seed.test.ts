@@ -1,12 +1,7 @@
 import { randomUUID } from "node:crypto"
-import {
-  ConceptService,
-  type EngineServices,
-  FieldService,
-  type OrgContext,
-} from "#engine"
 import { Effect } from "effect"
 import { describe, expect, it } from "vitest"
+import { ConceptService, type EngineServices, FieldService, type OrgContext } from "#engine"
 import { runEngineOrThrow } from "../runtime"
 import { seedKingsmaker } from "./seed"
 

@@ -195,7 +195,9 @@ await evaljs(`
   true
 `)
 await until("app shell after signup", 25000, () =>
-  evaljs(`document.body.innerText.includes("Intro Lab") && !!document.querySelector("nav, aside, [class*=sidebar]")`),
+  evaljs(
+    `document.body.innerText.includes("Intro Lab") && !!document.querySelector("nav, aside, [class*=sidebar]")`,
+  ),
 ).catch(async () => {
   // fall back: maybe just the lab heading without sidebar selector
   await until("lab heading", 10000, () =>
@@ -285,7 +287,9 @@ for (let i = 0; i < PLAYS.length; i++) {
       `window.__probe ? JSON.stringify(window.__probe.events.filter(e => !e.mark || e.mark.includes("${p.key}"))) : "GONE"`,
     )
     clean = probe !== "GONE"
-    console.log(`  ${p.key}: ${clean ? `clean play; probe: ${probe}` : "page reloaded mid-play — retrying"}`)
+    console.log(
+      `  ${p.key}: ${clean ? `clean play; probe: ${probe}` : "page reloaded mid-play — retrying"}`,
+    )
   }
   if (!clean) console.log(`  ${p.key}: WARNING — no clean play in 4 attempts, frames untrusted`)
   report[p.key] = drainConsole(p.key)
@@ -326,8 +330,16 @@ console.log("step: esc-skip test on monolith")
 consoleBuf = []
 await clickPlay(2, "esc-skip")
 await sleep(1000)
-await send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 }, sessionId)
-await send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 }, sessionId)
+await send(
+  "Input.dispatchKeyEvent",
+  { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 },
+  sessionId,
+)
+await send(
+  "Input.dispatchKeyEvent",
+  { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 },
+  sessionId,
+)
 await until("skip overlay gone", 5000, overlayGone)
 console.log("  esc skip: ok")
 report.skip = drainConsole("esc-skip")

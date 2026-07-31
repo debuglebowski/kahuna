@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto"
 import { eq } from "drizzle-orm"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
+import { apolloConnection } from "#db"
 import {
   apolloRequest,
   apolloStatus,
@@ -11,7 +12,6 @@ import {
   setApolloFetchForTest,
 } from "./apollo"
 import { auth } from "./auth"
-import { apolloConnection } from "#db"
 import { db } from "./db"
 import { decryptToken, encryptToken } from "./integrations/crypto"
 import { runEngineOrThrow } from "./runtime"

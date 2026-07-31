@@ -1,6 +1,6 @@
 import "./env" // Load repo-root .env before the engine reads DATABASE_URL.
-import { healthCheck, PgLive } from "#engine"
 import { Effect } from "effect"
+import { healthCheck, PgLive } from "#engine"
 
 /**
  * Standalone DB health probe (Phase 0 acceptance check).

@@ -1,5 +1,5 @@
-import type { EventEnvelope } from "#engine"
 import { describe, expect, it } from "vitest"
+import type { EventEnvelope } from "#engine"
 import { dispatch, subscribe } from "./stream"
 
 const env = (org: string, id: number): EventEnvelope => ({

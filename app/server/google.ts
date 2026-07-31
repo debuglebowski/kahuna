@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto"
-import type { OrgScope } from "#engine"
 import { and, eq } from "drizzle-orm"
 import {
   googleAuditLog,
@@ -12,6 +11,7 @@ import {
   googleNotification,
   googleOAuthState,
 } from "#db"
+import type { OrgScope } from "#engine"
 import { db, pool } from "./db"
 import { decryptToken, encryptToken } from "./integrations/crypto"
 import {
@@ -224,7 +224,7 @@ async function accessTokenFor(connectionId: string): Promise<string> {
     .from(googleConnection)
     .where(eq(googleConnection.id, connectionId))
     .limit(1)
-  if (!row || row.status !== "connected") throw new Error("Google connection not connected")
+  if (row?.status !== "connected") throw new Error("Google connection not connected")
   const expiresAt = row.accessTokenExpiresAt?.getTime() ?? 0
   if (!row.accessToken || expiresAt < Date.now() + 60_000) return refreshAccessToken(row)
   const token = decryptToken(row.accessToken)
@@ -448,7 +448,7 @@ export async function syncGoogleConnection(connectionId: string) {
     .from(googleConnection)
     .where(eq(googleConnection.id, connectionId))
     .limit(1)
-  if (!connection || connection.status !== "connected") return
+  if (connection?.status !== "connected") return
   if (hasScope(connection.scopes, GOOGLE_SCOPES.calendarEvents)) await syncCalendar(connection.id)
   if (hasScope(connection.scopes, GOOGLE_SCOPES.gmailMetadata)) await syncGmail(connection.id)
   await db

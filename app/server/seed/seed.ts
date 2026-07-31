@@ -1,3 +1,4 @@
+import { Effect } from "effect"
 import {
   ConceptService,
   DashboardService,
@@ -5,7 +6,6 @@ import {
   TaskPriorityService,
   TaskStatusService,
 } from "#engine"
-import { Effect } from "effect"
 import { conceptDashboardSeed } from "../use-cases"
 import {
   type ConceptSpec,

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
+import { posthogConnection } from "#db"
 import {
   buildCustomQuery,
   buildPosthogQuery,
@@ -9,7 +10,6 @@ import {
   rowsToSeries,
 } from "./analytics"
 import { auth } from "./auth"
-import { posthogConnection } from "#db"
 import { db } from "./db"
 import { encryptToken } from "./integrations/crypto"
 import { setPosthogFetchForTest } from "./posthog"
