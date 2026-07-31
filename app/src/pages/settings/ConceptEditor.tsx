@@ -48,7 +48,6 @@ import {
   Badge,
   Button,
   Card,
-  CardHeader,
   ColorSwatchPicker,
   ConfirmDialog,
   IconButton,
@@ -75,6 +74,7 @@ import { useUnsavedGuard } from "../../lib/useUnsavedGuard"
 import { showValue } from "../../lib/utils"
 import { InstanceForm } from "../InstanceForm"
 import { FieldForm, type FieldFormValue, fieldKindLabel } from "./FieldForm"
+import { DangerZone } from "./parts"
 
 /** Map engine errors to a short message for the concept dialogs. */
 export function msgOf(e: unknown): string {
@@ -965,77 +965,26 @@ export function ConceptEditor({
               </div>
 
               {admin && (
-                <Card className="border-destructive/40">
-                  <CardHeader title={<span className="text-destructive">Danger zone</span>} />
-                  <div className="divide-y divide-border">
-                    {concept.archivedAt ? (
-                      <div className="flex items-center justify-between gap-4 px-4 py-3">
-                        <div className="min-w-0">
-                          <p className="text-sm font-medium text-foreground">
-                            Restore this concept
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            Brings it back to the sidebar, lists, and graph.
-                          </p>
-                        </div>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="shrink-0"
-                          disabled={restorePending}
-                          onClick={onRestore}
-                        >
-                          <ArchiveRestore size={14} />
-                          {restorePending ? "Restoring…" : "Restore"}
-                        </Button>
-                      </div>
-                    ) : (
-                      <div className="flex items-center justify-between gap-4 px-4 py-3">
-                        <div className="min-w-0">
-                          <p className="text-sm font-medium text-foreground">
-                            Archive this concept
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            Hides it from the sidebar and lists; its fields
-                            {concept.itemCount
-                              ? ` and ${concept.itemCount} item${concept.itemCount === 1 ? "" : "s"}`
-                              : ""}{" "}
-                            are kept. Restore anytime.
-                          </p>
-                        </div>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="shrink-0"
-                          onClick={onRequestArchive}
-                        >
-                          <Archive size={14} />
-                          Archive
-                        </Button>
-                      </div>
-                    )}
-                    <div className="flex items-center justify-between gap-4 px-4 py-3">
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium text-foreground">Delete this concept</p>
-                        <p className="text-xs text-muted-foreground">
-                          Permanently removes it and its fields. This can't be undone.
-                        </p>
-                      </div>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="shrink-0 border-destructive/50 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                        onClick={onRequestDelete}
-                      >
-                        <Trash2 size={14} />
-                        Delete
-                      </Button>
-                    </div>
-                  </div>
-                  {restoreError && (
-                    <p className="px-4 pb-3 text-sm text-destructive">{restoreError}</p>
-                  )}
-                </Card>
+                <DangerZone
+                  noun="concept"
+                  archived={concept.archivedAt !== null}
+                  archiveHint={
+                    <>
+                      Hides it from the sidebar and lists; its fields
+                      {concept.itemCount
+                        ? ` and ${concept.itemCount} item${concept.itemCount === 1 ? "" : "s"}`
+                        : ""}{" "}
+                      are kept. Restore anytime.
+                    </>
+                  }
+                  restoreHint="Brings it back to the sidebar, lists, and graph."
+                  onArchive={onRequestArchive}
+                  onRestore={onRestore}
+                  restorePending={restorePending}
+                  restoreError={restoreError}
+                  onDelete={onRequestDelete}
+                  deleteHint="Permanently removes it and its fields. This can't be undone."
+                />
               )}
             </div>
           </TabsContent>

@@ -14,7 +14,7 @@ import {
 } from "@dnd-kit/sortable"
 import { CSS } from "@dnd-kit/utilities"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Archive, ArchiveRestore, Check, GripVertical, Pencil, Plus, X } from "lucide-react"
+import { Check, GripVertical, Pencil, Plus, X } from "lucide-react"
 import { useState } from "react"
 import { useOutletContext } from "react-router-dom"
 import {
@@ -28,7 +28,6 @@ import {
   Badge,
   Button,
   Card,
-  CardHeader,
   ColorSwatchPicker,
   ConfirmDialog,
   IconButton,
@@ -42,7 +41,7 @@ import {
 } from "../../components/ui"
 import { api, type TaskPriority, type TaskStatus, type TaskStatusCategory } from "../../lib/api"
 import { taskPrioritiesCollection, taskStatusesCollection } from "../../lib/collections"
-import { Feedback } from "./parts"
+import { DangerZone, Feedback } from "./parts"
 
 /** Display metadata per status category (the category carries completion
  *  semantics — grouping, the done checkbox — so nothing keys off the name). */
@@ -569,65 +568,6 @@ function PriorityModal({
 }
 
 /** The archive/restore Danger zone shared by both vocabulary modals. */
-function DangerZone({
-  archived,
-  archiveHint,
-  onArchive,
-  onRestore,
-  restorePending,
-  restoreError,
-  noun,
-}: {
-  archived: boolean
-  archiveHint: string
-  onArchive: () => void
-  onRestore: () => void
-  restorePending: boolean
-  restoreError?: string
-  noun: string
-}) {
-  return (
-    <Card className="border-destructive/40">
-      <CardHeader
-        title={<span className="text-destructive">Danger zone</span>}
-        action={archived ? <Badge tone="amber">Archived</Badge> : undefined}
-      />
-      <div className="divide-y divide-border">
-        {archived ? (
-          <div className="flex items-center justify-between gap-4 px-4 py-3">
-            <div className="min-w-0">
-              <p className="text-sm font-medium text-foreground">Restore this {noun}</p>
-              <p className="text-xs text-muted-foreground">Brings it back to pickers.</p>
-            </div>
-            <Button
-              variant="outline"
-              size="sm"
-              className="shrink-0"
-              disabled={restorePending}
-              onClick={onRestore}
-            >
-              <ArchiveRestore size={14} />
-              {restorePending ? "Restoring…" : "Restore"}
-            </Button>
-          </div>
-        ) : (
-          <div className="flex items-center justify-between gap-4 px-4 py-3">
-            <div className="min-w-0">
-              <p className="text-sm font-medium text-foreground">Archive this {noun}</p>
-              <p className="text-xs text-muted-foreground">{archiveHint}</p>
-            </div>
-            <Button variant="outline" size="sm" className="shrink-0" onClick={onArchive}>
-              <Archive size={14} />
-              Archive
-            </Button>
-          </div>
-        )}
-      </div>
-      {restoreError && <p className="px-4 pb-3 text-sm text-destructive">{restoreError}</p>}
-    </Card>
-  )
-}
-
 // ── sections ─────────────────────────────────────────────────────────────────
 
 function StatusesSection({ admin }: { admin: boolean }) {

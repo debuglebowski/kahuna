@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Archive, ArchiveRestore, Check, Pencil, Plus, Trash2, X } from "lucide-react"
+import { Check, Pencil, Plus, X } from "lucide-react"
 import type { ReactNode } from "react"
 import { useState } from "react"
 import { useOutletContext } from "react-router-dom"
@@ -7,7 +7,6 @@ import {
   Badge,
   Button,
   Card,
-  CardHeader,
   ColorSwatchPicker,
   ConfirmDialog,
   IconButton,
@@ -20,7 +19,7 @@ import {
   Toolbar,
 } from "../../components/ui"
 import { api, type Label } from "../../lib/api"
-import { Feedback } from "./parts"
+import { DangerZone, Feedback } from "./parts"
 
 /** Map engine errors to a short message for the label dialogs. */
 function labelMsg(e: unknown): string {
@@ -185,66 +184,18 @@ function LabelModal({
         </div>
 
         {admin && (
-          <Card className="border-destructive/40">
-            <CardHeader
-              title={<span className="text-destructive">Danger zone</span>}
-              action={label.archivedAt ? <Badge tone="amber">Archived</Badge> : undefined}
-            />
-            <div className="divide-y divide-border">
-              {label.archivedAt ? (
-                <div className="flex items-center justify-between gap-4 px-4 py-3">
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-foreground">Restore this label</p>
-                    <p className="text-xs text-muted-foreground">
-                      Brings it back to pickers and chips.
-                    </p>
-                  </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="shrink-0"
-                    disabled={restorePending}
-                    onClick={onRestore}
-                  >
-                    <ArchiveRestore size={14} />
-                    {restorePending ? "Restoring…" : "Restore"}
-                  </Button>
-                </div>
-              ) : (
-                <div className="flex items-center justify-between gap-4 px-4 py-3">
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-foreground">Archive this label</p>
-                    <p className="text-xs text-muted-foreground">
-                      Hides it from pickers and chips; items keep it. Restore anytime.
-                    </p>
-                  </div>
-                  <Button variant="outline" size="sm" className="shrink-0" onClick={onArchive}>
-                    <Archive size={14} />
-                    Archive
-                  </Button>
-                </div>
-              )}
-              <div className="flex items-center justify-between gap-4 px-4 py-3">
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-foreground">Delete this label</p>
-                  <p className="text-xs text-muted-foreground">
-                    Permanently removes it from every concept and item that used it. This can't be
-                    undone.
-                  </p>
-                </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="shrink-0 border-destructive/50 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                  onClick={onDelete}
-                >
-                  <Trash2 size={14} />
-                  Delete
-                </Button>
-              </div>
-            </div>
-            {restoreError && <p className="px-4 pb-3 text-sm text-destructive">{restoreError}</p>}
-          </Card>
+          <DangerZone
+            noun="label"
+            archived={label.archivedAt !== null}
+            archiveHint="Hides it from pickers and chips; items keep it. Restore anytime."
+            restoreHint="Brings it back to pickers and chips."
+            onArchive={onArchive}
+            onRestore={onRestore}
+            restorePending={restorePending}
+            restoreError={restoreError}
+            onDelete={onDelete}
+            deleteHint="Permanently removes it from every concept and item that used it. This can't be undone."
+          />
         )}
       </div>
     </Modal>
