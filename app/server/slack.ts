@@ -10,6 +10,7 @@ import {
 } from "#db"
 import { db } from "./db"
 import { decryptToken, encryptToken } from "./integrations/crypto"
+import { sleepBeforeRetry } from "./integrations/http"
 import { resolveOrg } from "./session"
 
 /**
@@ -205,9 +206,7 @@ export async function slackApiRequest<T = SlackApiResult>(
     body: JSON.stringify(body),
   })
   if ((res.status === 429 || res.status >= 500) && attempt < 3) {
-    const retryAfter = Number(res.headers.get("retry-after"))
-    const delay = Number.isFinite(retryAfter) ? retryAfter * 1000 : 300 * 2 ** attempt
-    await new Promise((resolve) => setTimeout(resolve, delay))
+    await sleepBeforeRetry(res, attempt)
     return slackApiRequest<T>(token, method, body, attempt + 1)
   }
   if (!res.ok) {
@@ -218,10 +217,10 @@ export async function slackApiRequest<T = SlackApiResult>(
   }
   const data = (await res.json().catch(() => ({ ok: false, error: "bad_json" }))) as SlackApiResult
   if (data.ok === false) {
+    // Slack's app-level throttling arrives as a 200 whose BODY says ratelimited,
+    // so this is past `res.ok` — but `Retry-After` is on the same response.
     if (data.error === "ratelimited" && attempt < 3) {
-      const retryAfter = Number(res.headers.get("retry-after"))
-      const delay = Number.isFinite(retryAfter) ? retryAfter * 1000 : 300 * 2 ** attempt
-      await new Promise((resolve) => setTimeout(resolve, delay))
+      await sleepBeforeRetry(res, attempt)
       return slackApiRequest<T>(token, method, body, attempt + 1)
     }
     throw new Error(`Slack API error: ${data.error ?? "unknown"}`)

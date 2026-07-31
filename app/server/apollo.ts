@@ -2,6 +2,7 @@ import { and, eq, gt } from "drizzle-orm"
 import { apolloAuditLog, apolloConnection, apolloEnrichmentCache } from "#db"
 import { db } from "./db"
 import { decryptToken, encryptToken } from "./integrations/crypto"
+import { sleepBeforeRetry } from "./integrations/http"
 import { runEngine } from "./runtime"
 import { resolveOrg } from "./session"
 import { createInstance, getInstance, updateInstance } from "./use-cases"
@@ -73,10 +74,7 @@ export async function apolloRequest<T>(
   if (init.body && !headers.has("content-type")) headers.set("content-type", "application/json")
   const res = await apolloFetch(url, { ...init, headers })
   if ((res.status === 429 || res.status >= 500) && attempt < MAX_RETRIES) {
-    const retryAfter = Number(res.headers.get("retry-after"))
-    const delay =
-      Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 500 * 2 ** attempt
-    await new Promise((resolve) => setTimeout(resolve, delay))
+    await sleepBeforeRetry(res, attempt, 500)
     return apolloRequest<T>(ctx, pathOrUrl, init, attempt + 1)
   }
   if (!res.ok) {

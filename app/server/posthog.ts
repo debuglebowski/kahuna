@@ -3,6 +3,7 @@ import { and, eq } from "drizzle-orm"
 import { posthogAuditLog, posthogConnection, posthogPersonMetric, posthogWebhookEvent } from "#db"
 import { db, pool } from "./db"
 import { decryptToken, encryptToken } from "./integrations/crypto"
+import { sleepBeforeRetry } from "./integrations/http"
 import { resolveOrg } from "./session"
 
 /**
@@ -66,9 +67,7 @@ export async function posthogRequest<T>(
   if (init.body && !headers.has("content-type")) headers.set("content-type", "application/json")
   const res = await posthogFetch(url, { ...init, headers })
   if ((res.status === 429 || res.status >= 500) && attempt < 3) {
-    const retryAfter = Number(res.headers.get("retry-after"))
-    const delay = Number.isFinite(retryAfter) ? retryAfter * 1000 : 300 * 2 ** attempt
-    await new Promise((resolve) => setTimeout(resolve, delay))
+    await sleepBeforeRetry(res, attempt)
     return posthogRequest<T>(ctx, pathOrUrl, init, attempt + 1)
   }
   if (!res.ok) {

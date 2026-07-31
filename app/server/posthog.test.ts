@@ -103,6 +103,35 @@ describe("PostHog integration", () => {
     expect(calls).toBe(4) // initial + 3 retries
   })
 
+  /* A 429/5xx with NO `Retry-After` must still back off. `Number(null)` is 0 and
+   * `Number.isFinite(0)` is true, so the obvious reading of the header made the
+   * exponential fallback dead code and hot-looped the retries — this asserts the
+   * absent header is distinguished from an explicit "0" (which stays immediate,
+   * which is why every other retry test here can send "0" and run fast). */
+  it("backs off when the 429 carries no retry-after header", async () => {
+    let calls = 0
+    const gaps: number[] = []
+    let last = performance.now()
+    setPosthogFetchForTest(async () => {
+      calls += 1
+      const now = performance.now()
+      gaps.push(now - last)
+      last = now
+      if (calls <= 2) return new Response("rate limited", { status: 429 })
+      return okJson({ ok: true })
+    })
+    const out = await posthogRequest<{ ok: boolean }>(
+      { host: "https://us.posthog.com", apiKey: "k" },
+      "/api/projects/",
+    )
+    expect(out.ok).toBe(true)
+    expect(calls).toBe(3)
+    // Gaps after the 1st/2nd attempt are the backoff: 300 * 2**0, 300 * 2**1.
+    // Generous lower bounds — the point is "not zero", not the exact schedule.
+    expect(gaps[1]).toBeGreaterThan(200)
+    expect(gaps[2]).toBeGreaterThan(500)
+  })
+
   it("connect validates the key, binds a project, and stores it encrypted", async () => {
     const actor = await signUpAndOrg()
     const seen: string[] = []

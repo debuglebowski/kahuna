@@ -4,6 +4,7 @@ import { linearAuditLog, linearConnection, linearIssue, linearWebhookEvent } fro
 import type { OrgScope } from "#engine"
 import { db, pool } from "./db"
 import { decryptToken, encryptToken } from "./integrations/crypto"
+import { sleepBeforeRetry } from "./integrations/http"
 import {
   type ProvisionConceptSpec,
   type ProvisionedConcept,
@@ -61,9 +62,7 @@ export async function linearGraphQL<T>(
     body: JSON.stringify({ query, variables }),
   })
   if ((res.status === 429 || res.status >= 500) && attempt < 3) {
-    const retryAfter = Number(res.headers.get("retry-after"))
-    const delay = Number.isFinite(retryAfter) ? retryAfter * 1000 : 300 * 2 ** attempt
-    await new Promise((resolve) => setTimeout(resolve, delay))
+    await sleepBeforeRetry(res, attempt)
     return linearGraphQL<T>(token, query, variables, attempt + 1)
   }
   if (!res.ok) {

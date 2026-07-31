@@ -14,6 +14,7 @@ import {
 import type { OrgScope } from "#engine"
 import { db, pool } from "./db"
 import { decryptToken, encryptToken } from "./integrations/crypto"
+import { sleepBeforeRetry } from "./integrations/http"
 import {
   type ProvisionConceptSpec,
   type ProvisionedConcept,
@@ -164,9 +165,7 @@ async function googleRequest<T>(
   if (init.body && !headers.has("content-type")) headers.set("content-type", "application/json")
   const res = await googleFetch(url, { ...init, headers })
   if ((res.status === 429 || res.status >= 500) && attempt < 3) {
-    const retryAfter = Number(res.headers.get("retry-after"))
-    const delay = Number.isFinite(retryAfter) ? retryAfter * 1000 : 300 * 2 ** attempt
-    await new Promise((resolve) => setTimeout(resolve, delay))
+    await sleepBeforeRetry(res, attempt)
     return googleRequest<T>(connectionId, url, init, attempt + 1)
   }
   if (!res.ok) {
