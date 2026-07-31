@@ -89,7 +89,9 @@ const listFiles = (filter: Record<string, unknown>) =>
 // ── uploads ──
 const bucketId = crypto.randomUUID()
 const privateBucket = crypto.randomUUID()
-const upload = (bucket: string, name: string, body: Uint8Array, shared: boolean) => {
+// `Uint8Array<ArrayBuffer>`, not a bare `Uint8Array`: the default type param is
+// `ArrayBufferLike`, which includes SharedArrayBuffer and so is not a `BlobPart`.
+const upload = (bucket: string, name: string, body: Uint8Array<ArrayBuffer>, shared: boolean) => {
   const form = new FormData()
   form.append("file", new File([body], name, { type: "application/pdf" }))
   return req(`/api/buckets/${bucket}/attachments?shared=${shared}`, { method: "POST", body: form })

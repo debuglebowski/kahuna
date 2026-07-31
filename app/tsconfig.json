@@ -20,6 +20,11 @@
     "engine",
     "db",
     "test",
+    // Was missing entirely, so NOTHING under scripts/ was ever typechecked —
+    // not the ones that live here, nor the two that used to sit in the repo-root
+    // scripts/ (outside every tsconfig). They import server/engine internals, so
+    // a contract change would otherwise only surface when someone ran one.
+    "scripts",
     "vite.config.ts",
     "vitest.config.ts",
     "drizzle.config.ts"

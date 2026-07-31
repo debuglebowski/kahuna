@@ -1,17 +1,14 @@
-import { existsSync, readFileSync } from "node:fs"
+// Load repo-root .env (vitest runs with CWD=app, which has no .env of its own).
+// This is the SERVER's loader, imported for its side effect, so tests and the
+// running server agree on which keys exist. It used to be a second, subtly
+// different regex here (`^\s*([A-Z0-9_]+)=`) that silently dropped
+// `export FOO=bar`, lowercase, and mixed-case keys the server accepts — i.e. a
+// key could be visible to the server and invisible to every test.
+// It resolves the path from its own import.meta.dirname, so CWD does not matter.
+import "./server/env.ts"
 import path from "node:path"
 import { defineConfig } from "vitest/config"
 
-// Load repo-root .env (vitest runs with CWD=app, which has no .env of its own).
-const envPath = path.resolve(import.meta.dirname, "../.env")
-if (existsSync(envPath)) {
-  for (const line of readFileSync(envPath, "utf8").split("\n")) {
-    const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/)
-    if (m?.[1] && process.env[m[1]] === undefined) {
-      process.env[m[1]] = (m[2] ?? "").replace(/^["']|["']$/g, "")
-    }
-  }
-}
 // One test database for the whole suite (engine + server + client). The engine
 // used to be a separate package with its own vitest config and its own DB; both
 // now live here, so `TEST_DATABASE_URL` is rewritten once and every DB-bound

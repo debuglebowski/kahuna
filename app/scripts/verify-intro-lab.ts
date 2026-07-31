@@ -15,7 +15,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 // ---------- sanity: vite up? ----------
 try {
-  const r = await fetch(BASE + "/")
+  const r = await fetch(`${BASE}/`)
   if (!r.ok) throw new Error(`status ${r.status}`)
 } catch (e) {
   console.error("FATAL: vite not reachable on 5100:", e)
@@ -41,11 +41,11 @@ const proc = spawn(
 
 const wsUrl: string = await new Promise((resolve, reject) => {
   let buf = ""
-  const t = setTimeout(() => reject(new Error("chrome ws url timeout; stderr: " + buf)), 15000)
+  const t = setTimeout(() => reject(new Error(`chrome ws url timeout; stderr: ${buf}`)), 15000)
   proc.stderr.on("data", (d: Buffer) => {
     buf += d.toString()
     const m = buf.match(/DevTools listening on (ws:\/\/\S+)/)
-    if (m) {
+    if (m?.[1]) {
       clearTimeout(t)
       resolve(m[1])
     }
@@ -142,7 +142,7 @@ async function until(label: string, ms: number, fn: () => Promise<boolean>) {
     if (await fn().catch(() => false)) return
     await sleep(250)
   }
-  throw new Error("timeout waiting for: " + label)
+  throw new Error(`timeout waiting for: ${label}`)
 }
 
 function drainConsole(label: string) {
@@ -266,6 +266,7 @@ const report: Record<string, ConsoleMsg[]> = {}
 
 for (let i = 0; i < PLAYS.length; i++) {
   const p = PLAYS[i]
+  if (!p) continue // indexed access is `T | undefined`; the loop bound makes this dead
   const cardIdx = ALL_PLAYS.findIndex((x) => x.key === p.key)
   // A vite full-reload mid-play (other dev session saving) kills the run and
   // poisons the frames — detect via the in-page probe and retry the play.
@@ -275,10 +276,10 @@ for (let i = 0; i < PLAYS.length; i++) {
     consoleBuf = []
     await clickPlay(cardIdx, p.key)
     const t0 = Date.now()
-    for (let s = 0; s < p.at.length; s++) {
-      const wait = p.at[s] - (Date.now() - t0)
+    for (const at of p.at) {
+      const wait = at - (Date.now() - t0)
       if (wait > 0) await sleep(wait)
-      await shot(`${String(i + 1).padStart(2, "0")}-${p.key}-${p.at[s]}ms`)
+      await shot(`${String(i + 1).padStart(2, "0")}-${p.key}-${at}ms`)
     }
     const remaining = p.total + 1500 - (Date.now() - t0)
     if (remaining > 0) await sleep(remaining)
