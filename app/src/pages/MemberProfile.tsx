@@ -18,7 +18,7 @@ import {
 import { formatDateValue } from "@/lib/dates"
 import { memberLabel, useMembers } from "@/lib/members"
 import { recordHref } from "@/lib/recordHref"
-import { isSnoozed } from "@/lib/taskGroups"
+import { openTasksFor } from "@/lib/taskGroups"
 import { initialsOf } from "@/lib/utils"
 
 /** How many of the member's open tasks / authored events the page shows. */
@@ -50,23 +50,12 @@ export function MemberProfile() {
   // (done/cancelled), not snoozed — dated ones first, then newest-first.
   const tasks = useMemo(
     () =>
-      (tasksQ.data ?? [])
-        .filter((t) => {
-          const category = statusById.get(t.statusId ?? "")?.category
-          return (
-            t.assignee === userId &&
-            !t.archivedAt &&
-            category !== "done" &&
-            category !== "cancelled" &&
-            !isSnoozed(t, new Date())
-          )
-        })
-        .sort((a, b) => {
-          if (a.dueAt && b.dueAt) return a.dueAt.localeCompare(b.dueAt)
-          if (a.dueAt || b.dueAt) return a.dueAt ? -1 : 1
-          return +new Date(b.createdAt) - +new Date(a.createdAt)
-        })
-        .slice(0, TASK_LIMIT),
+      openTasksFor(
+        tasksQ.data ?? [],
+        userId,
+        (t) => statusById.get(t.statusId ?? "")?.category,
+        new Date(),
+      ).slice(0, TASK_LIMIT),
     [tasksQ.data, statusById, userId],
   )
 

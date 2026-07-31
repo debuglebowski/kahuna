@@ -18,7 +18,7 @@ import {
 } from "@/lib/collections"
 import { formatDateValue } from "@/lib/dates"
 import { recordHref } from "@/lib/recordHref"
-import { isSnoozed } from "@/lib/taskGroups"
+import { openTasksFor } from "@/lib/taskGroups"
 import { pickWelcome } from "@/lib/welcomeMessages"
 
 /**
@@ -48,25 +48,12 @@ export function Overview() {
   const mine = useMemo(() => {
     const uid = me?.id
     if (!uid) return []
-    const now = new Date()
-    return (tasksQ.data ?? [])
-      .filter((t) => {
-        const category = statusById.get(t.statusId ?? "")?.category
-        return (
-          t.assignee === uid &&
-          !t.archivedAt &&
-          // Open only: closed (done/cancelled) and still-snoozed tasks drop out.
-          category !== "done" &&
-          category !== "cancelled" &&
-          !isSnoozed(t, now)
-        )
-      })
-      .sort((a, b) => {
-        // Dated tasks first (soonest due on top), then the rest newest-first.
-        if (a.dueAt && b.dueAt) return a.dueAt.localeCompare(b.dueAt)
-        if (a.dueAt || b.dueAt) return a.dueAt ? -1 : 1
-        return +new Date(b.createdAt) - +new Date(a.createdAt)
-      })
+    return openTasksFor(
+      tasksQ.data ?? [],
+      uid,
+      (t) => statusById.get(t.statusId ?? "")?.category,
+      new Date(),
+    )
   }, [tasksQ.data, statusById, me?.id])
 
   const complete = useMutation({

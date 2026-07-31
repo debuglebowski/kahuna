@@ -46,6 +46,44 @@ export const matchesDue = (t: Task, due: "any" | "overdue" | "week", now: Date):
   return due === "overdue" ? d > 0 : d <= 0 && d >= -7
 }
 
+/**
+ * One person's open tasks, soonest-due first — the "what's on my plate" list the
+ * overview page and a member's profile both render.
+ *
+ * OPEN means: assigned to `userId`, not archived, not in a done/cancelled status,
+ * and not still snoozed. That rule was written out twice (overview + profile) and
+ * has to agree in both places, which is the reason it lives here. `now` is taken
+ * as a parameter and read ONCE for the whole filter — one of the two copies
+ * called `new Date()` inside the predicate, so "now" advanced while the list was
+ * being filtered.
+ *
+ * Sort: dated tasks first, soonest due on top; then the undated, newest first.
+ * `categoryOf` resolves a task's status category, so this never reads status
+ * names (the caller owns the status lookup).
+ */
+export const openTasksFor = (
+  tasks: ReadonlyArray<Task>,
+  userId: string,
+  categoryOf: (t: Task) => string | undefined,
+  now: Date,
+): ReadonlyArray<Task> =>
+  tasks
+    .filter((t) => {
+      const category = categoryOf(t)
+      return (
+        t.assignee === userId &&
+        !t.archivedAt &&
+        category !== "done" &&
+        category !== "cancelled" &&
+        !isSnoozed(t, now)
+      )
+    })
+    .sort((a, b) => {
+      if (a.dueAt && b.dueAt) return a.dueAt.localeCompare(b.dueAt)
+      if (a.dueAt || b.dueAt) return a.dueAt ? -1 : 1
+      return +new Date(b.createdAt) - +new Date(a.createdAt)
+    })
+
 export type TaskGroupBy = "schedule" | "status" | "priority" | "none"
 
 const byCreatedDescG = (a: Task, b: Task) => +new Date(b.createdAt) - +new Date(a.createdAt)

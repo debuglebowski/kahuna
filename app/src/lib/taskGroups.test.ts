@@ -6,6 +6,7 @@ import {
   groupTasksBy,
   isSnoozed,
   matchesDue,
+  openTasksFor,
   type TaskPredicates,
 } from "./taskGroups"
 
@@ -207,5 +208,60 @@ describe("groupTasksBy", () => {
       priorities,
     )
     expect(groups.map((g) => g.key)).toEqual(["today"])
+  })
+})
+
+describe("openTasksFor", () => {
+  const ME = "u1"
+  const cat = (byId: Record<string, string>) => (t: Task) => byId[t.statusId ?? ""]
+
+  it("keeps only the user's open tasks: drops others', archived, closed and snoozed", () => {
+    const mine = task({ assignee: ME, statusId: "todo" })
+    const theirs = task({ assignee: "u2", statusId: "todo" })
+    const unassigned = task({ assignee: null, statusId: "todo" })
+    const archived = task({ assignee: ME, statusId: "todo", archivedAt: new Date() })
+    const done = task({ assignee: ME, statusId: "done" })
+    const cancelled = task({ assignee: ME, statusId: "cancelled" })
+    const snoozed = task({
+      assignee: ME,
+      statusId: "todo",
+      snoozedUntil: "2026-06-12T00:00:00.000Z", // after NOW
+    })
+    const woken = task({
+      assignee: ME,
+      statusId: "todo",
+      snoozedUntil: "2026-06-10T00:00:00.000Z", // before NOW — snooze elapsed
+    })
+    const out = openTasksFor(
+      [mine, theirs, unassigned, archived, done, cancelled, snoozed, woken],
+      ME,
+      cat({ todo: "started", done: "done", cancelled: "cancelled" }),
+      NOW,
+    )
+    expect(out.map((t) => t.id)).toEqual([mine.id, woken.id])
+  })
+
+  it("sorts dated tasks soonest-first, then undated newest-first", () => {
+    const later = task({ assignee: ME, dueAt: "2026-06-20T00:00:00.000Z" })
+    const sooner = task({ assignee: ME, dueAt: "2026-06-12T00:00:00.000Z" })
+    const oldUndated = task({ assignee: ME, createdAt: new Date("2026-05-01T00:00:00.000Z") })
+    const newUndated = task({ assignee: ME, createdAt: new Date("2026-06-05T00:00:00.000Z") })
+    const out = openTasksFor([oldUndated, later, newUndated, sooner], ME, () => undefined, NOW)
+    expect(out.map((t) => t.id)).toEqual([sooner.id, later.id, newUndated.id, oldUndated.id])
+  })
+
+  it("reads `now` once, so a snooze boundary cannot shift mid-filter", () => {
+    // Both snooze to exactly NOW+1ms. Evaluated against a single `now` they must
+    // BOTH survive or BOTH drop — never split, which is what calling new Date()
+    // inside the predicate risked.
+    const at = new Date(NOW.getTime() + 1).toISOString()
+    const a = task({ assignee: ME, snoozedUntil: at })
+    const b = task({ assignee: ME, snoozedUntil: at })
+    expect(openTasksFor([a, b], ME, () => undefined, NOW)).toHaveLength(0)
+  })
+
+  it("treats an unknown status as open (a purged status must not hide a task)", () => {
+    const t = task({ assignee: ME, statusId: "gone" })
+    expect(openTasksFor([t], ME, () => undefined, NOW).map((x) => x.id)).toEqual([t.id])
   })
 })
