@@ -1,8 +1,10 @@
 import { and, eq, gt } from "drizzle-orm"
 import { apolloAuditLog, apolloConnection, apolloEnrichmentCache } from "#db"
 import { db } from "./db"
+import { type AuditEntry, writeAuditLog } from "./integrations/audit"
 import { decryptToken, encryptToken } from "./integrations/crypto"
 import { sleepBeforeRetry } from "./integrations/http"
+import { connectionForOrgIn } from "./integrations/rows"
 import { runEngine } from "./runtime"
 import { resolveOrg } from "./session"
 import { createInstance, getInstance, updateInstance } from "./use-cases"
@@ -325,36 +327,10 @@ export async function bulkImport(
 
 // ── persistence helpers ───────────────────────────────────────────────────────
 
-async function audit(input: {
-  orgId: string
-  userId: string
-  connectionId?: string | null
-  action: string
-  status?: "ok" | "error"
-  subjectKind?: string | null
-  subjectId?: string | null
-  detail?: unknown
-}) {
-  await db.insert(apolloAuditLog).values({
-    orgId: input.orgId,
-    userId: input.userId,
-    connectionId: input.connectionId ?? null,
-    action: input.action,
-    status: input.status ?? "ok",
-    subjectKind: input.subjectKind ?? null,
-    subjectId: input.subjectId ?? null,
-    detail: input.detail ?? {},
-  })
-}
+/** Write one row to this connector's audit log. */
+const audit = (input: AuditEntry) => writeAuditLog(apolloAuditLog, input)
 
-const connectionForOrg = async (orgId: string) => {
-  const [row] = await db
-    .select()
-    .from(apolloConnection)
-    .where(eq(apolloConnection.orgId, orgId))
-    .limit(1)
-  return row ?? null
-}
+const connectionForOrg = (orgId: string) => connectionForOrgIn(apolloConnection, orgId)
 
 const ctxFor = (conn: typeof apolloConnection.$inferSelect): RequestCtx => {
   const apiKey = decryptToken(conn.apiKey)

@@ -3,6 +3,7 @@ import { and, eq } from "drizzle-orm"
 import { linearAuditLog, linearConnection, linearIssue, linearWebhookEvent } from "#db"
 import type { OrgScope } from "#engine"
 import { db, pool } from "./db"
+import { type AuditEntry, writeAuditLog } from "./integrations/audit"
 import { decryptToken, encryptToken } from "./integrations/crypto"
 import { sleepBeforeRetry } from "./integrations/http"
 import {
@@ -11,6 +12,7 @@ import {
   provisionConcept,
   upsertInstanceByExternalId,
 } from "./integrations/instances"
+import { connectionForOrgIn } from "./integrations/rows"
 import { resolveOrg } from "./session"
 
 /**
@@ -78,36 +80,10 @@ export async function linearGraphQL<T>(
   return payload.data as T
 }
 
-async function audit(input: {
-  orgId: string
-  userId: string
-  connectionId?: string | null
-  action: string
-  status?: "ok" | "error"
-  subjectKind?: string | null
-  subjectId?: string | null
-  detail?: unknown
-}) {
-  await db.insert(linearAuditLog).values({
-    orgId: input.orgId,
-    userId: input.userId,
-    connectionId: input.connectionId ?? null,
-    action: input.action,
-    status: input.status ?? "ok",
-    subjectKind: input.subjectKind ?? null,
-    subjectId: input.subjectId ?? null,
-    detail: input.detail ?? {},
-  })
-}
+/** Write one row to this connector's audit log. */
+const audit = (input: AuditEntry) => writeAuditLog(linearAuditLog, input)
 
-const connectionForOrg = async (orgId: string) => {
-  const [row] = await db
-    .select()
-    .from(linearConnection)
-    .where(eq(linearConnection.orgId, orgId))
-    .limit(1)
-  return row ?? null
-}
+const connectionForOrg = (orgId: string) => connectionForOrgIn(linearConnection, orgId)
 
 const tokenFor = (conn: typeof linearConnection.$inferSelect): string => {
   const token = decryptToken(conn.token)

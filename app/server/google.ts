@@ -13,6 +13,7 @@ import {
 } from "#db"
 import type { OrgScope } from "#engine"
 import { db, pool } from "./db"
+import { type AuditEntry, writeAuditLog } from "./integrations/audit"
 import { decryptToken, encryptToken } from "./integrations/crypto"
 import { sleepBeforeRetry } from "./integrations/http"
 import {
@@ -21,6 +22,7 @@ import {
   provisionConcept,
   upsertInstanceByExternalId,
 } from "./integrations/instances"
+import { redirect, safeReturnTo } from "./integrations/oauth"
 import { resolveOrg } from "./session"
 
 // Token crypto now lives in the shared integrations helper; re-export it so
@@ -102,56 +104,8 @@ const scopesForRequest = (url: URL) => {
   return [...scopes]
 }
 
-const redirect = (to: string) =>
-  Response.redirect(
-    new URL(to, process.env.BETTER_AUTH_URL ?? "http://localhost:3100").toString(),
-    302,
-  )
-
-/**
- * Resolve a stored `returnTo` to a safe absolute URL for the post-OAuth bounce.
- * Same-origin as the server is always allowed; in dev we also allow any
- * localhost/127.0.0.1 port so the Vite dev server (whose port drifts) receives
- * the redirect instead of :3100 (which only serves the built `dist/`). Anything
- * else falls back to the settings page on the server origin — no open redirect.
- */
-const safeReturnTo = (raw: string | null | undefined): string => {
-  const base = process.env.BETTER_AUTH_URL ?? "http://localhost:3100"
-  const fallback = new URL("/settings/integrations", base).toString()
-  if (!raw) return fallback
-  let target: URL
-  try {
-    target = new URL(raw, base)
-  } catch {
-    return fallback
-  }
-  const isLocal = target.hostname === "localhost" || target.hostname === "127.0.0.1"
-  const sameOrigin = target.origin === new URL(base).origin
-  if (sameOrigin || (process.env.NODE_ENV !== "production" && isLocal)) return target.toString()
-  return fallback
-}
-
-async function audit(input: {
-  orgId: string
-  userId: string
-  connectionId?: string | null
-  action: string
-  status?: "ok" | "error"
-  subjectKind?: string | null
-  subjectId?: string | null
-  detail?: unknown
-}) {
-  await db.insert(googleAuditLog).values({
-    orgId: input.orgId,
-    userId: input.userId,
-    connectionId: input.connectionId ?? null,
-    action: input.action,
-    status: input.status ?? "ok",
-    subjectKind: input.subjectKind ?? null,
-    subjectId: input.subjectId ?? null,
-    detail: input.detail ?? {},
-  })
-}
+/** Write one row to this connector's audit log. */
+const audit = (input: AuditEntry) => writeAuditLog(googleAuditLog, input)
 
 async function googleRequest<T>(
   connectionId: string,
