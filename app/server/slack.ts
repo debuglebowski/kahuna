@@ -14,7 +14,7 @@ import { decryptToken, encryptToken } from "./integrations/crypto"
 import { sleepBeforeRetry } from "./integrations/http"
 import { redirect, safeReturnTo } from "./integrations/oauth"
 import { connectionForOrgIn } from "./integrations/rows"
-import { resolveOrg } from "./session"
+import { resolveAdmin, resolveOrg } from "./session"
 
 /**
  * Slack connector — the first OAuth-based integration on the shared scaffold
@@ -262,7 +262,9 @@ export function verifySlackSignature(req: Request, rawBody: string, now = Date.n
 // ── connect / callback / disconnect / status ──────────────────────────────────
 
 export async function handleSlackConnect(req: Request) {
-  const org = await resolveOrg(req)
+  // Admin-only: this is the workspace-level BOT install. `handleSlackUserConnect`
+  // below deliberately stays member-open (own identity, own token).
+  const org = await resolveAdmin(req)
   if (!org.ok) return json({ error: org.code }, org.status)
   const c = requireConfig()
   const url = new URL(req.url)
@@ -473,7 +475,8 @@ export async function handleSlackCallback(req: Request) {
 }
 
 export async function disconnectSlack(req: Request) {
-  const org = await resolveOrg(req)
+  // Admin-only: this cascades to EVERY member's user token (see below).
+  const org = await resolveAdmin(req)
   if (!org.ok) return json({ error: org.code }, org.status)
   const connection = await connectionForOrg(org.orgId)
   if (!connection) return json({ ok: true })

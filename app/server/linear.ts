@@ -13,7 +13,7 @@ import {
   upsertInstanceByExternalId,
 } from "./integrations/instances"
 import { connectionForOrgIn } from "./integrations/rows"
-import { resolveOrg } from "./session"
+import { resolveAdmin, resolveOrg } from "./session"
 
 /**
  * Linear connector — a key-based integration built on the PostHog template.
@@ -199,7 +199,9 @@ async function upsertIssue(conn: typeof linearConnection.$inferSelect, node: Lin
 // ── connect / disconnect / status ───────────────────────────────────────────
 
 export async function connectLinear(req: Request) {
-  const org = await resolveOrg(req)
+  // Admin-only: one org-wide API key + webhook secret drives the Ticket mirror
+  // for every member.
+  const org = await resolveAdmin(req)
   if (!org.ok) return json({ error: org.code }, org.status)
   const body = (await req.json().catch(() => null)) as {
     apiKey?: string
@@ -266,7 +268,7 @@ export async function connectLinear(req: Request) {
 }
 
 export async function disconnectLinear(req: Request) {
-  const org = await resolveOrg(req)
+  const org = await resolveAdmin(req)
   if (!org.ok) return json({ error: org.code }, org.status)
   const connection = await connectionForOrg(org.orgId)
   if (!connection) return json({ ok: true })

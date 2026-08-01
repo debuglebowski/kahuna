@@ -6,7 +6,7 @@ import { decryptToken, encryptToken } from "./integrations/crypto"
 import { sleepBeforeRetry } from "./integrations/http"
 import { connectionForOrgIn } from "./integrations/rows"
 import { runEngine } from "./runtime"
-import { resolveOrg } from "./session"
+import { resolveAdmin, resolveOrg } from "./session"
 import { createInstance, getInstance, updateInstance } from "./use-cases"
 
 /**
@@ -403,7 +403,8 @@ async function validateKey(ctx: RequestCtx): Promise<void> {
 }
 
 export async function connectApollo(req: Request) {
-  const org = await resolveOrg(req)
+  // Admin-only: org-wide enrichment key (and the billing it draws on).
+  const org = await resolveAdmin(req)
   if (!org.ok) return json({ error: org.code }, org.status)
   const body = (await req.json().catch(() => null)) as { apiKey?: string } | null
   const apiKey = body?.apiKey?.trim()
@@ -444,7 +445,8 @@ export async function connectApollo(req: Request) {
 }
 
 export async function disconnectApollo(req: Request) {
-  const org = await resolveOrg(req)
+  // Admin-only — and this one also DROPS the org's cached enrichment PII below.
+  const org = await resolveAdmin(req)
   if (!org.ok) return json({ error: org.code }, org.status)
   const connection = await connectionForOrg(org.orgId)
   if (!connection) return json({ ok: true })

@@ -19,6 +19,7 @@ import {
   SlackLogo,
 } from "./integrationLogos"
 import { Feedback } from "./parts"
+import { useIsAdmin } from "./SettingsLayout"
 
 /**
  * An OAuth connect URL carrying a `returnTo`. Absolute origin so the post-OAuth
@@ -42,6 +43,10 @@ function ConnectedActions({
   onDisconnect,
   disconnecting,
   extra,
+  /** Org-wide connectors are admin-only server-side; hide the action rather than
+   *  offer a button that 403s. Per-user connectors (Google, the Slack user token)
+   *  pass `true` — their owner manages them regardless of role. */
+  canManage = true,
 }: {
   onSync?: () => void
   syncing?: boolean
@@ -49,6 +54,7 @@ function ConnectedActions({
   disconnecting: boolean
   /** Slack's per-user disconnect sits alongside the org one. */
   extra?: ReactNode
+  canManage?: boolean
 }) {
   return (
     <div className="flex items-center gap-2">
@@ -59,10 +65,14 @@ function ConnectedActions({
           {syncing ? "Syncing..." : "Sync"}
         </Button>
       )}
-      <Button type="button" variant="outline" onClick={onDisconnect} disabled={disconnecting}>
-        <Unplug size={15} />
-        Disconnect
-      </Button>
+      {canManage ? (
+        <Button type="button" variant="outline" onClick={onDisconnect} disabled={disconnecting}>
+          <Unplug size={15} />
+          Disconnect
+        </Button>
+      ) : (
+        <Badge tone="gray">Managed by an admin</Badge>
+      )}
     </div>
   )
 }
@@ -72,18 +82,25 @@ function ConnectAction({
   name,
   dataImported,
   onConnect,
+  canManage = true,
 }: {
   name: string
   dataImported: ReactNode
   onConnect: () => void
+  /** See `ConnectedActions.canManage`. */
+  canManage?: boolean
 }) {
   return (
     <div className="flex items-center gap-1">
       <DataImportInfo name={name}>{dataImported}</DataImportInfo>
-      <Button type="button" onClick={onConnect}>
-        <PlugZap size={15} />
-        Connect
-      </Button>
+      {canManage ? (
+        <Button type="button" onClick={onConnect}>
+          <PlugZap size={15} />
+          Connect
+        </Button>
+      ) : (
+        <Badge tone="gray">Admins only</Badge>
+      )}
     </div>
   )
 }
@@ -450,6 +467,7 @@ const REGION_OPTIONS: ReadonlyArray<{ value: PosthogRegion; label: string }> = [
 
 function PosthogCard() {
   const qc = useQueryClient()
+  const { admin } = useIsAdmin()
   const status = useQuery({ queryKey: ["posthogStatus"], queryFn: api.getPosthogStatus })
   const detail = INTEGRATION_INFO.posthog
   const [apiKey, setApiKey] = useState("")
@@ -500,12 +518,14 @@ function PosthogCard() {
             syncing={sync.isPending}
             onDisconnect={() => disconnect.mutate()}
             disconnecting={disconnect.isPending}
+            canManage={admin}
           />
         ) : connecting ? undefined : (
           <ConnectAction
             name={detail.name}
             dataImported={detail.dataImported}
             onConnect={() => setConnecting(true)}
+            canManage={admin}
           />
         )
       }
@@ -603,6 +623,7 @@ function PosthogCard() {
 
 function LinearCard() {
   const qc = useQueryClient()
+  const { admin } = useIsAdmin()
   const status = useQuery({ queryKey: ["linearStatus"], queryFn: api.getLinearStatus })
   const detail = INTEGRATION_INFO.linear
   const [apiKey, setApiKey] = useState("")
@@ -650,12 +671,14 @@ function LinearCard() {
             syncing={sync.isPending}
             onDisconnect={() => disconnect.mutate()}
             disconnecting={disconnect.isPending}
+            canManage={admin}
           />
         ) : connecting ? undefined : (
           <ConnectAction
             name={detail.name}
             dataImported={detail.dataImported}
             onConnect={() => setConnecting(true)}
+            canManage={admin}
           />
         )
       }
@@ -726,6 +749,7 @@ function LinearCard() {
 
 function SlackCard() {
   const qc = useQueryClient()
+  const { admin } = useIsAdmin()
   const status = useQuery({ queryKey: ["slackStatus"], queryFn: api.getSlackStatus })
   const disconnect = useMutation({
     mutationFn: api.disconnectSlack,
@@ -762,17 +786,26 @@ function SlackCard() {
             syncing={sync.isPending}
             onDisconnect={() => disconnect.mutate()}
             disconnecting={disconnect.isPending}
+            canManage={admin}
           />
         ) : (
           <div className="flex items-center gap-1">
             <DataImportInfo name="Slack">{INTEGRATION_INFO.slack.dataImported}</DataImportInfo>
-            <Button
-              type="button"
-              onClick={() => (window.location.href = connectUrl("/api/integrations/slack/connect"))}
-            >
-              <PlugZap size={15} />
-              Connect
-            </Button>
+            {/* The workspace BOT install is admin-only (per-user Slack connect,
+                offered once the bot exists, stays open to every member). */}
+            {admin ? (
+              <Button
+                type="button"
+                onClick={() =>
+                  (window.location.href = connectUrl("/api/integrations/slack/connect"))
+                }
+              >
+                <PlugZap size={15} />
+                Connect
+              </Button>
+            ) : (
+              <Badge tone="gray">Admins only</Badge>
+            )}
           </div>
         )
       }
@@ -856,6 +889,7 @@ function SlackCard() {
  */
 function ApolloCard() {
   const qc = useQueryClient()
+  const { admin } = useIsAdmin()
   const status = useQuery({ queryKey: ["apolloStatus"], queryFn: api.getApolloStatus })
   const detail = INTEGRATION_INFO.apollo
   const [apiKey, setApiKey] = useState("")
@@ -891,12 +925,14 @@ function ApolloCard() {
           <ConnectedActions
             onDisconnect={() => disconnect.mutate()}
             disconnecting={disconnect.isPending}
+            canManage={admin}
           />
         ) : connecting ? undefined : (
           <ConnectAction
             name={detail.name}
             dataImported={detail.dataImported}
             onConnect={() => setConnecting(true)}
+            canManage={admin}
           />
         )
       }
@@ -959,6 +995,7 @@ function ApolloCard() {
  */
 function ClayCard() {
   const qc = useQueryClient()
+  const { admin } = useIsAdmin()
   const status = useQuery({ queryKey: ["clayStatus"], queryFn: api.getClayStatus })
   const detail = INTEGRATION_INFO.clay
   const [tableWebhookUrl, setTableWebhookUrl] = useState("")
@@ -1000,12 +1037,14 @@ function ClayCard() {
           <ConnectedActions
             onDisconnect={() => disconnect.mutate()}
             disconnecting={disconnect.isPending}
+            canManage={admin}
           />
         ) : connecting ? undefined : (
           <ConnectAction
             name={detail.name}
             dataImported={detail.dataImported}
             onConnect={() => setConnecting(true)}
+            canManage={admin}
           />
         )
       }

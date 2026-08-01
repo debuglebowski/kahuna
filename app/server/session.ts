@@ -4,7 +4,7 @@ import { member } from "#db"
 import type { EngineServices, OrgContext } from "#engine"
 import { auth } from "./auth"
 import { db, pool } from "./db"
-import type { Role } from "./policy"
+import { can, type Role } from "./policy"
 import { runEngine, type UseCaseResult } from "./runtime"
 
 /** Resolve a user's role within an org from the BetterAuth `member` table. */
@@ -32,6 +32,27 @@ export const isDeactivated = async (userId: string, orgId: string): Promise<bool
 export type OrgResolution =
   | { readonly ok: true; readonly orgId: string; readonly actor: string }
   | { readonly ok: false; readonly status: number; readonly code: string }
+
+/**
+ * `resolveOrg` plus an admin check — the plain-HTTP analogue of rpc.ts's
+ * `requireAdmin`, for handlers that never enter the RPC middleware.
+ *
+ * Use it for anything acting on ORG-WIDE state: the shared integration
+ * connectors (PostHog / Linear / Apollo / Clay / the Slack bot) hold one
+ * credential per org, so a plain member could otherwise disconnect the whole
+ * org's Linear or re-point PostHog at a project they control.
+ *
+ * NOT for per-user credentials — Google and the Slack *user* token are keyed
+ * (org_id, user_id), and their owner must stay able to connect/disconnect their
+ * own mailbox or identity without being an admin.
+ */
+export const resolveAdmin = async (request: Request): Promise<OrgResolution> => {
+  const org = await resolveOrg(request)
+  if (!org.ok) return org
+  const role = await roleOf(org.actor, org.orgId)
+  if (!role || !can(role, "admin")) return { ok: false, status: 403, code: "FORBIDDEN" }
+  return org
+}
 
 /**
  * Resolve the BetterAuth session into an org scope (org_id + actor), or an

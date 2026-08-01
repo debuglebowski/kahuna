@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto"
 import { posthogConnectionForOrg, posthogCtxFor, posthogRequest } from "./posthog"
-import { resolveOrg } from "./session"
+import { resolveAdmin, resolveOrg } from "./session"
 
 /**
  * Aggregated analytics queries for the `analytics` dashboard widget.
@@ -352,6 +352,20 @@ export async function queryAnalytics(req: Request) {
     return json({ error: "UNSUPPORTED_PROVIDER" }, 400)
   const query = asString(body.query)
   if (metric === "custom" && !query) return json({ error: "QUERY_REQUIRED" }, 400)
+  // Structured metrics are member-open (the server authors the HogQL). A CUSTOM
+  // query is arbitrary caller-authored HogQL running on the org's key against the
+  // whole PostHog project — an admin surface, even though the wrap bounds the
+  // result and PostHog's parser refuses writes.
+  //
+  // Tradeoff, deliberately taken: a dashboard holding a custom-analytics widget
+  // now renders that widget empty for non-admins, because the query runs at
+  // render time. The narrower fix — allow a custom query only when it matches a
+  // saved dashboard body the caller can already see — needs the read model, so
+  // it belongs with that work.
+  if (metric === "custom") {
+    const admin = await resolveAdmin(req)
+    if (!admin.ok) return json({ error: "CUSTOM_QUERY_ADMIN_ONLY" }, 403)
+  }
 
   const q: AnalyticsQuery = {
     provider: "posthog",

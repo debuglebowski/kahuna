@@ -6,7 +6,7 @@ import { type AuditEntry, writeAuditLog } from "./integrations/audit"
 import { decryptToken, encryptToken } from "./integrations/crypto"
 import { sleepBeforeRetry } from "./integrations/http"
 import { connectionForOrgIn } from "./integrations/rows"
-import { resolveOrg } from "./session"
+import { resolveAdmin, resolveOrg } from "./session"
 
 /**
  * PostHog connector — the first key-based (non-OAuth) integration, and the
@@ -135,7 +135,9 @@ async function resolveProject(
 }
 
 export async function connectPosthog(req: Request) {
-  const org = await resolveOrg(req)
+  // Admin-only: the key is org-wide, so connecting points EVERY member's
+  // analytics widgets at whichever project this key belongs to.
+  const org = await resolveAdmin(req)
   if (!org.ok) return json({ error: org.code }, org.status)
   const body = (await req.json().catch(() => null)) as {
     apiKey?: string
@@ -204,7 +206,7 @@ export async function connectPosthog(req: Request) {
 }
 
 export async function disconnectPosthog(req: Request) {
-  const org = await resolveOrg(req)
+  const org = await resolveAdmin(req)
   if (!org.ok) return json({ error: org.code }, org.status)
   const connection = await connectionForOrg(org.orgId)
   if (!connection) return json({ ok: true })

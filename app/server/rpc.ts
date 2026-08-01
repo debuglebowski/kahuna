@@ -205,7 +205,7 @@ const as = <A>(eff: Effect.Effect<unknown, unknown, OrgContext | EngineServices>
  * here against `bauth_member` via the shared pool (the same way auth.ts reaches
  * engine tables). Throws RpcError(422) listing any non-members.
  */
-async function assertMembers(
+export async function assertMembers(
   orgId: string,
   conceptId: string,
   values: Record<string, unknown>,
@@ -225,8 +225,16 @@ async function assertMembers(
     }
   }
   if (ids.size === 0) return
+  // Deactivated members are excluded: a deactivated user is blocked from the org
+  // at every entry point, so assigning work to them would create a value nobody
+  // can act on (and the pickers already filter them out).
   const members = await pool.query<{ user_id: string }>(
-    "SELECT user_id FROM bauth_member WHERE organization_id = $1",
+    `SELECT m.user_id FROM bauth_member m
+      WHERE m.organization_id = $1
+        AND NOT EXISTS (
+          SELECT 1 FROM member_deactivations d
+           WHERE d.org_id = m.organization_id AND d.user_id = m.user_id
+        )`,
     [orgId],
   )
   const present = new Set(members.rows.map((r) => r.user_id))
@@ -254,21 +262,28 @@ async function assertMembersForInstance(
   if (conceptId) await assertMembers(orgId, conceptId, patch)
 }
 
-/** A task's assignee must be a real org member (the engine treats it as an opaque
- *  logical FK; membership is an auth-tier concern validated here). No-op when unset. */
-async function assertAssigneeMember(
+/** A task's assignee must be a real, ACTIVE org member (the engine treats it as an
+ *  opaque logical FK; membership is an auth-tier concern validated here). A
+ *  deactivated member is rejected — same rule as `assertMembers`. No-op when unset. */
+export async function assertAssigneeMember(
   orgId: string,
   assignee: string | null | undefined,
 ): Promise<void> {
   if (!assignee) return
   const members = await pool.query<{ user_id: string }>(
-    "SELECT user_id FROM bauth_member WHERE organization_id = $1 AND user_id = $2 LIMIT 1",
+    `SELECT m.user_id FROM bauth_member m
+      WHERE m.organization_id = $1 AND m.user_id = $2
+        AND NOT EXISTS (
+          SELECT 1 FROM member_deactivations d
+           WHERE d.org_id = m.organization_id AND d.user_id = m.user_id
+        )
+      LIMIT 1`,
     [orgId, assignee],
   )
   if (members.rows.length === 0) {
     throw new RpcError({
       code: "VALIDATION",
-      message: `not an org member: ${assignee}`,
+      message: `not an active org member: ${assignee}`,
       status: 422,
     })
   }

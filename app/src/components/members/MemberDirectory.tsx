@@ -31,12 +31,13 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { api } from "@/lib/api"
-import { authClient, useSession } from "@/lib/auth-client"
+import { useSession } from "@/lib/auth-client"
 import {
   addMemberByEmail,
   memberLabel,
   type OrgMember,
   purgeMember,
+  setMemberRole,
   useMembers,
 } from "@/lib/members"
 import { useSectionBase } from "@/lib/sectionBase"
@@ -104,7 +105,9 @@ export function MemberDirectory({
   const [email, setEmail] = useState("")
   const [role, setRole] = useState("member")
   // Role changes happen in a modal; null = closed.
-  const [editing, setEditing] = useState<{ id: string; label: string; role: string } | null>(null)
+  const [editing, setEditing] = useState<{ userId: string; label: string; role: string } | null>(
+    null,
+  )
   const [draftRole, setDraftRole] = useState("member")
 
   const invalidate = async () => {
@@ -120,13 +123,9 @@ export function MemberDirectory({
     },
   })
   const changeRole = useMutation({
-    mutationFn: async (vars: { memberId: string; role: string }) => {
-      const { error: err } = await authClient.organization.updateMemberRole({
-        memberId: vars.memberId,
-        role: vars.role,
-      })
-      if (err) throw new Error(err.message ?? "Failed to update role")
-    },
+    // Our route, not authClient.organization.updateMemberRole — the last-owner
+    // rule lives server-side (see router.ts).
+    mutationFn: (vars: { userId: string; role: string }) => setMemberRole(vars.userId, vars.role),
     onSuccess: async () => {
       setEditing(null)
       await invalidate()
@@ -312,7 +311,7 @@ export function MemberDirectory({
                           <DropdownMenuItem
                             disabled={lockOwner}
                             onSelect={() => {
-                              setEditing({ id: m.id, label, role: m.role })
+                              setEditing({ userId: m.userId, label, role: m.role })
                               setDraftRole(m.role)
                             }}
                           >
@@ -422,7 +421,7 @@ export function MemberDirectory({
             </Field>
             <div className="flex gap-2">
               <Button
-                onClick={() => changeRole.mutate({ memberId: editing.id, role: draftRole })}
+                onClick={() => changeRole.mutate({ userId: editing.userId, role: draftRole })}
                 disabled={changeRole.isPending || draftRole === editing.role}
               >
                 {changeRole.isPending ? "Saving…" : "Save"}

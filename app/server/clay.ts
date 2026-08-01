@@ -7,7 +7,7 @@ import { decryptToken, encryptToken } from "./integrations/crypto"
 import { sleepBeforeRetry } from "./integrations/http"
 import { connectionForOrgIn } from "./integrations/rows"
 import { runEngine } from "./runtime"
-import { resolveOrg } from "./session"
+import { resolveAdmin, resolveOrg } from "./session"
 import { createInstance, getInstance, updateInstance } from "./use-cases"
 
 /**
@@ -116,7 +116,9 @@ const callbackUrlFor = (connectionId: string, secret: string | null): string => 
 // ── connect / disconnect / status ──────────────────────────────────────────────
 
 export async function connectClay(req: Request) {
-  const org = await resolveOrg(req)
+  // Admin-only: the webhook URL is where org records get POSTed, and the
+  // callback secret is what authenticates data coming back in.
+  const org = await resolveAdmin(req)
   if (!org.ok) return json({ error: org.code }, org.status)
   const body = (await req.json().catch(() => null)) as {
     tableWebhookUrl?: string
@@ -170,7 +172,7 @@ export async function connectClay(req: Request) {
 }
 
 export async function disconnectClay(req: Request) {
-  const org = await resolveOrg(req)
+  const org = await resolveAdmin(req)
   if (!org.ok) return json({ error: org.code }, org.status)
   const connection = await connectionForOrg(org.orgId)
   if (!connection) return json({ ok: true })

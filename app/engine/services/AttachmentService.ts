@@ -154,9 +154,21 @@ export class AttachmentService extends Effect.Service<AttachmentService>()(
         })
 
       // Archived files stay downloadable (visible under "show archived").
+      //
+      // A PRIVATE bucket file (bucket_shared = false) is deliberately excluded
+      // from org-scope `list`, so it must not be fetchable org-wide here either —
+      // otherwise the flag only hides files from the UI while the bytes stay one
+      // request away for anyone holding the id. Its uploader keeps access (they
+      // reach it through the owning widget, which is the one scope that lists
+      // private files). Record files and shared buckets are unaffected.
       const download = (attachmentId: Id) =>
         Effect.gen(function* () {
-          const attachment = toAttachment(yield* load(attachmentId))
+          const { actor } = yield* OrgContext
+          const row = yield* load(attachmentId)
+          if (row.bucket_id && !row.bucket_shared && row.created_by !== actor) {
+            return yield* Effect.fail(new AttachmentNotFound({ attachmentId }))
+          }
+          const attachment = toAttachment(row)
           const data = yield* blob.get(attachment.contentRef)
           return { attachment, data } as { attachment: Attachment; data: Uint8Array }
         })

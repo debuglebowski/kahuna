@@ -197,7 +197,8 @@ describe("attachments", () => {
       expect((yield* attachments.list({ bucketId: privateBucket })).map((a) => a.id)).toEqual([
         hidden.id,
       ])
-      // …and stays directly downloadable (privacy gates listing, not access).
+      // …and its UPLOADER can still download it directly (this layer's actor is
+      // the uploader). Another member cannot — see the next test.
       expect((yield* attachments.download(hidden.id)).data.length).toBe(1)
 
       // Record-shaped scopes can never surface bucket files: no item, no concept.
@@ -209,6 +210,53 @@ describe("attachments", () => {
       expect(conceptIds).toEqual([onRecord.id])
     }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
+
+  // `bucket_shared = false` excludes a file from org-scope listing, so it must
+  // exclude it from `download` too — otherwise the flag only hides files from the
+  // UI while the bytes stay one request away for anyone holding the id. The
+  // uploader keeps access (they reach it through the owning widget).
+  it("a private bucket file is not downloadable by another member", async () => {
+    const orgId = newOrgId()
+    const bucketId = randomUUID()
+
+    // Uploader's scope: upload a private file and a shared one for contrast.
+    const uploaded = await Effect.gen(function* () {
+      const attachments = yield* AttachmentService
+      const priv = yield* attachments.upload({
+        owner: { bucketId, shared: false },
+        filename: "private.txt",
+        data: new Uint8Array([7]),
+      })
+      const shared = yield* attachments.upload({
+        owner: { bucketId: randomUUID(), shared: true },
+        filename: "shared.txt",
+        data: new Uint8Array([8]),
+      })
+      return { priv, shared }
+    }).pipe(Effect.provide(testLayer(orgId, "uploader")), Effect.runPromise)
+
+    // A DIFFERENT member of the SAME org: the private file reads as absent, while
+    // the shared one downloads fine (so this isn't just blanket denial).
+    const outcome = await Effect.gen(function* () {
+      const attachments = yield* AttachmentService
+      const denied = yield* Effect.either(attachments.download(uploaded.priv.id))
+      const allowed = yield* attachments.download(uploaded.shared.id)
+      return { denied, allowedBytes: allowed.data.length }
+    }).pipe(Effect.provide(testLayer(orgId, "someone-else")), Effect.runPromise)
+
+    expect(outcome.denied._tag).toBe("Left")
+    if (outcome.denied._tag === "Left") {
+      expect((outcome.denied.left as { _tag: string })._tag).toBe("AttachmentNotFound")
+    }
+    expect(outcome.allowedBytes).toBe(1)
+
+    // The uploader still gets their own bytes.
+    const own = await Effect.gen(function* () {
+      const attachments = yield* AttachmentService
+      return (yield* attachments.download(uploaded.priv.id)).data.length
+    }).pipe(Effect.provide(testLayer(orgId, "uploader")), Effect.runPromise)
+    expect(own).toBe(1)
+  })
 
   // The flag is stamped per row at upload, so flipping the widget's toggle has to
   // re-stamp what's already in the bucket — otherwise "private" would only ever

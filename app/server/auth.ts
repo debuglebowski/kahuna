@@ -51,6 +51,19 @@ async function purgeOrgEngineData(orgId: string): Promise<void> {
 // Production trusts only the baseURL plus whatever TRUSTED_ORIGINS lists
 // (comma-separated).
 const isProd = process.env.NODE_ENV === "production"
+
+/**
+ * The session-signing secret. A dev fallback is fine locally, but in production
+ * it would mean anyone who has read the source can FORGE a session cookie — so
+ * fail the boot instead of starting up insecure. Mirrors the same rule
+ * `integrations/crypto.ts` applies to the token-encryption key.
+ */
+const authSecret = (): string => {
+  const secret = process.env.BETTER_AUTH_SECRET
+  if (secret) return secret
+  if (isProd) throw new Error("BETTER_AUTH_SECRET must be set in production")
+  return "dev-secret-change-me"
+}
 const envOrigins = (process.env.TRUSTED_ORIGINS ?? "")
   .split(",")
   .map((o) => o.trim())
@@ -69,7 +82,7 @@ export const auth = betterAuth({
     changeEmail: { enabled: true },
     deleteUser: { enabled: true },
   },
-  secret: process.env.BETTER_AUTH_SECRET ?? "dev-secret-change-me",
+  secret: authSecret(),
   baseURL: process.env.BETTER_AUTH_URL ?? "http://localhost:3100",
   trustedOrigins,
   databaseHooks: {

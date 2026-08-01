@@ -370,6 +370,43 @@ describe("custom query endpoint", () => {
     return sent
   }
 
+  /** A second signed-in user, joined to `actor`'s org as a plain member. */
+  const addPlainMember = async (actor: { orgId: string }) => {
+    const email = `u-${randomUUID()}@test.dev`
+    const password = "password12345"
+    const created = await auth.api.signUpEmail({ body: { email, password, name: "Member" } })
+    const signIn = await auth.api.signInEmail({ body: { email, password }, asResponse: true })
+    const headers = new Headers({ cookie: cookieHeader(signIn) })
+    await auth.api.addMember({
+      body: { userId: created.user.id, role: "member", organizationId: actor.orgId },
+    })
+    await auth.api.setActiveOrganization({ body: { organizationId: actor.orgId }, headers })
+    return { headers }
+  }
+
+  it("403s a custom query from a plain member, before hitting the provider", async () => {
+    // Arbitrary caller-authored HogQL on the org's key is an admin surface; the
+    // STRUCTURED metrics stay member-open (the server authors that SQL).
+    const owner = await signUpAndOrg()
+    await connectFor(owner)
+    const member = await addPlainMember(owner)
+    const sent = capture([["2026-07-01T00:00:00Z", 5]], ["bucket", "value"])
+
+    const denied = await postQuery(member, CUSTOM)
+    expect(denied.status).toBe(403)
+    expect(await denied.json()).toMatchObject({ error: "CUSTOM_QUERY_ADMIN_ONLY" })
+    expect(sent).toHaveLength(0)
+
+    // Same member, structured metric: allowed.
+    const allowed = await postQuery(member, BASE)
+    expect(allowed.status).toBe(200)
+    expect(sent).toHaveLength(1)
+
+    // And the owner may still run the custom query.
+    const asOwner = await postQuery(owner, CUSTOM)
+    expect(asOwner.status).toBe(200)
+  })
+
   it("400s a custom query with no query text, before hitting the provider", async () => {
     const actor = await signUpAndOrg()
     await connectFor(actor)

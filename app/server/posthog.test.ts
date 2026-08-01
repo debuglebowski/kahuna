@@ -309,4 +309,37 @@ describe("PostHog integration", () => {
     expect(rows).toHaveLength(1)
     expect(rows[0]?.eventCount).toBe(9)
   })
+
+  // The key is ORG-WIDE: connecting points every member's analytics widgets at
+  // whichever project the key belongs to, and disconnecting takes the integration
+  // away from the whole org. Stands in for the other shared connectors (Linear /
+  // Apollo / Clay / the Slack bot), which route through the same `resolveAdmin`.
+  it("connect is admin-only; a plain member is forbidden before any provider call", async () => {
+    const owner = await signUpAndOrg()
+
+    const email = `u-${randomUUID()}@test.dev`
+    const password = "password12345"
+    const created = await auth.api.signUpEmail({ body: { email, password, name: "Member" } })
+    const signIn = await auth.api.signInEmail({ body: { email, password }, asResponse: true })
+    const headers = new Headers({ cookie: cookieHeader(signIn) })
+    await auth.api.addMember({
+      body: { userId: created.user.id, role: "member", organizationId: owner.orgId },
+    })
+    await auth.api.setActiveOrganization({ body: { organizationId: owner.orgId }, headers })
+
+    const seen: string[] = []
+    setPosthogFetchForTest(async (input) => {
+      seen.push(String(input))
+      return okJson({ results: [{ id: 42, name: "Marketing" }] })
+    })
+
+    const denied = await postConnect({ headers }, { apiKey: "phx_member_key", region: "us" })
+    expect(denied.status).toBe(403)
+    expect((await denied.json()) as { error?: string }).toMatchObject({ error: "FORBIDDEN" })
+    // Gated BEFORE the key is validated, so a member can't even probe with it.
+    expect(seen).toHaveLength(0)
+
+    // The owner connects fine.
+    expect((await postConnect(owner, { apiKey: "phx_live_key", region: "us" })).status).toBe(200)
+  })
 })

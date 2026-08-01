@@ -71,6 +71,26 @@ export async function addMemberByEmail(email: string, role: string): Promise<voi
   }
 }
 
+const ROLE_ERRORS: Record<string, string> = {
+  LAST_OWNER: "An org must keep at least one owner.",
+  FORBIDDEN: "Admins only.",
+  NO_SUCH_MEMBER: "That member no longer exists.",
+}
+
+/** Change a member's role (admin-only; see router.ts). Goes through OUR route, not
+ *  BetterAuth directly, so the last-owner rule is enforced server-side. */
+export async function setMemberRole(userId: string, role: string): Promise<void> {
+  const res = await fetch(`/api/org/members/${userId}/role`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ role }),
+  })
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string }
+    throw new Error(ROLE_ERRORS[body.error ?? ""] ?? body.error ?? "Failed to update role")
+  }
+}
+
 /** Permanently remove a DEACTIVATED member (admin-only; see router.ts). */
 export async function purgeMember(userId: string): Promise<void> {
   const res = await fetch(`/api/org/members/${userId}`, { method: "DELETE" })

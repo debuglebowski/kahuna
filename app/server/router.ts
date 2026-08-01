@@ -53,7 +53,7 @@ import {
   syncPosthogForRequest,
 } from "./posthog"
 import type { UseCaseResult } from "./runtime"
-import { resolveOrg, roleOf, runScoped } from "./session"
+import { resolveAdmin, resolveOrg, roleOf, runScoped } from "./session"
 import {
   disconnectSlack,
   disconnectSlackUser,
@@ -246,6 +246,51 @@ export const handleApi = async (req: Request): Promise<Response | null> => {
       return Response.json(member, { status: 201 })
     } catch (e) {
       return Response.json({ error: "ADD_FAILED", detail: String(e) }, { status: 500 })
+    }
+  }
+
+  // Role change (admin-only). The client used to call BetterAuth's
+  // updateMemberRole directly, which meant the "can't demote the last owner"
+  // rule existed only in the UI that drew the menu — a hand-rolled request could
+  // leave an org with no owner and nobody able to restore one. Enforce it here.
+  if (seg[1] === "org" && seg[2] === "members" && seg[3] && seg[4] === "role" && m === "POST") {
+    const org = await resolveAdmin(req)
+    if (!org.ok) return Response.json({ error: org.code }, { status: org.status })
+
+    const body = (await req.json().catch(() => null)) as { role?: string } | null
+    const next = body?.role
+    if (next !== "owner" && next !== "admin" && next !== "member")
+      return Response.json({ error: "INVALID_ROLE" }, { status: 400 })
+
+    const userId = seg[3]
+    const current = await roleOf(userId, org.orgId)
+    if (!current) return Response.json({ error: "NO_SUCH_MEMBER" }, { status: 404 })
+
+    // Demoting the last owner would strip the org of the only role that can
+    // administer it. Counted server-side, not trusted from the caller.
+    if (current === "owner" && next !== "owner") {
+      const owners = await db
+        .select({ userId: member.userId })
+        .from(member)
+        .where(and(eq(member.organizationId, org.orgId), eq(member.role, "owner")))
+      if (owners.length <= 1) return Response.json({ error: "LAST_OWNER" }, { status: 409 })
+    }
+
+    const [target] = await db
+      .select({ id: member.id })
+      .from(member)
+      .where(and(eq(member.userId, userId), eq(member.organizationId, org.orgId)))
+      .limit(1)
+    if (!target) return Response.json({ error: "NO_SUCH_MEMBER" }, { status: 404 })
+
+    try {
+      const updated = await auth.api.updateMemberRole({
+        body: { memberId: target.id, role: next, organizationId: org.orgId },
+        headers: req.headers,
+      })
+      return Response.json(updated)
+    } catch (e) {
+      return Response.json({ error: "ROLE_UPDATE_FAILED", detail: String(e) }, { status: 500 })
     }
   }
 
