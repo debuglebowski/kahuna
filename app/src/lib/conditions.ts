@@ -19,6 +19,16 @@ export interface MatchOpts {
   readonly match?: ConditionMatch | null
   /** Current user id — resolves the `isMe` op; absent = `isMe` never matches. */
   readonly me?: string | null
+  /**
+   * The subject's state BEFORE the change being evaluated — supplied only by an
+   * automation run (from `getAsOf` at the event just before the trigger). It
+   * resolves the two transition ops, `changedTo` / `changedFrom`.
+   *
+   * Absent on every other surface (filter bars, widgets, sidebar sources), where
+   * there is no "before": both ops then evaluate to false rather than throwing,
+   * so a transition condition simply never matches outside an automation.
+   */
+  readonly prev?: Record<string, unknown> | null
 }
 
 export const labelsOf = (state: Record<string, unknown>): string[] =>
@@ -69,6 +79,21 @@ const cmp = (a: unknown, b: unknown): number | null => {
 export const matchCondition = (inst: Instance, c: SidebarCondition, opts?: MatchOpts): boolean => {
   if (c.op === "hasLabel") return labelsOf(inst.state).includes(String(c.value))
   if (c.op === "notHasLabel") return !labelsOf(inst.state).includes(String(c.value))
+
+  // Transition ops (automations only). Both require a `prev` state AND that the
+  // field actually moved — otherwise re-saving an unrelated field on a record
+  // that is ALREADY in the target state would re-fire the rule, which is the
+  // exact bug these ops exist to prevent.
+  if (c.op === "changedTo" || c.op === "changedFrom") {
+    if (opts?.prev == null) return false
+    const before = unwrap(opts.prev[c.field])
+    const after = unwrap(inst.state[c.field])
+    if (sameScalar(before, after)) return false
+    const side = c.op === "changedTo" ? after : before
+    // An empty `value` means "changed at all, in this direction".
+    if (isEmptyValue(c.value)) return c.op === "changedTo" ? !isEmptyValue(after) : true
+    return anyOf(side, (x) => sameScalar(x, c.value))
+  }
 
   const v = unwrap(inst.state[c.field])
   switch (c.op) {
@@ -140,9 +165,28 @@ const EMPTYNESS: OpDef[] = [
   { op: "notEmpty", label: "is not empty" },
 ]
 
+/** The transition ops, offered ONLY where a "before" state exists (an automation
+ *  editor). Appending them in a filter bar would offer a condition that can never
+ *  match, so they are opt-in via `opsForKind(kind, { transitions: true })`. */
+const TRANSITION_OPS: OpDef[] = [
+  { op: "changedTo", label: "changed to" },
+  { op: "changedFrom", label: "changed from" },
+]
+
 /** Ops offered for a field kind (filter editors). Relation/file fields don't
- *  live in instance state and are not filterable client-side. */
-export const opsForKind = (kind: Field["kind"]): OpDef[] => {
+ *  live in instance state and are not filterable client-side.
+ *
+ *  `transitions` appends `changedTo`/`changedFrom` — pass it only from the
+ *  automation editor, where a previous state is available at evaluation time. */
+export const opsForKind = (
+  kind: Field["kind"],
+  opts?: { readonly transitions?: boolean },
+): OpDef[] => {
+  const base = opsForKindBase(kind)
+  return opts?.transitions ? [...base, ...TRANSITION_OPS] : base
+}
+
+const opsForKindBase = (kind: Field["kind"]): OpDef[] => {
   switch (kind) {
     case "number":
     case "money":

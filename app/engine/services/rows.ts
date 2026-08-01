@@ -3,7 +3,15 @@ import type {
   AnnotationField,
   AnnotationType,
   Attachment,
+  Automation,
+  AutomationAction,
+  AutomationPausedReason,
+  AutomationRun,
+  AutomationRunDetail,
+  AutomationRunStatus,
+  AutomationTrigger,
   Concept,
+  ConditionMatch,
   Dashboard,
   DashboardBody,
   DashboardNode,
@@ -25,6 +33,7 @@ import type {
   MemberDeactivation,
   Note,
   Relation,
+  SidebarCondition,
   SidebarView,
   SidebarViewBody,
   SubjectKind,
@@ -624,4 +633,106 @@ export const toAnnotationField = (r: AnnotationFieldRow): AnnotationField => ({
   icon: r.icon,
   position: Number(r.position),
   archivedAt: r.archived_at,
+})
+
+// ── automations ────────────────────────────────────────────────────────────────
+// The jsonb columns are opaque persisted DOCUMENTS (like dashboard bodies), so
+// every mapper below is defensive: a row written by a newer client, or one whose
+// referenced field was since archived, must still load rather than throw. Unknown
+// keys survive the round-trip; malformed ones degrade to a safe default.
+
+export interface AutomationRow {
+  readonly id: string
+  readonly org_id: string
+  readonly name: string
+  readonly enabled: boolean
+  readonly trigger: unknown
+  readonly conditions: unknown
+  readonly match: string
+  readonly actions: unknown
+  readonly next_run_at: Date | null
+  readonly last_run_at: Date | null
+  readonly run_count: number | string
+  readonly paused_reason: string | null
+  readonly created_by: string | null
+  readonly created_at: Date
+  readonly updated_at: Date
+  readonly archived_at: Date | null
+}
+
+/** Coerce a stored trigger document. An unreadable one degrades to a
+ *  `record.changed` with no concept — which matches NOTHING useful but keeps the
+ *  row listable and editable, rather than breaking the whole settings page. */
+const toAutomationTrigger = (v: unknown): AutomationTrigger => {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return { kind: "record.changed" }
+  const o = v as Record<string, unknown>
+  const kind = typeof o.kind === "string" ? o.kind : "record.changed"
+  return { ...o, kind } as AutomationTrigger
+}
+
+/** Conditions ride as the shared `SidebarCondition[]`; drop anything that isn't
+ *  a `{ field, op }` pair so one bad entry can't poison the set. */
+const toConditions = (v: unknown): ReadonlyArray<SidebarCondition> =>
+  Array.isArray(v)
+    ? v.filter(
+        (c): c is SidebarCondition =>
+          !!c && typeof c === "object" && typeof (c as SidebarCondition).op === "string",
+      )
+    : []
+
+/** Actions keep only entries with a `kind`; the runner then skips any kind it
+ *  doesn't know (forward compatibility, same contract as widgets). */
+const toActions = (v: unknown): ReadonlyArray<AutomationAction> =>
+  Array.isArray(v)
+    ? v.filter(
+        (a): a is AutomationAction =>
+          !!a && typeof a === "object" && typeof (a as AutomationAction).kind === "string",
+      )
+    : []
+
+export const toAutomation = (r: AutomationRow): Automation => ({
+  id: r.id,
+  orgId: r.org_id,
+  name: r.name,
+  enabled: r.enabled,
+  trigger: toAutomationTrigger(r.trigger),
+  conditions: toConditions(r.conditions),
+  match: r.match === "any" ? "any" : ("all" satisfies ConditionMatch),
+  actions: toActions(r.actions),
+  nextRunAt: r.next_run_at,
+  lastRunAt: r.last_run_at,
+  runCount: Number(r.run_count),
+  pausedReason: (r.paused_reason as AutomationPausedReason | null) ?? null,
+  createdBy: r.created_by,
+  createdAt: r.created_at,
+  updatedAt: r.updated_at,
+  archivedAt: r.archived_at,
+})
+
+export interface AutomationRunRow {
+  readonly id: string
+  readonly org_id: string
+  readonly automation_id: string
+  readonly event_id: number | string | null
+  readonly subject_id: string | null
+  readonly status: string
+  readonly detail: unknown
+  readonly started_at: Date
+  readonly finished_at: Date | null
+}
+
+export const toAutomationRun = (r: AutomationRunRow): AutomationRun => ({
+  id: r.id,
+  orgId: r.org_id,
+  automationId: r.automation_id,
+  // bigint arrives as a string from pg; null stays null (a scheduled run).
+  eventId: r.event_id === null ? null : Number(r.event_id),
+  subjectId: r.subject_id,
+  status: r.status as AutomationRunStatus,
+  detail:
+    r.detail && typeof r.detail === "object" && !Array.isArray(r.detail)
+      ? (r.detail as AutomationRunDetail)
+      : {},
+  startedAt: r.started_at,
+  finishedAt: r.finished_at,
 })

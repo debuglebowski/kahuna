@@ -71,6 +71,7 @@ export function ConditionList({
   labelOnly,
   match,
   onMatchChange,
+  transitions,
 }: {
   conceptId: string
   conditions: readonly SidebarCondition[]
@@ -79,6 +80,10 @@ export function ConditionList({
   labelOnly?: boolean
   match?: ConditionMatch
   onMatchChange?: (m: ConditionMatch) => void
+  /** Offer the transition ops (`changed to` / `changed from`). Automations only —
+   *  they need a before-state, which no other surface has, so elsewhere they'd be
+   *  a condition that can never match. */
+  transitions?: boolean
 }) {
   const fields = useFields(conceptId)
   const liveFields = useMemo(
@@ -283,7 +288,9 @@ export function ConditionList({
       {conditions.map((cond, i) => {
         const isLabel = cond.field === "__labels"
         const field = liveFields.find((f) => f.id === cond.field)
-        const ops: readonly OpDef[] = isLabel ? LABEL_OPS : opsForKind(field?.kind ?? "text")
+        const ops: readonly OpDef[] = isLabel
+          ? LABEL_OPS
+          : opsForKind(field?.kind ?? "text", { transitions })
         return (
           // biome-ignore lint/suspicious/noArrayIndexKey: conditions are positional
           <div key={i} className="flex items-center gap-1.5">

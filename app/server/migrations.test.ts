@@ -160,8 +160,9 @@ describe("migrations", () => {
     const first = await inspect(url)
 
     // Exact count, not a truthiness check: a partially-applied baseline would
-    // pass `> 0`. 56 tables + the instance_state_readable view.
-    expect(first.tableCount).toBe(57)
+    // pass `> 0`. 58 tables + the instance_state_readable view.
+    // (56 + automations + automation_runs, added by 0001.)
+    expect(first.tableCount).toBe(59)
     expect(first.hasAuthTable).toBe(true)
     expect(first.hasEngineTable).toBe(true)
     expect(first.ledgerRows).toBe(EXPECTED_LEDGER_ROWS)

@@ -38,8 +38,34 @@ const unregister = (orgId: string, c: Client): void => {
   if (set.size === 0) clients.delete(orgId)
 }
 
+/**
+ * Server-side taps: handlers that see EVERY org's envelopes.
+ *
+ * Distinct from `subscribe`, which is per-org because that is the SSE isolation
+ * boundary — a browser client must never be able to receive another org's
+ * envelopes. A tap is in-process server code (the automation runner) with no
+ * client behind it, so it is cross-org by design and must not be modelled as a
+ * subscriber to a magic "*" org.
+ */
+const taps = new Set<(env: EventEnvelope) => void>()
+
+/** Register a cross-org, in-process handler; returns an unregister fn. */
+export const tap = (handler: (env: EventEnvelope) => void): (() => void) => {
+  taps.add(handler)
+  return () => taps.delete(handler)
+}
+
 /** Fan an envelope out to its org's subscribers — the org-isolation boundary. Exported for tests. */
 export const dispatch = (env: EventEnvelope): void => {
+  // Taps first: a slow/throwing tap must not delay or break client delivery.
+  for (const t of taps) {
+    try {
+      t(env)
+    } catch {
+      // A broken tap is dropped rather than allowed to poison the hub.
+      taps.delete(t)
+    }
+  }
   const set = clients.get(env.org)
   if (!set) return
   for (const c of set) {
@@ -75,10 +101,11 @@ const replayEventsSince = (orgId: string, since: number) =>
       readonly subject_kind: string
       readonly subject_id: string
       readonly event_type: string
+      readonly actor: string | null
       readonly concept_id: string | null
       readonly concept: string | null
     }>`
-      SELECT e.id, e.occurred_at, e.subject_kind, e.subject_id, e.event_type,
+      SELECT e.id, e.occurred_at, e.subject_kind, e.subject_id, e.event_type, e.actor,
              c.id AS concept_id, c.name AS concept
       FROM events e
       LEFT JOIN instances i
@@ -97,6 +124,7 @@ const replayEventsSince = (orgId: string, since: number) =>
         type: r.event_type,
         conceptId: r.concept_id,
         concept: r.concept,
+        actor: r.actor,
       }),
     )
   })

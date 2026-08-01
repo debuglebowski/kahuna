@@ -483,6 +483,30 @@ export type EventPayload =
   | { readonly _tag: "AnnotationFieldArchived"; readonly annotationType: string }
   | { readonly _tag: "AnnotationFieldRestored"; readonly annotationType: string }
   | { readonly _tag: "AnnotationFieldReordered"; readonly annotationType: string }
+  // ── automations ─────────────────────────────────────────────────────────────
+  // Definition edits (settings → Automations). subjectKind "automation"; like
+  // concept/field/label schema events these never enter an instance stream.
+  | { readonly _tag: "AutomationCreated"; readonly name: string; readonly trigger: string }
+  | { readonly _tag: "AutomationUpdated"; readonly name: string; readonly trigger: string }
+  | { readonly _tag: "AutomationEnabled"; readonly name: string }
+  | { readonly _tag: "AutomationDisabled"; readonly name: string; readonly reason: string | null }
+  | { readonly _tag: "AutomationArchived" }
+  | { readonly _tag: "AutomationRestored" }
+  | { readonly _tag: "AutomationDeleted" }
+  // A completed RUN, appended on the acted-on record's own stream (subjectKind
+  // "instance", subject_id = the record) so the record's activity feed explains
+  // itself: "Automation 'Won deals → #wins' created task 'Send contract'".
+  // Folds like `ComputedBandChanged` — a marker that never bumps `version`, so it
+  // can't collide with a user's optimistic-concurrency check. For a run with no
+  // record (org-level task, failed lookup) it rides the automation's own stream.
+  | {
+      readonly _tag: "AutomationRan"
+      readonly automationId: Id
+      readonly name: string
+      readonly status: string
+      /** Short per-action summaries, for the feed line. */
+      readonly actions: ReadonlyArray<string>
+    }
 
 export interface Attachment {
   readonly id: Id
@@ -532,6 +556,18 @@ export interface SidebarCondition {
     | "notIn"
     | "isMe"
     | "notHasLabel"
+    // ── transition ops (automations only) ──────────────────────────────────────
+    // Every op above asks about a RESTING state ("Stage is Won"); these two ask
+    // about a TRANSITION ("Stage BECAME Won"), which is what an automation
+    // actually means. Without them, saving an unrelated field on an already-Won
+    // deal would re-fire a "when a deal is won" rule.
+    //
+    // They need a previous state to compare against, so they only ever hold in an
+    // automation run (which supplies one via `MatchOpts.prev`). On every other
+    // surface — filter bars, widgets, sidebar sources — there is no prior state
+    // and both evaluate to false rather than throwing.
+    | "changedTo"
+    | "changedFrom"
   readonly value: unknown
 }
 /** How a condition set combines: every condition or at least one (absent = all). */
@@ -1059,6 +1095,7 @@ export type SubjectKind =
   | "taskPriority"
   | "annotationField"
   | "attachment"
+  | "automation"
 
 /** The annotation variant. Append-only; "comment" etc. may follow. */
 export type AnnotationType = "note" | "task"
@@ -1171,4 +1208,169 @@ export interface EngineEvent {
   readonly subjectId: Id
   readonly eventType: string
   readonly payload: EventPayload
+}
+
+// ── automations ────────────────────────────────────────────────────────────────
+// "when X, if Y, then Z" — a saved filter over the event log with a list of
+// service calls attached. Three slots, three closed vocabularies:
+//   trigger    — which event (or a schedule); a FILTER over `events`, not new
+//                machinery, since every mutation already appends + pg_notifies
+//   conditions — `SidebarCondition[]`, the same shape/evaluator every widget uses
+//   actions    — ordered thin calls onto existing services
+// `trigger`/`actions` are persisted as opaque jsonb documents validated by the
+// RPC contract, exactly like dashboard widget bodies: an APPEND-ONLY union — add
+// new kinds at the end, never reshape an existing one, because old rows must keep
+// parsing. Concepts and fields are referenced by ID, never name, so a rename can
+// never break a rule.
+
+/** The actor prefix every automation-run event carries. Events by such an actor
+ *  NEVER trigger another automation — this is the one-hop guard, enforced by
+ *  construction rather than by cycle detection. Mirrors `system:decay-tick`. */
+export const AUTOMATION_ACTOR_PREFIX = "system:automation:"
+
+/** Is this event actor an automation? (the one-hop guard's predicate) */
+export const isAutomationActor = (actor: string | null | undefined): boolean =>
+  typeof actor === "string" && actor.startsWith(AUTOMATION_ACTOR_PREFIX)
+
+/** Which event (or clock tick) starts a run. Append-only. */
+export type AutomationTriggerKind =
+  | "record.created"
+  | "record.changed"
+  | "record.archived"
+  | "version.published"
+  | "record.band.changed"
+  | "task.created"
+  | "task.status.changed"
+  | "schedule"
+
+/** The trigger document. Which optional keys are meaningful depends on `kind`;
+ *  all are ids (never names). `schedule` is the only non-event kind — it runs
+ *  over EVERY record matching the conditions, which is also why automations need
+ *  no loop construct. */
+export interface AutomationTrigger {
+  readonly kind: AutomationTriggerKind
+  /** Restrict to one concept (all record.* + task.created); absent = any. */
+  readonly conceptId?: string | null
+  /** `record.changed`: only when THIS field is in the patch; absent = any field. */
+  readonly fieldId?: string | null
+  /** `record.band.changed`: the computed field, and which band to fire on. */
+  readonly band?: string | null
+  /** `task.status.changed`: only when the task lands on this status id. */
+  readonly statusId?: string | null
+  /** `schedule` only. */
+  readonly every?: "day" | "week" | "month"
+  /** `schedule` only: local hour 0-23 (minute is always 0). */
+  readonly hour?: number
+  /** `schedule` + every=week: 0=Sunday … 6=Saturday. */
+  readonly weekday?: number
+  /** `schedule` + every=month: day of month 1-28 (capped so every month has it). */
+  readonly day?: number
+}
+
+/** One action. Ordered and run sequentially; the first failure stops the run and
+ *  records which step failed and why. Every kind is a thin call onto a service
+ *  that already exists — so required fields, uniques, enum transitions,
+ *  managed-concept guards and optimistic concurrency all still apply. There is
+ *  deliberately NO purge action: an automation is a rule you wrote once and then
+ *  forgot, so it may only do reversible things. */
+export type AutomationAction =
+  | {
+      readonly kind: "setField"
+      readonly fieldId: string
+      /** Template-interpolated when a string (see `AUTOMATION_TOKENS`). */
+      readonly value: unknown
+    }
+  | { readonly kind: "addLabel"; readonly labelId: string }
+  | { readonly kind: "removeLabel"; readonly labelId: string }
+  | {
+      readonly kind: "createTask"
+      readonly title: string
+      readonly assignee?: string | null
+      readonly statusId?: string | null
+      readonly priorityId?: string | null
+      readonly labelIds?: ReadonlyArray<string>
+      /** Days from the run to the due date; absent = no due date. */
+      readonly dueInDays?: number | null
+      /** Hang the task off the trigger record (default true) vs org-level. */
+      readonly onRecord?: boolean
+    }
+  | {
+      readonly kind: "createRecord"
+      readonly conceptId: string
+      /** Field id → value; string values are template-interpolated. */
+      readonly fields: Record<string, unknown>
+    }
+  | { readonly kind: "archiveRecord" }
+  | {
+      readonly kind: "notifySlack"
+      readonly channel: string
+      readonly text: string
+    }
+  | {
+      readonly kind: "webhook"
+      readonly url: string
+      /** Extra JSON merged over the default envelope; strings interpolated. */
+      readonly body?: Record<string, unknown>
+    }
+
+export type AutomationActionKind = AutomationAction["kind"]
+
+/** Why an automation paused itself. Only `rate-cap` exists today; the column is
+ *  free text so a future reason needs no migration. */
+export type AutomationPausedReason = "rate-cap" | (string & {})
+
+export interface Automation {
+  readonly id: Id
+  readonly orgId: OrgId
+  readonly name: string
+  readonly enabled: boolean
+  readonly trigger: AutomationTrigger
+  readonly conditions: ReadonlyArray<SidebarCondition>
+  readonly match: ConditionMatch
+  readonly actions: ReadonlyArray<AutomationAction>
+  /** Schedule triggers only: when this is next due (claimed atomically). */
+  readonly nextRunAt: Date | null
+  readonly lastRunAt: Date | null
+  readonly runCount: number
+  /** Non-null ⇒ the automation paused ITSELF (rate cap tripped). */
+  readonly pausedReason: AutomationPausedReason | null
+  readonly createdBy: string | null
+  readonly createdAt: Date
+  readonly updatedAt: Date
+  readonly archivedAt: Date | null
+}
+
+/** How one run ended. `skipped` is RECORDED, never silent — it is the answer to
+ *  "why didn't my automation fire?". */
+export type AutomationRunStatus = "ok" | "skipped" | "failed"
+
+/** Per-action outcome inside `AutomationRun.detail`. */
+export interface AutomationActionOutcome {
+  readonly kind: AutomationActionKind
+  readonly ok: boolean
+  /** Short human note ("created task abc", "no Slack connection"). */
+  readonly note?: string
+}
+
+export interface AutomationRunDetail {
+  /** Why a `skipped` run skipped ("conditions", "disabled", "no-subject"). */
+  readonly reason?: string
+  readonly actions?: ReadonlyArray<AutomationActionOutcome>
+  /** Set on `failed`: which step (0-based) and the error. */
+  readonly failedAt?: number
+  readonly error?: string
+}
+
+export interface AutomationRun {
+  readonly id: Id
+  readonly orgId: OrgId
+  readonly automationId: Id
+  /** The triggering `events.id`; null for a scheduled run. */
+  readonly eventId: number | null
+  /** The record acted on (`instances.id`); null when there is none. */
+  readonly subjectId: Id | null
+  readonly status: AutomationRunStatus
+  readonly detail: AutomationRunDetail
+  readonly startedAt: Date
+  readonly finishedAt: Date | null
 }

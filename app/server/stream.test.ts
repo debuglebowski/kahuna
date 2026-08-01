@@ -11,6 +11,7 @@ const env = (org: string, id: number): EventEnvelope => ({
   type: "InstanceCreated",
   conceptId: "deal-id",
   concept: "Deal",
+  actor: "user-1",
 })
 
 describe("stream hub — org isolation", () => {

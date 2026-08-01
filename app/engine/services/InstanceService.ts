@@ -515,6 +515,11 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
             subjectId: current.id,
             eventType: tag,
             payload: { _tag: tag, patch },
+            // Both ids ride the envelope: `conceptId` is what routes the live-sync
+            // refetch AND what lets an automation's concept-scoped trigger match
+            // without a DB read. Passing only the name left conceptId null, so a
+            // scoped trigger could never fire on an edit.
+            conceptId: concept.id,
             conceptName: concept.name,
           })
           const folded = applyEvent(seedFrom(current, null), event)
@@ -572,6 +577,7 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
             subjectId: current.id,
             eventType: "InstanceArchived",
             payload: { _tag: "InstanceArchived" },
+            conceptId: concept.id,
             conceptName: concept.name,
           })
           const folded = applyEvent(seedFrom(current, null), event)
@@ -612,6 +618,7 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
             subjectId: current.id,
             eventType: "InstanceRestored",
             payload: { _tag: "InstanceRestored" },
+            conceptId: concept.id,
             conceptName: concept.name,
           })
           const folded = applyEvent(seedFrom(current, current.archivedAt), event)
@@ -671,6 +678,7 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
               subjectId: instance.id,
               eventType: "InstancePurged",
               payload: { _tag: "InstancePurged" },
+              conceptId: concept.id,
               conceptName: concept.name,
             })
             return { instance, blobRefs }
@@ -797,6 +805,7 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
                 from: storedNow ?? null,
                 to: bandNow,
               },
+              conceptId: concept.id,
               conceptName: concept.name,
             })
             const folded = applyEvent(seedFrom(current, null), event)

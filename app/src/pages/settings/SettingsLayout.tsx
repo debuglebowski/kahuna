@@ -8,6 +8,7 @@ import {
   Shapes,
   Tags,
   UserRound,
+  Zap,
 } from "lucide-react"
 import type { ReactNode } from "react"
 import { Navigate, Outlet, useLocation } from "react-router-dom"
@@ -52,6 +53,9 @@ export const SETTINGS_NAV: ReadonlyArray<SettingsGroup> = [
       { to: "sidebar", label: "Sidebar", admin: false, icon: <PanelLeft size={16} /> },
       { to: "tasks", label: "Tasks", admin: false, icon: <ListTodo size={16} /> },
       { to: "labels", label: "Labels", admin: false, icon: <Tags size={16} /> },
+      // Readable by any member (a record's trail names the automation that
+      // touched it); every write is admin-gated server-side.
+      { to: "automations", label: "Automations", admin: false, icon: <Zap size={16} /> },
       { to: "integrations", label: "Integrations", admin: false, icon: <Plug size={16} /> },
     ],
   },

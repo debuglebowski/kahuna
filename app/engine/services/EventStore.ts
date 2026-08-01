@@ -23,6 +23,17 @@ export interface EventEnvelope {
   readonly conceptId: string | null
   /** Concept name for instance events (used by the by-name dashboard routing); null otherwise. */
   readonly concept: string | null
+  /**
+   * Who caused the event (= the `events.actor` column): a user id, or a
+   * `system:*` actor for a server tick.
+   *
+   * Carried so the automation runner can enforce its one-hop guard WITHOUT a
+   * database read per delivered event — an event whose actor is an automation
+   * (`system:automation:<id>`) must never trigger another one. Identity metadata
+   * only, never field values, so the envelope stays leak-free and well under the
+   * 8 KB NOTIFY cap.
+   */
+  readonly actor: string | null
 }
 
 export interface AppendInput {
@@ -69,6 +80,7 @@ export class EventStore extends Effect.Service<EventStore>()("engine/EventStore"
           type: input.eventType,
           conceptId: input.conceptId ?? null,
           concept: input.conceptName ?? null,
+          actor,
         }
         yield* sql`SELECT pg_notify(${EVENT_CHANNEL}, ${JSON.stringify(envelope)})`
         return {

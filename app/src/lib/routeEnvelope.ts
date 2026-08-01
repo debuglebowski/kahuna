@@ -27,12 +27,16 @@ export interface LiveEnvelope {
     | "taskPriority"
     | "annotationField"
     | "attachment"
+    | "automation"
   readonly subjectId: string
   readonly type: string
   /** Concept id for instance events — routes to the id-keyed instance collection. */
   readonly conceptId: string | null
   /** Concept name for instance events — informational (mirrors the wire envelope). */
   readonly concept: string | null
+  /** Who caused it (mirrors the wire envelope). Present for the automation
+   *  runner's one-hop guard; the client only reads it for display. */
+  readonly actor?: string | null
 }
 
 export const KEY = {
@@ -67,6 +71,10 @@ export const KEY = {
   taskPriorities: "taskPriorities",
   /** Annotation custom-field defs for a type. */
   annotationFields: (type: string) => `annotationFields:${type}`,
+  /** Org-wide automation list (settings). */
+  automations: "automations",
+  /** One automation's run history (the editor's panel). */
+  automationRuns: (id: string) => `automationRuns:${id}`,
 } as const
 
 /**
@@ -111,6 +119,11 @@ export const routeEnvelope = (env: LiveEnvelope, mounted: ReadonlyArray<string>)
     for (const k of byPrefix("annotationFields:")) candidates.add(k)
     for (const k of byPrefix("notes:")) candidates.add(k)
     for (const k of byPrefix("tasks:")) candidates.add(k)
+  } else if (env.kind === "automation") {
+    // Definition edits + an AutomationRan with no record both land here. The
+    // settings list shows run counts, so it refetches either way.
+    candidates.add(KEY.automations)
+    for (const k of byPrefix("automationRuns:")) candidates.add(k)
   } else {
     // instance / item — nudge its concept's list and any open detail pages.
     if (env.conceptId) candidates.add(KEY.instances(env.conceptId))
@@ -121,6 +134,12 @@ export const routeEnvelope = (env: LiveEnvelope, mounted: ReadonlyArray<string>)
     if (env.conceptId) candidates.add(KEY.singleRecord(env.conceptId))
     // An instance edit also surfaces in its item's activity feed.
     for (const k of byPrefix("activity:")) candidates.add(k)
+    // An `AutomationRan` rides the acted-on RECORD's stream (so the record's feed
+    // explains itself), but it is also new run history — nudge the open editor.
+    if (env.type === "AutomationRan") {
+      candidates.add(KEY.automations)
+      for (const k of byPrefix("automationRuns:")) candidates.add(k)
+    }
   }
 
   const mountedSet = new Set(mounted)

@@ -11,6 +11,7 @@ import { MemberProfile } from "./pages/MemberProfile"
 import { MembersDirectory } from "./pages/MembersDirectory"
 import { Overview } from "./pages/Overview"
 import { Placeholder } from "./pages/Placeholder"
+import { Automations } from "./pages/settings/Automations"
 import { Concepts } from "./pages/settings/Concepts"
 import { Dashboards as DashboardsSettings } from "./pages/settings/Dashboards"
 import { Integrations } from "./pages/settings/Integrations"
@@ -69,6 +70,8 @@ export function App() {
           <Route path="sidebar/:id" element={<Views />} />
           <Route path="dashboards" element={<DashboardsSettings />} />
           <Route path="dashboards/:id" element={<DashboardsSettings />} />
+          <Route path="automations" element={<Automations />} />
+          <Route path="automations/:id" element={<Automations />} />
         </Route>
         <Route path="/instances/:id" element={<InstanceView />} />
         {/* A single-record concept's one record, addressed by slug — no instance

@@ -99,6 +99,26 @@ const audit = (input: AuditEntry) => writeAuditLog(slackAuditLog, input)
 
 const connectionForOrg = (orgId: string) => connectionForOrgIn(slackConnection, orgId)
 
+/**
+ * Post to a channel as the org's bot, resolving the connection here.
+ *
+ * Exists for callers outside a request (the automation runner) that have an org
+ * id but no `Request` to authenticate — so they don't reimplement the connection
+ * lookup. Returns false when the org has no Slack connected, rather than
+ * throwing: a missing integration is a recorded per-action outcome, not a run
+ * failure.
+ */
+export async function postMessageForOrg(
+  orgId: string,
+  channel: string,
+  text: string,
+): Promise<boolean> {
+  const conn = await connectionForOrg(orgId)
+  if (!conn) return false
+  const result = await postMessage(conn, channel, { text })
+  return result.ok !== false
+}
+
 const connectionForTeam = async (teamId: string) => {
   const [row] = await db
     .select()

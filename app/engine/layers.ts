@@ -2,6 +2,7 @@ import { Layer } from "effect"
 import { AnnotationFieldService } from "./services/AnnotationFieldService"
 import { AnnotationService } from "./services/AnnotationService"
 import { AttachmentService } from "./services/AttachmentService"
+import { AutomationService } from "./services/AutomationService"
 import { ComputedFields } from "./services/ComputedFields"
 import { ConceptService } from "./services/ConceptService"
 import { DashboardService } from "./services/DashboardService"
@@ -39,6 +40,7 @@ export const EngineLive = Layer.mergeAll(
   TaskPriorityService.Default,
   AnnotationFieldService.Default,
   AnnotationService.Default,
+  AutomationService.Default,
 )
 
 /** Union of all engine service tags — the requirements an engine effect may carry. */
@@ -60,3 +62,4 @@ export type EngineServices =
   | TaskPriorityService
   | AnnotationFieldService
   | AnnotationService
+  | AutomationService

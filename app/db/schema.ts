@@ -673,3 +673,109 @@ export const annotationFields = pgTable(
       .where(sql`${t.archivedAt} IS NULL`),
   ],
 )
+
+/**
+ * **Automations** — "when X, if Y, then Z", one row per rule.
+ *
+ * The whole model is three slots, each drawn from a closed vocabulary:
+ * `trigger` (which event, or a schedule), `conditions` (the SAME
+ * `SidebarCondition[]` shape every widget/filter bar uses), and `actions` (an
+ * ordered list of thin calls onto existing services). All three are jsonb and
+ * validated by the RPC contract — an APPEND-ONLY union, exactly like dashboard
+ * widget bodies: add new trigger/action kinds freely, never reshape an existing
+ * one, because old rows must keep parsing.
+ *
+ * A trigger is not new machinery — it is a filter over the `events` stream this
+ * schema already writes (and already announces via `pg_notify`). Concepts and
+ * fields inside `trigger`/`conditions`/`actions` are referenced by **id**, never
+ * by name, so renaming a concept can never break a rule.
+ *
+ * Soft-deleted (`archived_at`) rather than deleted: a run history pointing at a
+ * vanished automation explains nothing.
+ */
+export const automations = pgTable(
+  "automations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: text("org_id").notNull(),
+    name: text("name").notNull(),
+    // Disabled automations are skipped by the runner but keep their run history.
+    enabled: boolean("enabled").notNull().default(false),
+    // { kind, conceptId?, fieldId?, to?, statusId?, band?, cron?, hour?, weekday?, day? }
+    trigger: jsonb("trigger").notNull(),
+    // SidebarCondition[] — the shared filter shape (see src/lib/conditions.ts).
+    conditions: jsonb("conditions").notNull().default(sql`'[]'::jsonb`),
+    // How the condition set combines: "all" | "any".
+    match: text("match").notNull().default("all"),
+    // Action[] — ordered, run sequentially; first failure stops the run.
+    actions: jsonb("actions").notNull().default(sql`'[]'::jsonb`),
+    // Schedule triggers only: when this is next due. Claimed atomically by the
+    // tick (UPDATE … WHERE next_run_at <= now() RETURNING), so two server
+    // instances can never both take one. NULL for event triggers.
+    nextRunAt: timestamp("next_run_at", { withTimezone: true }),
+    lastRunAt: timestamp("last_run_at", { withTimezone: true }),
+    runCount: integer("run_count").notNull().default(0),
+    // Non-null ⇒ the automation paused ITSELF (rate cap tripped); shown in the
+    // list so a runaway is visible rather than silent.
+    pausedReason: text("paused_reason"),
+    createdBy: text("created_by"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+  },
+  (t) => [
+    // The runner's hot path: enabled automations for one org.
+    index("automations_org_idx").on(t.orgId, t.enabled).where(sql`${t.archivedAt} IS NULL`),
+    // The schedule tick's claim scan, across all orgs.
+    index("automations_due_idx")
+      .on(t.nextRunAt)
+      .where(sql`${t.nextRunAt} IS NOT NULL AND ${t.archivedAt} IS NULL`),
+  ],
+)
+
+/**
+ * One attempt of one automation — and NOT merely a log. This table is
+ * load-bearing three times over:
+ *
+ *  1. **The idempotency guard.** The runner inserts its row *before* acting,
+ *     under `unique (automation_id, event_id)`. A duplicate delivery (two server
+ *     instances, an SSE reconnect replay) loses the insert race and skips. So
+ *     correctness does not depend on there being exactly one process — which
+ *     matters, because "exactly one process" is a deployment property.
+ *  2. **The rate-cap window.** Runs per minute are counted off `started_at`.
+ *  3. **The answer to "why didn't it fire?"** — a non-matching event records
+ *     `status: 'skipped'` rather than vanishing.
+ *
+ * `event_id` is NULL for schedule-triggered runs (there is no event); those rows
+ * carry `subject_id` instead. Deleting the parent automation cascades.
+ */
+export const automationRuns = pgTable(
+  "automation_runs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: text("org_id").notNull(),
+    automationId: uuid("automation_id")
+      .notNull()
+      .references(() => automations.id, { onDelete: "cascade" }),
+    // The triggering event (`events.id`); NULL for a scheduled run.
+    eventId: bigint("event_id", { mode: "number" }),
+    // The record the run acted on (`instances.id`); NULL when there is none.
+    subjectId: uuid("subject_id"),
+    // "ok" | "skipped" | "failed".
+    status: text("status").notNull(),
+    // Per-action outcome, or the failure (which step, and why).
+    detail: jsonb("detail").notNull().default(sql`'{}'::jsonb`),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+  },
+  (t) => [
+    // THE guard: one run per (automation, event). Partial, because scheduled runs
+    // have a NULL event_id and NULLs never conflict in a unique index anyway —
+    // being explicit documents that only event runs are deduped this way.
+    uniqueIndex("automation_runs_event_uq")
+      .on(t.automationId, t.eventId)
+      .where(sql`${t.eventId} IS NOT NULL`),
+    // The run-history panel (newest first) + the rate-cap window scan.
+    index("automation_runs_recent_idx").on(t.automationId, t.startedAt),
+  ],
+)

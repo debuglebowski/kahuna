@@ -2,6 +2,7 @@ import "./env" // Load repo-root .env into process.env before any DB-touching im
 import path from "node:path"
 import { healthCheck } from "#engine"
 import { auth } from "./auth"
+import { startAutomationRunner, startAutomationScheduleTick } from "./automations"
 import { startDecayTick } from "./decay-tick"
 import { startGoogleWatchRenewal } from "./google"
 import { handleApi } from "./router"
@@ -18,6 +19,11 @@ const DIST = path.resolve(import.meta.dirname, "../dist")
 startHub()
 startDecayTick()
 startGoogleWatchRenewal()
+// Automations: the event-triggered runner taps the hub above (so it needs no
+// second LISTEN), and the schedule tick claims due rows atomically. Both AFTER
+// startHub, since the runner registers a tap on it.
+startAutomationRunner()
+startAutomationScheduleTick()
 
 const server = Bun.serve({
   port,

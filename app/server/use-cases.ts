@@ -7,8 +7,14 @@ import {
   type AnnotationType,
   type Attachment,
   AttachmentService,
+  type Automation,
+  type AutomationAction,
+  type AutomationRun,
+  AutomationService,
+  type AutomationTrigger,
   ComputedFields,
   ConceptService,
+  type ConditionMatch,
   type DashboardBody,
   DashboardService,
   type EditReach,
@@ -34,6 +40,7 @@ import {
   QueryService,
   RelationService,
   type RichTextValue,
+  type SidebarCondition,
   type SidebarViewBody,
   SidebarViewService,
   type Task,
@@ -44,6 +51,10 @@ import {
   TaskStatusService,
   type UploadOwner,
 } from "#engine"
+// The runner owns the dry-run evaluation (it also owns trigger matching and the
+// shared condition evaluator); this is the only import of it from a use-case, and
+// it does not import back — no cycle.
+import { dryRun } from "./automations"
 
 /** All use-cases return engine effects (R = OrgContext | EngineServices) for runScoped. */
 type UC<A, E = unknown> = Effect.Effect<A, E, OrgContext | EngineServices>
@@ -1179,3 +1190,56 @@ export const reorderAnnotationFields = (
   orders: ReadonlyArray<{ readonly id: string; readonly position: number }>,
 ): UC<ReadonlyArray<AnnotationField>> =>
   Effect.flatMap(AnnotationFieldService, (s) => s.reorder(annotationType, orders))
+
+// ── automations (admin) ────────────────────────────────────────────────────────
+// "when X, if Y, then Z". The service owns validation + the event trail; the
+// RUNNER (server/automations.ts) owns matching and execution. `testAutomation` is
+// the dry run — it evaluates and reports, writing nothing.
+
+export const listAutomations = (includeArchived = false): UC<ReadonlyArray<Automation>> =>
+  Effect.flatMap(AutomationService, (s) => s.list({ includeArchived }))
+
+export const getAutomation = (id: string): UC<Automation> =>
+  Effect.flatMap(AutomationService, (s) => s.getById(id))
+
+export const createAutomation = (input: {
+  readonly name: string
+  readonly trigger: AutomationTrigger
+  readonly conditions?: ReadonlyArray<SidebarCondition>
+  readonly match?: ConditionMatch
+  readonly actions: ReadonlyArray<AutomationAction>
+  readonly enabled?: boolean
+}): UC<Automation> => Effect.flatMap(AutomationService, (s) => s.create(input))
+
+export const updateAutomation = (input: {
+  readonly id: string
+  readonly name?: string
+  readonly trigger?: AutomationTrigger
+  readonly conditions?: ReadonlyArray<SidebarCondition>
+  readonly match?: ConditionMatch
+  readonly actions?: ReadonlyArray<AutomationAction>
+  readonly enabled?: boolean
+}): UC<Automation> => Effect.flatMap(AutomationService, (s) => s.update(input))
+
+export const archiveAutomation = (id: string): UC<Automation> =>
+  Effect.flatMap(AutomationService, (s) => s.archive(id))
+
+export const restoreAutomation = (id: string): UC<Automation> =>
+  Effect.flatMap(AutomationService, (s) => s.restore(id))
+
+export const deleteAutomation = (id: string): UC<{ readonly id: string }> =>
+  Effect.flatMap(AutomationService, (s) => s.remove(id)).pipe(Effect.map(() => ({ id })))
+
+export const listAutomationRuns = (
+  automationId: string,
+  limit?: number,
+): UC<ReadonlyArray<AutomationRun>> =>
+  Effect.flatMap(AutomationService, (s) => s.listRuns(automationId, { limit }))
+
+/** Dry run: what WOULD happen, having written nothing. */
+export const testAutomation = (id: string, limit?: number) =>
+  Effect.gen(function* () {
+    const automations = yield* AutomationService
+    const automation = yield* automations.getById(id)
+    return yield* dryRun({ automation, limit })
+  })

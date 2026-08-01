@@ -257,6 +257,19 @@ export class AnnotationFieldConfigInvalid extends Schema.TaggedError<AnnotationF
   { annotationType: Schema.String, name: Schema.String, reason: Schema.String },
 ) {}
 
+export class AutomationNotFound extends Schema.TaggedError<AutomationNotFound>()(
+  "AutomationNotFound",
+  { automationId: Schema.String },
+) {}
+
+/** A trigger or action document that no vocabulary entry accepts (an unknown
+ *  kind, a schedule with no cadence, a `setField` with no field). Raised at the
+ *  service boundary so a bad rule can never be persisted. */
+export class AutomationInvalid extends Schema.TaggedError<AutomationInvalid>()(
+  "AutomationInvalid",
+  { reason: Schema.String },
+) {}
+
 /** A connector-managed concept (Linear ticket, Gmail email, …) owns its own
  *  schema + instances via integration sync; user-initiated mutations (rename,
  *  add/remove field, create/edit/delete instance) are rejected. The sync path
@@ -311,3 +324,5 @@ export type EngineError =
   | AnnotationFieldNotFound
   | AnnotationFieldNameConflict
   | AnnotationFieldConfigInvalid
+  | AutomationNotFound
+  | AutomationInvalid

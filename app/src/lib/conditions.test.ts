@@ -137,3 +137,57 @@ describe("matchInstance combine modes", () => {
     expect(matchInstance(i, [], { match: "any" })).toBe(true)
   })
 })
+
+describe("transition ops (changedTo / changedFrom)", () => {
+  const won = inst({ stage: "won", value: 5000 })
+
+  it("changedTo holds only when the field actually moved INTO the value", () => {
+    // The bug these ops exist to prevent: an unrelated edit on a record that is
+    // ALREADY won must not read as "the deal was just won".
+    expect(matchCondition(won, c("stage", "changedTo", "won"), { prev: { stage: "won" } })).toBe(
+      false,
+    )
+    expect(matchCondition(won, c("stage", "changedTo", "won"), { prev: { stage: "nego" } })).toBe(
+      true,
+    )
+    // Moved, but not to the value we asked about.
+    expect(matchCondition(won, c("stage", "changedTo", "lost"), { prev: { stage: "nego" } })).toBe(
+      false,
+    )
+  })
+
+  it("changedFrom looks at the previous value", () => {
+    expect(
+      matchCondition(won, c("stage", "changedFrom", "nego"), { prev: { stage: "nego" } }),
+    ).toBe(true)
+    expect(
+      matchCondition(won, c("stage", "changedFrom", "open"), { prev: { stage: "nego" } }),
+    ).toBe(false)
+  })
+
+  it("an empty value means 'changed at all, in this direction'", () => {
+    expect(matchCondition(won, c("stage", "changedTo"), { prev: { stage: "nego" } })).toBe(true)
+    expect(matchCondition(won, c("stage", "changedTo"), { prev: { stage: "won" } })).toBe(false)
+    // Newly SET (absent before) still counts as changed-to-something.
+    expect(matchCondition(won, c("stage", "changedTo"), { prev: {} })).toBe(true)
+    // Cleared: changedTo wants a non-empty after, changedFrom does not care.
+    const cleared = inst({ stage: null })
+    expect(matchCondition(cleared, c("stage", "changedTo"), { prev: { stage: "won" } })).toBe(false)
+    expect(matchCondition(cleared, c("stage", "changedFrom"), { prev: { stage: "won" } })).toBe(
+      true,
+    )
+  })
+
+  it("never matches without a prev state — so filter bars and widgets are safe", () => {
+    expect(matchCondition(won, c("stage", "changedTo", "won"))).toBe(false)
+    expect(matchCondition(won, c("stage", "changedFrom", "nego"), { prev: null })).toBe(false)
+    // And it composes with the normal combine modes.
+    expect(matchInstance(won, [c("stage", "changedTo", "won")], { match: "all" })).toBe(false)
+  })
+
+  it("coerces like the other ops (numbers through a JSON round-trip)", () => {
+    expect(matchCondition(won, c("value", "changedTo", "5000"), { prev: { value: 100 } })).toBe(
+      true,
+    )
+  })
+})

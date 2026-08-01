@@ -5,6 +5,8 @@ import type {
   AnnotationField,
   AnnotationType,
   Attachment,
+  Automation,
+  AutomationRun,
   Concept,
   FeedItem,
   Instance,
@@ -306,6 +308,44 @@ export const annotationFieldsByType = (type: AnnotationType) => {
   if (!c) {
     c = makeAnnotationFields(type)
     annotationFieldCollections.set(type, c)
+  }
+  return c
+}
+
+// ── automations ────────────────────────────────────────────────────────────────
+
+/** Org-wide automations (the settings list + editor read this). Includes archived
+ *  so the list can offer a restore, exactly like the concepts collection. */
+export const automationsCollection = createCollection(
+  queryCollectionOptions({
+    queryKey: ["live", "automations"],
+    queryFn: async (): Promise<Automation[]> => [
+      ...(await api.listAutomations({ includeArchived: true })),
+    ],
+    queryClient,
+    getKey: (a: Automation) => a.id,
+  }),
+)
+
+// One run-history collection per automation, created on first use — the editor
+// shows exactly one at a time, so this stays bounded in practice.
+const automationRunCollections = new Map<string, ReturnType<typeof makeAutomationRuns>>()
+const makeAutomationRuns = (automationId: string) =>
+  createCollection(
+    queryCollectionOptions({
+      queryKey: ["live", "automationRuns", automationId],
+      queryFn: async (): Promise<AutomationRun[]> => [
+        ...(await api.listAutomationRuns(automationId, { limit: 20 })),
+      ],
+      queryClient,
+      getKey: (r: AutomationRun) => r.id,
+    }),
+  )
+export const automationRunsFor = (automationId: string) => {
+  let c = automationRunCollections.get(automationId)
+  if (!c) {
+    c = makeAutomationRuns(automationId)
+    automationRunCollections.set(automationId, c)
   }
   return c
 }

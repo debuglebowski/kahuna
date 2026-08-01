@@ -368,6 +368,10 @@ export const SidebarCondition = Schema.Struct({
     "notIn",
     "isMe",
     "notHasLabel",
+    // Transition ops — only meaningful in an automation, where a previous state
+    // exists to compare against. Elsewhere they never match (see conditions.ts).
+    "changedTo",
+    "changedFrom",
   ),
   value: Schema.Unknown,
 })
@@ -1116,6 +1120,152 @@ export const DeactivatedMember = Schema.Struct({
   deactivatedAt: Schema.Date,
 })
 export type DeactivatedMember = typeof DeactivatedMember.Type
+
+// ── automations ────────────────────────────────────────────────────────────────
+// "when X, if Y, then Z". `trigger` and `actions` are validated documents, and
+// the union is APPEND-ONLY exactly like the widget union above: add new kinds at
+// the END, never reshape an existing one, because persisted rows must keep
+// parsing on an older build. Concepts/fields/labels are referenced by id.
+
+export const AutomationTrigger = Schema.Struct({
+  kind: Schema.Literal(
+    "record.created",
+    "record.changed",
+    "record.archived",
+    "version.published",
+    "record.band.changed",
+    "task.created",
+    "task.status.changed",
+    "schedule",
+  ),
+  /** Restrict to one concept (record.* + task.created); absent = any. */
+  conceptId: Schema.optional(Schema.NullOr(Schema.String)),
+  /** `record.changed`: fire only when THIS field is in the patch.
+   *  `record.band.changed`: which computed field's band moved. */
+  fieldId: Schema.optional(Schema.NullOr(Schema.String)),
+  /** `record.band.changed`: the destination band. */
+  band: Schema.optional(Schema.NullOr(Schema.String)),
+  /** `task.status.changed`: the destination status id. */
+  statusId: Schema.optional(Schema.NullOr(Schema.String)),
+  /** `schedule` cadence + when. `day` is capped at 28 so every month has it. */
+  every: Schema.optional(Schema.Literal("day", "week", "month")),
+  hour: Schema.optional(Schema.Number),
+  weekday: Schema.optional(Schema.Number),
+  day: Schema.optional(Schema.Number),
+})
+export type AutomationTrigger = typeof AutomationTrigger.Type
+
+const SetFieldAction = Schema.Struct({
+  kind: Schema.Literal("setField"),
+  fieldId: Schema.String,
+  value: Schema.Unknown,
+})
+const AddLabelAction = Schema.Struct({
+  kind: Schema.Literal("addLabel"),
+  labelId: Schema.String,
+})
+const RemoveLabelAction = Schema.Struct({
+  kind: Schema.Literal("removeLabel"),
+  labelId: Schema.String,
+})
+const CreateTaskAction = Schema.Struct({
+  kind: Schema.Literal("createTask"),
+  title: Schema.String,
+  assignee: Schema.optional(Schema.NullOr(Schema.String)),
+  statusId: Schema.optional(Schema.NullOr(Schema.String)),
+  priorityId: Schema.optional(Schema.NullOr(Schema.String)),
+  labelIds: Schema.optional(Schema.Array(Schema.String)),
+  /** Days from the run to the due date; absent = no due date. */
+  dueInDays: Schema.optional(Schema.NullOr(Schema.Number)),
+  /** Hang it off the trigger record (default) vs org-level. */
+  onRecord: Schema.optional(Schema.Boolean),
+})
+const CreateRecordAction = Schema.Struct({
+  kind: Schema.Literal("createRecord"),
+  conceptId: Schema.String,
+  fields: Schema.Record({ key: Schema.String, value: Schema.Unknown }),
+})
+/** Archive, never purge: an automation may only do reversible things. */
+const ArchiveRecordAction = Schema.Struct({
+  kind: Schema.Literal("archiveRecord"),
+})
+const NotifySlackAction = Schema.Struct({
+  kind: Schema.Literal("notifySlack"),
+  channel: Schema.String,
+  text: Schema.String,
+})
+const WebhookAction = Schema.Struct({
+  kind: Schema.Literal("webhook"),
+  url: Schema.String,
+  body: Schema.optional(Schema.Record({ key: Schema.String, value: Schema.Unknown })),
+})
+
+export const AutomationAction = Schema.Union(
+  SetFieldAction,
+  AddLabelAction,
+  RemoveLabelAction,
+  CreateTaskAction,
+  CreateRecordAction,
+  ArchiveRecordAction,
+  NotifySlackAction,
+  WebhookAction,
+)
+export type AutomationAction = typeof AutomationAction.Type
+
+export const Automation = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+  enabled: Schema.Boolean,
+  trigger: AutomationTrigger,
+  conditions: Schema.Array(SidebarCondition),
+  match: Schema.Literal("all", "any"),
+  actions: Schema.Array(AutomationAction),
+  nextRunAt: Schema.NullOr(Schema.Date),
+  lastRunAt: Schema.NullOr(Schema.Date),
+  runCount: Schema.Number,
+  /** Non-null ⇒ the automation paused ITSELF (rate cap). */
+  pausedReason: Schema.NullOr(Schema.String),
+  createdBy: Schema.NullOr(Schema.String),
+  createdAt: Schema.Date,
+  updatedAt: Schema.Date,
+  archivedAt: Schema.NullOr(Schema.Date),
+})
+export type Automation = typeof Automation.Type
+
+export const AutomationRun = Schema.Struct({
+  id: Schema.String,
+  automationId: Schema.String,
+  eventId: Schema.NullOr(Schema.Number),
+  subjectId: Schema.NullOr(Schema.String),
+  status: Schema.Literal("ok", "skipped", "failed"),
+  detail: Schema.Struct({
+    reason: Schema.optional(Schema.String),
+    actions: Schema.optional(
+      Schema.Array(
+        Schema.Struct({
+          kind: Schema.String,
+          ok: Schema.Boolean,
+          note: Schema.optional(Schema.String),
+        }),
+      ),
+    ),
+    failedAt: Schema.optional(Schema.Number),
+    error: Schema.optional(Schema.String),
+  }),
+  startedAt: Schema.Date,
+  finishedAt: Schema.NullOr(Schema.Date),
+})
+export type AutomationRun = typeof AutomationRun.Type
+
+/** What a dry run reports — what WOULD happen, having written nothing. */
+export const AutomationDryRun = Schema.Struct({
+  matched: Schema.Number,
+  scanned: Schema.Number,
+  samples: Schema.Array(Schema.Struct({ id: Schema.String, label: Schema.String })),
+  /** Set when the preview is inherently partial (e.g. transition conditions). */
+  note: Schema.NullOr(Schema.String),
+})
+export type AutomationDryRun = typeof AutomationDryRun.Type
 
 /** One serializable error for the whole API; `code` mirrors the old HTTP codes. */
 export class RpcError extends Schema.TaggedError<RpcError>()("RpcError", {
@@ -1911,6 +2061,71 @@ export class KingsmakerRpcs extends RpcGroup.make(
   Rpc.make("reactivateMember", {
     payload: { userId: Schema.String },
     success: Schema.Struct({ userId: Schema.String }),
+    error: RpcError,
+  }),
+  // ── automations ─────────────────────────────────────────────────────────────
+  // Admin-gated writes (an automation writes to everyone's records, so it is a
+  // settings-level power, not a per-member one); the list is readable by any
+  // member so a record's activity trail can be explained.
+  Rpc.make("listAutomations", {
+    payload: { includeArchived: Schema.optional(Schema.Boolean) },
+    success: Schema.Array(Automation),
+    error: RpcError,
+  }),
+  Rpc.make("getAutomation", {
+    payload: { id: Schema.String },
+    success: Automation,
+    error: RpcError,
+  }),
+  Rpc.make("createAutomation", {
+    payload: {
+      name: Schema.String,
+      trigger: AutomationTrigger,
+      conditions: Schema.optional(Schema.Array(SidebarCondition)),
+      match: Schema.optional(Schema.Literal("all", "any")),
+      actions: Schema.Array(AutomationAction),
+      enabled: Schema.optional(Schema.Boolean),
+    },
+    success: Automation,
+    error: RpcError,
+  }),
+  Rpc.make("updateAutomation", {
+    payload: {
+      id: Schema.String,
+      name: Schema.optional(Schema.String),
+      trigger: Schema.optional(AutomationTrigger),
+      conditions: Schema.optional(Schema.Array(SidebarCondition)),
+      match: Schema.optional(Schema.Literal("all", "any")),
+      actions: Schema.optional(Schema.Array(AutomationAction)),
+      enabled: Schema.optional(Schema.Boolean),
+    },
+    success: Automation,
+    error: RpcError,
+  }),
+  Rpc.make("archiveAutomation", {
+    payload: { id: Schema.String },
+    success: Automation,
+    error: RpcError,
+  }),
+  Rpc.make("restoreAutomation", {
+    payload: { id: Schema.String },
+    success: Automation,
+    error: RpcError,
+  }),
+  Rpc.make("deleteAutomation", {
+    payload: { id: Schema.String },
+    success: Schema.Struct({ id: Schema.String }),
+    error: RpcError,
+  }),
+  Rpc.make("listAutomationRuns", {
+    payload: { automationId: Schema.String, limit: Schema.optional(Schema.Number) },
+    success: Schema.Array(AutomationRun),
+    error: RpcError,
+  }),
+  /** The Test button: evaluate against recent records, write nothing. */
+  Rpc.make("testAutomation", {
+    payload: { id: Schema.String, limit: Schema.optional(Schema.Number) },
+    success: AutomationDryRun,
     error: RpcError,
   }),
 ) {}

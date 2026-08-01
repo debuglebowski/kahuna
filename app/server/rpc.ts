@@ -6,6 +6,9 @@ import { type EngineServices, OrgContext, type OrgScope } from "#engine"
 import {
   type AnnotationField,
   type Attachment,
+  type Automation,
+  type AutomationDryRun,
+  type AutomationRun,
   type Concept,
   type ConceptGraph,
   type Dashboard,
@@ -722,6 +725,26 @@ const HandlersLive = ServerRpcs.toLayer({
       ),
     ) as Effect.Effect<DeactivatedMember, RpcError, OrgContext | EngineServices>,
   reactivateMember: ({ userId }) => admin<{ userId: string }>(uc.reactivateMember(userId)),
+  // Automations. Reads are member-visible (a record's activity trail names the
+  // automation that touched it, so the list must be resolvable); every WRITE is
+  // admin-gated, because an automation writes to everyone's records.
+  listAutomations: ({ includeArchived }) =>
+    as<ReadonlyArray<Automation>>(uc.listAutomations(includeArchived)),
+  getAutomation: ({ id }) => as<Automation>(uc.getAutomation(id)),
+  createAutomation: ({ name, trigger, conditions, match, actions, enabled }) =>
+    admin<Automation>(uc.createAutomation({ name, trigger, conditions, match, actions, enabled })),
+  updateAutomation: ({ id, name, trigger, conditions, match, actions, enabled }) =>
+    admin<Automation>(
+      uc.updateAutomation({ id, name, trigger, conditions, match, actions, enabled }),
+    ),
+  archiveAutomation: ({ id }) => admin<Automation>(uc.archiveAutomation(id)),
+  restoreAutomation: ({ id }) => admin<Automation>(uc.restoreAutomation(id)),
+  deleteAutomation: ({ id }) => admin<{ id: string }>(uc.deleteAutomation(id)),
+  listAutomationRuns: ({ automationId, limit }) =>
+    as<ReadonlyArray<AutomationRun>>(uc.listAutomationRuns(automationId, limit)),
+  // A dry run writes nothing, but it reads every record of a concept — keep it
+  // behind the same gate as the editor that launches it.
+  testAutomation: ({ id, limit }) => admin<AutomationDryRun>(uc.testAutomation(id, limit)),
 }).pipe(Layer.provide(EngineBase))
 
 // HttpRouter.DefaultServices (HttpPlatform | Etag | FileSystem | Path) — pure

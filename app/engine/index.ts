@@ -40,6 +40,11 @@ export {
   type UploadInput,
   type UploadOwner,
 } from "./services/AttachmentService"
+export {
+  AutomationService,
+  nextRunAfter,
+  RATE_CAP_PER_MIN,
+} from "./services/AutomationService"
 export { ComputedFields } from "./services/ComputedFields"
 export { ConceptService } from "./services/ConceptService"
 export { DashboardService } from "./services/DashboardService"

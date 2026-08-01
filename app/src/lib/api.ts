@@ -2,6 +2,8 @@ import { FetchHttpClient } from "@effect/platform"
 import { RpcClient, RpcSerialization } from "@effect/rpc"
 import { Context, Effect, Layer, ManagedRuntime } from "effect"
 import {
+  type AutomationAction,
+  type AutomationTrigger,
   type DashboardBody,
   type EditReach,
   type FieldConfig,
@@ -11,6 +13,7 @@ import {
   type InstanceViewPrefsBody,
   KingsmakerRpcs,
   type RichTextEnvelope,
+  type SidebarCondition,
   type SidebarViewBody,
   type TaskStatusCategory,
 } from "../../rpc/contract"
@@ -19,6 +22,11 @@ export type {
   AnnotationField,
   AnnotationType,
   Attachment,
+  Automation,
+  AutomationAction,
+  AutomationDryRun,
+  AutomationRun,
+  AutomationTrigger,
   Concept,
   ConceptGraph,
   ConceptGraphEdge,
@@ -1041,4 +1049,33 @@ export const api = {
   listDeactivatedMembers: () => call((c) => c.listDeactivatedMembers()),
   deactivateMember: (userId: string) => call((c) => c.deactivateMember({ userId })),
   reactivateMember: (userId: string) => call((c) => c.reactivateMember({ userId })),
+  // ── automations (writes admin-only server-side) ────────────────────────────────
+  listAutomations: (opts?: { includeArchived?: boolean }) =>
+    call((c) => c.listAutomations({ includeArchived: opts?.includeArchived })),
+  getAutomation: (id: string) => call((c) => c.getAutomation({ id })),
+  createAutomation: (input: {
+    name: string
+    trigger: AutomationTrigger
+    conditions?: ReadonlyArray<SidebarCondition>
+    match?: "all" | "any"
+    actions: ReadonlyArray<AutomationAction>
+    enabled?: boolean
+  }) => call((c) => c.createAutomation(input)),
+  updateAutomation: (input: {
+    id: string
+    name?: string
+    trigger?: AutomationTrigger
+    conditions?: ReadonlyArray<SidebarCondition>
+    match?: "all" | "any"
+    actions?: ReadonlyArray<AutomationAction>
+    enabled?: boolean
+  }) => call((c) => c.updateAutomation(input)),
+  archiveAutomation: (id: string) => call((c) => c.archiveAutomation({ id })),
+  restoreAutomation: (id: string) => call((c) => c.restoreAutomation({ id })),
+  deleteAutomation: (id: string) => call((c) => c.deleteAutomation({ id })),
+  listAutomationRuns: (automationId: string, opts?: { limit?: number }) =>
+    call((c) => c.listAutomationRuns({ automationId, limit: opts?.limit })),
+  /** Dry run — reports what WOULD happen, writes nothing. */
+  testAutomation: (id: string, opts?: { limit?: number }) =>
+    call((c) => c.testAutomation({ id, limit: opts?.limit })),
 }
