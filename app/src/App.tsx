@@ -4,14 +4,13 @@ import { Layout } from "./components/Layout"
 import { ErrorScreen, Spinner } from "./components/ui"
 import { useSession } from "./lib/auth-client"
 import { AuthPage } from "./pages/AuthPage"
+import { Automations } from "./pages/Automations"
 import { ConceptRecordView } from "./pages/ConceptRecordView"
 import { Dashboards } from "./pages/Dashboards"
 import { InstanceView } from "./pages/InstanceView"
 import { MemberProfile } from "./pages/MemberProfile"
 import { MembersDirectory } from "./pages/MembersDirectory"
 import { Overview } from "./pages/Overview"
-import { Placeholder } from "./pages/Placeholder"
-import { Automations } from "./pages/settings/Automations"
 import { Concepts } from "./pages/settings/Concepts"
 import { Dashboards as DashboardsSettings } from "./pages/settings/Dashboards"
 import { Integrations } from "./pages/settings/Integrations"
@@ -45,7 +44,8 @@ export function App() {
         <Route path="/dashboards/:id" element={<Dashboards />} />
         <Route path="/members" element={<MembersDirectory />} />
         <Route path="/members/:userId" element={<MemberProfile />} />
-        <Route path="/automations" element={<Placeholder title="Automations" />} />
+        <Route path="/automations" element={<Automations />} />
+        <Route path="/automations/:id" element={<Automations />} />
         <Route
           path="/intro-lab"
           element={
@@ -70,8 +70,11 @@ export function App() {
           <Route path="sidebar/:id" element={<Views />} />
           <Route path="dashboards" element={<DashboardsSettings />} />
           <Route path="dashboards/:id" element={<DashboardsSettings />} />
-          <Route path="automations" element={<Automations />} />
-          <Route path="automations/:id" element={<Automations />} />
+          {/* Automations live at the top level (their own global nav slot), the
+              same way member management lives at /members. Redirect so any
+              bookmarked settings URL still lands somewhere real. */}
+          <Route path="automations" element={<Navigate to="/automations" replace />} />
+          <Route path="automations/:id" element={<Navigate to="/automations" replace />} />
         </Route>
         <Route path="/instances/:id" element={<InstanceView />} />
         {/* A single-record concept's one record, addressed by slug — no instance

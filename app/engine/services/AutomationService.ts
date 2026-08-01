@@ -434,9 +434,15 @@ export class AutomationService extends Effect.Service<AutomationService>()(
       }) =>
         Effect.gen(function* () {
           const { orgId } = yield* OrgContext
+          // The claim lands as `skipped` + reason "running": the row must exist
+          // before any action runs (that IS the guard), but it has no outcome yet.
+          // `finishRun` overwrites both. Naming the placeholder means a row left
+          // behind by a hard kill reads as "started, never finished" instead of
+          // masquerading as a deliberate skip with no reason.
           const rows = yield* sql<AutomationRunRow>`
-            INSERT INTO automation_runs (org_id, automation_id, event_id, subject_id, status)
-            VALUES (${orgId}, ${input.automationId}, ${input.eventId}, ${input.subjectId}, 'skipped')
+            INSERT INTO automation_runs (org_id, automation_id, event_id, subject_id, status, detail)
+            VALUES (${orgId}, ${input.automationId}, ${input.eventId}, ${input.subjectId}, 'skipped',
+                    ${sql.json({ reason: "running" })})
             ON CONFLICT (automation_id, event_id) WHERE event_id IS NOT NULL DO NOTHING
             RETURNING *`
           const row = rows[0]

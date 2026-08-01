@@ -2,12 +2,13 @@ import { useLiveQuery } from "@tanstack/react-db"
 import { useMutation } from "@tanstack/react-query"
 import { Plus, Zap } from "lucide-react"
 import { useState } from "react"
-import { Link, useNavigate, useOutletContext, useParams } from "react-router-dom"
-import { Badge, Button, Card, Spinner, Toolbar } from "../../components/ui"
-import { type Automation, api } from "../../lib/api"
-import { automationsCollection, KEY, useRegisterCollection } from "../../lib/collections"
-import { AutomationEditor } from "./AutomationEditor"
-import { describeTrigger, summarizeActions } from "./automationText"
+import { Link, useNavigate, useParams } from "react-router-dom"
+import { Badge, Button, Card, Spinner, Toolbar } from "../components/ui"
+import { type Automation, api } from "../lib/api"
+import { automationsCollection, KEY, useRegisterCollection } from "../lib/collections"
+import { AutomationEditor } from "./settings/AutomationEditor"
+import { describeTrigger, summarizeActions } from "./settings/automationText"
+import { useIsAdmin } from "./settings/SettingsLayout"
 
 /** Relative "2h ago" for the run column — short by design, the editor has detail. */
 const ago = (d: Date | null): string => {
@@ -22,16 +23,18 @@ const ago = (d: Date | null): string => {
 }
 
 /**
- * `/settings/automations` — the list, where each row reads as its own sentence
- * ("when Deal · Stage changes → post to Slack, create task"), plus
- * `/settings/automations/:id`, the full-page editor.
+ * `/automations` — the list, where each row reads as its own sentence ("when
+ * Deal · Stage changes → post to Slack, create task"), plus `/automations/:id`,
+ * the full-page editor. One component owns both: the presence of `:id` picks.
  *
- * One component owning both routes matches the Concepts/Views/Dashboards pattern
- * in this folder: the presence of `:id` picks the editor.
+ * A TOP-LEVEL page, not a settings section — it has its own global nav slot
+ * (`GLOBAL_NAV`, alongside Tasks and Members), which is where people look for it.
+ * Writes are still admin-only, gated server-side and reflected here via
+ * `useIsAdmin` (there is no settings Outlet context out here).
  */
 export function Automations() {
   const { id } = useParams()
-  const { admin } = useOutletContext<{ admin: boolean }>()
+  const { admin } = useIsAdmin()
   const navigate = useNavigate()
   const [filter, setFilter] = useState("")
   useRegisterCollection(KEY.automations, automationsCollection)
@@ -57,7 +60,7 @@ export function Automations() {
       }),
     onSuccess: async (a) => {
       await automationsCollection.utils.refetch()
-      navigate(`/settings/automations/${a.id}`)
+      navigate(`/automations/${a.id}`)
     },
   })
 
@@ -68,7 +71,8 @@ export function Automations() {
   const archived = rows.filter((a) => a.archivedAt)
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
+      <h2 className="text-2xl font-bold tracking-tight text-foreground">Automations</h2>
       <Toolbar filter={filter} onFilter={setFilter} placeholder="Filter automations…">
         {admin && (
           <Button onClick={() => create.mutate()} disabled={create.isPending}>
@@ -122,7 +126,7 @@ function AutomationRow({ automation: a }: { automation: Automation }) {
   return (
     <li>
       <Link
-        to={`/settings/automations/${a.id}`}
+        to={`/automations/${a.id}`}
         className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-accent/50"
       >
         <span

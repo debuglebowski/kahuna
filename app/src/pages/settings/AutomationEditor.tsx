@@ -51,7 +51,7 @@ import { DangerZone, Feedback } from "./parts"
 const NONE = "__none"
 
 /**
- * `/settings/automations/:id` — the full-page editor.
+ * `/automations/:id` — the full-page editor.
  *
  * Three stacked blocks that read as the sentence the automation IS: **When** /
  * **If** / **Then**, plus Test (a dry run that writes nothing) and the recent
@@ -120,7 +120,7 @@ export function AutomationEditor({ id, admin }: { id: string; admin: boolean }) 
     onSuccess: async () => {
       await automationsCollection.utils.refetch()
       bypass()
-      navigate("/settings/automations")
+      navigate("/automations")
     },
   })
   const restore = useMutation({
@@ -132,7 +132,7 @@ export function AutomationEditor({ id, admin }: { id: string; admin: boolean }) 
     onSuccess: async () => {
       await automationsCollection.utils.refetch()
       bypass()
-      navigate("/settings/automations")
+      navigate("/automations")
     },
   })
   const test = useMutation({ mutationFn: () => api.testAutomation(id) })
@@ -142,7 +142,7 @@ export function AutomationEditor({ id, admin }: { id: string; admin: boolean }) 
     return (
       <div className="space-y-3">
         <p className="text-sm text-muted-foreground">This automation no longer exists.</p>
-        <Button variant="outline" onClick={() => navigate("/settings/automations")}>
+        <Button variant="outline" onClick={() => navigate("/automations")}>
           Back to automations
         </Button>
       </div>
@@ -157,7 +157,7 @@ export function AutomationEditor({ id, admin }: { id: string; admin: boolean }) 
       <div className="flex shrink-0 items-center gap-1.5 pb-3 text-base font-medium text-foreground">
         <button
           type="button"
-          onClick={() => navigate("/settings/automations")}
+          onClick={() => navigate("/automations")}
           className="truncate text-muted-foreground hover:text-foreground"
         >
           Automations
@@ -376,7 +376,7 @@ export function AutomationEditor({ id, admin }: { id: string; admin: boolean }) 
             <Button
               variant="outline"
               className="shadow-lg"
-              onClick={() => navigate("/settings/automations")}
+              onClick={() => navigate("/automations")}
             >
               {dirty ? "Cancel" : "Back"}
             </Button>

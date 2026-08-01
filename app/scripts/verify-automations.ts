@@ -275,9 +275,12 @@ await call((c) =>
     patch: { [stage.id]: "nego" },
   }),
 )
+// Wait for the run to SETTLE, not merely to exist: `claimRun` inserts the row
+// before acting (that's the idempotency guard), so a freshly-claimed row is
+// still `reason: "running"` for a few ms.
 const pickyRuns = await until(
   () => call((c) => c.listAutomationRuns({ automationId: picky.id })),
-  (rs) => rs.length > 0,
+  (rs) => rs.some((r) => r.finishedAt !== null),
 )
 const skip = pickyRuns.find((r) => r.status === "skipped")
 ok(
