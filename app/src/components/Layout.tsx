@@ -97,13 +97,18 @@ function useSettingsSections(pathname: string): ResolvedSection[] {
         collapsed: false,
         entries: group.items
           .filter((t) => !t.admin || admin)
-          .map((t) => ({
-            key: t.to,
-            label: t.label,
-            icon: t.icon,
-            to: `/settings/${t.to}`,
-            active: pathname.startsWith(`/settings/${t.to}`),
-          })),
+          .map((t) => {
+            // An `external` entry lives outside /settings (Automations) but still
+            // belongs in this menu: link to its real path and light up there too.
+            const to = t.external ?? `/settings/${t.to}`
+            return {
+              key: t.to,
+              label: t.label,
+              icon: t.icon,
+              to,
+              active: pathname.startsWith(to),
+            }
+          }),
       })),
     [admin, pathname],
   )

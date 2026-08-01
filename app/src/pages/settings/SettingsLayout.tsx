@@ -8,6 +8,7 @@ import {
   Shapes,
   Tags,
   UserRound,
+  Workflow,
 } from "lucide-react"
 import type { ReactNode } from "react"
 import { Navigate, Outlet, useLocation } from "react-router-dom"
@@ -23,6 +24,10 @@ interface SettingsItem {
    *  fills) so the page can pin a footer or own its scroll. The page must also
    *  request `usePageChrome({ fillHeight: true })`. Default: normal flow. */
   readonly fillHeight?: boolean
+  /** An absolute path OUTSIDE /settings that this entry links to. For a section
+   *  that lives at the top level but still belongs in the settings menu (see
+   *  Automations): the nav shows it here, the click leaves /settings. */
+  readonly external?: string
 }
 
 interface SettingsGroup {
@@ -52,6 +57,16 @@ export const SETTINGS_NAV: ReadonlyArray<SettingsGroup> = [
       { to: "sidebar", label: "Sidebar", admin: false, icon: <PanelLeft size={16} /> },
       { to: "tasks", label: "Tasks", admin: false, icon: <ListTodo size={16} /> },
       { to: "labels", label: "Labels", admin: false, icon: <Tags size={16} /> },
+      // Automations also have a top-level page (their own GLOBAL_NAV slot) — this
+      // entry is the settings-side door to the same list, like Concepts. The
+      // `external` target keeps ONE implementation rather than a second copy.
+      {
+        to: "automations",
+        label: "Automations",
+        admin: false,
+        icon: <Workflow size={16} />,
+        external: "/automations",
+      },
       { to: "integrations", label: "Integrations", admin: false, icon: <Plug size={16} /> },
     ],
   },

@@ -1,6 +1,6 @@
 import { useLiveQuery } from "@tanstack/react-db"
 import { useMutation, useQuery } from "@tanstack/react-query"
-import { ChevronDown, FlaskConical, Plus, X } from "lucide-react"
+import { ChevronDown, FlaskConical, History, Plus, SlidersHorizontal, X } from "lucide-react"
 import { useMemo, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import {
@@ -10,6 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { Tabs, TabsContent } from "@/components/ui/tabs"
 import { ConditionList, useFields } from "../../components/ConditionList"
 import { usePageChrome } from "../../components/Layout"
 import {
@@ -23,6 +24,8 @@ import {
   InfoHint,
   Input,
   Spinner,
+  TabBar,
+  TabBarItem,
 } from "../../components/ui"
 import {
   type AutomationAction,
@@ -51,12 +54,18 @@ import { DangerZone, Feedback } from "./parts"
 const NONE = "__none"
 
 /**
- * `/automations/:id` — the full-page editor.
+ * `/automations/:id` — the full-page editor, in two tabs.
  *
- * Three stacked blocks that read as the sentence the automation IS: **When** /
- * **If** / **Then**, plus Test (a dry run that writes nothing) and the recent
- * runs. Edits a local draft; Save persists; a discard confirm fires on any nav
- * away while dirty (the settings-editor convention).
+ * **Config** is what the automation WILL do: three stacked blocks reading as the
+ * sentence it is — When / If / Then — plus Test (a dry run that writes nothing)
+ * and the danger zone. **History** is what it HAS done: every run, including the
+ * ones that decided to do nothing, which is how "why didn't it fire?" gets
+ * answered. Each tab states its purpose in a line beneath the bar, because
+ * "History" on its own reads like a changelog of the rule rather than of runs.
+ *
+ * Config edits a local draft; Save persists; a discard confirm fires on any nav
+ * away while dirty (the settings-editor convention). The save bar only shows on
+ * Config — there is nothing to save on History.
  */
 export function AutomationEditor({ id, admin }: { id: string; admin: boolean }) {
   usePageChrome({ fillHeight: true })
@@ -67,6 +76,9 @@ export function AutomationEditor({ id, admin }: { id: string; admin: boolean }) 
 
   const { data: rows = [], isLoading } = useLiveQuery((q) => q.from({ a: automationsCollection }))
   const saved = rows.find((a) => a.id === id)
+  // Badge on the History tab, so the count is visible without switching to it.
+  const { data: runRows = [] } = useLiveQuery((q) => q.from({ r: runs }))
+  const runCount = runRows.length
 
   // The draft. Seeded once the row arrives; `seeded` guards against a live-sync
   // refetch clobbering in-progress edits.
@@ -78,6 +90,7 @@ export function AutomationEditor({ id, admin }: { id: string; admin: boolean }) 
   const [actions, setActions] = useState<readonly AutomationAction[]>([])
   const [dirty, setDirty] = useState(false)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
+  const [tab, setTab] = useState("config")
   const { blocker, bypass } = useUnsavedGuard(dirty)
 
   if (saved && !seeded) {
@@ -168,204 +181,231 @@ export function AutomationEditor({ id, admin }: { id: string; admin: boolean }) 
         {saved.pausedReason && <Badge tone="red">paused: {saved.pausedReason}</Badge>}
       </div>
 
-      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pb-28">
-        {saved.pausedReason && (
-          <Card className="border-destructive/40">
-            <div className="px-4 py-3 text-sm text-foreground">
-              This automation paused itself after running more than 20 times in a minute. Turning it
-              back on clears the pause — check the conditions first.
+      {/* Config = what it WILL do; History = what it HAS done. The two questions
+          people actually arrive with, and the subtitle under each tab says so —
+          "History" alone reads like a changelog of the rule itself. */}
+      <Tabs value={tab} onValueChange={setTab} className="min-h-0 flex-1 gap-0 overflow-hidden">
+        <TabBar>
+          <TabBarItem value="config" icon={<SlidersHorizontal size={16} />}>
+            Config
+          </TabBarItem>
+          <TabBarItem value="history" icon={<History size={16} />}>
+            History
+            {runCount > 0 && <span className="ml-1.5 text-muted-foreground">{runCount}</span>}
+          </TabBarItem>
+        </TabBar>
+
+        <TabsContent value="config" className="min-h-0 flex-1 space-y-4 overflow-y-auto pt-4 pb-28">
+          <p className="text-xs text-muted-foreground">
+            What this automation will do the next time it runs.
+          </p>
+          {saved.pausedReason && (
+            <Card className="border-destructive/40">
+              <div className="px-4 py-3 text-sm text-foreground">
+                This automation paused itself after running more than 20 times in a minute. Turning
+                it back on clears the pause — check the conditions first.
+              </div>
+            </Card>
+          )}
+
+          <div className="flex items-start gap-3">
+            <Field label="Name" className="flex-1">
+              <Input
+                value={name}
+                onChange={(e) => edit(setName)(e.target.value)}
+                placeholder="What this automation does…"
+                disabled={readOnly}
+              />
+            </Field>
+            <Field label="Enabled">
+              <Select
+                value={saved.enabled ? "on" : "off"}
+                onValueChange={(v) => toggle.mutate(v === "on")}
+                disabled={readOnly || !!saved.archivedAt}
+              >
+                <SelectTrigger className="w-28">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="off">Off</SelectItem>
+                  <SelectItem value="on">On</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+          </div>
+
+          {/* ── WHEN ─────────────────────────────────────────────────────────── */}
+          <Card>
+            <CardHeader
+              title="When"
+              action={<span className="text-xs text-muted-foreground">the trigger</span>}
+            />
+            <div className="space-y-3 px-4 py-3">
+              <TriggerEditor value={trigger} onChange={edit(setTrigger)} disabled={readOnly} />
+              <p className="text-xs text-muted-foreground">{describeTrigger(trigger)}</p>
             </div>
           </Card>
-        )}
 
-        <div className="flex items-start gap-3">
-          <Field label="Name" className="flex-1">
-            <Input
-              value={name}
-              onChange={(e) => edit(setName)(e.target.value)}
-              placeholder="What this automation does…"
-              disabled={readOnly}
+          {/* ── IF ───────────────────────────────────────────────────────────── */}
+          <Card>
+            <CardHeader
+              title="If"
+              action={
+                <span className="text-xs text-muted-foreground">
+                  optional — conditions on the record
+                </span>
+              }
             />
-          </Field>
-          <Field label="Enabled">
-            <Select
-              value={saved.enabled ? "on" : "off"}
-              onValueChange={(v) => toggle.mutate(v === "on")}
-              disabled={readOnly || !!saved.archivedAt}
-            >
-              <SelectTrigger className="w-28">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="off">Off</SelectItem>
-                <SelectItem value="on">On</SelectItem>
-              </SelectContent>
-            </Select>
-          </Field>
-        </div>
+            <div className="space-y-2 px-4 py-3">
+              {conceptId ? (
+                <>
+                  <ConditionList
+                    conceptId={conceptId}
+                    conditions={conditions}
+                    labels={[]}
+                    onChange={(next) => edit(setConditions)(next)}
+                    match={match}
+                    onMatchChange={(m) => edit(setMatch)(m === "any" ? "any" : "all")}
+                    // Automations are the only surface with a "before" state, so
+                    // they're the only one that may offer the transition ops.
+                    transitions
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    <strong>changed to</strong> / <strong>changed from</strong> match a transition,
+                    not a resting value — so re-saving an already-won deal won't re-fire the rule.
+                  </p>
+                </>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  Pick a concept above to filter on its fields.
+                </p>
+              )}
+            </div>
+          </Card>
 
-        {/* ── WHEN ─────────────────────────────────────────────────────────── */}
-        <Card>
-          <CardHeader
-            title="When"
-            action={<span className="text-xs text-muted-foreground">the trigger</span>}
-          />
-          <div className="space-y-3 px-4 py-3">
-            <TriggerEditor value={trigger} onChange={edit(setTrigger)} disabled={readOnly} />
-            <p className="text-xs text-muted-foreground">{describeTrigger(trigger)}</p>
-          </div>
-        </Card>
-
-        {/* ── IF ───────────────────────────────────────────────────────────── */}
-        <Card>
-          <CardHeader
-            title="If"
-            action={
-              <span className="text-xs text-muted-foreground">
-                optional — conditions on the record
-              </span>
-            }
-          />
-          <div className="space-y-2 px-4 py-3">
-            {conceptId ? (
-              <>
-                <ConditionList
+          {/* ── THEN ─────────────────────────────────────────────────────────── */}
+          <Card>
+            <CardHeader
+              title="Then"
+              action={<span className="text-xs text-muted-foreground">run in order</span>}
+            />
+            <div className="divide-y divide-border">
+              {actions.length === 0 && (
+                <p className="px-4 py-3 text-sm text-muted-foreground">
+                  No actions yet — an automation needs at least one to save.
+                </p>
+              )}
+              {actions.map((action, i) => (
+                <ActionEditor
+                  // biome-ignore lint/suspicious/noArrayIndexKey: actions are positional
+                  key={i}
+                  action={action}
                   conceptId={conceptId}
-                  conditions={conditions}
-                  labels={[]}
-                  onChange={(next) => edit(setConditions)(next)}
-                  match={match}
-                  onMatchChange={(m) => edit(setMatch)(m === "any" ? "any" : "all")}
-                  // Automations are the only surface with a "before" state, so
-                  // they're the only one that may offer the transition ops.
-                  transitions
+                  disabled={readOnly}
+                  onChange={(next) => edit(setActions)(actions.map((a, j) => (j === i ? next : a)))}
+                  onRemove={() => edit(setActions)(actions.filter((_, j) => j !== i))}
                 />
-                <p className="text-xs text-muted-foreground">
-                  <strong>changed to</strong> / <strong>changed from</strong> match a transition,
-                  not a resting value — so re-saving an already-won deal won't re-fire the rule.
-                </p>
-              </>
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                Pick a concept above to filter on its fields.
-              </p>
-            )}
-          </div>
-        </Card>
+              ))}
+              {!readOnly && (
+                <div className="px-4 py-3">
+                  <Select
+                    value=""
+                    onValueChange={(k) =>
+                      edit(setActions)([...actions, emptyAction(k as AutomationAction["kind"])])
+                    }
+                  >
+                    <SelectTrigger className="w-56">
+                      <span className="flex items-center gap-1.5 text-sm">
+                        <Plus size={14} /> Add an action
+                      </span>
+                    </SelectTrigger>
+                    <SelectContent>
+                      {ACTION_OPTIONS.map((o) => (
+                        <SelectItem key={o.kind} value={o.kind}>
+                          {o.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+            </div>
+          </Card>
 
-        {/* ── THEN ─────────────────────────────────────────────────────────── */}
-        <Card>
-          <CardHeader
-            title="Then"
-            action={<span className="text-xs text-muted-foreground">run in order</span>}
-          />
-          <div className="divide-y divide-border">
-            {actions.length === 0 && (
-              <p className="px-4 py-3 text-sm text-muted-foreground">
-                No actions yet — an automation needs at least one to save.
-              </p>
-            )}
-            {actions.map((action, i) => (
-              <ActionEditor
-                // biome-ignore lint/suspicious/noArrayIndexKey: actions are positional
-                key={i}
-                action={action}
-                conceptId={conceptId}
-                disabled={readOnly}
-                onChange={(next) => edit(setActions)(actions.map((a, j) => (j === i ? next : a)))}
-                onRemove={() => edit(setActions)(actions.filter((_, j) => j !== i))}
-              />
-            ))}
-            {!readOnly && (
-              <div className="px-4 py-3">
-                <Select
-                  value=""
-                  onValueChange={(k) =>
-                    edit(setActions)([...actions, emptyAction(k as AutomationAction["kind"])])
-                  }
+          {/* ── TEST ─────────────────────────────────────────────────────────── */}
+          <Card>
+            <CardHeader
+              title="Test"
+              action={
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => test.mutate()}
+                  disabled={test.isPending || readOnly}
                 >
-                  <SelectTrigger className="w-56">
-                    <span className="flex items-center gap-1.5 text-sm">
-                      <Plus size={14} /> Add an action
-                    </span>
-                  </SelectTrigger>
-                  <SelectContent>
-                    {ACTION_OPTIONS.map((o) => (
-                      <SelectItem key={o.kind} value={o.kind}>
-                        {o.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
-          </div>
-        </Card>
-
-        {/* ── TEST ─────────────────────────────────────────────────────────── */}
-        <Card>
-          <CardHeader
-            title="Test"
-            action={
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => test.mutate()}
-                disabled={test.isPending || readOnly}
-              >
-                <FlaskConical size={14} />
-                {test.isPending ? "Testing…" : "Dry run"}
-              </Button>
-            }
-          />
-          <div className="px-4 py-3">
-            {test.data ? (
-              <div className="space-y-2">
-                <p className="text-sm text-foreground">
-                  {test.data.matched} of {test.data.scanned} records match. Nothing was written.
+                  <FlaskConical size={14} />
+                  {test.isPending ? "Testing…" : "Dry run"}
+                </Button>
+              }
+            />
+            <div className="px-4 py-3">
+              {test.data ? (
+                <div className="space-y-2">
+                  <p className="text-sm text-foreground">
+                    {test.data.matched} of {test.data.scanned} records match. Nothing was written.
+                  </p>
+                  {test.data.note && (
+                    <p className="text-xs text-muted-foreground">{test.data.note}</p>
+                  )}
+                  {test.data.samples.length > 0 && (
+                    <ul className="space-y-0.5 text-xs text-muted-foreground">
+                      {test.data.samples.map((s) => (
+                        <li key={s.id} className="truncate">
+                          {s.label}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  Evaluates the trigger and conditions against recent records and shows what would
+                  happen — writing nothing.
                 </p>
-                {test.data.note && (
-                  <p className="text-xs text-muted-foreground">{test.data.note}</p>
-                )}
-                {test.data.samples.length > 0 && (
-                  <ul className="space-y-0.5 text-xs text-muted-foreground">
-                    {test.data.samples.map((s) => (
-                      <li key={s.id} className="truncate">
-                        {s.label}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                Evaluates the trigger and conditions against recent records and shows what would
-                happen — writing nothing.
-              </p>
-            )}
-            <Feedback error={test.error} />
-          </div>
-        </Card>
+              )}
+              <Feedback error={test.error} />
+            </div>
+          </Card>
 
-        <RunHistory automationId={id} />
+          {admin && (
+            <DangerZone
+              noun="automation"
+              archived={!!saved.archivedAt}
+              archiveHint="Stops it and hides it from the list. Its run history is kept."
+              restoreHint="Brings it back — still switched off."
+              onArchive={() => archive.mutate()}
+              onRestore={() => restore.mutate()}
+              restorePending={restore.isPending}
+              restoreError={restore.error ? (restore.error as Error).message : undefined}
+              onDelete={() => setConfirmingDelete(true)}
+              deleteHint="Permanently deletes the automation and its run history."
+            />
+          )}
+        </TabsContent>
 
-        {admin && (
-          <DangerZone
-            noun="automation"
-            archived={!!saved.archivedAt}
-            archiveHint="Stops it and hides it from the list. Its run history is kept."
-            restoreHint="Brings it back — still switched off."
-            onArchive={() => archive.mutate()}
-            onRestore={() => restore.mutate()}
-            restorePending={restore.isPending}
-            restoreError={restore.error ? (restore.error as Error).message : undefined}
-            onDelete={() => setConfirmingDelete(true)}
-            deleteHint="Permanently deletes the automation and its run history."
-          />
-        )}
-      </div>
+        <TabsContent
+          value="history"
+          className="min-h-0 flex-1 space-y-4 overflow-y-auto pt-4 pb-28"
+        >
+          <p className="text-xs text-muted-foreground">
+            Every time this automation ran, and what it did — including the times it decided to do
+            nothing. This is where you find out why something didn't fire.
+          </p>
+          <RunHistory automationId={id} />
+        </TabsContent>
+      </Tabs>
 
-      {!readOnly && (
+      {!readOnly && tab === "config" && (
         <div className="pointer-events-none absolute right-6 bottom-6 z-10 flex flex-col items-end gap-2">
           {save.error && (
             <p className="pointer-events-auto max-w-md rounded-md border border-destructive/30 bg-background px-3 py-2 text-xs text-destructive shadow-lg">
