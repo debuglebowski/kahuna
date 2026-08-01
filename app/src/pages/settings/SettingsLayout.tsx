@@ -8,6 +8,7 @@ import {
   Shapes,
   Tags,
   UserRound,
+  Users,
   Workflow,
 } from "lucide-react"
 import type { ReactNode } from "react"
@@ -24,10 +25,11 @@ interface SettingsItem {
    *  fills) so the page can pin a footer or own its scroll. The page must also
    *  request `usePageChrome({ fillHeight: true })`. Default: normal flow. */
   readonly fillHeight?: boolean
-  /** An absolute path OUTSIDE /settings that this entry links to. For a section
-   *  that lives at the top level but still belongs in the settings menu (see
-   *  Automations): the nav shows it here, the click leaves /settings. */
-  readonly external?: string
+  /** This section also renders at a top-level url (`/members`, `/automations`)
+   *  from the same implementation. It owns its own heading and, for a detail
+   *  route, its own chrome — so the layout renders it bare rather than wrapping
+   *  it in the section `<h2>`. See `useSectionBase`. */
+  readonly dual?: boolean
 }
 
 interface SettingsGroup {
@@ -57,15 +59,17 @@ export const SETTINGS_NAV: ReadonlyArray<SettingsGroup> = [
       { to: "sidebar", label: "Sidebar", admin: false, icon: <PanelLeft size={16} /> },
       { to: "tasks", label: "Tasks", admin: false, icon: <ListTodo size={16} /> },
       { to: "labels", label: "Labels", admin: false, icon: <Tags size={16} /> },
-      // Automations also have a top-level page (their own GLOBAL_NAV slot) — this
-      // entry is the settings-side door to the same list, like Concepts. The
-      // `external` target keeps ONE implementation rather than a second copy.
+      // Members + Automations each render at TWO urls from one implementation:
+      // here, and at their own top-level GLOBAL_NAV slot. Both are real routes
+      // (see App.tsx) — not links out — so entering through settings keeps the
+      // settings sidebar. `dual` marks them for the route guard below.
+      { to: "members", label: "Members", admin: false, icon: <Users size={16} />, dual: true },
       {
         to: "automations",
         label: "Automations",
         admin: false,
         icon: <Workflow size={16} />,
-        external: "/automations",
+        dual: true,
       },
       { to: "integrations", label: "Integrations", admin: false, icon: <Plug size={16} /> },
     ],
@@ -128,6 +132,11 @@ export function SettingsLayout() {
       </div>
     )
   }
+
+  // A `dual` section is a whole page in its own right (it also renders at a
+  // top-level url), so it brings its own heading — wrapping it in the section
+  // <h2> would show the title twice.
+  if (item?.dual) return <Outlet context={{ admin }} />
 
   return (
     <div className="space-y-5">

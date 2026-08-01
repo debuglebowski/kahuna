@@ -39,6 +39,7 @@ import {
   purgeMember,
   useMembers,
 } from "@/lib/members"
+import { useSectionBase } from "@/lib/sectionBase"
 import { initialsOf } from "@/lib/utils"
 import { Feedback } from "@/pages/settings/parts"
 import { isAdminRole } from "@/pages/settings/SettingsLayout"
@@ -87,6 +88,9 @@ export function MemberDirectory({
 }) {
   const qc = useQueryClient()
   const { data: session } = useSession()
+  // Members render at two urls (/members and /settings/members) — link relative
+  // to whichever is mounted, so a click can't throw the user out of settings.
+  const base = useSectionBase("members")
   const { members, deactivatedSet, isPending, error } = useMembers()
   const [filter, setFilter] = useState("")
   const [showDeactivated, setShowDeactivated] = useState(false)
@@ -178,7 +182,7 @@ export function MemberDirectory({
 
   const viewAll = overflow > 0 && (
     <Link
-      to="/members"
+      to={base}
       className="block px-2 py-1.5 text-xs text-muted-foreground hover:text-foreground"
     >
       View all {sorted.length} members →
@@ -200,7 +204,7 @@ export function MemberDirectory({
             {shown.map((m) => (
               <Link
                 key={m.id}
-                to={`/members/${m.userId}`}
+                to={`${base}/${m.userId}`}
                 className="flex flex-col items-center gap-1.5 rounded-lg border p-3 text-center transition hover:bg-accent"
               >
                 <Avatar className="size-12">
@@ -260,7 +264,7 @@ export function MemberDirectory({
               return (
                 <li key={m.id} className="flex items-center gap-3 px-6 py-3 hover:bg-accent/50">
                   <Link
-                    to={`/members/${m.userId}`}
+                    to={`${base}/${m.userId}`}
                     className="flex min-w-0 flex-1 items-center gap-3"
                   >
                     <Avatar className="size-8">

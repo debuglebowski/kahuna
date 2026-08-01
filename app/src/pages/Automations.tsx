@@ -6,6 +6,7 @@ import { Link, useNavigate, useParams } from "react-router-dom"
 import { Badge, Button, Card, Spinner, Toolbar } from "../components/ui"
 import { type Automation, api } from "../lib/api"
 import { automationsCollection, KEY, useRegisterCollection } from "../lib/collections"
+import { useSectionBase } from "../lib/sectionBase"
 import { AutomationEditor } from "./settings/AutomationEditor"
 import { describeTrigger, summarizeActions } from "./settings/automationText"
 import { useIsAdmin } from "./settings/SettingsLayout"
@@ -23,20 +24,25 @@ const ago = (d: Date | null): string => {
 }
 
 /**
- * `/automations` — the list, where each row reads as its own sentence ("when
- * Deal · Stage changes → post to Slack, create task"), plus `/automations/:id`,
- * the full-page editor. One component owns both: the presence of `:id` picks.
+ * The automations list, where each row reads as its own sentence ("when Deal ·
+ * Stage changes → post to Slack, create task"), plus the full-page editor when
+ * the route carries an `:id`. One component owns both.
  *
- * A TOP-LEVEL page, not a settings section — it has its own global nav slot
- * (`GLOBAL_NAV`, alongside Tasks and Members), which is where people look for it.
- * Writes are still admin-only, gated server-side and reflected here via
- * `useIsAdmin` (there is no settings Outlet context out here).
+ * Mounted at TWO urls with one implementation: `/automations` (its own
+ * `GLOBAL_NAV` slot, alongside Tasks and Members) and `/settings/automations`
+ * (the settings menu). `useSectionBase` keeps every self-link inside whichever
+ * one you came in through. Writes are admin-only, gated server-side and
+ * reflected here via `useIsAdmin` — which works at both urls, unlike the
+ * settings Outlet context.
  */
 export function Automations() {
   const { id } = useParams()
   const { admin } = useIsAdmin()
   const navigate = useNavigate()
   const [filter, setFilter] = useState("")
+  // Rendered at both /automations and /settings/automations — self-links follow
+  // whichever is mounted so a click never leaves the section you're in.
+  const base = useSectionBase("automations")
   useRegisterCollection(KEY.automations, automationsCollection)
   const { data: all = [], isLoading } = useLiveQuery((q) => q.from({ a: automationsCollection }))
   const needle = filter.trim().toLowerCase()
@@ -60,7 +66,7 @@ export function Automations() {
       }),
     onSuccess: async (a) => {
       await automationsCollection.utils.refetch()
-      navigate(`/automations/${a.id}`)
+      navigate(`${base}/${a.id}`)
     },
   })
 
@@ -97,7 +103,7 @@ export function Automations() {
         <Card>
           <ul className="divide-y divide-border">
             {live.map((a) => (
-              <AutomationRow key={a.id} automation={a} />
+              <AutomationRow key={a.id} automation={a} base={base} />
             ))}
           </ul>
         </Card>
@@ -111,7 +117,7 @@ export function Automations() {
           <Card>
             <ul className="divide-y divide-border">
               {archived.map((a) => (
-                <AutomationRow key={a.id} automation={a} />
+                <AutomationRow key={a.id} automation={a} base={base} />
               ))}
             </ul>
           </Card>
@@ -122,11 +128,11 @@ export function Automations() {
 }
 
 /** One row: a status dot, the name, the sentence, and its run stats. */
-function AutomationRow({ automation: a }: { automation: Automation }) {
+function AutomationRow({ automation: a, base }: { automation: Automation; base: string }) {
   return (
     <li>
       <Link
-        to={`/automations/${a.id}`}
+        to={`${base}/${a.id}`}
         className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-accent/50"
       >
         <span

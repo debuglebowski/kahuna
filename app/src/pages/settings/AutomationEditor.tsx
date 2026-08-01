@@ -40,6 +40,7 @@ import {
   KEY,
   useRegisterCollection,
 } from "../../lib/collections"
+import { useSectionBase } from "../../lib/sectionBase"
 import { useUnsavedGuard } from "../../lib/useUnsavedGuard"
 import {
   ACTION_OPTIONS,
@@ -54,7 +55,9 @@ import { DangerZone, Feedback } from "./parts"
 const NONE = "__none"
 
 /**
- * `/automations/:id` — the full-page editor, in two tabs.
+ * The full-page automation editor, in two tabs. Reached at `/automations/:id`
+ * or `/settings/automations/:id` — `base` keeps its breadcrumb and post-save
+ * navigation inside whichever one is mounted.
  *
  * **Config** is what the automation WILL do: three stacked blocks reading as the
  * sentence it is — When / If / Then — plus Test (a dry run that writes nothing)
@@ -70,6 +73,9 @@ const NONE = "__none"
 export function AutomationEditor({ id, admin }: { id: string; admin: boolean }) {
   usePageChrome({ fillHeight: true })
   const navigate = useNavigate()
+  // Back-navigation must return to the list you came from (/automations or
+  // /settings/automations), not always the top-level one.
+  const base = useSectionBase("automations")
   useRegisterCollection(KEY.automations, automationsCollection)
   const runs = automationRunsFor(id)
   useRegisterCollection(KEY.automationRuns(id), runs)
@@ -133,7 +139,7 @@ export function AutomationEditor({ id, admin }: { id: string; admin: boolean }) 
     onSuccess: async () => {
       await automationsCollection.utils.refetch()
       bypass()
-      navigate("/automations")
+      navigate(base)
     },
   })
   const restore = useMutation({
@@ -145,7 +151,7 @@ export function AutomationEditor({ id, admin }: { id: string; admin: boolean }) 
     onSuccess: async () => {
       await automationsCollection.utils.refetch()
       bypass()
-      navigate("/automations")
+      navigate(base)
     },
   })
   const test = useMutation({ mutationFn: () => api.testAutomation(id) })
@@ -155,7 +161,7 @@ export function AutomationEditor({ id, admin }: { id: string; admin: boolean }) 
     return (
       <div className="space-y-3">
         <p className="text-sm text-muted-foreground">This automation no longer exists.</p>
-        <Button variant="outline" onClick={() => navigate("/automations")}>
+        <Button variant="outline" onClick={() => navigate(base)}>
           Back to automations
         </Button>
       </div>
@@ -170,7 +176,7 @@ export function AutomationEditor({ id, admin }: { id: string; admin: boolean }) 
       <div className="flex shrink-0 items-center gap-1.5 pb-3 text-base font-medium text-foreground">
         <button
           type="button"
-          onClick={() => navigate("/automations")}
+          onClick={() => navigate(base)}
           className="truncate text-muted-foreground hover:text-foreground"
         >
           Automations
@@ -413,11 +419,7 @@ export function AutomationEditor({ id, admin }: { id: string; admin: boolean }) 
             </p>
           )}
           <div className="pointer-events-auto flex gap-2">
-            <Button
-              variant="outline"
-              className="shadow-lg"
-              onClick={() => navigate("/automations")}
-            >
+            <Button variant="outline" className="shadow-lg" onClick={() => navigate(base)}>
               {dirty ? "Cancel" : "Back"}
             </Button>
             <Button

@@ -59,7 +59,12 @@ export function App() {
           <Route path="profile" element={<Profile />} />
           <Route path="security" element={<Navigate to="/settings/profile" replace />} />
           <Route path="organization" element={<Organization />} />
-          <Route path="members" element={<Navigate to="/members" replace />} />
+          {/* Members and Automations render at TWO urls each — here and at the
+              top level — from one implementation. Self-links inside them follow
+              the mounted base (see `useSectionBase`), so entering through
+              settings keeps you in settings. */}
+          <Route path="members" element={<MembersDirectory />} />
+          <Route path="members/:userId" element={<MemberProfile />} />
           <Route path="concepts" element={<Concepts />} />
           <Route path="concepts/:id" element={<Concepts />} />
           <Route path="concepts-graph" element={<Navigate to="/settings/concepts" replace />} />
@@ -70,11 +75,8 @@ export function App() {
           <Route path="sidebar/:id" element={<Views />} />
           <Route path="dashboards" element={<DashboardsSettings />} />
           <Route path="dashboards/:id" element={<DashboardsSettings />} />
-          {/* Automations live at the top level (their own global nav slot), the
-              same way member management lives at /members. Redirect so any
-              bookmarked settings URL still lands somewhere real. */}
-          <Route path="automations" element={<Navigate to="/automations" replace />} />
-          <Route path="automations/:id" element={<Navigate to="/automations" replace />} />
+          <Route path="automations" element={<Automations />} />
+          <Route path="automations/:id" element={<Automations />} />
         </Route>
         <Route path="/instances/:id" element={<InstanceView />} />
         {/* A single-record concept's one record, addressed by slug — no instance
