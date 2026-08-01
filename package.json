@@ -13,6 +13,7 @@
     "health": "cd app && bun server/health.ts",
     "seed": "cd app && bun server/seed/run.ts",
     "typecheck": "tsc -p app",
+    "check:imports": "cd app && bun scripts/check-image-imports.ts server/index.ts",
     "test": "cd app && vitest run",
     "lint": "biome lint .",
     "format": "biome format --write .",

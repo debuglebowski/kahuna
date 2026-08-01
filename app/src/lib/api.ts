@@ -110,6 +110,15 @@ const call = <A, E>(f: (client: Client) => Effect.Effect<A, E>): Promise<A> =>
 
 type Fields = Record<string, unknown>
 
+/** What build is running, and is a newer one published. See server/version.ts. */
+export interface VersionInfo {
+  readonly current: string
+  readonly latest: string | null
+  readonly updateAvailable: boolean
+  readonly checkedAt: string | null
+  readonly checkDisabled: boolean
+}
+
 export interface GoogleStatus {
   /** Server-side OAuth credentials present — false means the integration is disabled. */
   readonly configured: boolean
@@ -639,6 +648,13 @@ export const api = {
   fileDownloadUrl: (id: string) => `/api/attachments/${id}/download`,
   /** Inline render (img/pdf preview) — same bytes, inline disposition. */
   fileInlineUrl: (id: string) => `/api/attachments/${id}/download?inline=1`,
+  // ── Version / update check ──────────────────────────────────────────────────
+  /** Advisory: the server polls the registry hourly and caches in memory. */
+  getVersion: async (): Promise<VersionInfo> => {
+    const res = await fetch("/api/version")
+    if (!res.ok) throw new Error("Failed to load version")
+    return (await res.json()) as VersionInfo
+  },
   // ── Google integration ──────────────────────────────────────────────────────
   getGoogleStatus: async (): Promise<GoogleStatus> => {
     const res = await fetch("/api/integrations/google/status")

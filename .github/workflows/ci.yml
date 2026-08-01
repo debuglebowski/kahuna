@@ -3,6 +3,10 @@ name: CI
 on:
   push:
     branches: [main]
+    # Release tags. Without this a `v0.1.0` push would not run CI at all, so no
+    # semver-tagged image would ever reach GHCR — and the in-app update check
+    # looks for exactly those tags.
+    tags: ["v*.*.*"]
   pull_request:
   workflow_dispatch:
 
@@ -48,6 +52,12 @@ jobs:
       # Validates the migration snapshots + detects duplicate journal ids. ~1s.
       - run: bun run db:check
 
+      # Cheap here, and it fails the `check` job with a clear message instead of
+      # surfacing 10 minutes later as an opaque image-build failure. The image
+      # runs the same probe against the files it actually copied — that is the
+      # assertion that matters; this one is just a fast signal.
+      - run: bun run check:imports
+
       # Includes server/migrations.test.ts, which drives the real `drizzle-kit`
       # deploy path against an empty scratch database and asserts completeness,
       # idempotency, journal monotonicity, and schema drift. The rest of the suite
@@ -79,20 +89,42 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository }}
+          # `0.1.0` and `0.1` come from a `v0.1.0` tag. The bare semver tag is
+          # what server/version.ts scans the registry for — it ignores `latest`,
+          # `main` and `sha-…`, so a release MUST produce one of these.
+          #
+          # `latest` deliberately follows RELEASE TAGS, not main: a self-hoster
+          # pulling `latest` should get the newest release, not the newest commit.
+          # Main pushes get `main` + `sha-…` for internal use.
           tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
             type=ref,event=branch
             type=ref,event=pr
             type=sha,format=long
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest,enable=${{ github.ref_type == 'tag' }}
 
       # Build and load locally first so the smoke test runs against the exact
       # image that gets pushed.
+      # Stamps the build so /api/version can report it. On a tag push that's the
+      # tag (`v0.1.0` -> `0.1.0`); otherwise `dev`, which the server treats as
+      # "never claim an update is available".
+      - id: version
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=dev" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build image
         uses: docker/build-push-action@v6
         with:
           context: .
           load: true
           tags: kingsmaker:ci
+          build-args: |
+            KINGSMAKER_VERSION=${{ steps.version.outputs.value }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -184,5 +216,7 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            KINGSMAKER_VERSION=${{ steps.version.outputs.value }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

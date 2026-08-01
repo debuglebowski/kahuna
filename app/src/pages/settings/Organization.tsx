@@ -1,10 +1,68 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query"
-import { Check } from "lucide-react"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { ArrowUpCircle, Check } from "lucide-react"
 import { useEffect, useState } from "react"
-import { Button, Card, CardHeader, Field, Input, Spinner } from "../../components/ui"
+import { Badge, Button, Card, CardHeader, Field, Input, Spinner } from "../../components/ui"
+import { api } from "../../lib/api"
 import { authClient, signOut, useSession } from "../../lib/auth-client"
 import { Feedback } from "./parts"
 import { useFullOrg } from "./SettingsLayout"
+
+/**
+ * Running build, plus an advisory note when the registry has a newer release.
+ *
+ * Deliberately does NOT print an upgrade command. The server has no idea whether
+ * it is under compose, Kubernetes, Nomad or systemd, and the one thing that IS
+ * invariant (migrate with the new image before serving) belongs in the release
+ * notes, not guessed at here. So: state the fact, link the notes, let the
+ * operator use their own deploy path.
+ */
+function VersionCard() {
+  const v = useQuery({ queryKey: ["version"], queryFn: api.getVersion })
+
+  return (
+    <Card>
+      <CardHeader title="Version" />
+      <div className="space-y-3 p-6">
+        {v.isPending ? (
+          <Spinner />
+        ) : v.error ? (
+          <p className="text-sm text-muted-foreground">Version unavailable.</p>
+        ) : (
+          <>
+            <div className="flex items-center gap-2 text-sm">
+              <span className="text-muted-foreground">Running</span>
+              <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">
+                {v.data?.current}
+              </code>
+              {v.data?.updateAvailable && <Badge tone="amber">Update available</Badge>}
+            </div>
+            {v.data?.updateAvailable && (
+              <div className="flex items-start gap-2 rounded-md border border-border bg-muted/40 p-3">
+                <ArrowUpCircle size={16} className="mt-0.5 shrink-0 text-muted-foreground" />
+                <p className="text-sm">
+                  <strong>{v.data.latest}</strong> is available.{" "}
+                  <a
+                    className="underline underline-offset-2"
+                    href="https://github.com/debuglebowski/kingsmaker/releases"
+                    target="_blank"
+                    rel="noreferrer noopener"
+                  >
+                    Release notes
+                  </a>
+                  {" — "}
+                  check them before upgrading.
+                </p>
+              </div>
+            )}
+            {v.data?.checkDisabled && (
+              <p className="text-xs text-muted-foreground">Update checks are disabled.</p>
+            )}
+          </>
+        )}
+      </div>
+    </Card>
+  )
+}
 
 export function Organization() {
   const org = useFullOrg()
@@ -80,6 +138,8 @@ export function Organization() {
           <Feedback ok={save.isSuccess} okText="Organization saved." error={save.error} />
         </div>
       </Card>
+
+      <VersionCard />
 
       {isOwner && (
         <Card className="border-destructive/40">
