@@ -1,10 +1,10 @@
-import { createHash, randomUUID, timingSafeEqual } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import { and, eq } from "drizzle-orm"
 import { clayAuditLog, clayConnection, clayJob, clayNotification } from "#db"
 import type { OrgScope } from "#engine"
 import { db } from "./db"
 import { type AuditEntry, writeAuditLog } from "./integrations/audit"
-import { decryptToken, encryptToken } from "./integrations/crypto"
+import { decryptToken, encryptToken, secretMatches } from "./integrations/crypto"
 import { sleepBeforeRetry } from "./integrations/http"
 import { connectionForOrgIn } from "./integrations/rows"
 import { runEngine, sessionScope, systemScope } from "./runtime"
@@ -357,14 +357,6 @@ export async function enrichForRequest(req: Request) {
 }
 
 // ── inbound: Clay → KM callback ────────────────────────────────────────────────
-
-/** Constant-time string compare guarding against length-leak + timing attacks. */
-const secretMatches = (provided: string, expected: string): boolean => {
-  const a = Buffer.from(provided)
-  const b = Buffer.from(expected)
-  if (a.length !== b.length) return false
-  return timingSafeEqual(a, b)
-}
 
 /** Extract enriched columns from a callback body (nested `fields` or top-level). */
 const fieldsFromBody = (body: Record<string, unknown>): Record<string, unknown> => {

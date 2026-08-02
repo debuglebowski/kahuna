@@ -33,7 +33,7 @@ import {
   syncGoogleForRequest,
   upsertGoogleCalendarEvent,
 } from "./google"
-import { appSecurityHeaders, attachmentSecurityHeaders } from "./headers"
+import { attachmentSecurityHeaders } from "./headers"
 import {
   closeLinearIssueForRequest,
   connectLinear,

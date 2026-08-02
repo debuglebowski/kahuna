@@ -14,7 +14,7 @@ import {
 import type { OrgScope } from "#engine"
 import { db, pool } from "./db"
 import { type AuditEntry, writeAuditLog } from "./integrations/audit"
-import { decryptToken, encryptToken } from "./integrations/crypto"
+import { decryptToken, encryptToken, secretMatches } from "./integrations/crypto"
 import { sleepBeforeRetry } from "./integrations/http"
 import {
   type ProvisionConceptSpec,
@@ -86,6 +86,15 @@ const requireConfig = () => {
     throw new Error("GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are required")
   }
   return c
+}
+
+/** `Authorization: Bearer <token>`, if present. Pub/Sub can be configured to send
+ *  the verification token as a bearer instead of a query param; both are accepted
+ *  (the header form keeps the secret out of access logs — see the Clay callback). */
+const bearerToken = (req: Request): string | null => {
+  const raw = req.headers.get("authorization") ?? ""
+  const m = /^Bearer\s+(.+)$/i.exec(raw.trim())
+  return m ? m[1]!.trim() : null
 }
 
 const toScopeList = (scopeText: string | null | undefined) =>
@@ -1168,7 +1177,26 @@ export async function upsertGoogleCalendarEvent(req: Request, eventId?: string) 
   return json({ id: event.id })
 }
 
+/**
+ * Gmail push receiver (Google Pub/Sub → us). Pub/Sub POSTs carry no signature, so
+ * the shared `GOOGLE_PUBSUB_VERIFICATION_TOKEN` is the ONLY authenticator: it is
+ * appended to the push endpoint URL registered in Pub/Sub (`?token=…`) and
+ * compared timing-safely here.
+ *
+ * It used to be read into `config()` and never checked, which left this endpoint
+ * fully unauthenticated — any caller who knew (or guessed) a connected user's
+ * address could force unbounded Gmail syncs for them. When the token is unset the
+ * endpoint now refuses everything rather than falling open, because an
+ * unauthenticated sync trigger is worse than a disabled one.
+ */
 export async function handleGmailPush(req: Request) {
+  const expected = config().pubsubVerificationToken
+  if (!expected) return json({ error: "PUSH_NOT_CONFIGURED" }, 503)
+  const url = new URL(req.url)
+  const provided = url.searchParams.get("token") ?? bearerToken(req)
+  if (!provided || !secretMatches(provided, expected)) {
+    return json({ error: "INVALID_TOKEN" }, 401)
+  }
   const body = (await req.json().catch(() => null)) as {
     message?: { messageId?: string; data?: string }
   } | null

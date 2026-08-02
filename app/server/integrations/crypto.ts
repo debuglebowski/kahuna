@@ -1,4 +1,10 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto"
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  randomBytes,
+  timingSafeEqual,
+} from "node:crypto"
 
 /**
  * AES-256-GCM token crypto shared by every integration connector (Google,
@@ -34,6 +40,28 @@ export const encryptToken = (token: string | null | undefined): string | null =>
   const ciphertext = Buffer.concat([cipher.update(token, "utf8"), cipher.final()])
   const tag = cipher.getAuthTag()
   return `v1.${iv.toString("base64url")}.${tag.toString("base64url")}.${ciphertext.toString("base64url")}`
+}
+
+/**
+ * Constant-time secret comparison for the inbound webhook/callback endpoints
+ * (Clay callback, Gmail Pub/Sub push). Shared so each connector doesn't
+ * re-derive it — and so nobody reaches for `===`, which leaks the secret one
+ * character at a time.
+ *
+ * The BYTE-length guard is required, not just an optimisation: `timingSafeEqual`
+ * throws on a length mismatch, and comparing `.length` (UTF-16 code units) is not
+ * the same test — a multibyte string can match on characters while differing in
+ * bytes. Length is not itself secret here.
+ */
+export const secretMatches = (
+  provided: string | null | undefined,
+  expected: string | null | undefined,
+): boolean => {
+  if (!provided || !expected) return false
+  const a = Buffer.from(provided, "utf8")
+  const b = Buffer.from(expected, "utf8")
+  if (a.length !== b.length) return false
+  return timingSafeEqual(a, b)
 }
 
 export const decryptToken = (value: string | null | undefined): string | null => {
