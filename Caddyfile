@@ -17,6 +17,20 @@ kingsmaker.example.com {
 		max_size 30MB
 	}
 
+	# The app sets its own CSP/HSTS/nosniff per response (see server/headers.ts),
+	# and uses a STRICTER deny-all policy for attachment bytes — so do NOT set
+	# Content-Security-Policy here; a blanket header would flatten that
+	# distinction and re-enable script execution on uploaded files.
+	#
+	# These two are safe to assert at the edge as a backstop: they are identical
+	# for every response, and surviving a misconfigured upstream matters.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		# Caddy's default; stated because removing it leaks the version.
+		-Server
+	}
+
 	reverse_proxy 127.0.0.1:3100 {
 		# BetterAuth's rate limiting is SILENTLY INERT without a client IP — it
 		# logs "Rate limiting skipped: could not determine client IP address"

@@ -15,6 +15,7 @@ import type { OrgScope } from "#engine"
 import { db, pool } from "./db"
 import { type AuditEntry, writeAuditLog } from "./integrations/audit"
 import { decryptToken, encryptToken, secretMatches } from "./integrations/crypto"
+import { publicConnectorError } from "./integrations/errors"
 import { sleepBeforeRetry } from "./integrations/http"
 import {
   type ProvisionConceptSpec,
@@ -626,10 +627,11 @@ async function syncCalendar(connectionId: string, calendarId = "primary") {
     }
     await db
       .insert(googleCalendarSync)
-      .values({ connectionId, calendarId, lastError: String(error) })
+      // Sanitized: `lastError` reaches the client via `…/status`.
+      .values({ connectionId, calendarId, lastError: publicConnectorError(error) })
       .onConflictDoUpdate({
         target: [googleCalendarSync.connectionId, googleCalendarSync.calendarId],
-        set: { lastError: String(error) },
+        set: { lastError: publicConnectorError(error) },
       })
     throw error
   }

@@ -104,40 +104,22 @@ function ChangePassword() {
   )
 }
 
-function ChangeEmail() {
+/**
+ * Read-only email. Self-serve change is disabled server-side (see `auth.ts`):
+ * email is what grants org membership and is never verified here, so the address
+ * an operator provisioned is the one that stands. Shown rather than hidden so
+ * people can see which account they're signed in as, and know who to ask.
+ */
+function AccountEmail() {
   const { data: session } = useSession()
-  const [email, setEmail] = useState("")
-
-  const save = useMutation({
-    mutationFn: async () => {
-      const { error } = await authClient.changeEmail({ newEmail: email.trim() })
-      if (error) throw new Error(error.message ?? "Failed to change email")
-    },
-    onSuccess: () => setEmail(""),
-  })
-
   return (
     <Card>
-      <CardHeader
-        title="Email"
-        action={
-          <Button onClick={() => save.mutate()} disabled={save.isPending || !email.includes("@")}>
-            <Check size={15} />
-            {save.isPending ? "Saving…" : "Change email"}
-          </Button>
-        }
-      />
-      <div className="max-w-md space-y-4 p-6">
-        <p className="text-xs text-muted-foreground">Current: {session?.user.email}</p>
-        <Field label="New email">
-          <Input
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="you@example.com"
-          />
-        </Field>
-        <Feedback ok={save.isSuccess} okText="Email updated." error={save.error} />
+      <CardHeader title="Email" />
+      <div className="max-w-md space-y-2 p-6">
+        <p className="text-sm text-foreground">{session?.user.email}</p>
+        <p className="text-xs text-muted-foreground">
+          Ask an administrator to change the email on your account.
+        </p>
       </div>
     </Card>
   )
@@ -185,7 +167,7 @@ export function Profile() {
   return (
     <div className="space-y-5">
       <ProfileInfo />
-      <ChangeEmail />
+      <AccountEmail />
       <ChangePassword />
       <DeleteAccount />
     </div>

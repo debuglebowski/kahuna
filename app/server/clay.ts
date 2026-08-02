@@ -5,6 +5,7 @@ import type { OrgScope } from "#engine"
 import { db } from "./db"
 import { type AuditEntry, writeAuditLog } from "./integrations/audit"
 import { decryptToken, encryptToken, secretMatches } from "./integrations/crypto"
+import { connectorFailure, publicConnectorError } from "./integrations/errors"
 import { sleepBeforeRetry } from "./integrations/http"
 import { connectionForOrgIn } from "./integrations/rows"
 import { runEngine, sessionScope, systemScope } from "./runtime"
@@ -101,16 +102,19 @@ const connectionById = async (id: string) => {
 // ── callback URL ──────────────────────────────────────────────────────────────
 
 /**
- * The URL the operator pastes into Clay's "send result back" action. Routing id
- * (`cid`) is non-secret; the secret rides the `token` query param (or, preferred
- * in production, the `x-clay-secret` header — both are accepted on callback).
+ * The URL the operator pastes into Clay's "send result back" action. Only the
+ * routing id (`cid`) is in it — that is not a secret.
+ *
+ * The shared secret is returned SEPARATELY (see `statusPayload`) for the operator
+ * to paste into Clay's header config, because a URL is the worst possible place
+ * for a credential: it lands in the reverse-proxy access log, in any intermediate
+ * proxy, and in Clay's own request history — none of which are protected like a
+ * secret store. `?token=` is still ACCEPTED on the callback so already-wired
+ * integrations keep working, but it is no longer what we hand out.
  */
-const callbackUrlFor = (connectionId: string, secret: string | null): string => {
+const callbackUrlFor = (connectionId: string): string => {
   const base = process.env.CLAY_CALLBACK_BASE_URL ?? process.env.BETTER_AUTH_URL ?? ""
-  const q = secret
-    ? `?cid=${connectionId}&token=${encodeURIComponent(secret)}`
-    : `?cid=${connectionId}`
-  const path = `/api/integrations/clay/callback${q}`
+  const path = `/api/integrations/clay/callback?cid=${encodeURIComponent(connectionId)}`
   return base ? `${base.replace(/\/+$/, "")}${path}` : path
 }
 
@@ -207,10 +211,18 @@ async function statusPayload(req: Request) {
   if (connection?.status !== "connected") {
     return json({ configured: true, connected: false })
   }
+  // The callback secret is revealed ONLY to an admin, and only as its own field —
+  // it used to be baked into `callbackUrl`, which meant every member could read
+  // it out of the status response and it ended up in access logs besides. An admin
+  // needs it once, to paste into Clay's header config.
+  const isAdmin = (await resolveAdmin(req)).ok
   return json({
     configured: true,
     connected: true,
-    callbackUrl: callbackUrlFor(connection.id, decryptToken(connection.callbackSecret)),
+    callbackUrl: callbackUrlFor(connection.id),
+    // Paste as `x-clay-secret` in Clay's webhook headers.
+    callbackSecretHeader: "x-clay-secret",
+    callbackSecret: isAdmin ? decryptToken(connection.callbackSecret) : null,
     hasTableWebhook: Boolean(connection.tableWebhookUrl),
     hasApiKey: Boolean(connection.apiKey),
     newRowConceptId: connection.newRowConceptId,
@@ -286,7 +298,10 @@ export async function pushRow(
     ...rowFromMapping(state, input.mapping),
     ...(input.extra ?? {}),
     _km_correlation_id: job.id,
-    _km_callback_url: callbackUrlFor(connection.id, decryptToken(connection.callbackSecret)),
+    // Informational only (the operator wires the real callback in Clay's UI), so
+    // it carries no secret — this used to ship the callback secret to Clay inside
+    // every pushed row, and thence into Clay's stored table data.
+    _km_callback_url: callbackUrlFor(connection.id),
   }
   try {
     const res = await clayPost(webhookUrl, row)
@@ -301,9 +316,14 @@ export async function pushRow(
   } catch (error) {
     await db
       .update(clayJob)
-      .set({ status: "error", lastError: String(error).slice(0, 1000) })
+      .set({ status: "error", lastError: publicConnectorError(error) })
       .where(eq(clayJob.id, job.id))
-    return { ok: false, status: 502, code: "CLAY_PUSH_FAILED", detail: String(error) }
+    return {
+      ok: false,
+      status: 502,
+      code: "CLAY_PUSH_FAILED",
+      detail: connectorFailure("clay", "push", error),
+    }
   }
   return { ok: true, jobId: job.id }
 }

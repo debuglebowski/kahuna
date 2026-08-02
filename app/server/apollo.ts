@@ -4,6 +4,7 @@ import type { OrgScope } from "#engine"
 import { db } from "./db"
 import { type AuditEntry, writeAuditLog } from "./integrations/audit"
 import { decryptToken, encryptToken } from "./integrations/crypto"
+import { connectorFailure } from "./integrations/errors"
 import { sleepBeforeRetry } from "./integrations/http"
 import { connectionForOrgIn } from "./integrations/rows"
 import { runEngine, sessionScope } from "./runtime"
@@ -415,7 +416,10 @@ export async function connectApollo(req: Request) {
     await validateKey({ base: apiBase(), apiKey })
   } catch (error) {
     // Bad key / unreachable host → surface as an auth failure, not a 500.
-    return json({ error: "INVALID_API_KEY", detail: String(error) }, 400)
+    return json(
+      { error: "INVALID_API_KEY", detail: connectorFailure("apollo", "connect", error) },
+      400,
+    )
   }
 
   const existing = await connectionForOrg(org.orgId)
@@ -560,7 +564,10 @@ export async function enrichInstanceForRequest(req: Request) {
       subjectId: instanceId,
       detail: { error: String(error) },
     })
-    return json({ error: "ENRICH_FAILED", detail: String(error) }, 502)
+    return json(
+      { error: "ENRICH_FAILED", detail: connectorFailure("apollo", "enrich", error) },
+      502,
+    )
   }
   if (!person) return json({ ok: true, matched: false, updated: false, fields: [] })
 
@@ -609,7 +616,10 @@ export async function searchForRequest(req: Request) {
     })
     return json(result)
   } catch (error) {
-    return json({ error: "SEARCH_FAILED", detail: String(error) }, 502)
+    return json(
+      { error: "SEARCH_FAILED", detail: connectorFailure("apollo", "search", error) },
+      502,
+    )
   }
 }
 

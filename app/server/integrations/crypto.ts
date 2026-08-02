@@ -14,9 +14,25 @@ import {
  *
  * The 32-byte key comes from `INTEGRATION_TOKEN_ENCRYPTION_KEY` (preferred) or
  * the legacy `GOOGLE_TOKEN_ENCRYPTION_KEY` (back-compat) as base64 or 64-char
- * hex. In non-production, with neither set, it derives a stable key from
- * `BETTER_AUTH_SECRET` so local/test runs don't need extra config.
+ * hex.
+ *
+ * FALLBACK, non-production only: a key derived from `BETTER_AUTH_SECRET`, so a
+ * local checkout needs no extra config. Two guard rails on it, because this used
+ * to be looser than it looked:
+ *
+ *  - `BETTER_AUTH_SECRET` must actually be set, and must not be the published dev
+ *    placeholder. It previously defaulted to `"dev-secret-change-me"`, so with
+ *    neither variable configured every stored token was encrypted under a
+ *    constant that is in this repo — i.e. readable by anyone with the ciphertext.
+ *  - Deriving from the session secret COUPLES the two: rotating
+ *    `BETTER_AUTH_SECRET` (documented as merely invalidating sessions) silently
+ *    makes every stored integration token undecryptable. The warning below is the
+ *    only place that says so out loud, so any deployment holding real tokens gets
+ *    told to set a dedicated key.
  */
+const DEV_PLACEHOLDER_SECRET = "dev-secret-change-me"
+let warnedAboutDerivedKey = false
+
 const encryptionKey = (): Buffer => {
   const raw =
     process.env.INTEGRATION_TOKEN_ENCRYPTION_KEY ?? process.env.GOOGLE_TOKEN_ENCRYPTION_KEY
@@ -24,13 +40,32 @@ const encryptionKey = (): Buffer => {
     if (/^[0-9a-f]{64}$/i.test(raw)) return Buffer.from(raw, "hex")
     const decoded = Buffer.from(raw, "base64")
     if (decoded.length === 32) return decoded
+    // A set-but-malformed key is a configuration mistake in every environment.
+    // Falling through to the derived key would encrypt real tokens under
+    // something the operator did not choose and cannot reproduce.
+    throw new Error(
+      "INTEGRATION_TOKEN_ENCRYPTION_KEY is set but malformed — need 32 bytes as base64 or 64-char hex",
+    )
   }
   if (process.env.NODE_ENV === "production") {
     throw new Error("INTEGRATION_TOKEN_ENCRYPTION_KEY must be 32 bytes as base64 or 64-char hex")
   }
-  return createHash("sha256")
-    .update(process.env.BETTER_AUTH_SECRET ?? "dev-secret-change-me")
-    .digest()
+  const authSecret = process.env.BETTER_AUTH_SECRET
+  if (!authSecret || authSecret === DEV_PLACEHOLDER_SECRET) {
+    throw new Error(
+      "Set INTEGRATION_TOKEN_ENCRYPTION_KEY (32 bytes base64/hex), or a real BETTER_AUTH_SECRET to derive it from. " +
+        `Refusing to encrypt tokens under the published placeholder "${DEV_PLACEHOLDER_SECRET}".`,
+    )
+  }
+  if (!warnedAboutDerivedKey) {
+    warnedAboutDerivedKey = true
+    console.warn(
+      "[integrations/crypto] No INTEGRATION_TOKEN_ENCRYPTION_KEY; deriving the token key from " +
+        "BETTER_AUTH_SECRET. Rotating that secret will make every stored integration token " +
+        "undecryptable. Set a dedicated key before storing tokens you care about.",
+    )
+  }
+  return createHash("sha256").update(authSecret).digest()
 }
 
 export const encryptToken = (token: string | null | undefined): string | null => {
@@ -63,6 +98,18 @@ export const secretMatches = (
   if (a.length !== b.length) return false
   return timingSafeEqual(a, b)
 }
+
+/**
+ * The per-connection webhook token, from either the header (preferred — keeps it
+ * out of access logs) or the legacy `?token=` query param.
+ *
+ * Both are accepted deliberately: the query form is what older deployments have
+ * already pasted into the provider's config, and silently breaking their delivery
+ * to tidy this up would be worse than the logging exposure. New URLs handed out by
+ * the status endpoints carry no token.
+ */
+export const webhookTokenFrom = (req: Request, url: URL): string | null =>
+  req.headers.get("x-km-webhook-token") ?? url.searchParams.get("token")
 
 export const decryptToken = (value: string | null | undefined): string | null => {
   if (!value) return null

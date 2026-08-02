@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto"
+import { connectorFailure } from "./integrations/errors"
 import { posthogConnectionForOrg, posthogCtxFor, posthogRequest } from "./posthog"
-import { resolveAdmin, resolveOrg } from "./session"
+import { resolveOrg } from "./session"
 
 /**
  * Aggregated analytics queries for the `analytics` dashboard widget.
@@ -352,21 +353,12 @@ export async function queryAnalytics(req: Request) {
     return json({ error: "UNSUPPORTED_PROVIDER" }, 400)
   const query = asString(body.query)
   if (metric === "custom" && !query) return json({ error: "QUERY_REQUIRED" }, 400)
-  // Structured metrics are member-open (the server authors the HogQL). A CUSTOM
-  // query is arbitrary caller-authored HogQL running on the org's key against the
-  // whole PostHog project — an admin surface, even though the wrap bounds the
-  // result and PostHog's parser refuses writes.
-  //
-  // Tradeoff, deliberately taken: a dashboard holding a custom-analytics widget
-  // now renders that widget empty for non-admins, because the query runs at
-  // render time. The narrower fix — allow a custom query only when it matches a
-  // saved dashboard body the caller can already see — needs the read model, so
-  // it belongs with that work.
-  if (metric === "custom") {
-    const admin = await resolveAdmin(req)
-    if (!admin.ok) return json({ error: "CUSTOM_QUERY_ADMIN_ONLY" }, 403)
-  }
-
+  // NOTE (accepted risk, deliberate): `metric: "custom"` runs arbitrary
+  // caller-authored HogQL on the ORG's PostHog key, and is open to any member.
+  // A gate was tried and reverted — it renders a custom-analytics widget empty
+  // for non-admins, because the query runs at render time. Revisit with the read
+  // model, which can instead allow a custom query only when it matches a saved
+  // dashboard body the caller is already permitted to see.
   const q: AnalyticsQuery = {
     provider: "posthog",
     metric,
@@ -397,7 +389,13 @@ export async function queryAnalytics(req: Request) {
     const status = (error as { status?: number }).status
     if (q.metric === "custom" && status === 400)
       return json({ error: "ANALYTICS_QUERY_INVALID", detail: providerMessage(error) }, 400)
-    return json({ error: "ANALYTICS_QUERY_FAILED", detail: String(error) }, 502)
+    return json(
+      {
+        error: "ANALYTICS_QUERY_FAILED",
+        detail: connectorFailure("posthog", "analytics.query", error),
+      },
+      502,
+    )
   }
 }
 

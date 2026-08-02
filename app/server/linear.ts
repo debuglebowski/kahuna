@@ -4,7 +4,8 @@ import { linearAuditLog, linearConnection, linearIssue, linearWebhookEvent } fro
 import type { OrgScope } from "#engine"
 import { db, pool } from "./db"
 import { type AuditEntry, writeAuditLog } from "./integrations/audit"
-import { decryptToken, encryptToken } from "./integrations/crypto"
+import { decryptToken, encryptToken, webhookTokenFrom } from "./integrations/crypto"
+import { connectorFailure, publicConnectorError } from "./integrations/errors"
 import { sleepBeforeRetry } from "./integrations/http"
 import {
   type ProvisionConceptSpec,
@@ -220,8 +221,12 @@ export async function connectLinear(req: Request) {
     if (!data?.viewer?.id) throw new Error("viewer query returned no user")
     viewer = data.viewer
   } catch (error) {
-    // Bad key / unreachable host → surface as an auth failure, not a 500.
-    return json({ error: "INVALID_API_KEY", detail: String(error) }, 400)
+    // Bad key / unreachable host → surface as an auth failure, not a 500. The
+    // upstream body goes to the log, not the client (see integrations/errors.ts).
+    return json(
+      { error: "INVALID_API_KEY", detail: connectorFailure("linear", "connect", error) },
+      400,
+    )
   }
 
   const existing = await connectionForOrg(org.orgId)
@@ -467,7 +472,8 @@ export async function syncLinearConnection(connectionId: string) {
   } catch (error) {
     await db
       .update(linearConnection)
-      .set({ lastError: String(error) })
+      // Sanitized: this is served to every member via `…/status`.
+      .set({ lastError: publicConnectorError(error) })
       .where(eq(linearConnection.id, connection.id))
     throw error
   }
@@ -505,7 +511,9 @@ type LinearWebhookBody = {
  */
 export async function handleLinearWebhook(req: Request) {
   const url = new URL(req.url)
-  const token = url.searchParams.get("token")
+  // Header preferred, `?token=` still accepted for already-wired webhooks. This
+  // token only ROUTES to the connection; the HMAC below is the authenticator.
+  const token = webhookTokenFrom(req, url)
   if (!token) return json({ error: "MISSING_TOKEN" }, 401)
   const [connection] = await db
     .select()
@@ -637,7 +645,10 @@ export async function updateLinearIssueForRequest(req: Request, issueId: string)
     })
     return json({ ok: true, issue })
   } catch (error) {
-    return json({ error: "WRITE_BACK_FAILED", detail: String(error) }, 502)
+    return json(
+      { error: "WRITE_BACK_FAILED", detail: connectorFailure("linear", "writeback.update", error) },
+      502,
+    )
   }
 }
 
@@ -660,6 +671,9 @@ export async function closeLinearIssueForRequest(req: Request, issueId: string) 
   } catch (error) {
     const code = (error as Error & { code?: string }).code
     if (code === "NO_COMPLETED_STATE") return json({ error: code }, 400)
-    return json({ error: "WRITE_BACK_FAILED", detail: String(error) }, 502)
+    return json(
+      { error: "WRITE_BACK_FAILED", detail: connectorFailure("linear", "writeback.close", error) },
+      502,
+    )
   }
 }

@@ -178,6 +178,9 @@ export interface PosthogStatus {
   readonly lastSyncAt?: string | null
   readonly lastError?: string | null
   readonly webhookUrl?: string | null
+  /** Send as the `webhookTokenHeader` header; admin-only, null for members. */
+  readonly webhookToken?: string | null
+  readonly webhookTokenHeader?: string
 }
 
 export interface PosthogConnectInput {
@@ -248,6 +251,9 @@ export interface LinearStatus {
   readonly lastSyncAt?: string | null
   readonly lastError?: string | null
   readonly webhookUrl?: string | null
+  /** Send as the `webhookTokenHeader` header; admin-only, null for members. */
+  readonly webhookToken?: string | null
+  readonly webhookTokenHeader?: string
   /** Whether a webhook signing secret is stored (required to accept webhooks). */
   readonly webhookConfigured?: boolean
 }
@@ -352,6 +358,9 @@ export interface ClayStatus {
   readonly connected: boolean
   /** Callback URL (incl. routing id + secret token) to paste into Clay. */
   readonly callbackUrl?: string
+  /** Send as the `callbackSecretHeader` header; admin-only, null for members. */
+  readonly callbackSecret?: string | null
+  readonly callbackSecretHeader?: string
   readonly hasTableWebhook?: boolean
   readonly hasApiKey?: boolean
   readonly newRowConceptId?: string | null

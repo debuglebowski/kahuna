@@ -11,6 +11,7 @@ import {
 import { db } from "./db"
 import { type AuditEntry, writeAuditLog } from "./integrations/audit"
 import { decryptToken, encryptToken } from "./integrations/crypto"
+import { connectorFailure, publicConnectorError } from "./integrations/errors"
 import { sleepBeforeRetry } from "./integrations/http"
 import { redirect, safeReturnTo } from "./integrations/oauth"
 import { connectionForOrgIn } from "./integrations/rows"
@@ -378,7 +379,10 @@ export async function handleSlackCallback(req: Request) {
     try {
       test = await slackApiRequest(userToken, "auth.test")
     } catch (error) {
-      return json({ error: "USER_TOKEN_INVALID", detail: String(error) }, 400)
+      return json(
+        { error: "USER_TOKEN_INVALID", detail: connectorFailure("slack", "user.connect", error) },
+        400,
+      )
     }
     if (test.team_id && test.team_id !== bot.teamId) {
       await audit({
@@ -642,7 +646,8 @@ export async function syncSlackChannels(connectionId: string) {
   } catch (error) {
     await db
       .update(slackConnection)
-      .set({ lastError: String(error) })
+      // Sanitized: served to every member via `…/status`.
+      .set({ lastError: publicConnectorError(error) })
       .where(eq(slackConnection.id, connection.id))
     throw error
   }
@@ -704,7 +709,10 @@ export async function postSlackMessageForRequest(req: Request) {
     })
     return json({ ok: true, ts: result.ts ?? null, channel: result.channel ?? channel })
   } catch (error) {
-    return json({ error: "POST_FAILED", detail: String(error) }, 502)
+    return json(
+      { error: "POST_FAILED", detail: connectorFailure("slack", "post_message", error) },
+      502,
+    )
   }
 }
 

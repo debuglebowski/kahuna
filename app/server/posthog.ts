@@ -3,7 +3,8 @@ import { and, eq } from "drizzle-orm"
 import { posthogAuditLog, posthogConnection, posthogPersonMetric, posthogWebhookEvent } from "#db"
 import { db, pool } from "./db"
 import { type AuditEntry, writeAuditLog } from "./integrations/audit"
-import { decryptToken, encryptToken } from "./integrations/crypto"
+import { decryptToken, encryptToken, webhookTokenFrom } from "./integrations/crypto"
+import { connectorFailure, publicConnectorError } from "./integrations/errors"
 import { sleepBeforeRetry } from "./integrations/http"
 import { connectionForOrgIn } from "./integrations/rows"
 import { resolveAdmin, resolveOrg } from "./session"
@@ -158,7 +159,10 @@ export async function connectPosthog(req: Request) {
     const code = (error as Error & { code?: string; status?: number }).code
     if (code === "NO_PROJECTS" || code === "PROJECT_NOT_FOUND") return json({ error: code }, 400)
     // Bad key / unreachable host → surface as an auth failure, not a 500.
-    return json({ error: "INVALID_API_KEY", detail: String(error) }, 400)
+    return json(
+      { error: "INVALID_API_KEY", detail: connectorFailure("posthog", "connect", error) },
+      400,
+    )
   }
 
   const existing = await connectionForOrg(org.orgId)
@@ -223,10 +227,22 @@ export async function disconnectPosthog(req: Request) {
   return json({ ok: true })
 }
 
+/**
+ * The webhook receiver URL, WITHOUT the token.
+ *
+ * The token is this endpoint's only authenticator (PostHog's destination POSTs
+ * carry no signature), so it is a credential — and a credential in a query string
+ * is recorded by the reverse-proxy access log, every intermediate proxy, and
+ * PostHog's own destination config/history. It is now returned as a separate
+ * admin-only field for the operator to send as a header instead.
+ *
+ * `?token=` remains ACCEPTED on the receiver so integrations already wired that
+ * way keep delivering; it is simply no longer what we hand out.
+ */
 const webhookUrlFor = (token: string | null | undefined): string | null => {
   if (!token) return null
   const base = process.env.POSTHOG_WEBHOOK_BASE_URL ?? process.env.BETTER_AUTH_URL ?? ""
-  const path = `/api/integrations/posthog/webhook?token=${encodeURIComponent(token)}`
+  const path = "/api/integrations/posthog/webhook"
   return base ? `${base.replace(/\/+$/, "")}${path}` : path
 }
 
@@ -249,6 +265,10 @@ async function statusPayload(req: Request) {
     lastSyncAt: connection.lastSyncAt,
     lastError: connection.lastError,
     webhookUrl: webhookUrlFor(connection.webhookToken),
+    // The token authenticates the receiver, so it is admin-only and travels as a
+    // header rather than in the URL (see `webhookUrlFor`).
+    webhookTokenHeader: "x-km-webhook-token",
+    webhookToken: (await resolveAdmin(req)).ok ? connection.webhookToken : null,
   })
 }
 
@@ -356,7 +376,8 @@ export async function syncPosthogConnection(connectionId: string) {
   } catch (error) {
     await db
       .update(posthogConnection)
-      .set({ lastError: String(error) })
+      // Sanitized: served to every member via `…/status`.
+      .set({ lastError: publicConnectorError(error) })
       .where(eq(posthogConnection.id, connection.id))
     throw error
   }
@@ -429,7 +450,8 @@ export async function listPosthogPersons(req: Request) {
  */
 export async function handlePosthogWebhook(req: Request) {
   const url = new URL(req.url)
-  const token = url.searchParams.get("token")
+  // Header preferred, `?token=` still accepted for already-wired destinations.
+  const token = webhookTokenFrom(req, url)
   if (!token) return json({ error: "MISSING_TOKEN" }, 401)
   const [connection] = await db
     .select()

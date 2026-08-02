@@ -24,6 +24,7 @@ import {
   RATE_CAP_PER_MIN,
 } from "#engine"
 import { matchInstance } from "../src/lib/conditions"
+import { fetchGuardedJson, UnsafeUrlError } from "./integrations/url-guard"
 import { AppRuntime, systemScope } from "./runtime"
 import { postMessageForOrg } from "./slack"
 import { tap } from "./stream"
@@ -326,20 +327,31 @@ const runAction = (
           at: new Date().toISOString(),
           ...extra,
         }
-        const ok = yield* Effect.tryPromise({
+        // SSRF guard at SEND time, not just at save time: `url` above is
+        // template-interpolated, so record data can steer it, and DNS can change
+        // between saving the rule and running it. `fetchGuardedJson` re-resolves
+        // and refuses non-public addresses (and won't follow redirects into one).
+        const outcome = yield* Effect.tryPromise({
           try: async () => {
-            const res = await fetch(url, {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify(payload),
-              // A hung endpoint must not hold the runner open.
-              signal: AbortSignal.timeout(10_000),
-            })
-            return res.ok
+            const res = await fetchGuardedJson(url, payload)
+            // A manual-redirect response is opaque (status 0) — treat any 3xx as
+            // undelivered rather than silently "posted".
+            if (res.type === "opaqueredirect" || (res.status >= 300 && res.status < 400)) {
+              return { ok: false, note: "endpoint redirected (not followed)" }
+            }
+            return { ok: res.ok, note: res.ok ? "posted" : `endpoint returned ${res.status}` }
           },
           catch: (e) => e,
-        }).pipe(Effect.catchAll(() => Effect.succeed(false)))
-        return { kind: action.kind, ok, note: ok ? "posted" : "request failed" }
+        }).pipe(
+          Effect.catchAll((e) =>
+            Effect.succeed(
+              e instanceof UnsafeUrlError
+                ? { ok: false, note: `blocked: ${e.reason}` }
+                : { ok: false, note: "request failed" },
+            ),
+          ),
+        )
+        return { kind: action.kind, ok: outcome.ok, note: outcome.note }
       }
       default:
         // A kind this build doesn't know (a row written by a newer client).

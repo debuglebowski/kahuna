@@ -47,6 +47,70 @@ const ACTION_KINDS = new Set([
  */
 export const RATE_CAP_PER_MIN = 20
 
+/**
+ * Why a webhook URL is unacceptable, or null if it looks fine. Rejects at SAVE
+ * time so an obviously-internal target never persists.
+ *
+ * This is a fast textual screen, NOT the security boundary — it cannot resolve
+ * DNS (the engine is sync/pure here) and the URL may contain `{{tokens}}` that
+ * only resolve at run time. `server/integrations/url-guard.ts` re-checks and
+ * resolves at SEND time; that is what actually stops SSRF. Kept in sync
+ * deliberately: catching `http://127.0.0.1` in the editor is much better UX than
+ * a rule that saves cleanly and then fails on every run.
+ *
+ * A URL containing a template token skips the host checks — the host isn't known
+ * until render, and the send-time guard covers it.
+ */
+const webhookUrlProblem = (raw: string): string | null => {
+  const url = raw.trim()
+  if (!/^https?:\/\/.+/i.test(url)) return "webhook needs an http(s) URL"
+  if (url.includes("{{")) return null // host resolved at run time; guarded there
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return "webhook needs an http(s) URL"
+  }
+  if (parsed.username || parsed.password) return "webhook URL must not embed credentials"
+  const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "")
+  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local")) {
+    return "webhook URL must be publicly reachable, not localhost"
+  }
+  // Literal non-routable IPv4/IPv6 — the metadata service (169.254.169.254) and
+  // anything on the container's own network.
+  //
+  // `new URL()` rewrites an IPv4-mapped v6 literal into HEX
+  // (`::ffff:169.254.169.254` → `::ffff:a9fe:a9fe`), so decode that back before
+  // the v4 rules or the mapped spelling sails past every check below.
+  const mappedHex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(host)
+  const mappedDotted = /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/.exec(host)
+  const asV4 = mappedHex
+    ? (() => {
+        const hi = Number.parseInt(mappedHex[1]!, 16)
+        const lo = Number.parseInt(mappedHex[2]!, 16)
+        return [hi >> 8, hi & 0xff, lo >> 8, lo & 0xff].join(".")
+      })()
+    : (mappedDotted?.[1] ?? host)
+  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(asV4)
+  if (v4) {
+    const [a, b] = [Number(v4[1]), Number(v4[2])]
+    const blocked =
+      a === 0 ||
+      a === 10 ||
+      a === 127 ||
+      a >= 224 ||
+      (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168) ||
+      (a === 100 && b >= 64 && b <= 127)
+    if (blocked) return "webhook URL must be a public address"
+  }
+  if (host === "::" || host === "::1" || /^(fe[89ab]|f[cd]|ff)/.test(host)) {
+    return "webhook URL must be a public address"
+  }
+  return null
+}
+
 /** Validate a trigger document at the write boundary, so a rule that could never
  *  fire (or could fire on garbage) is never persisted. */
 const validateTrigger = (t: AutomationTrigger) =>
@@ -113,14 +177,8 @@ const validateActions = (actions: ReadonlyArray<AutomationAction>) =>
         return yield* Effect.fail(new AutomationInvalid({ reason: "notifySlack needs a channel" }))
       }
       if (a.kind === "webhook") {
-        // Only http(s), and only an absolute URL — a relative or `file:` target
-        // would either fail obscurely or reach the server's own filesystem.
-        const ok = /^https?:\/\/.+/i.test(a.url ?? "")
-        if (!ok) {
-          return yield* Effect.fail(
-            new AutomationInvalid({ reason: "webhook needs an http(s) URL" }),
-          )
-        }
+        const reason = webhookUrlProblem(a.url ?? "")
+        if (reason) return yield* Effect.fail(new AutomationInvalid({ reason }))
       }
     }
   })

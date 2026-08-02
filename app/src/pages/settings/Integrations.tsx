@@ -540,8 +540,21 @@ function PosthogCard() {
             {data.lastSyncAt && <span>· Synced {new Date(data.lastSyncAt).toLocaleString()}</span>}
           </div>
           {data.webhookUrl && (
-            <div className="break-all">
-              Webhook receiver: <code className="text-xs">{data.webhookUrl}</code>
+            <div className="space-y-1 break-all">
+              <div>
+                Webhook receiver: <code className="text-xs">{data.webhookUrl}</code>
+              </div>
+              {/* The token authenticates this endpoint, so it goes in a header
+                  rather than the URL (a query string lands in proxy logs). Only
+                  an admin gets it back from the API. */}
+              {data.webhookToken && (
+                <div>
+                  Add header{" "}
+                  <code className="text-xs">
+                    {data.webhookTokenHeader ?? "x-km-webhook-token"}: {data.webhookToken}
+                  </code>
+                </div>
+              )}
             </div>
           )}
           {data.lastError && <p className="text-destructive">{data.lastError}</p>}
@@ -690,12 +703,25 @@ function LinearCard() {
             {data.lastSyncAt && <span>· Synced {new Date(data.lastSyncAt).toLocaleString()}</span>}
           </div>
           {data.webhookUrl && (
-            <div className="break-all">
-              Webhook receiver: <code className="text-xs">{data.webhookUrl}</code>
-              {!data.webhookConfigured && (
-                <span className="ml-1 text-amber-600">
-                  (add a signing secret to accept deliveries)
-                </span>
+            <div className="space-y-1 break-all">
+              <div>
+                Webhook receiver: <code className="text-xs">{data.webhookUrl}</code>
+                {!data.webhookConfigured && (
+                  <span className="ml-1 text-amber-600">
+                    (add a signing secret to accept deliveries)
+                  </span>
+                )}
+              </div>
+              {/* Routing token as a header, not a query param — see PostHog above.
+                  For Linear the HMAC signature is the real authenticator; this
+                  only selects the connection. */}
+              {data.webhookToken && (
+                <div>
+                  Add header{" "}
+                  <code className="text-xs">
+                    {data.webhookTokenHeader ?? "x-km-webhook-token"}: {data.webhookToken}
+                  </code>
+                </div>
               )}
             </div>
           )}
@@ -1057,8 +1083,21 @@ function ClayCard() {
             {data.newRowAutoCreate ? "create instances" : "are queued for review"}.
           </p>
           {data.callbackUrl && (
-            <div className="break-all">
-              Callback URL (paste into Clay): <code className="text-xs">{data.callbackUrl}</code>
+            <div className="space-y-1 break-all">
+              <div>
+                Callback URL (paste into Clay): <code className="text-xs">{data.callbackUrl}</code>
+              </div>
+              {/* The secret is what authenticates the callback, so it is sent as a
+                  header instead of riding in the URL — a query string is recorded
+                  by our proxy logs AND by Clay's request history. Admin-only. */}
+              {data.callbackSecret && (
+                <div>
+                  Add header{" "}
+                  <code className="text-xs">
+                    {data.callbackSecretHeader ?? "x-clay-secret"}: {data.callbackSecret}
+                  </code>
+                </div>
+              )}
             </div>
           )}
           {data.lastValidatedAt && (

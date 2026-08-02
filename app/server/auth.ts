@@ -80,11 +80,26 @@ export const auth = betterAuth({
   // so this rejects `auth.api.signUpEmail` too, not just HTTP — anything that
   // legitimately mints an account goes through `server/provision.ts`.
   emailAndPassword: { enabled: true, disableSignUp: true },
-  // Settings → Security: allow self-serve email change + account deletion.
-  // Both are off by default; we have no mail provider, so these update directly
-  // (email is unverified) / are password-gated rather than email-verified.
   user: {
-    changeEmail: { enabled: true },
+    // OFF, deliberately. Two reasons, either sufficient:
+    //
+    // 1. It never worked. With no mail provider, and neither
+    //    `emailVerification.sendVerificationEmail` nor
+    //    `changeEmail.updateEmailWithoutVerification` configured, BetterAuth's
+    //    handler rejects every call with "Verification email isn't enabled" —
+    //    the Settings → Security form 400'd on submit.
+    // 2. It shouldn't. Email is the identifier `POST /api/org/members` trusts to
+    //    grant org membership, and addresses are never verified anywhere in this
+    //    deployment. Letting a session rewrite its own email is therefore a
+    //    lateral-movement primitive, not a convenience. Now that accounts are
+    //    operator-provisioned (see `disableSignUp` above), the address is
+    //    something an operator set on purpose — changing it is their call.
+    //
+    // To re-enable: wire a mail provider AND `sendChangeEmailConfirmation`, so
+    // the new address has to be proven before it takes effect.
+    changeEmail: { enabled: false },
+    // Stays on: self-serve deletion is password-gated (or session-fresh) by
+    // BetterAuth, and only ever destroys the caller's OWN account.
     deleteUser: { enabled: true },
   },
   secret: authSecret(),

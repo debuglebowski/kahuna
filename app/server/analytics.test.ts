@@ -388,25 +388,32 @@ describe("custom query endpoint", () => {
     return { headers }
   }
 
-  it("403s a custom query from a plain member, before hitting the provider", async () => {
-    // Arbitrary caller-authored HogQL on the org's key is an admin surface; the
-    // STRUCTURED metrics stay member-open (the server authors that SQL).
+  it("lets a plain member run a custom query (documented, accepted risk)", async () => {
+    // Pins the CURRENT policy, which is deliberate rather than an oversight: an
+    // admin gate here was implemented and then reverted, because a
+    // custom-analytics widget runs its query at RENDER time, so gating it makes
+    // the widget render empty for every non-admin viewing the dashboard.
+    //
+    // The exposure is real and accepted for now — arbitrary caller-authored HogQL
+    // on the org's PostHog key reads the whole project, person properties
+    // included. Revisit alongside the read model, which can scope a custom query
+    // to a saved dashboard body the caller may already see.
+    //
+    // If this test starts failing, someone re-added the gate: that may well be
+    // correct, but it is a policy change and needs the widget behaviour handled.
     const owner = await signUpAndOrg()
     await connectFor(owner)
     const member = await addPlainMember(owner)
     const sent = capture([["2026-07-01T00:00:00Z", 5]], ["bucket", "value"])
 
-    const denied = await postQuery(member, CUSTOM)
-    expect(denied.status).toBe(403)
-    expect(await denied.json()).toMatchObject({ error: "CUSTOM_QUERY_ADMIN_ONLY" })
-    expect(sent).toHaveLength(0)
-
-    // Same member, structured metric: allowed.
-    const allowed = await postQuery(member, BASE)
-    expect(allowed.status).toBe(200)
+    const asMember = await postQuery(member, CUSTOM)
+    expect(asMember.status).toBe(200)
     expect(sent).toHaveLength(1)
 
-    // And the owner may still run the custom query.
+    // Structured metrics were never in question.
+    const allowed = await postQuery(member, BASE)
+    expect(allowed.status).toBe(200)
+
     const asOwner = await postQuery(owner, CUSTOM)
     expect(asOwner.status).toBe(200)
   })
