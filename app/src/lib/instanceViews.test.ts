@@ -17,6 +17,7 @@ const concept = (instanceView: InstanceViewLayout | null): Concept =>
     versioningEnabled: false,
     editReach: "draft",
     singleRecord: false,
+    visibility: "visible" as const,
     instanceView,
     titleFieldId: null,
     archivedAt: null,

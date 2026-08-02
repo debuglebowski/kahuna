@@ -15,6 +15,13 @@
       "when": 1785580215293,
       "tag": "0001_nostalgic_blob",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1785657968304,
+      "tag": "0002_productive_gambit",
+      "breakpoints": true
     }
   ]
 }

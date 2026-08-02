@@ -60,6 +60,7 @@ export interface ConceptRow {
   readonly versioning_enabled: boolean
   readonly edit_reach: string | null
   readonly single_record: boolean
+  readonly visibility: string | null
   /** Org-wide default instance-detail layout (`{ tiles }`); null = built-in preset. */
   readonly instance_view: unknown
   /** Field id used as the instance display label; null = first-text-field fallback. */
@@ -222,6 +223,10 @@ export const toConcept = (r: ConceptRow): Concept => ({
   // default, which is the historical freeze.
   editReach: r.edit_reach === "any" ? "any" : "draft",
   singleRecord: r.single_record ?? false,
+  // Same exhaustive-coercion rule as `editReach` above, but the OPPOSITE polarity:
+  // here the safe default is the RESTRICTIVE one. An older server meeting a future
+  // value (say 'team:eng') must fail CLOSED rather than treat it as org-visible.
+  visibility: r.visibility === "visible" ? "visible" : "admin",
   instanceView: toInstanceViewLayout(r.instance_view),
   titleFieldId: r.title_field_id,
   createdAt: r.created_at,

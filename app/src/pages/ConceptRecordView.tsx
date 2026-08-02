@@ -23,13 +23,15 @@ export function ConceptRecordView() {
   const { detail, loading, refetch } = useSingleRecord(concept?.id ?? "")
 
   if (concepts.isLoading) return <Spinner />
-  // No such slug, or it names a concept with no `/c/` address (archived, or single
-  // record switched off). Both are dead links rather than error states.
+  // No such slug, or it names a concept with no `/c/` address (archived, single
+  // record switched off, or restricted to admins). All dead links, not errors —
+  // and deliberately NOT enumerated below: listing the reasons would tell a member
+  // that "restricted" is the one that applies.
   if (!concept) {
     return (
       <Fault
         title="Page not found"
-        message={`No single-record concept is published at /c/${slug}. It may have been renamed, archived, or switched back to a list.`}
+        message={`Nothing is published at /c/${slug}.`}
         onHome={() => navigate("/")}
       />
     )

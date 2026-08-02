@@ -457,6 +457,20 @@ export function ConceptEditor({
     },
   })
 
+  // Read visibility is its own immediate RPC too — a security control shouldn't
+  // ride a batched name/description Save, and an editor that loaded the concept
+  // before someone else changed it would otherwise silently re-send the old value.
+  const saveVisibility = useMutation({
+    mutationFn: (visibility: "visible" | "admin") =>
+      api.setConceptVisibility(concept.id, visibility),
+    onSuccess: () => {
+      // Restricting a concept removes it from `listConcepts` for members, so every
+      // concept-keyed cache has to re-read.
+      qc.invalidateQueries({ queryKey: ["concepts"] })
+      refetchGraph()
+    },
+  })
+
   const refetchFields = () => {
     qc.invalidateQueries({ queryKey: ["fields", concept.id, "withArchived"] })
     // Keep the live list other views read (ConceptView columns) fresh too.
@@ -860,6 +874,34 @@ export function ConceptEditor({
                     label="Editable versions — more info"
                   />
                 </div>
+              </div>
+
+              {/* Who can read this concept. Immediate, like Single record below.
+                  Offered on managed concepts too: an integration owning the schema
+                  says nothing about who may READ the rows it syncs. */}
+              <div className="space-y-3 border-t border-border pt-4">
+                <div className="flex items-center gap-3">
+                  <Checkbox
+                    id="admin-only-toggle"
+                    checked={concept.visibility === "admin"}
+                    disabled={!admin || saveVisibility.isPending}
+                    onCheckedChange={(v) => saveVisibility.mutate(v === true ? "admin" : "visible")}
+                  />
+                  <label
+                    htmlFor="admin-only-toggle"
+                    className="text-sm font-medium text-foreground"
+                  >
+                    Admins only
+                  </label>
+                  <InfoHint
+                    text="Restrict this concept to owners and admins. Members won't see it anywhere — not in the sidebar, pickers, search, dashboards or activity feeds — and its records read as if they don't exist. Existing widgets pointing at it simply come up empty for them. Automations and integration syncs are unaffected."
+                    label="Admins only — more info"
+                  />
+                  {concept.visibility === "admin" && <Badge tone="amber">Admins only</Badge>}
+                </div>
+                {saveVisibility.error && (
+                  <p className="pl-7 text-sm text-destructive">{msgOf(saveVisibility.error)}</p>
+                )}
               </div>
 
               {/* Single record — an IMMEDIATE mutation, not part of the Save below:

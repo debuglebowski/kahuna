@@ -2,6 +2,7 @@ import { PgClient } from "@effect/sql-pg"
 import { Effect } from "effect"
 import type { Id } from "../domain/types"
 import { canEditVersion } from "../domain/versioning"
+import { canReadRestricted } from "../domain/visibility"
 import {
   FieldNotFound,
   FieldValidationError,
@@ -94,7 +95,21 @@ export class RelationService extends Effect.Service<RelationService>()("engine/R
         ORDER BY version_seq DESC LIMIT 1`.pipe(Effect.map((r) => r[0]?.id ?? null))
 
     /** Normalise a target into (itemId, versionId|null, conceptId, shadow toId). */
-    const resolveTarget = (orgId: string, input: CreateRelationInput) =>
+    /** Fail unless the caller may read `conceptId`. Without this a member could
+     *  LINK into a restricted concept and then read the target's id (and its
+     *  concept) straight back out of `listFrom`. Errors as if the target does not
+     *  exist, so it is not an existence oracle either. */
+    const assertTargetReadable = (conceptId: string, targetId: string) =>
+      Effect.gen(function* () {
+        const { role } = yield* OrgContext
+        if (canReadRestricted(role)) return
+        const rows = yield* sql<{ readonly visibility: string | null }>`
+          SELECT visibility FROM concepts WHERE id = ${conceptId} LIMIT 1`
+        if (rows[0]?.visibility !== "visible")
+          return yield* Effect.fail(new InstanceNotFound({ instanceId: targetId }))
+      })
+
+    const resolveTargetRaw = (orgId: string, input: CreateRelationInput) =>
       Effect.gen(function* () {
         // Pinned: must reference a live, published version.
         if (input.toVersionId) {
@@ -156,6 +171,14 @@ export class RelationService extends Effect.Service<RelationService>()("engine/R
             field: "toId",
           }),
         )
+      })
+
+    /** `resolveTargetRaw` + the read gate — every target branch funnels through it. */
+    const resolveTarget = (orgId: string, input: CreateRelationInput) =>
+      Effect.gen(function* () {
+        const target = yield* resolveTargetRaw(orgId, input)
+        yield* assertTargetReadable(target.conceptId, target.itemId)
+        return target
       })
 
     const create = (input: CreateRelationInput) =>

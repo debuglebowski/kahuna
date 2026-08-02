@@ -24,6 +24,9 @@ export type VersionStatus = typeof VersionStatus.Type
  *  draft. `any` = any published version may be AMENDED in place, which everyone
  *  referencing that version sees. Ignored when versioning is off. */
 export const EditReach = Schema.Literal("draft", "any")
+
+/** Read reach for a concept: org-wide, or owners/admins only. */
+export const ConceptVisibility = Schema.Literal("visible", "admin")
 export type EditReach = typeof EditReach.Type
 
 const InstanceFields = {
@@ -124,6 +127,10 @@ export const Concept = Schema.Struct({
    *  `/c/<slug>`. Toggled ONLY via `setConceptSingleRecord` (never
    *  `updateConcept` — the toggle also creates/guards the record). */
   singleRecord: Schema.Boolean,
+  /** Who may READ this concept's records. `"admin"` means members never see it at
+   *  all — it is absent from this very list for them, so a member only ever
+   *  receives `"visible"` here. Set via `setConceptVisibility` (admin-only). */
+  visibility: ConceptVisibility,
   /** Org-wide default instance-detail layout (a 12-col tile grid); null = the
    *  built-in default preset. Set in concept settings → Layout. */
   instanceView: Schema.NullOr(InstanceViewLayout),
@@ -1329,6 +1336,15 @@ export class KingsmakerRpcs extends RpcGroup.make(
   // (the integration owns it).
   Rpc.make("setConceptTitleField", {
     payload: { id: Schema.String, titleFieldId: Schema.NullOr(Schema.String) },
+    success: Concept,
+    error: RpcError,
+  }),
+  // Set who may READ a concept's records. Admin-gated and applied immediately, NOT
+  // part of `updateConcept`'s batched patch: it is a security control, so it should
+  // not ride along with a name/description save (nor be silently re-sent by an
+  // editor that loaded the concept before the setting changed).
+  Rpc.make("setConceptVisibility", {
+    payload: { id: Schema.String, visibility: ConceptVisibility },
     success: Concept,
     error: RpcError,
   }),

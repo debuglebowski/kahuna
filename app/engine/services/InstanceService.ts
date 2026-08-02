@@ -11,6 +11,7 @@ import {
   LABELS_KEY,
 } from "../domain/types"
 import { canEditVersion, isAmendment } from "../domain/versioning"
+import { canReadRestricted } from "../domain/visibility"
 import {
   DraftAlreadyExists,
   FieldValidationError,
@@ -689,6 +690,25 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
           Effect.map(({ instance }) => instance),
         )
 
+    /**
+     * Read gate: fail as if the row does not exist when the caller's role may not
+     * read its concept. Applied to every BY-ID read entry point below — the list
+     * path is already covered because `QueryService` resolves the concept first.
+     *
+     * Fails `InstanceNotFound` (not a distinct 403) so a member cannot use the
+     * error to confirm that a record exists in a concept they can't see.
+     */
+    const assertConceptVisible = (conceptId: string, instanceId: string) =>
+      Effect.gen(function* () {
+        const { role } = yield* OrgContext
+        if (canReadRestricted(role)) return
+        const rows = yield* sql<{ readonly visibility: string | null }>`
+          SELECT visibility FROM concepts WHERE id = ${conceptId} LIMIT 1`
+        // Unknown/absent reads as restricted — same fail-closed rule as toConcept.
+        if (rows[0]?.visibility !== "visible")
+          return yield* Effect.fail(new InstanceNotFound({ instanceId }))
+      })
+
     const get = (instanceId: string) =>
       Effect.gen(function* () {
         const { orgId } = yield* OrgContext
@@ -697,12 +717,15 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
           WHERE id = ${instanceId} AND org_id = ${orgId} AND archived_at IS NULL LIMIT 1`
         const row = rows[0]
         if (!row) return yield* Effect.fail(new InstanceNotFound({ instanceId }))
+        yield* assertConceptVisible(row.concept_id, instanceId)
         return toInstance(row)
       })
 
     const getAsOf = (instanceId: string, eventId: number) =>
       Effect.gen(function* () {
         const meta = yield* loadAny(instanceId)
+        // This one hand-builds its result and so never passes through `toInstance`.
+        yield* assertConceptVisible(meta.conceptId, instanceId)
         const stream = yield* events.readStream(instanceId, { upToEventId: eventId })
         const folded = foldEvents(stream)
         if (Either.isLeft(folded)) return yield* Effect.fail(folded.left)
@@ -1076,6 +1099,7 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
           SELECT * FROM items WHERE id = ${itemId} AND org_id = ${orgId} LIMIT 1`
         const row = rows[0]
         if (!row) return yield* Effect.fail(new ItemNotFound({ itemId }))
+        yield* assertConceptVisible(row.concept_id, itemId)
         return toItem(row)
       })
 
@@ -1089,7 +1113,10 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
           WHERE org_id = ${orgId} AND item_id = ${itemId}
             AND version_status = 'published' AND archived_at IS NULL
           ORDER BY version_seq DESC LIMIT 1`
-        return rows[0] ? toInstance(rows[0]) : null
+        const head = rows[0]
+        if (!head) return null
+        yield* assertConceptVisible(head.concept_id, head.id)
+        return toInstance(head)
       })
 
     /**
@@ -1114,6 +1141,10 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
           WHERE org_id = ${orgId} AND concept_id = ${conceptId} AND archived_at IS NULL
           ORDER BY created_at ASC LIMIT 1`
         const item = itemRows[0]
+        // Gate on the concept asked about, before any row is returned. A restricted
+        // single-record concept reads as absent rather than erroring, matching the
+        // `null` a member already gets for a concept with no record yet.
+        if (item) yield* assertConceptVisible(conceptId, item.id)
         if (!item) return null
         const head = yield* headOf(item.id)
         if (head) return head
@@ -1188,6 +1219,9 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
           SELECT * FROM instances
           WHERE org_id = ${orgId} AND item_id = ${itemId}
           ORDER BY version_seq ASC`
+        // Every version of an item shares its concept, so one check covers them all.
+        const first = rows[0]
+        if (first) yield* assertConceptVisible(first.concept_id, first.id)
         return rows.map(toInstance)
       })
 

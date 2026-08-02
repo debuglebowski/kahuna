@@ -1,0 +1,1 @@
+ALTER TABLE "concepts" ADD COLUMN "visibility" text DEFAULT 'visible' NOT NULL;

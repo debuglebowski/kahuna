@@ -126,6 +126,10 @@ export interface Concept {
    *  — a versioned single record still holds N versions on its one lineage.
    *  Default false ⇒ an ordinary many-record concept. */
   readonly singleRecord: boolean
+  /** Who may READ this concept's records: 'visible' = any member, 'admin' =
+   *  owners/admins only. Enforced in ConceptService + InstanceService off
+   *  `OrgContext.role`; unknown DB values coerce to 'admin' (fail closed). */
+  readonly visibility: ConceptVisibility
   /** Org-wide default instance-detail layout for this concept (a 12-col tile
    *  grid, same shape as a view-prefs custom layout); null = render the built-in
    *  default preset. Set in concept settings; every instance renders it. */
@@ -210,6 +214,14 @@ export type VersionStatus = "draft" | "published"
  *    (erratum semantics). Auditable — each amendment is an appended event, so
  *    `getAsOf` still reconstructs the pre-amendment state. */
 export type EditReach = "draft" | "any"
+
+/** Read reach for a concept's records.
+ *  - `visible`: any member of the org may read it. The default.
+ *  - `admin`: only owners/admins. A member sees it as if it does not exist —
+ *    absent from `listConcepts`, and every by-id read fails `ConceptNotFound`
+ *    (deliberately NOT a distinct 403, which would confirm it exists).
+ *  Engine-level callers (`role: "system"` — syncs, automations, seeds) bypass it. */
+export type ConceptVisibility = "visible" | "admin"
 
 export interface Instance {
   readonly id: Id
@@ -363,6 +375,7 @@ export type EventPayload =
       readonly versioningEnabled?: boolean
       readonly editReach?: EditReach
       readonly singleRecord?: boolean
+      readonly visibility?: ConceptVisibility
       readonly staticLabelIds?: ReadonlyArray<Id>
       readonly defaultLabelIds?: ReadonlyArray<Id>
     }

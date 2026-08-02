@@ -14,6 +14,7 @@ import {
   type AutomationTrigger,
   ComputedFields,
   ConceptService,
+  type ConceptVisibility,
   type ConditionMatch,
   type DashboardBody,
   DashboardService,
@@ -260,6 +261,16 @@ export const getInstanceDetail = (id: string): UC<unknown> =>
         const other = otherId
           ? yield* instances.get(otherId).pipe(Effect.catchAll(() => Effect.succeed(null)))
           : null
+        // A target in a concept this caller may not read: DROP the edge entirely
+        // rather than fall into the "(unavailable)" shape below, which would still
+        // confirm that a connection exists (and name its concept). `nameById` comes
+        // from the filtered `concepts.list()`, so a missing name is the signal.
+        if (otherId && !other) {
+          const targetItem = yield* instances
+            .getItem(rel.toItemId)
+            .pipe(Effect.catchAll(() => Effect.succeed(null)))
+          if (!targetItem) return null
+        }
         if (!other) {
           const item = yield* instances
             .getItem(rel.toItemId)
@@ -393,6 +404,10 @@ export const setConceptInstanceView = (
 
 /** Designate (or clear) a concept's title field. Rejected for a managed concept —
  *  the integration owns its title (set at provision time). */
+/** Set who may read a concept's records (admin-gated at the RPC boundary). */
+export const setConceptVisibility = (id: string, visibility: ConceptVisibility): UC<unknown> =>
+  Effect.flatMap(ConceptService, (c) => c.setVisibility(id, visibility))
+
 export const setConceptTitleField = (id: string, titleFieldId: string | null): UC<unknown> =>
   ensureUnmanagedConcept(id).pipe(
     Effect.zipRight(Effect.flatMap(ConceptService, (c) => c.setTitleField(id, titleFieldId))),
@@ -1064,6 +1079,17 @@ export const getActivity = (subjectId: string, limit = 100): UC<ReadonlyArray<Fe
   Effect.gen(function* () {
     const annotations = yield* AnnotationService
     const store = yield* EventStore
+    // `readActivityForSubject` keys purely off `subject_id`, so without this a
+    // member could read the whole payload stream of a record in a concept they
+    // cannot see — including `InstanceCreated.fields` and every patch. `getItem`
+    // carries the concept read gate, so resolving the lineage IS the check.
+    const instances = yield* InstanceService
+    yield* instances.getItem(subjectId).pipe(
+      // Not every subject is an item lineage (annotations have their own ids), so a
+      // miss must fall through rather than deny — the gate only fires on a real,
+      // restricted lineage.
+      Effect.catchTag("ItemNotFound", () => Effect.void),
+    )
     const events = yield* annotations.readActivityForSubject(subjectId, { limit })
     // An amendment (`VersionAmended`) is a field edit too, so it gets the same
     // before/after treatment — and its patch must join the running fold, or a later

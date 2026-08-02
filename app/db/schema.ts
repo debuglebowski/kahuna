@@ -76,6 +76,14 @@ export const concepts = pgTable(
     // `versioning_enabled`, where one lineage legitimately holds N version rows.
     // Makes the concept addressable without a uuid (routed at /c/<slug>).
     singleRecord: boolean("single_record").notNull().default(false),
+    // Who may READ this concept's records: 'visible' = every member of the org,
+    // 'admin' = owners/admins only. Named by who can see it (not "hidden") so a
+    // narrower value can be added later without re-meaning the existing ones.
+    //
+    // Enforced INSIDE the engine off `OrgContext.role` — see ConceptService and
+    // the `assertConceptVisible` gate in InstanceService. Unknown values coerce to
+    // 'admin' (fail CLOSED), the opposite polarity to `edit_reach`; see toConcept.
+    visibility: text("visibility").notNull().default("visible"),
     // Org-wide default detail layout for this concept's instances: a 12-col grid
     // of tiles (`{ tiles: [...] }`), the same shape as the view-prefs custom
     // layouts. Null = render the built-in default preset. Set in concept

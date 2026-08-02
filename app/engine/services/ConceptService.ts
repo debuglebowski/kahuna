@@ -1,6 +1,7 @@
 import { PgClient } from "@effect/sql-pg"
 import { Effect } from "effect"
-import type { EditReach, InstanceViewLayout } from "../domain/types"
+import type { ConceptVisibility, EditReach, InstanceViewLayout } from "../domain/types"
+import { canReadConcept, canReadRestricted } from "../domain/visibility"
 import {
   ConceptInUse,
   ConceptNameConflict,
@@ -49,15 +50,39 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
         return toConcept(row)
       })
 
+    /**
+     * `getById` for a READ path: fails `ConceptNotFound` when the caller's role may
+     * not read the concept.
+     *
+     * Deliberately a SEPARATE function rather than a gate inside `getById`, because
+     * `getById` is also what the write-side guards resolve through
+     * (`ensureUnmanagedConcept`, `ensureWritablePatch`) and what every
+     * InstanceService mutation loads to check `versioningEnabled` / `editReach`.
+     * Gating it there would turn "you can't read this" into confusing write
+     * failures on concepts a member legitimately writes.
+     */
+    const getByIdForRead = (id: string) =>
+      Effect.gen(function* () {
+        const { role } = yield* OrgContext
+        const concept = yield* getById(id)
+        if (!canReadConcept(concept.visibility, role))
+          return yield* Effect.fail(new ConceptNotFound({ concept: id }))
+        return concept
+      })
+
     /** Look up a concept by its stable slug (the handle the app pins by). */
     const getBySlug = (slug: string) =>
       Effect.gen(function* () {
-        const { orgId } = yield* OrgContext
+        const { orgId, role } = yield* OrgContext
         const rows = yield* sql<ConceptRow>`
           SELECT * FROM concepts WHERE org_id = ${orgId} AND slug = ${slug} LIMIT 1`
         const row = rows[0]
         if (!row) return yield* Effect.fail(new ConceptNotFound({ concept: slug }))
-        return toConcept(row)
+        const concept = toConcept(row)
+        // Only ever reached from a read (`/c/<slug>` resolution), so gate here.
+        if (!canReadConcept(concept.visibility, role))
+          return yield* Effect.fail(new ConceptNotFound({ concept: slug }))
+        return concept
       })
 
     /** Concepts ordered by name. Archived (archived_at set) are excluded unless
@@ -68,7 +93,7 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
       opts: { readonly includeArchived?: boolean; readonly withCounts?: boolean } = {},
     ) =>
       Effect.gen(function* () {
-        const { orgId } = yield* OrgContext
+        const { orgId, role } = yield* OrgContext
         const liveOnly = opts.includeArchived ? sql`` : sql` AND archived_at IS NULL`
         // Count ITEMS, not version rows: a versioned concept counts distinct
         // lineages (each item has ≥1 version); a non-versioned concept counts
@@ -80,8 +105,13 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
                     ELSE (SELECT COUNT(*)::int FROM instances i WHERE i.org_id = c.org_id AND i.concept_id = c.id)
                   END) AS item_count`
           : sql``
+        // Restricted concepts are FILTERED OUT for a member, not an error: this is
+        // the read every nav/picker/graph goes through, and a throw would break a
+        // whole page rather than just omitting an entry.
+        const visibleOnly = canReadRestricted(role) ? sql`` : sql` AND c.visibility = 'visible'`
         const rows = yield* sql<ConceptRow>`
-          SELECT c.*${countCol} FROM concepts c WHERE c.org_id = ${orgId}${liveOnly} ORDER BY c.name ASC`
+          SELECT c.*${countCol} FROM concepts c
+          WHERE c.org_id = ${orgId}${liveOnly}${visibleOnly} ORDER BY c.name ASC`
         return rows.map(toConcept)
       })
 
@@ -329,6 +359,39 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
         }),
       )
 
+    /** Set who may READ this concept. A narrow setter (like `setTitleField`) rather
+     *  than part of `update()`'s batched patch: it is a security control, so it gets
+     *  its own admin-gated RPC and its own event rather than riding along with a
+     *  name/description save.
+     *
+     *  Emits `ConceptUpdated` so the client's concept cache refreshes — without it a
+     *  member's open tab would keep listing a concept the server has just started
+     *  refusing. */
+    const setVisibility = (id: string, visibility: ConceptVisibility) =>
+      sql.withTransaction(
+        Effect.gen(function* () {
+          const { orgId } = yield* OrgContext
+          yield* getById(id) // 404 if missing / cross-org
+          const rows = yield* sql<ConceptRow>`
+            UPDATE concepts SET visibility = ${visibility}
+            WHERE org_id = ${orgId} AND id = ${id} RETURNING *`
+          const row = rows[0]
+          if (!row) return yield* Effect.fail(new ConceptNotFound({ concept: id }))
+          const concept = toConcept(row)
+          yield* events.append({
+            subjectKind: "concept",
+            subjectId: concept.id,
+            eventType: "ConceptUpdated",
+            payload: {
+              _tag: "ConceptUpdated",
+              description: concept.description,
+              visibility: concept.visibility,
+            },
+          })
+          return concept
+        }),
+      )
+
     /** Archive a concept (soft, restorable): hides it from the live list but keeps
      *  the row and its fields/instances intact. Idempotent on an archived concept. */
     const archive = (id: string) =>
@@ -411,7 +474,9 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
       create,
       getByName,
       getById,
+      getByIdForRead,
       getBySlug,
+      setVisibility,
       list,
       update,
       setInstanceView,

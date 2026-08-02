@@ -100,6 +100,12 @@ export const sidebarViewsCollection = createCollection(
   }),
 )
 
+/** A read the server refused because the caller may not see the concept (or it is
+ *  genuinely gone). Both cases mean "render nothing", deliberately — telling a
+ *  member the difference would confirm a restricted concept exists. */
+const isNotFound = (e: unknown): boolean =>
+  typeof e === "object" && e !== null && (e as { code?: string }).code === "NOT_FOUND"
+
 // ── lazy, per-scope collections (memoised so the instance is stable) ───────────
 
 const conceptCollections = new Map<string, ReturnType<typeof makeConcept>>()
@@ -107,7 +113,18 @@ const makeConcept = (conceptId: string) =>
   createCollection(
     queryCollectionOptions({
       queryKey: ["live", "instances", conceptId],
-      queryFn: async (): Promise<Instance[]> => [...(await api.listInstances(conceptId))],
+      // A concept restricted to admins reads as NOT_FOUND for a member. Surface it
+      // as EMPTY rather than an error: this collection backs every concept-scoped
+      // widget, and a dashboard holding one widget for a restricted concept must
+      // still render the rest of the board.
+      queryFn: async (): Promise<Instance[]> => {
+        try {
+          return [...(await api.listInstances(conceptId))]
+        } catch (e) {
+          if (isNotFound(e)) return []
+          throw e
+        }
+      },
       queryClient,
       getKey: (i: Instance) => i.id,
     }),

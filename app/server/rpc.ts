@@ -438,6 +438,8 @@ const HandlersLive = ServerRpcs.toLayer({
   // Not admin-gated: any member may shape a concept's default instance layout.
   setConceptInstanceView: ({ id, instanceView }) =>
     as<Concept>(uc.setConceptInstanceView(id, instanceView)),
+  setConceptVisibility: ({ id, visibility }) =>
+    admin<Concept>(uc.setConceptVisibility(id, visibility)),
   setConceptTitleField: ({ id, titleFieldId }) =>
     admin<Concept>(uc.setConceptTitleField(id, titleFieldId)),
   // Admin + the member check `createInstance` does: `fields` seeds a real record,

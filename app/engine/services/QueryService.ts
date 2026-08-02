@@ -29,9 +29,12 @@ export class QueryService extends Effect.Service<QueryService>()("engine/QuerySe
     const findInstances = (input: FindInstancesInput) =>
       Effect.gen(function* () {
         const { orgId } = yield* OrgContext
+        // `getByIdForRead` (not `getById`): this is THE list read, so a restricted
+        // concept must fail here rather than return rows. `getByName` is only
+        // reachable from engine-internal callers (seeds/tests), which run as system.
         const concept =
           "conceptId" in input
-            ? yield* concepts.getById(input.conceptId)
+            ? yield* concepts.getByIdForRead(input.conceptId)
             : yield* concepts.getByName(input.conceptName)
         const limit = input.limit ?? 100
 
