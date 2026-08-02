@@ -74,7 +74,12 @@ const trustedOrigins = isProd
 
 export const auth = betterAuth({
   database: drizzleAdapter(db, { provider: "pg", schema }),
-  emailAndPassword: { enabled: true },
+  // Sign-IN only. Self-serve sign-up is closed because this deploys internally:
+  // accounts are provisioned by an operator (`scripts/create-user.ts`) and then
+  // added to an org by an admin. NOTE the check lives INSIDE the route handler,
+  // so this rejects `auth.api.signUpEmail` too, not just HTTP — anything that
+  // legitimately mints an account goes through `server/provision.ts`.
+  emailAndPassword: { enabled: true, disableSignUp: true },
   // Settings → Security: allow self-serve email change + account deletion.
   // Both are off by default; we have no mail provider, so these update directly
   // (email is unverified) / are password-gated rather than email-verified.
@@ -106,6 +111,12 @@ export const auth = betterAuth({
   },
   plugins: [
     organization({
+      // Closing sign-up is not enough on its own: an already-signed-in member
+      // could still spin up unlimited orgs. Orgs are provisioned by an operator
+      // (`scripts/create-admin.ts`), which reaches the endpoint on better-auth's
+      // "system action" path — `userId` in the body and NO session headers — and
+      // is therefore exempt from this check while still firing the hooks below.
+      allowUserToCreateOrganization: false,
       organizationHooks: {
         // Seed the Kingsmaker concepts into every new org, server-side, so it
         // can't be skipped by a failed/absent client call. Idempotent.

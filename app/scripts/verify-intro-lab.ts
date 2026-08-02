@@ -3,6 +3,7 @@
  * account, plays each intro, captures timed screenshots + console output. */
 import { spawn } from "node:child_process"
 import { mkdirSync, rmSync } from "node:fs"
+import { provisionVerifyIdentity } from "./verify-session"
 
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 const BASE = "http://localhost:5100"
@@ -172,14 +173,10 @@ try {
 }
 drainConsole("boot")
 
-console.log("step: sign up throwaway account")
-await evaljs(
-  `[...document.querySelectorAll("button")].find(b => b.textContent.includes("Need an account"))?.click(), true`,
-)
-await until("signup form", 5000, () =>
-  evaljs(`document.body.innerText.includes("Organization name")`),
-)
-const email = `intro-lab-${Date.now()}@example.com`
+// Self-serve sign-up is closed (see server/auth.ts), so the throwaway account and
+// its seeded org are provisioned out of band and the UI only signs in.
+console.log("step: sign in throwaway account")
+const identity = await provisionVerifyIdentity("intro-lab")
 await evaljs(`
   const set = (el, v) => {
     const s = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set
@@ -187,16 +184,14 @@ await evaljs(`
     el.dispatchEvent(new Event("input", { bubbles: true }))
   }
   const ins = [...document.querySelectorAll("form input")]
-  set(ins[0], "Intro Lab")
-  set(ins[1], ${JSON.stringify(email)})
-  set(ins[2], "introlab-pass-123")
-  set(ins[3], "IntroLab Org")
+  set(ins[0], ${JSON.stringify(identity.email)})
+  set(ins[1], ${JSON.stringify(identity.password)})
   document.querySelector('form button[type="submit"]').click()
   true
 `)
-await until("app shell after signup", 25000, () =>
+await until("app shell after sign-in", 25000, () =>
   evaljs(
-    `document.body.innerText.includes("Intro Lab") && !!document.querySelector("nav, aside, [class*=sidebar]")`,
+    `!document.body.innerText.includes("Sign in to your org") && !!document.querySelector("nav, aside, [class*=sidebar]")`,
   ),
 ).catch(async () => {
   // fall back: maybe just the lab heading without sidebar selector
@@ -204,11 +199,11 @@ await until("app shell after signup", 25000, () =>
     evaljs(`document.body.innerText.includes("Try out the candidate app intros")`),
   )
 })
-console.log("signed up as", email)
+console.log("signed in as", identity.email)
 const rm = await evaljs(`matchMedia("(prefers-reduced-motion: reduce)").matches`)
 console.log("prefers-reduced-motion reduce:", rm)
 await shot("00-lab-page")
-drainConsole("signup")
+drainConsole("sign-in")
 
 // intro card order matches INTROS in IntroLab.tsx
 const ALL_PLAYS: { key: string; total: number; at: number[] }[] = [

@@ -11,6 +11,7 @@ import { FetchHttpClient } from "@effect/platform"
 import { RpcClient, RpcSerialization } from "@effect/rpc"
 import { Context, Effect, Layer, ManagedRuntime } from "effect"
 import { KingsmakerRpcs } from "../rpc/contract"
+import { provisionVerifyIdentity } from "./verify-session"
 
 const API = process.env.API ?? "http://localhost:3199"
 const ORIGIN = process.env.ORIGIN ?? "http://localhost:5199"
@@ -37,28 +38,24 @@ const ok = (label: string, cond: boolean, extra = "") => {
 }
 
 // ── session ──
-const email = `bucket-verify-${Date.now()}@example.test`
-const signup = await req("/api/auth/sign-up/email", {
+// Provisioned in-process: sign-up and member org-creation are both closed
+// server-side (see server/auth.ts + scripts/verify-session.ts).
+const identity = await provisionVerifyIdentity("bucket")
+ok("identity provisioned (org seeds concepts)", !!identity.orgId, identity.email)
+const signIn = await req("/api/auth/sign-in/email", {
   method: "POST",
   headers: { "content-type": "application/json" },
-  body: JSON.stringify({ email, password: "password12345", name: "Bucket Verify" }),
+  body: JSON.stringify({ email: identity.email, password: identity.password }),
 })
-ok("signup", signup.ok, `${signup.status}`)
-if (!signup.ok) {
-  console.log(await signup.text())
+ok("sign-in", signIn.ok, `${signIn.status}`)
+if (!signIn.ok) {
+  console.log(await signIn.text())
   process.exit(1)
 }
-const orgRes = await req("/api/auth/organization/create", {
-  method: "POST",
-  headers: { "content-type": "application/json" },
-  body: JSON.stringify({ name: "Verify Co", slug: `verify-${Date.now()}` }),
-})
-const newOrg = await orgRes.json()
-ok("org created (seeds concepts)", orgRes.ok && !!newOrg.id, `${orgRes.status}`)
 const setActive = await req("/api/auth/organization/set-active", {
   method: "POST",
   headers: { "content-type": "application/json" },
-  body: JSON.stringify({ organizationId: newOrg.id }),
+  body: JSON.stringify({ organizationId: identity.orgId }),
 })
 ok("org active on the session", setActive.ok, `${setActive.status}`)
 
@@ -132,14 +129,13 @@ const orgIds = (await listFiles({})).map((a) => a.id)
 ok("org scope includes the shared bucket file", orgIds.includes(att1.id))
 ok("org scope EXCLUDES the private bucket file", !orgIds.includes(att2.id), `orgN=${orgIds.length}`)
 
-// ── download: "private" hides from lists, it does not lock the link ──
+// ── download: the UPLOADER may fetch their own private file ──
+// (Another member may not — `bucket_shared=false` gates access, not just
+// listing. That half is covered by the engine test in attachments.test.ts,
+// which can act as two different actors; this driver has only one session.)
 const dl = await req(`/api/attachments/${att2.id}/download`)
 const dlBody = await dl.text()
-ok(
-  "private file still downloads by direct link",
-  dl.ok && dlBody.includes("secret"),
-  `${dl.status}`,
-)
+ok("uploader downloads their own private file", dl.ok && dlBody.includes("secret"), `${dl.status}`)
 
 const dlShared = await req(`/api/attachments/${att1.id}/download`)
 ok(

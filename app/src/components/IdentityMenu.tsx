@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query"
-import { Building2, Check, ChevronRight, LogOut, Plus, Settings } from "lucide-react"
+import { Building2, Check, ChevronRight, LogOut, Settings } from "lucide-react"
 import { useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
@@ -17,7 +17,6 @@ import {
 import { authClient, signOut, useSession } from "../lib/auth-client"
 import { cn, initialsOf } from "../lib/utils"
 import { useFullOrg } from "../pages/settings/SettingsLayout"
-import { CreateOrgModal } from "./CreateOrgModal"
 
 /** Sidebar footer identity menu — the single resting affordance at the bottom of
  *  the sidebar. The trigger shows who you are (avatar + name) and where you are
@@ -38,7 +37,6 @@ export function IdentityMenu() {
     },
   })
 
-  const [showCreate, setShowCreate] = useState(false)
   const [switching, setSwitching] = useState(false)
   const [switchError, setSwitchError] = useState<string | null>(null)
 
@@ -68,80 +66,76 @@ export function IdentityMenu() {
   )
 
   return (
-    <>
-      <DropdownMenu>
-        <DropdownMenuTrigger className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 transition-colors hover:bg-sidebar-accent">
-          {avatar}
-          <div className="min-w-0 flex-1 text-left leading-tight">
-            <div className="truncate text-sm font-medium text-sidebar-foreground">{name}</div>
-            <div className="truncate text-xs text-sidebar-foreground/70">
-              {current.data?.name ?? "Organization"}
-            </div>
+    <DropdownMenu>
+      <DropdownMenuTrigger className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 transition-colors hover:bg-sidebar-accent">
+        {avatar}
+        <div className="min-w-0 flex-1 text-left leading-tight">
+          <div className="truncate text-sm font-medium text-sidebar-foreground">{name}</div>
+          <div className="truncate text-xs text-sidebar-foreground/70">
+            {current.data?.name ?? "Organization"}
           </div>
-          <ChevronRight size={15} className="shrink-0 text-sidebar-foreground/70" />
-        </DropdownMenuTrigger>
+        </div>
+        <ChevronRight size={15} className="shrink-0 text-sidebar-foreground/70" />
+      </DropdownMenuTrigger>
 
-        <DropdownMenuContent side="right" align="end" className="min-w-56">
-          <DropdownMenuLabel className="flex items-center gap-2 p-2 font-normal">
-            {avatar}
-            <div className="min-w-0 leading-tight">
-              <div className="truncate text-sm font-medium">{name}</div>
-              {email && <div className="truncate text-xs text-muted-foreground">{email}</div>}
-            </div>
-          </DropdownMenuLabel>
-          <DropdownMenuSeparator />
+      <DropdownMenuContent side="right" align="end" className="min-w-56">
+        <DropdownMenuLabel className="flex items-center gap-2 p-2 font-normal">
+          {avatar}
+          <div className="min-w-0 leading-tight">
+            <div className="truncate text-sm font-medium">{name}</div>
+            {email && <div className="truncate text-xs text-muted-foreground">{email}</div>}
+          </div>
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
 
-          <DropdownMenuSub>
-            <DropdownMenuSubTrigger>
-              <Building2 size={14} />
-              Organizations
-            </DropdownMenuSubTrigger>
-            <DropdownMenuSubContent className="min-w-48">
-              {orgs.isPending && (
-                <p className="px-2 py-1.5 text-xs text-muted-foreground">Loading…</p>
-              )}
-              {orgs.error && (
-                <p className="px-2 py-1.5 text-xs text-destructive">Couldn't load organizations.</p>
-              )}
-              {switchError && <p className="px-2 py-1.5 text-xs text-destructive">{switchError}</p>}
-              {orgs.data?.map((o) => {
-                const active = o.id === currentId
-                return (
-                  <DropdownMenuItem
-                    key={o.id}
-                    disabled={switching}
-                    onSelect={() => switchTo(o.id)}
-                    className={cn(active && "font-medium")}
-                  >
-                    <span className="min-w-0 flex-1 truncate">{o.name}</span>
-                    {active && <Check size={14} className="shrink-0 text-muted-foreground" />}
-                  </DropdownMenuItem>
-                )
-              })}
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onSelect={() => setShowCreate(true)}>
-                <Plus size={14} />
-                New organization
-              </DropdownMenuItem>
-            </DropdownMenuSubContent>
-          </DropdownMenuSub>
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger>
+            <Building2 size={14} />
+            Organizations
+          </DropdownMenuSubTrigger>
+          <DropdownMenuSubContent className="min-w-48">
+            {orgs.isPending && (
+              <p className="px-2 py-1.5 text-xs text-muted-foreground">Loading…</p>
+            )}
+            {orgs.error && (
+              <p className="px-2 py-1.5 text-xs text-destructive">Couldn't load organizations.</p>
+            )}
+            {switchError && <p className="px-2 py-1.5 text-xs text-destructive">{switchError}</p>}
+            {orgs.data?.map((o) => {
+              const active = o.id === currentId
+              return (
+                <DropdownMenuItem
+                  key={o.id}
+                  disabled={switching}
+                  onSelect={() => switchTo(o.id)}
+                  className={cn(active && "font-medium")}
+                >
+                  <span className="min-w-0 flex-1 truncate">{o.name}</span>
+                  {active && <Check size={14} className="shrink-0 text-muted-foreground" />}
+                </DropdownMenuItem>
+              )
+            })}
+            {/* No "New organization" entry: the server refuses member-created
+                  orgs (`allowUserToCreateOrganization: false` in auth.ts), so the
+                  button could only ever 403. Orgs are provisioned with
+                  `scripts/create-admin.ts`. CreateOrgModal is kept for when/if
+                  that policy is relaxed. */}
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
 
-          <DropdownMenuItem onSelect={() => navigate("/settings/profile")}>
-            <Settings size={14} />
-            Settings
-          </DropdownMenuItem>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem
-            variant="destructive"
-            onSelect={() => signOut().then(() => location.reload())}
-          >
-            <LogOut size={14} />
-            Sign out
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-
-      {showCreate && <CreateOrgModal onClose={() => setShowCreate(false)} />}
-    </>
+        <DropdownMenuItem onSelect={() => navigate("/settings/profile")}>
+          <Settings size={14} />
+          Settings
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          variant="destructive"
+          onSelect={() => signOut().then(() => location.reload())}
+        >
+          <LogOut size={14} />
+          Sign out
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }

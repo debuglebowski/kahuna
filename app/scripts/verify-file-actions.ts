@@ -13,6 +13,7 @@ import { RpcClient, RpcSerialization } from "@effect/rpc"
 import { Context, Effect, Layer, ManagedRuntime } from "effect"
 import { KingsmakerRpcs } from "../rpc/contract"
 import { newWidget } from "../src/lib/dashboards"
+import { provisionVerifyIdentity } from "./verify-session"
 
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 const BASE = process.env.BASE ?? "http://localhost:5199"
@@ -158,25 +159,22 @@ const clickRowAction = (filename: string, label: string) =>
 const hasLabel = (label: string) =>
   evaljs(`!!document.querySelector('[aria-label=${JSON.stringify(label)}]')`) as Promise<boolean>
 
-// ── sign up ──
-console.log("step: sign up")
+// ── sign in (account + org provisioned out of band: sign-up is closed) ──
+console.log("step: sign in")
+const identity = await provisionVerifyIdentity("file-actions")
 await send("Page.navigate", { url: `${BASE}/` }, sessionId)
-await until("auth page", 60000, async () => (await text()).includes("Need an account"))
-await clickText("Need an account")
-await until("signup form", 8000, async () => (await text()).includes("Organization name"))
-const email = `file-actions-${Date.now()}@example.com`
+await until("auth page", 60000, async () => (await text()).includes("Sign in to your org"))
 await evaljs(`(() => {
   const set = (el, v) => {
     const s = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set
     s.call(el, v); el.dispatchEvent(new Event("input", { bubbles: true }))
   }
   const ins = [...document.querySelectorAll("form input")]
-  set(ins[0], "File Actions"); set(ins[1], ${JSON.stringify(email)})
-  set(ins[2], "file-pass-123"); set(ins[3], "File Actions Org")
+  set(ins[0], ${JSON.stringify(identity.email)}); set(ins[1], ${JSON.stringify(identity.password)})
   document.querySelector('form button[type="submit"]').click()
   return true
 })()`)
-await until("app shell", 60000, async () => !(await text()).includes("Organization name"))
+await until("app shell", 60000, async () => !(await text()).includes("Sign in to your org"))
 await until("active org", 40000, async () =>
   Boolean(
     JSON.parse((await evaljs(`fetch("/api/auth/get-session").then((r) => r.text())`)) || "null")

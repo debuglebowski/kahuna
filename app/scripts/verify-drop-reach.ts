@@ -19,6 +19,7 @@ import { Context, Effect, Layer, ManagedRuntime } from "effect"
 import { KingsmakerRpcs } from "../rpc/contract"
 // The editor's own factory, so this tests the default a person actually gets.
 import { newWidget } from "../src/lib/dashboards"
+import { provisionVerifyIdentity } from "./verify-session"
 
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 const BASE = process.env.BASE ?? "http://localhost:5199"
@@ -223,25 +224,22 @@ async function dragFileOnto(name: string, target: "zone" | "body" = "zone") {
   return true
 }
 
-// ── sign up (the browser has no session; org is created by the client) ──
-console.log("step: sign up")
+// ── sign in (account + org provisioned out of band: sign-up is closed) ──
+console.log("step: sign in")
+const identity = await provisionVerifyIdentity("drop-reach")
 await send("Page.navigate", { url: `${BASE}/` }, sessionId)
-await until("auth page", 60000, async () => (await text()).includes("Need an account"))
-await clickText("Need an account")
-await until("signup form", 8000, async () => (await text()).includes("Organization name"))
-const email = `drop-reach-${Date.now()}@example.com`
+await until("auth page", 60000, async () => (await text()).includes("Sign in to your org"))
 await evaljs(`(() => {
   const set = (el, v) => {
     const s = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set
     s.call(el, v); el.dispatchEvent(new Event("input", { bubbles: true }))
   }
   const ins = [...document.querySelectorAll("form input")]
-  set(ins[0], "Drop Reach"); set(ins[1], ${JSON.stringify(email)})
-  set(ins[2], "drop-pass-123"); set(ins[3], "Drop Reach Org")
+  set(ins[0], ${JSON.stringify(identity.email)}); set(ins[1], ${JSON.stringify(identity.password)})
   document.querySelector('form button[type="submit"]').click()
   return true
 })()`)
-await until("app shell", 60000, async () => !(await text()).includes("Organization name"))
+await until("app shell", 60000, async () => !(await text()).includes("Sign in to your org"))
 // Sign-up creates the org and THEN sets it active; navigating in between yields a
 // shell whose every query fails with "No active org".
 await until("active org on the session", 40000, async () =>

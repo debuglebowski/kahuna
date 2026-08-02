@@ -20,6 +20,7 @@
  * Mirrors scripts/verify-bucket-ui.ts. */
 import { spawn } from "node:child_process"
 import { rmSync } from "node:fs"
+import { provisionVerifyIdentity } from "./verify-session"
 
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 const BASE = process.env.BASE ?? "http://localhost:3199"
@@ -127,35 +128,33 @@ async function until(label: string, ms: number, fn: () => Promise<boolean>) {
   throw new Error(`timeout waiting for: ${label}\n--- page text ---\n${body.slice(0, 1200)}`)
 }
 
-// ── Sign up + org, in-page so the session cookie lands in the browser ─────────
-const stamp = Date.now()
+// ── Sign in, in-page so the session cookie lands in the browser ───────────────
+// The account + seeded org are provisioned out of band: self-serve sign-up and
+// member org-creation are both closed server-side (see server/auth.ts).
+const identity = await provisionVerifyIdentity("version-card")
 await send("Page.navigate", { url: `${BASE}/` }, sessionId)
 await until("app booted", 30000, async () => (await text()).length > 0)
 
 const setup = await evaljs(`(async () => {
-  const j = async (url, body) => {
-    const r = await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    })
-    return { status: r.status, body: await r.text() }
-  }
-  const su = await j("/api/auth/sign-up/email", {
-    email: "vc-${stamp}@test.dev", password: "password12345", name: "VC",
+  const r = await fetch("/api/auth/sign-in/email", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      email: ${JSON.stringify(identity.email)},
+      password: ${JSON.stringify(identity.password)},
+    }),
   })
-  if (su.status !== 200) return JSON.stringify({ step: "signup", ...su })
-  const org = await j("/api/auth/organization/create", {
-    name: "VCard Test", slug: "vc-${stamp}",
+  if (r.status !== 200) return JSON.stringify({ step: "signIn", status: r.status, body: await r.text() })
+  const act = await fetch("/api/auth/organization/set-active", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ organizationId: ${JSON.stringify(identity.orgId)} }),
   })
-  if (org.status !== 200) return JSON.stringify({ step: "createOrg", ...org })
-  const id = JSON.parse(org.body).id
-  const act = await j("/api/auth/organization/set-active", { organizationId: id })
-  if (act.status !== 200) return JSON.stringify({ step: "setActive", ...act })
-  return JSON.stringify({ step: "ok", id })
+  if (act.status !== 200) return JSON.stringify({ step: "setActive", status: act.status, body: await act.text() })
+  return JSON.stringify({ step: "ok" })
 })()`)
 const setupResult = JSON.parse(setup) as { step: string; status?: number; body?: string }
-ok("signed up + org active", setupResult.step === "ok", JSON.stringify(setupResult).slice(0, 200))
+ok("signed in + org active", setupResult.step === "ok", JSON.stringify(setupResult).slice(0, 200))
 
 // What the server reports — the card must agree with it. The registry check runs
 // once at boot and is in-flight while we sign up, so poll for it to LAND rather

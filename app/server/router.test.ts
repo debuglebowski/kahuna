@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto"
 import { describe, expect, it } from "vitest"
 import { auth } from "./auth"
+import { createUserDirect } from "./provision"
 import { handleApi } from "./router"
 import { runEngineOrThrow } from "./runtime"
 import { deactivateMember, listDeactivatedMembers } from "./use-cases"
@@ -16,17 +17,20 @@ const cookieHeader = (res: Response): string =>
 const signUp = async () => {
   const email = `u-${randomUUID()}@test.dev`
   const password = "password12345"
-  await auth.api.signUpEmail({ body: { email, password, name: "Tester" } })
+  const created = await createUserDirect({ email, password, name: "Tester" })
   const signIn = await auth.api.signInEmail({ body: { email, password }, asResponse: true })
   const headers = new Headers({ cookie: cookieHeader(signIn) })
-  return { email, headers }
+  return { email, headers, userId: created.userId }
 }
 
 const signUpAndOrg = async () => {
   const u = await signUp()
   const org = await auth.api.createOrganization({
-    body: { name: `Org ${randomUUID().slice(0, 8)}`, slug: `org-${randomUUID().slice(0, 8)}` },
-    headers: u.headers,
+    body: {
+      name: `Org ${randomUUID().slice(0, 8)}`,
+      slug: `org-${randomUUID().slice(0, 8)}`,
+      userId: u.userId,
+    },
   })
   if (!org) throw new Error("createOrganization returned null")
   await auth.api.setActiveOrganization({ body: { organizationId: org.id }, headers: u.headers })

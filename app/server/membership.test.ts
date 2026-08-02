@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto"
 import { describe, expect, it } from "vitest"
 import { auth } from "./auth"
+import { createUserDirect } from "./provision"
 import { assertAssigneeMember, assertMembers } from "./rpc"
 import { runEngineOrThrow } from "./runtime"
 import { addField, createConcept, deactivateMember } from "./use-cases"
@@ -15,10 +16,8 @@ import { addField, createConcept, deactivateMember } from "./use-cases"
 
 const signUp = async () => {
   const email = `u-${randomUUID()}@test.dev`
-  const created = await auth.api.signUpEmail({
-    body: { email, password: "password12345", name: "Tester" },
-  })
-  return { email, userId: created.user.id }
+  const created = await createUserDirect({ email, password: "password12345", name: "Tester" })
+  return { email, userId: created.userId }
 }
 
 const orgWithOwner = async () => {

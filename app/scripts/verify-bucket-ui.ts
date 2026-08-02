@@ -12,6 +12,7 @@ import { FetchHttpClient } from "@effect/platform"
 import { RpcClient, RpcSerialization } from "@effect/rpc"
 import { Context, Effect, Layer, ManagedRuntime } from "effect"
 import { KingsmakerRpcs } from "../rpc/contract"
+import { provisionVerifyIdentity } from "./verify-session"
 
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 const BASE = process.env.BASE ?? "http://localhost:5199"
@@ -241,25 +242,24 @@ const drain = (label: string) => {
   return bad
 }
 
-// ── sign up ──
-console.log("step: sign up")
+// ── sign in ──
+// The account + org are provisioned out of band: self-serve sign-up is closed
+// (see server/auth.ts), so the UI is sign-in only.
+console.log("step: sign in")
+const identity = await provisionVerifyIdentity("bucket-ui")
 await send("Page.navigate", { url: `${BASE}/` }, sessionId)
-await until("auth page", 60000, async () => (await text()).includes("Need an account"))
-await clickText("Need an account")
-await until("signup form", 8000, async () => (await text()).includes("Organization name"))
-const email = `bucket-ui-${Date.now()}@example.com`
+await until("auth page", 60000, async () => (await text()).includes("Sign in to your org"))
 await evaljs(`(() => {
   const set = (el, v) => {
     const s = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set
     s.call(el, v); el.dispatchEvent(new Event("input", { bubbles: true }))
   }
   const ins = [...document.querySelectorAll("form input")]
-  set(ins[0], "Bucket UI"); set(ins[1], ${JSON.stringify(email)})
-  set(ins[2], "bucket-pass-123"); set(ins[3], "Bucket Org")
+  set(ins[0], ${JSON.stringify(identity.email)}); set(ins[1], ${JSON.stringify(identity.password)})
   document.querySelector('form button[type="submit"]').click()
   return true
 })()`)
-await until("app shell", 40000, async () => !(await text()).includes("Organization name"))
+await until("app shell", 40000, async () => !(await text()).includes("Sign in to your org"))
 // Sign-up creates the org and THEN sets it active; navigating in between yields a
 // shell whose every query fails with "No active org".
 await until("active org on the session", 40000, async () =>

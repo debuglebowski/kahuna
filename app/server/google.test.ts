@@ -13,6 +13,7 @@ import {
   setGoogleFetchForTest,
   syncGoogleConnection,
 } from "./google"
+import { createUserDirect } from "./provision"
 
 const cookieHeader = (res: Response): string =>
   (res.headers.get("set-cookie") ?? "")
@@ -24,12 +25,15 @@ const cookieHeader = (res: Response): string =>
 const signUpAndOrg = async () => {
   const email = `u-${randomUUID()}@test.dev`
   const password = "password12345"
-  await auth.api.signUpEmail({ body: { email, password, name: "Tester" } })
+  const created = await createUserDirect({ email, password, name: "Tester" })
   const signIn = await auth.api.signInEmail({ body: { email, password }, asResponse: true })
   const headers = new Headers({ cookie: cookieHeader(signIn) })
   const org = await auth.api.createOrganization({
-    body: { name: `Org ${randomUUID().slice(0, 8)}`, slug: `org-${randomUUID().slice(0, 8)}` },
-    headers,
+    body: {
+      name: `Org ${randomUUID().slice(0, 8)}`,
+      slug: `org-${randomUUID().slice(0, 8)}`,
+      userId: created.userId,
+    },
   })
   if (!org) throw new Error("createOrganization returned null")
   await auth.api.setActiveOrganization({ body: { organizationId: org.id }, headers })
