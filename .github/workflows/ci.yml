@@ -191,14 +191,36 @@ jobs:
           test -n "$asset"
           curl -fsS "http://localhost:3100$asset" -o /dev/null
 
-          # Sign-up exercises BetterAuth against the auth tables that the ledger
-          # bug used to omit entirely.
-          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+          # Drive BetterAuth against the auth tables the ledger bug used to omit
+          # entirely. This used to POST sign-up and assert 200, which stopped being
+          # true when self-serve sign-up was closed (`disableSignUp`) — the smoke
+          # test then failed on correct behaviour.
+          #
+          # Sign IN as a user who does not exist instead. A 401
+          # INVALID_EMAIL_OR_PASSWORD proves the lookup REACHED `bauth_user` and
+          # found nothing; a missing table 500s, which is the failure being
+          # guarded. Asserting the code (not just the status) also means the test
+          # notices if this endpoint ever gets disabled too, rather than passing on
+          # some other 401.
+          body=$(curl -s -o /tmp/signin.json -w '%{http_code}' -X POST \
+            http://localhost:3100/api/auth/sign-in/email \
+            -H 'Content-Type: application/json' \
+            -H 'Origin: http://localhost:3100' \
+            -d '{"email":"ci-nobody@test.dev","password":"password12345"}')
+          echo "sign-in status=$body body=$(cat /tmp/signin.json)"
+          test "$body" = "401"
+          grep -q 'INVALID_EMAIL_OR_PASSWORD' /tmp/signin.json
+
+          # Sign-up MUST be refused: an image that lets anyone create an account
+          # is the single worst default for a self-hosted deploy, and it regressed
+          # once already.
+          code=$(curl -s -o /tmp/signup.json -w '%{http_code}' -X POST \
             http://localhost:3100/api/auth/sign-up/email \
             -H 'Content-Type: application/json' \
             -H 'Origin: http://localhost:3100' \
             -d '{"email":"ci@test.dev","password":"password12345","name":"CI"}')
-          test "$code" = "200"
+          echo "sign-up status=$code body=$(cat /tmp/signup.json)"
+          test "$code" != "200"
 
           echo "smoke test passed"
 
