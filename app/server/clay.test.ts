@@ -165,7 +165,13 @@ describe("Clay integration", () => {
     expect(typeof payload.callbackUrl).toBe("string")
     expect(payload.callbackUrl).toContain("/api/integrations/clay/callback")
     expect(payload.callbackUrl).toContain("cid=")
-    expect(payload.callbackUrl).toContain("token=")
+    // The secret must NOT be in the URL: a query string is recorded by the
+    // reverse-proxy access log, any intermediate proxy, AND Clay's own request
+    // history. It comes back as its own admin-only field instead, for the
+    // operator to paste into Clay's header config.
+    expect(payload.callbackUrl).not.toContain("token=")
+    expect(payload.callbackSecretHeader).toBe("x-clay-secret")
+    expect(typeof payload.callbackSecret).toBe("string")
 
     const [row] = await db
       .select()
@@ -195,7 +201,11 @@ describe("Clay integration", () => {
     const payload = (await res.json()) as Record<string, unknown>
     expect(payload.configured).toBe(true)
     expect(payload.connected).toBe(true)
-    expect(payload.callbackUrl).toContain(`token=${encodeURIComponent(secret)}`)
+    // Secret out of the URL, returned separately (admin-only) for the header.
+    expect(payload.callbackUrl).not.toContain(secret)
+    expect(payload.callbackUrl).not.toContain("token=")
+    expect(payload.callbackSecret).toBe(secret)
+    expect(payload.callbackSecretHeader).toBe("x-clay-secret")
     expect(payload.hasTableWebhook).toBe(true)
   })
 

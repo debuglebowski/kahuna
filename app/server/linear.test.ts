@@ -282,6 +282,33 @@ describe("Linear integration", () => {
     })
   }
 
+  it("routes a webhook by the token HEADER as well as the query param", async () => {
+    // The status endpoint now hands out a URL with no token in it, so header
+    // delivery has to work. `?token=` stays supported (every other test in this
+    // file uses it) because already-wired webhooks must keep delivering.
+    const actor = await signUpAndOrg()
+    await db.insert(linearConnection).values({
+      orgId: actor.orgId,
+      userId: actor.userId,
+      token: encryptToken("lin_k"),
+      webhookToken: "wh-hdr",
+      webhookSecret: encryptToken("topsecret"),
+    })
+    const raw = JSON.stringify({ action: "update", type: "Issue", data: { id: "issue-hdr" } })
+    const headers = new Headers({ "content-type": "application/json" })
+    headers.set("linear-signature", createHmac("sha256", "topsecret").update(raw).digest("hex"))
+    headers.set("x-km-webhook-token", "wh-hdr")
+    const res = await handleLinearWebhook(
+      // No `?token=` at all — the header is the only routing information.
+      new Request("http://localhost/api/integrations/linear/webhook", {
+        method: "POST",
+        headers,
+        body: raw,
+      }),
+    )
+    expect(res.status).toBe(200)
+  })
+
   it("rejects a webhook with a bad signature", async () => {
     const actor = await signUpAndOrg()
     await db.insert(linearConnection).values({

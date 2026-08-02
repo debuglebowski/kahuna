@@ -199,7 +199,14 @@ describe("PostHog integration", () => {
     expect(payload.connected).toBe(true)
     expect(payload.region).toBe("eu")
     expect(payload.projectId).toBe("7")
-    expect(String(payload.webhookUrl)).toContain("token=wh-token")
+    // The token is this endpoint's ONLY authenticator (PostHog's destination
+    // POSTs carry no signature), so it is a credential and must not ride in the
+    // URL, where the proxy access log and PostHog's own config would record it.
+    // Returned as an admin-only field, sent as a header.
+    expect(String(payload.webhookUrl)).not.toContain("token=")
+    expect(String(payload.webhookUrl)).toContain("/api/integrations/posthog/webhook")
+    expect(payload.webhookToken).toBe("wh-token")
+    expect(payload.webhookTokenHeader).toBe("x-km-webhook-token")
   })
 
   it("syncs persons and merges event aggregates into metrics", async () => {
