@@ -254,5 +254,25 @@ ok("8. owner reads the hidden field", oRows[0]?.state[sSalary.id] === "250000")
 const oDefs = await asOwner.call((c) => c.listFields({ conceptId: staff.id }))
 ok("   owner sees both defs", oDefs.length >= 2)
 
+// ── the activity feed is its own channel: raw payloads + a `previous` map ─────
+const mFeed = await asMember.call((c) => c.getActivity({ subjectId: staffRec.itemId }))
+const mLeaks = mFeed.filter((e) => {
+  const p = (e.payload ?? {}) as { fields?: object; patch?: object }
+  const keys = [
+    ...Object.keys(p.fields ?? {}),
+    ...Object.keys(p.patch ?? {}),
+    ...Object.keys((e.previous ?? {}) as object),
+  ]
+  return keys.includes(sSalary.id)
+})
+ok("9. member's activity feed carries NO hidden field key", mLeaks.length === 0, `leaks=${mLeaks.length}`)
+ok("   …and still reports the visible field's history", mFeed.length > 0, `n=${mFeed.length}`)
+const oFeed = await asOwner.call((c) => c.getActivity({ subjectId: staffRec.itemId }))
+const oSees = oFeed.some((e) => {
+  const p = (e.payload ?? {}) as { fields?: object; patch?: object }
+  return sSalary.id in (p.fields ?? {}) || sSalary.id in (p.patch ?? {})
+})
+ok("   owner's feed DOES carry it", oSees)
+
 console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILURE(S)`)
 process.exit(failures === 0 ? 0 : 1)

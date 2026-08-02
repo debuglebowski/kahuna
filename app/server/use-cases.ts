@@ -221,6 +221,35 @@ const ensureWritableVisibility = (conceptId: string, keys: ReadonlyArray<string>
       )
   })
 
+/** Drop hidden keys from a field-id-keyed record (a patch, or a `previous` map). */
+const maskRecord = (
+  rec: Record<string, unknown> | undefined,
+  hidden: ReadonlySet<string>,
+): Record<string, unknown> | undefined =>
+  !rec || hidden.size === 0 ? rec : projectState(rec, hidden)
+
+/**
+ * Drop hidden field keys from an event payload. Three payload shapes carry
+ * field-id-keyed data — `InstanceCreated.fields`, `InstanceUpdated.patch` and
+ * `VersionAmended.patch` — and `ComputedBandChanged` names a single field, whose
+ * very mention would disclose a hidden one.
+ */
+const maskPayload = (payload: unknown, hidden: ReadonlySet<string>): unknown => {
+  if (hidden.size === 0 || !payload || typeof payload !== "object") return payload
+  const p = payload as { _tag?: string; fields?: unknown; patch?: unknown; field?: unknown }
+  if (p._tag === "InstanceCreated" && p.fields && typeof p.fields === "object")
+    return { ...p, fields: projectState(p.fields as Record<string, unknown>, hidden) }
+  if (
+    (p._tag === "InstanceUpdated" || p._tag === "VersionAmended") &&
+    p.patch &&
+    typeof p.patch === "object"
+  )
+    return { ...p, patch: projectState(p.patch as Record<string, unknown>, hidden) }
+  if (p._tag === "ComputedBandChanged" && typeof p.field === "string" && hidden.has(p.field))
+    return { _tag: p._tag }
+  return payload
+}
+
 /** Apply a mask to one instance (no-op when nothing is hidden). */
 const maskInstance = <T extends { readonly state: Record<string, unknown> }>(
   inst: T,
@@ -1254,6 +1283,17 @@ export const getActivity = (subjectId: string, limit = 100): UC<ReadonlyArray<Fe
         }
       }
     }
+    // Field-level masking, applied ONLY here at the final map — never inside the
+    // fold above. The running `state` there must stay complete, or a later event's
+    // `previous` would report a value an earlier masked patch had already replaced.
+    //
+    // The log itself is never redacted: it is the source of truth for versioning,
+    // amend and automations, so this is a read-time filter and nothing else.
+    const lineage = yield* instances
+      .getItem(subjectId)
+      .pipe(Effect.catchAll(() => Effect.succeed(null)))
+    const hidden = lineage ? yield* fieldMaskFor(lineage.conceptId) : new Set<string>()
+
     return events.map((ev) => ({
       id: ev.id,
       occurredAt: ev.occurredAt,
@@ -1261,8 +1301,8 @@ export const getActivity = (subjectId: string, limit = 100): UC<ReadonlyArray<Fe
       eventType: ev.eventType,
       subjectKind: ev.subjectKind,
       subjectId: ev.subjectId,
-      payload: ev.payload,
-      previous: previousByEvent.get(ev.id),
+      payload: maskPayload(ev.payload, hidden),
+      previous: maskRecord(previousByEvent.get(ev.id), hidden),
     }))
   })
 
