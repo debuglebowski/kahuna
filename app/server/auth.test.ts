@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest"
 import { ConceptService, FieldService, InstanceService } from "#engine"
 import { auth } from "./auth"
 import { createUserDirect } from "./provision"
-import { runEngineOrThrow } from "./runtime"
+import { runEngineOrThrow, systemScope } from "./runtime"
 import { seedKingsmaker } from "./seed/seed"
 import { runScoped } from "./session"
 
@@ -46,7 +46,7 @@ describe("tier 0 (BetterAuth) + scoping", () => {
 
   it("an authenticated member runs engine ops scoped to their org", async () => {
     const { headers, orgId } = await signUpAndOrg()
-    await runEngineOrThrow({ orgId, actor: "system" }, seedKingsmaker)
+    await runEngineOrThrow(systemScope(orgId, "system"), seedKingsmaker)
     const req = new Request("http://localhost/api/concepts", { headers })
     const result = await runScoped(req, listConcepts)
     expect(result.ok).toBe(true)
@@ -56,9 +56,9 @@ describe("tier 0 (BetterAuth) + scoping", () => {
   it("org A cannot see org B's instances (404 via session scope)", async () => {
     const a = await signUpAndOrg()
     const b = await signUpAndOrg()
-    await runEngineOrThrow({ orgId: a.orgId, actor: "system" }, seedKingsmaker)
+    await runEngineOrThrow(systemScope(a.orgId, "system"), seedKingsmaker)
     const created = await runEngineOrThrow(
-      { orgId: a.orgId, actor: "system" },
+      systemScope(a.orgId, "system"),
       Effect.flatMap(InstanceService, (i) => i.create({ conceptName: "Company", fields: {} })),
     )
     const reqB = new Request("http://localhost/x", { headers: b.headers })
@@ -72,26 +72,26 @@ describe("tier 0 (BetterAuth) + scoping", () => {
 
   it("deleting an org purges its engine data (beforeDeleteOrganization hook)", async () => {
     const { headers, orgId } = await signUpAndOrg()
-    await runEngineOrThrow({ orgId, actor: "system" }, seedKingsmaker)
+    await runEngineOrThrow(systemScope(orgId, "system"), seedKingsmaker)
     await runEngineOrThrow(
-      { orgId, actor: "system" },
+      systemScope(orgId, "system"),
       Effect.flatMap(InstanceService, (i) => i.create({ conceptName: "Company", fields: {} })),
     )
-    const before = await runEngineOrThrow({ orgId, actor: "system" }, listConcepts)
+    const before = await runEngineOrThrow(systemScope(orgId, "system"), listConcepts)
     expect(before.length).toBe(8)
 
     await auth.api.deleteOrganization({ body: { organizationId: orgId }, headers })
 
-    const after = await runEngineOrThrow({ orgId, actor: "system" }, listConcepts)
+    const after = await runEngineOrThrow(systemScope(orgId, "system"), listConcepts)
     expect(after.length).toBe(0)
   })
 
   it("an illegal Agreement status transition surfaces as 422 ILLEGAL_TRANSITION", async () => {
     const a = await signUpAndOrg()
-    await runEngineOrThrow({ orgId: a.orgId, actor: "system" }, seedKingsmaker)
+    await runEngineOrThrow(systemScope(a.orgId, "system"), seedKingsmaker)
     // Resolve the seeded Agreement.status field id, then create a draft agreement.
     const { instanceId, statusId } = await runEngineOrThrow(
-      { orgId: a.orgId, actor: "system" },
+      systemScope(a.orgId, "system"),
       Effect.gen(function* () {
         const concepts = yield* ConceptService
         const fieldSvc = yield* FieldService

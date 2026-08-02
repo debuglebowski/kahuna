@@ -1,7 +1,7 @@
 import { PgClient } from "@effect/sql-pg"
 import { Duration, Effect, Schedule } from "effect"
 import { InstanceService, OrgContext, QueryService } from "#engine"
-import { AppRuntime } from "./runtime"
+import { AppRuntime, systemScope } from "./runtime"
 
 /**
  * Server decay tick: periodically detect time-based decay band crossings and
@@ -34,7 +34,7 @@ const runForOrg = (orgId: string) =>
       }
     }
   }).pipe(
-    Effect.provideService(OrgContext, { orgId, actor: TICK_ACTOR }),
+    Effect.provideService(OrgContext, systemScope(orgId, TICK_ACTOR)),
     // An org with no decay concepts just gets skipped.
     Effect.catchAllCause(() => Effect.void),
   )

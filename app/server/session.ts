@@ -5,7 +5,7 @@ import type { EngineServices, OrgContext } from "#engine"
 import { auth } from "./auth"
 import { db, pool } from "./db"
 import { can, type Role } from "./policy"
-import { runEngine, type UseCaseResult } from "./runtime"
+import { runEngine, sessionScope, type UseCaseResult } from "./runtime"
 
 /** Resolve a user's role within an org from the BetterAuth `member` table. */
 export const roleOf = async (userId: string, orgId: string): Promise<Role | null> => {
@@ -30,7 +30,7 @@ export const isDeactivated = async (userId: string, orgId: string): Promise<bool
 }
 
 export type OrgResolution =
-  | { readonly ok: true; readonly orgId: string; readonly actor: string }
+  | { readonly ok: true; readonly orgId: string; readonly actor: string; readonly role: Role }
   | { readonly ok: false; readonly status: number; readonly code: string }
 
 /**
@@ -49,8 +49,8 @@ export type OrgResolution =
 export const resolveAdmin = async (request: Request): Promise<OrgResolution> => {
   const org = await resolveOrg(request)
   if (!org.ok) return org
-  const role = await roleOf(org.actor, org.orgId)
-  if (!role || !can(role, "admin")) return { ok: false, status: 403, code: "FORBIDDEN" }
+  // The role already came back on the resolution — no second lookup.
+  if (!can(org.role, "admin")) return { ok: false, status: 403, code: "FORBIDDEN" }
   return org
 }
 
@@ -73,13 +73,15 @@ export const resolveOrg = async (request: Request): Promise<OrgResolution> => {
     return { ok: false, status: 403, code: "DEACTIVATED" }
   }
 
-  return { ok: true, orgId, actor: session.user.id }
+  return { ok: true, orgId, actor: session.user.id, role }
 }
 
 /**
  * The single server↔engine chokepoint: read the BetterAuth session, build an
- * OrgContext (org_id + actor), run the engine effect, map typed errors. Every
- * `/api/*` handler is a thin adapter over this.
+ * OrgContext (org_id + actor + role), run the engine effect, map typed errors.
+ * Every `/api/*` handler is a thin adapter over this. The role comes from the
+ * resolved membership via `sessionScope`, so a request can never carry engine
+ * (`"system"`) privilege.
  */
 export const runScoped = async <A, E>(
   request: Request,
@@ -87,5 +89,5 @@ export const runScoped = async <A, E>(
 ): Promise<UseCaseResult<A>> => {
   const org = await resolveOrg(request)
   if (!org.ok) return { ok: false, status: org.status, code: org.code }
-  return runEngine({ orgId: org.orgId, actor: org.actor }, effect)
+  return runEngine(sessionScope(org.orgId, org.actor, org.role), effect)
 }

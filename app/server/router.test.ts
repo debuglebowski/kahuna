@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest"
 import { auth } from "./auth"
 import { createUserDirect } from "./provision"
 import { handleApi } from "./router"
-import { runEngineOrThrow } from "./runtime"
+import { runEngineOrThrow, systemScope } from "./runtime"
 import { deactivateMember, listDeactivatedMembers } from "./use-cases"
 
 /** Convert a Set-Cookie response header into a request Cookie header. */
@@ -175,7 +175,7 @@ describe("DELETE /api/org/members/:userId (purge a deactivated member)", () => {
     // An ACTIVE member can't be purged (the archive→delete convention).
     expect((await del(owner.headers))?.status).toBe(409)
 
-    await runEngineOrThrow({ orgId: owner.orgId, actor: owner.email }, deactivateMember(userId))
+    await runEngineOrThrow(systemScope(owner.orgId, owner.email), deactivateMember(userId))
 
     // The deactivated member is blocked at the session boundary (any /api route).
     const blocked = await postMember(target.headers, { email: "x@test.dev", role: "member" })
@@ -186,7 +186,7 @@ describe("DELETE /api/org/members/:userId (purge a deactivated member)", () => {
     expect((await del(owner.headers))?.status).toBe(200)
     expect((await del(owner.headers))?.status).toBe(404)
     const markers = await runEngineOrThrow(
-      { orgId: owner.orgId, actor: owner.email },
+      systemScope(owner.orgId, owner.email),
       listDeactivatedMembers,
     )
     expect(

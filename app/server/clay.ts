@@ -1,12 +1,13 @@
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto"
 import { and, eq } from "drizzle-orm"
 import { clayAuditLog, clayConnection, clayJob, clayNotification } from "#db"
+import type { OrgScope } from "#engine"
 import { db } from "./db"
 import { type AuditEntry, writeAuditLog } from "./integrations/audit"
 import { decryptToken, encryptToken } from "./integrations/crypto"
 import { sleepBeforeRetry } from "./integrations/http"
 import { connectionForOrgIn } from "./integrations/rows"
-import { runEngine } from "./runtime"
+import { runEngine, sessionScope, systemScope } from "./runtime"
 import { resolveAdmin, resolveOrg } from "./session"
 import { createInstance, getInstance, updateInstance } from "./use-cases"
 
@@ -251,7 +252,7 @@ const rowFromMapping = (
  * supplies the {clayColumn → fieldId} mapping; no concept assumptions.
  */
 export async function pushRow(
-  scope: { orgId: string; actor: string },
+  scope: OrgScope,
   connection: typeof clayConnection.$inferSelect,
   input: { instanceId: string; mapping: Record<string, string>; extra?: Record<string, unknown> },
 ): Promise<
@@ -325,7 +326,7 @@ export async function enrichForRequest(req: Request) {
   if (!mapping || typeof mapping !== "object" || Object.keys(mapping).length === 0)
     return json({ error: "MAPPING_REQUIRED" }, 400)
 
-  const result = await pushRow({ orgId: org.orgId, actor: org.actor }, connection, {
+  const result = await pushRow(sessionScope(org.orgId, org.actor, org.role), connection, {
     instanceId,
     mapping,
     extra: body?.extra,
@@ -422,7 +423,9 @@ export async function handleClayCallback(req: Request) {
   if (!expected || !provided || !secretMatches(provided, expected))
     return json({ error: "INVALID_SECRET" }, 401)
 
-  const scope = { orgId: connection.orgId, actor: connection.userId }
+  // No session here: the callback is routed by `?cid=` and authenticated by the
+  // shared secret above, so it acts with engine privilege, not a member's.
+  const scope = systemScope(connection.orgId, connection.userId)
   const correlationId =
     (typeof body._km_correlation_id === "string" && body._km_correlation_id) ||
     (typeof body.correlationId === "string" && body.correlationId) ||
@@ -549,7 +552,7 @@ type WriteOutcome = { ok: true; instanceId: string } | { ok: false; status: numb
 
 /** Overwrite-write the enriched patch onto an existing instance via the engine. */
 async function writeBack(
-  scope: { orgId: string; actor: string },
+  scope: OrgScope,
   instanceId: string,
   patch: Record<string, unknown>,
 ): Promise<WriteOutcome> {
@@ -562,7 +565,7 @@ async function writeBack(
 
 /** Create a net-new instance on `conceptId` from the enriched patch. */
 async function createNew(
-  scope: { orgId: string; actor: string },
+  scope: OrgScope,
   conceptId: string,
   patch: Record<string, unknown>,
 ): Promise<WriteOutcome> {

@@ -13,6 +13,7 @@ import {
   upsertInstanceByExternalId,
 } from "./integrations/instances"
 import { connectionForOrgIn } from "./integrations/rows"
+import { systemScope } from "./runtime"
 import { resolveAdmin, resolveOrg } from "./session"
 
 /**
@@ -349,10 +350,9 @@ const TICKET_CONCEPT: ProvisionConceptSpec = {
   ],
 }
 
-const scopeOf = (conn: typeof linearConnection.$inferSelect): OrgScope => ({
-  orgId: conn.orgId,
-  actor: conn.userId,
-})
+const scopeOf = (conn: typeof linearConnection.$inferSelect): OrgScope =>
+  // A connector sync runs on no session at all — engine privilege, not a member.
+  systemScope(conn.orgId, conn.userId)
 
 /**
  * Ensure the org's Ticket concept exists and return `{ conceptId, fieldMap }`.

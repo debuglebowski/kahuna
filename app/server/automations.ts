@@ -24,7 +24,7 @@ import {
   RATE_CAP_PER_MIN,
 } from "#engine"
 import { matchInstance } from "../src/lib/conditions"
-import { AppRuntime } from "./runtime"
+import { AppRuntime, systemScope } from "./runtime"
 import { postMessageForOrg } from "./slack"
 import { tap } from "./stream"
 
@@ -587,10 +587,7 @@ export const handleEnvelope = (env: EventEnvelope) =>
       }).pipe(
         // Every write this run makes is attributed to THIS automation, so the
         // one-hop guard fires and the activity trail names the culprit.
-        Effect.provideService(OrgContext, {
-          orgId: env.org,
-          actor: actorFor(automation.id),
-        }),
+        Effect.provideService(OrgContext, systemScope(env.org, actorFor(automation.id))),
         Effect.catchAllCause((cause) =>
           // A crash mid-run must still close the row, or the automation would
           // look permanently "running" and the event could never be retried.
@@ -644,7 +641,7 @@ export const startAutomationRunner = (): void => {
         // The runner acts as the automation itself; OrgContext's actor is
         // overridden per-automation inside the run, but the org must be the
         // event's own org — this is the isolation boundary for automations.
-        Effect.provideService(OrgContext, { orgId: env.org, actor: AUTOMATION_ACTOR_PREFIX }),
+        Effect.provideService(OrgContext, systemScope(env.org, AUTOMATION_ACTOR_PREFIX)),
         Effect.tapErrorCause((cause) => Effect.logError("automation runner error", cause)),
         Effect.catchAllCause(() => Effect.void),
       ),
@@ -736,7 +733,7 @@ const runScheduled = (orgId: string, automationId: string) =>
     }
   }).pipe(
     // Same attribution as the event path: writes carry this automation's actor.
-    Effect.provideService(OrgContext, { orgId, actor: actorFor(automationId) }),
+    Effect.provideService(OrgContext, systemScope(orgId, actorFor(automationId))),
   )
 
 let tickStarted = false

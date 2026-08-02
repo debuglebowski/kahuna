@@ -1,11 +1,12 @@
 import { and, eq, gt } from "drizzle-orm"
 import { apolloAuditLog, apolloConnection, apolloEnrichmentCache } from "#db"
+import type { OrgScope } from "#engine"
 import { db } from "./db"
 import { type AuditEntry, writeAuditLog } from "./integrations/audit"
 import { decryptToken, encryptToken } from "./integrations/crypto"
 import { sleepBeforeRetry } from "./integrations/http"
 import { connectionForOrgIn } from "./integrations/rows"
-import { runEngine } from "./runtime"
+import { runEngine, sessionScope } from "./runtime"
 import { resolveAdmin, resolveOrg } from "./session"
 import { createInstance, getInstance, updateInstance } from "./use-cases"
 
@@ -300,7 +301,7 @@ const fieldsFromMapping = (
  * fields is skipped.
  */
 export async function bulkImport(
-  scope: { orgId: string; actor: string },
+  scope: OrgScope,
   people: ReadonlyArray<NormalizedPerson>,
   conceptId: string,
   mapping: Record<string, string>,
@@ -525,7 +526,7 @@ export async function enrichInstanceForRequest(req: Request) {
   if (!mapping || typeof mapping !== "object" || Object.keys(mapping).length === 0)
     return json({ error: "MAPPING_REQUIRED" }, 400)
 
-  const scope = { orgId: org.orgId, actor: org.actor }
+  const scope = sessionScope(org.orgId, org.actor, org.role)
   const instRes = await runEngine(scope, getInstance(instanceId))
   if (!instRes.ok) return json({ error: instRes.code, detail: instRes.detail }, instRes.status)
   const state = instRes.data.state as Record<string, unknown>
@@ -631,7 +632,7 @@ export async function importForRequest(req: Request) {
   if (!Array.isArray(people)) return json({ error: "PEOPLE_REQUIRED" }, 400)
 
   const result = await bulkImport(
-    { orgId: org.orgId, actor: org.actor },
+    sessionScope(org.orgId, org.actor, org.role),
     people,
     conceptId,
     mapping,

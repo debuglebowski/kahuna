@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest"
 import { auth } from "./auth"
 import { createUserDirect } from "./provision"
 import { assertAssigneeMember, assertMembers } from "./rpc"
-import { runEngineOrThrow } from "./runtime"
+import { runEngineOrThrow, systemScope } from "./runtime"
 import { addField, createConcept, deactivateMember } from "./use-cases"
 
 /**
@@ -40,11 +40,11 @@ const addMember = async (orgId: string, userId: string) => {
 /** A concept carrying one `user`-kind field; returns both ids. */
 const conceptWithUserField = async (orgId: string, actor: string) => {
   const concept = (await runEngineOrThrow(
-    { orgId, actor },
+    systemScope(orgId, actor),
     createConcept(`Assignable ${randomUUID().slice(0, 6)}`),
   )) as { id: string }
   const field = (await runEngineOrThrow(
-    { orgId, actor },
+    systemScope(orgId, actor),
     addField({ conceptId: concept.id, name: "Owner", kind: "user" }),
   )) as { id: string }
   return { conceptId: concept.id, fieldId: field.id }
@@ -67,7 +67,7 @@ describe("assertAssigneeMember", () => {
     await expect(assertAssigneeMember(orgId, null)).resolves.toBeUndefined()
 
     // Deactivate them: still a `bauth_member` row, but no longer assignable.
-    await runEngineOrThrow({ orgId, actor: owner.userId }, deactivateMember(target.userId))
+    await runEngineOrThrow(systemScope(orgId, owner.userId), deactivateMember(target.userId))
     await expect(assertAssigneeMember(orgId, target.userId)).rejects.toThrow(
       /not an active org member/,
     )
@@ -85,7 +85,7 @@ describe("assertMembers (user-kind field values)", () => {
       assertMembers(orgId, conceptId, { [fieldId]: target.userId }),
     ).resolves.toBeUndefined()
 
-    await runEngineOrThrow({ orgId, actor: owner.userId }, deactivateMember(target.userId))
+    await runEngineOrThrow(systemScope(orgId, owner.userId), deactivateMember(target.userId))
 
     await expect(assertMembers(orgId, conceptId, { [fieldId]: target.userId })).rejects.toThrow(
       /not org members/,

@@ -9,7 +9,7 @@ import {
   InstanceService,
   type OrgContext,
 } from "#engine"
-import { runEngine, runEngineOrThrow } from "./runtime"
+import { runEngine, runEngineOrThrow, systemScope } from "./runtime"
 import { seedKingsmaker } from "./seed/seed"
 import {
   addField,
@@ -65,7 +65,7 @@ const has = (xs: unknown, id: string) => ids(xs).includes(id)
 const run = <A, E>(
   orgId: string,
   eff: Effect.Effect<A, E, OrgContext | EngineServices | PgClient.PgClient>,
-) => runEngineOrThrow({ orgId, actor: "system" }, eff)
+) => runEngineOrThrow(systemScope(orgId, "system"), eff)
 
 /** The error code of a (failed) use-case result; undefined on success. */
 const codeOf = (r: { readonly ok: boolean; readonly code?: string }) => (r.ok ? undefined : r.code)
@@ -367,7 +367,7 @@ describe("instance view prefs", () => {
 describe("managed concepts: field-level read-only guard", () => {
   it("locks synced fields + record lifecycle, but allows user fields + their values", async () => {
     const org = randomUUID()
-    const scope = { orgId: org, actor: "u" }
+    const scope = systemScope(org, "u")
     await run(org, seedKingsmaker)
 
     // Simulate a connector sync: a managed concept + one integration-owned field
@@ -439,7 +439,7 @@ describe("managed concepts: field-level read-only guard", () => {
 
   it("leaves unmanaged concepts fully editable (no false positives)", async () => {
     const org = randomUUID()
-    const scope = { orgId: org, actor: "u" }
+    const scope = systemScope(org, "u")
     await run(org, seedKingsmaker)
 
     const concept = (await run(org, createConcept("Widget"))) as WithId
@@ -548,7 +548,7 @@ describe("single-record concepts (use-case layer)", () => {
 
   it("refuses the toggle on a managed concept (the integration owns its records)", async () => {
     const org = randomUUID()
-    const scope = { orgId: org, actor: "u" }
+    const scope = systemScope(org, "u")
     await run(org, seedKingsmaker)
 
     const concept = await run(
@@ -564,7 +564,7 @@ describe("single-record concepts (use-case layer)", () => {
 
   it("surfaces SINGLE_RECORD_CONFLICT (not a 500) when the concept already has two records", async () => {
     const org = randomUUID()
-    const scope = { orgId: org, actor: "u" }
+    const scope = systemScope(org, "u")
     await run(org, seedKingsmaker)
 
     const concept = (await run(org, createConcept("Team"))) as WithId
@@ -579,7 +579,7 @@ describe("single-record concepts (use-case layer)", () => {
 
   it("rolls the flag back when a required field is missing from the toggle payload", async () => {
     const org = randomUUID()
-    const scope = { orgId: org, actor: "u" }
+    const scope = systemScope(org, "u")
     await run(org, seedKingsmaker)
 
     const concept = (await run(org, createConcept("Settings"))) as WithId

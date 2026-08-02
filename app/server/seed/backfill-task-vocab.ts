@@ -1,7 +1,7 @@
 import "../env"
 import { Effect } from "effect"
 import { TaskPriorityService, TaskStatusService } from "#engine"
-import { runEngineOrThrow } from "../runtime"
+import { runEngineOrThrow, systemScope } from "../runtime"
 import { defaultTaskPriorities, defaultTaskStatuses } from "./spec"
 
 /**
@@ -17,7 +17,7 @@ if (!orgId) {
 }
 
 const result = await runEngineOrThrow(
-  { orgId, actor: "system" },
+  systemScope(orgId, "system"),
   Effect.gen(function* () {
     const statuses = yield* TaskStatusService
     const priorities = yield* TaskPriorityService

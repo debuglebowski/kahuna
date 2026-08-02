@@ -4,7 +4,7 @@ import { organization } from "better-auth/plugins"
 import { asc, eq } from "drizzle-orm"
 import * as schema from "#db"
 import { db, pool } from "./db"
-import { runEngineOrThrow } from "./runtime"
+import { runEngineOrThrow, systemScope } from "./runtime"
 import { seedKingsmaker } from "./seed/seed"
 
 /**
@@ -122,7 +122,7 @@ export const auth = betterAuth({
         // can't be skipped by a failed/absent client call. Idempotent.
         afterCreateOrganization: async ({ organization, user }) => {
           try {
-            await runEngineOrThrow({ orgId: organization.id, actor: user.id }, seedKingsmaker)
+            await runEngineOrThrow(systemScope(organization.id, user.id), seedKingsmaker)
           } catch (error) {
             console.error(`Failed to seed org ${organization.id}:`, error)
           }

@@ -15,7 +15,7 @@ import { auth } from "./auth"
 import { db } from "./db"
 import { decryptToken, encryptToken } from "./integrations/crypto"
 import { createUserDirect } from "./provision"
-import { runEngineOrThrow } from "./runtime"
+import { runEngineOrThrow, systemScope } from "./runtime"
 import { addField, createConcept, createInstance, getInstance, listFields } from "./use-cases"
 
 const cookieHeader = (res: Response): string =>
@@ -62,7 +62,7 @@ type FieldRow = { id: string; name: string }
 
 /** Build a fresh generic concept with three text fields; return their ids. */
 const setupConcept = async (orgId: string, userId: string) => {
-  const scope = { orgId, actor: userId }
+  const scope = systemScope(orgId, userId)
   const concept = (await runEngineOrThrow(
     scope,
     createConcept(`Lead ${randomUUID().slice(0, 6)}`),

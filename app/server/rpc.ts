@@ -34,7 +34,7 @@ import {
 import { auth } from "./auth"
 import { pool } from "./db"
 import { can } from "./policy"
-import { EngineBase, ERROR_MAP } from "./runtime"
+import { EngineBase, ERROR_MAP, sessionScope } from "./runtime"
 import { isDeactivated, roleOf } from "./session"
 import * as uc from "./use-cases"
 
@@ -99,7 +99,10 @@ const AuthMiddlewareLive = Layer.succeed(AuthMiddleware, (options) =>
         new RpcError({ code: "DEACTIVATED", message: "Member is deactivated", status: 403 }),
       )
     }
-    return { orgId, actor: session.user.id } satisfies OrgScope
+    // The role resolved above rides along: read visibility is enforced inside the
+    // engine off `OrgContext.role` (see OrgContext.ts). `sessionScope`'s signature
+    // is what guarantees a request can never claim engine ("system") privilege.
+    return sessionScope(orgId, session.user.id, role) satisfies OrgScope
   }),
 )
 
@@ -157,16 +160,12 @@ const mapErr = <A, E, R>(eff: Effect.Effect<A, E, R>) =>
 
 /**
  * Admin gate for schema-mutating RPCs (concept configuration). Reuses the
- * OrgContext already provided by AuthMiddleware plus the BetterAuth member role
- * — one indexed lookup, only on the handlers that need it.
+ * role AuthMiddleware already resolved onto the scope — no extra lookup.
  */
 const requireAdmin: Effect.Effect<void, RpcError, OrgContext> = Effect.gen(function* () {
-  const { orgId, actor } = yield* OrgContext
-  const role = yield* Effect.tryPromise({
-    try: () => roleOf(actor, orgId),
-    catch: () => new RpcError({ code: "INTERNAL", message: "role lookup failed", status: 500 }),
-  })
-  if (!role || !can(role, "admin")) {
+  // The role is already on the scope (AuthMiddleware resolved it) — no lookup.
+  const { role } = yield* OrgContext
+  if (role === "system" || !can(role, "admin")) {
     return yield* Effect.fail(
       new RpcError({ code: "FORBIDDEN", message: "Admin only", status: 403 }),
     )

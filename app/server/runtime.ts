@@ -9,6 +9,7 @@ import {
   PgLive,
 } from "#engine"
 import { S3BlobStore } from "./blob-s3"
+import type { Role } from "./policy"
 
 const BlobLive =
   process.env.BLOB_DRIVER === "s3"
@@ -108,6 +109,29 @@ export const toResult = <A, E>(exit: Exit.Exit<A, E>): UseCaseResult<A> => {
  *  `EngineBase` uses `provideMerge` and so surfaces it — a use-case that owns its
  *  own transaction (see `deleteConcept`) needs it, and the runtime already has it. */
 type Runnable<A, E> = Effect.Effect<A, E, OrgContext | EngineServices | PgClient.PgClient>
+
+/**
+ * Build a scope for a REAL request. `role` is typed as the server's `Role`, which
+ * does not include `"system"` — so a user request cannot be given engine-level
+ * privilege even by mistake. Session-resolved callers must use this.
+ */
+export const sessionScope = (orgId: string, actor: string, role: Role): OrgScope => ({
+  orgId,
+  actor,
+  role,
+})
+
+/**
+ * Build a scope for a caller that is not a person: the automations runner, the
+ * decay tick, integration syncs (webhooks/pushes with no session), seeds and
+ * backfills. Sees everything, so it must never be reachable from a user request —
+ * `grep 'role: "system"'` should only ever match this function.
+ */
+export const systemScope = (orgId: string, actor: string): OrgScope => ({
+  orgId,
+  actor,
+  role: "system",
+})
 
 /** Run an engine effect with a given org scope, mapping typed errors to a result. */
 export const runEngine = <A, E>(

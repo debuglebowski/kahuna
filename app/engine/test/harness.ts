@@ -5,7 +5,7 @@ import { PgClient } from "@effect/sql-pg"
 import { Config, Layer } from "effect"
 import { LocalFsBlobStore } from "../blob/local"
 import { EngineLive } from "../layers"
-import { OrgContext } from "../services/OrgContext"
+import { OrgContext, type ScopeRole } from "../services/OrgContext"
 
 /** SqlClient layer pointed at the dedicated test database. */
 export const PgTestLive = PgClient.layerConfig({
@@ -14,11 +14,15 @@ export const PgTestLive = PgClient.layerConfig({
 
 const BlobTestLive = LocalFsBlobStore(path.join(tmpdir(), "kingsmaker-test-blobs"))
 
-/** A fully-provided engine layer scoped to one org (Engine + Pg + Blob + OrgContext). */
-export const testLayer = (orgId: string, actor = "tester") =>
+/** A fully-provided engine layer scoped to one org (Engine + Pg + Blob + OrgContext).
+ *
+ *  `role` defaults to `"system"` so the existing suite keeps exercising the
+ *  unfiltered engine — read visibility is asserted by tests that pass a role
+ *  explicitly (`"member"` / `"admin"`), not by every test incidentally. */
+export const testLayer = (orgId: string, actor = "tester", role: ScopeRole = "system") =>
   Layer.provideMerge(
     EngineLive,
-    Layer.mergeAll(PgTestLive, BlobTestLive, Layer.succeed(OrgContext, { orgId, actor })),
+    Layer.mergeAll(PgTestLive, BlobTestLive, Layer.succeed(OrgContext, { orgId, actor, role })),
   )
 
 export const newOrgId = (): string => randomUUID()

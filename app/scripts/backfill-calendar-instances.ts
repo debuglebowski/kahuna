@@ -8,6 +8,7 @@
  */
 import { pool } from "../server/db"
 import { upsertInstanceByExternalId } from "../server/integrations/instances"
+import { systemScope } from "../server/runtime"
 
 type RawEvent = {
   id?: string
@@ -69,10 +70,12 @@ for (const c of conns.rows) {
       skipped++
       continue
     }
-    const res = await upsertInstanceByExternalId(
-      { orgId: c.org_id, actor: c.user_id },
-      { conceptId: c.concept_id, externalFieldId, externalValue: row.google_event_id, fields },
-    )
+    const res = await upsertInstanceByExternalId(systemScope(c.org_id, c.user_id), {
+      conceptId: c.concept_id,
+      externalFieldId,
+      externalValue: row.google_event_id,
+      fields,
+    })
     if (res.created) created++
     else updated++
     if ((created + updated) % 500 === 0) console.log(`  ...${created + updated} projected`)

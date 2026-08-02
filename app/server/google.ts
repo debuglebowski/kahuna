@@ -23,6 +23,7 @@ import {
   upsertInstanceByExternalId,
 } from "./integrations/instances"
 import { redirect, safeReturnTo } from "./integrations/oauth"
+import { systemScope } from "./runtime"
 import { resolveOrg } from "./session"
 
 // Token crypto now lives in the shared integrations helper; re-export it so
@@ -460,10 +461,9 @@ const EVENT_CONCEPT: ProvisionConceptSpec = {
   ],
 }
 
-const googleScopeOf = (conn: typeof googleConnection.$inferSelect): OrgScope => ({
-  orgId: conn.orgId,
-  actor: conn.userId,
-})
+const googleScopeOf = (conn: typeof googleConnection.$inferSelect): OrgScope =>
+  // A connector sync runs on no session at all — engine privilege, not a member.
+  systemScope(conn.orgId, conn.userId)
 
 /** Ensure the org's Event concept exists; reuse the ids stored on the connection
  *  when present (so a later concept/field rename never re-provisions), else

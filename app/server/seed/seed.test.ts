@@ -2,11 +2,11 @@ import { randomUUID } from "node:crypto"
 import { Effect } from "effect"
 import { describe, expect, it } from "vitest"
 import { ConceptService, type EngineServices, FieldService, type OrgContext } from "#engine"
-import { runEngineOrThrow } from "../runtime"
+import { runEngineOrThrow, systemScope } from "../runtime"
 import { seedKingsmaker } from "./seed"
 
 const run = <A, E>(orgId: string, eff: Effect.Effect<A, E, OrgContext | EngineServices>) =>
-  runEngineOrThrow({ orgId, actor: "system" }, eff)
+  runEngineOrThrow(systemScope(orgId, "system"), eff)
 
 describe("kingsmaker seed", () => {
   it("creates the 8 model concepts and is idempotent", async () => {

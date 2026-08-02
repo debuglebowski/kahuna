@@ -1,6 +1,6 @@
 import { Effect } from "effect"
 import { ConceptService } from "#engine"
-import { runEngineOrThrow } from "../runtime"
+import { runEngineOrThrow, systemScope } from "../runtime"
 
 /**
  * CLI: `bun server/seed/backfill-concept-colors.ts <orgId>` — give every live,
@@ -42,7 +42,7 @@ if (!orgId) {
 }
 
 const result = await runEngineOrThrow(
-  { orgId, actor: "system" },
+  systemScope(orgId, "system"),
   Effect.gen(function* () {
     const concepts = yield* ConceptService
     const all = yield* concepts.list()

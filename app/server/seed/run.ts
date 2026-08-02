@@ -1,5 +1,5 @@
 import "../env" // Load repo-root .env before the engine reads DATABASE_URL.
-import { runEngineOrThrow } from "../runtime"
+import { runEngineOrThrow, systemScope } from "../runtime"
 import { seedKingsmaker } from "./seed"
 
 /**
@@ -12,6 +12,6 @@ if (!orgId) {
   process.exit(1)
 }
 
-const result = await runEngineOrThrow({ orgId, actor: "system" }, seedKingsmaker)
+const result = await runEngineOrThrow(systemScope(orgId, "system"), seedKingsmaker)
 console.log(`Seeded ${result.concepts} concepts into org ${orgId}`)
 process.exit(0)
