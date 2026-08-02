@@ -95,6 +95,7 @@ export interface FieldRow {
   readonly formula: string | null
   readonly config: unknown
   readonly managed_by: string | null
+  readonly visibility: string | null
   readonly icon: string | null
   readonly position: number | string
   readonly archived_at: Date | null
@@ -261,6 +262,8 @@ export const toField = (r: FieldRow): Field => ({
   formula: r.formula,
   config: toFieldConfig(r.config),
   managedBy: r.managed_by,
+  // Fail CLOSED on anything unrecognised, same rule as `toConcept.visibility`.
+  visibility: r.visibility === "visible" ? "visible" : "admin",
   icon: r.icon,
   position: Number(r.position),
   archivedAt: r.archived_at,

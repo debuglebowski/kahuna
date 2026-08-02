@@ -24,6 +24,12 @@ export {
   richTextWalk,
 } from "./domain/richtext"
 export * from "./domain/types"
+export {
+  canReadConcept,
+  canReadRestricted,
+  hiddenFieldIds,
+  projectState,
+} from "./domain/visibility"
 export * from "./errors"
 export { EngineLive, type EngineServices } from "./layers"
 export { foldEvents, foldUntil } from "./projection/fold"
@@ -63,7 +69,7 @@ export { InstanceService } from "./services/InstanceService"
 export { LabelService } from "./services/LabelService"
 export { MemberService } from "./services/MemberService"
 // Services
-export { OrgContext, type OrgScope } from "./services/OrgContext"
+export { OrgContext, type OrgScope, type ScopeRole } from "./services/OrgContext"
 export { type FindInstancesInput, QueryService } from "./services/QueryService"
 export { type CreateRelationInput, RelationService } from "./services/RelationService"
 export { SidebarViewService } from "./services/SidebarViewService"

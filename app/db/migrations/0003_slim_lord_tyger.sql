@@ -1,0 +1,1 @@
+ALTER TABLE "fields" ADD COLUMN "visibility" text DEFAULT 'visible' NOT NULL;

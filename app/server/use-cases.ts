@@ -16,6 +16,7 @@ import {
   ConceptService,
   type ConceptVisibility,
   type ConditionMatch,
+  canReadRestricted,
   type DashboardBody,
   DashboardService,
   type EditReach,
@@ -24,8 +25,10 @@ import {
   type FieldConfig,
   type FieldKind,
   FieldService,
+  FieldValidationError,
   type GraphLayoutPositions,
   GraphLayoutService,
+  hiddenFieldIds,
   type Instance,
   InstanceService,
   type InstanceViewLayout,
@@ -37,7 +40,8 @@ import {
   ManagedConceptReadonly,
   MemberService,
   type Note,
-  type OrgContext,
+  OrgContext,
+  projectState,
   QueryService,
   RelationService,
   type RichTextValue,
@@ -166,6 +170,63 @@ export interface ListOpts {
   readonly includeArchived?: boolean
 }
 
+/**
+ * The field-visibility projection, resolved once per concept.
+ *
+ * Every read below that returns instance state runs through this. It lives HERE
+ * and not deeper in the engine on purpose — `domain/visibility.ts` documents the
+ * two placements that silently corrupt data (a filter in `toInstance` deletes
+ * hidden values on the next edit; a filter in `FieldService.listFields` disables
+ * required-field enforcement).
+ *
+ * One `listFields` call covers a whole page of rows, because every row in a
+ * `listInstances` result shares one concept.
+ */
+const fieldMaskFor = (conceptId: string): UC<ReadonlySet<string>> =>
+  Effect.gen(function* () {
+    const { role } = yield* OrgContext
+    if (canReadRestricted(role)) return new Set<string>()
+    const fields = yield* FieldService
+    // includeArchived: an archived field's values linger in `state`, so a hidden
+    // one must stay masked after it is archived.
+    const defs = yield* fields.listFields(conceptId, { includeArchived: true })
+    return hiddenFieldIds(defs, role)
+  })
+
+/** Run a write and project its echoed instance, so a writer's response carries no
+ *  more than a reader's would. */
+const maskEcho = (eff: UC<Instance>): UC<Instance> =>
+  Effect.gen(function* () {
+    const out = yield* eff
+    return maskInstance(out, yield* fieldMaskFor(out.conceptId))
+  })
+
+/**
+ * Refuse to WRITE a field the caller may not read. Without this a member could
+ * overwrite a hidden salary without ever seeing it — and could probe it via the
+ * unique-constraint error.
+ *
+ * Fails with the SAME `FieldValidationError` shape `validateFields` already emits
+ * for a bogus key, so a hidden field is indistinguishable from a nonexistent one
+ * (and needs no new error code or ERROR_MAP entry).
+ */
+const ensureWritableVisibility = (conceptId: string, keys: ReadonlyArray<string>): UC<void> =>
+  Effect.gen(function* () {
+    const hidden = yield* fieldMaskFor(conceptId)
+    if (hidden.size === 0) return
+    const blocked = keys.find((k) => hidden.has(k))
+    if (blocked)
+      return yield* Effect.fail(
+        new FieldValidationError({ message: `unknown field "${blocked}"`, field: blocked }),
+      )
+  })
+
+/** Apply a mask to one instance (no-op when nothing is hidden). */
+const maskInstance = <T extends { readonly state: Record<string, unknown> }>(
+  inst: T,
+  hidden: ReadonlySet<string>,
+): T => (hidden.size === 0 ? inst : { ...inst, state: projectState(inst.state, hidden) })
+
 export const listInstances = (
   conceptId: string,
   opts: ListOpts = {},
@@ -181,7 +242,11 @@ export const listInstances = (
       limit: opts.limit,
       includeArchived: opts.includeArchived,
     })
-    return opts.decorate ? yield* Effect.forEach(rows, (r) => computed.decorate(r)) : rows
+    const decorated = opts.decorate
+      ? yield* Effect.forEach(rows, (r) => computed.decorate(r))
+      : rows
+    const hidden = yield* fieldMaskFor(conceptId)
+    return hidden.size === 0 ? decorated : decorated.map((r) => maskInstance(r, hidden))
   })
 
 export const getInstance = (id: string, decorate = false): UC<Instance> =>
@@ -189,7 +254,8 @@ export const getInstance = (id: string, decorate = false): UC<Instance> =>
     const instances = yield* InstanceService
     const computed = yield* ComputedFields
     const inst = yield* instances.get(id)
-    return decorate ? yield* computed.decorate(inst) : inst
+    const out = decorate ? yield* computed.decorate(inst) : inst
+    return maskInstance(out, yield* fieldMaskFor(inst.conceptId))
   })
 
 /**
@@ -297,6 +363,11 @@ export const getInstanceDetail = (id: string): UC<unknown> =>
         // Resolve a display label from the connected concept's title field (its
         // state is keyed by field id; the client lacks these defs).
         const titleId = titleFieldIdOf(titleByConcept.get(other.conceptId) ?? null, otherFields)
+        // The related record belongs to a DIFFERENT concept, so it needs that
+        // concept's own mask — including for the title label below, or a hidden
+        // title field would leak through the edge's display text.
+        const otherHidden = yield* fieldMaskFor(other.conceptId)
+        const dMasked = maskInstance(d, otherHidden)
         return {
           relationId: rel.id,
           fieldId: rel.fieldId,
@@ -304,12 +375,12 @@ export const getInstanceDetail = (id: string): UC<unknown> =>
           relationName: field.name,
           relationInverseName: field.config.inverseName ?? null,
           relationInversePluralName: field.config.inversePluralName ?? null,
-          label: titleId && d.state[titleId] ? String(d.state[titleId]) : "(untitled)",
+          label: titleId && dMasked.state[titleId] ? String(dMasked.state[titleId]) : "(untitled)",
           direction,
           conceptId: other.conceptId,
           conceptName: nameById.get(other.conceptId) ?? other.conceptId,
           pinned,
-          instance: d,
+          instance: dMasked,
         }
       }).pipe(Effect.catchAll(() => Effect.succeed(null)))
 
@@ -318,10 +389,14 @@ export const getInstanceDetail = (id: string): UC<unknown> =>
       Effect.forEach(inRels, (r) => resolveEntry(r, "in")),
     ]).pipe(Effect.map(([a, b]) => [...a, ...b].filter((x) => x !== null)))
 
+    // The host's own mask, applied to both its values and the field DEFS it ships:
+    // a def whose values are masked must not appear at all, or the table renders a
+    // column that is permanently blank (and names a field the caller can't read).
+    const hostHidden = yield* fieldMaskFor(inst.conceptId)
     return {
-      instance: decorated,
+      instance: maskInstance(decorated, hostHidden),
       concept,
-      fields: fieldDefs,
+      fields: fieldDefs.filter((f) => !hostHidden.has(f.id)),
       inboundRelationFields: inboundFields,
       related,
       staticLabels,
@@ -405,6 +480,10 @@ export const setConceptInstanceView = (
 /** Designate (or clear) a concept's title field. Rejected for a managed concept —
  *  the integration owns its title (set at provision time). */
 /** Set who may read a concept's records (admin-gated at the RPC boundary). */
+/** Set who may read ONE field's values (admin-gated at the RPC boundary). */
+export const setFieldVisibility = (id: string, visibility: ConceptVisibility): UC<unknown> =>
+  Effect.flatMap(FieldService, (f) => f.setVisibility(id, visibility))
+
 export const setConceptVisibility = (id: string, visibility: ConceptVisibility): UC<unknown> =>
   Effect.flatMap(ConceptService, (c) => c.setVisibility(id, visibility))
 
@@ -544,7 +623,16 @@ export const deleteLabel = (id: string): UC<Label> =>
   Effect.flatMap(LabelService, (l) => l.purge(id))
 
 export const listFields = (conceptId: string, includeArchived = false): UC<unknown> =>
-  Effect.flatMap(FieldService, (f) => f.listFields(conceptId, { includeArchived }))
+  Effect.gen(function* () {
+    const fields = yield* FieldService
+    const defs = yield* fields.listFields(conceptId, { includeArchived })
+    // Filtered HERE, not in `FieldService.listFields`: that one is also what write
+    // validation reads, and filtering it would silently disable required-field
+    // enforcement (see domain/visibility.ts). Shipping a hidden def would leak more
+    // than the name, too — `config.options` on an enum is real business data.
+    const hidden = yield* fieldMaskFor(conceptId)
+    return hidden.size === 0 ? defs : defs.filter((f) => !hidden.has(f.id))
+  })
 
 // ── sidebar views (configurable nav layouts) ───────────────────────────────────
 
@@ -784,7 +872,10 @@ export const listEvents = (input: {
 
 export const createInstance = (conceptId: string, fields: Record<string, unknown>): UC<Instance> =>
   ensureUnmanagedConcept(conceptId).pipe(
-    Effect.zipRight(Effect.flatMap(InstanceService, (i) => i.create({ conceptId, fields }))),
+    Effect.zipRight(ensureWritableVisibility(conceptId, Object.keys(fields))),
+    Effect.zipRight(
+      maskEcho(Effect.flatMap(InstanceService, (i) => i.create({ conceptId, fields }))),
+    ),
   )
 
 export const updateInstance = (
@@ -794,7 +885,12 @@ export const updateInstance = (
 ): UC<Instance> =>
   ensureWritablePatch(id, Object.keys(patch)).pipe(
     Effect.zipRight(
-      Effect.flatMap(InstanceService, (i) => i.update({ instanceId: id, expectedVersion, patch })),
+      Effect.gen(function* () {
+        const instances = yield* InstanceService
+        const inst = yield* instances.get(id)
+        yield* ensureWritableVisibility(inst.conceptId, Object.keys(patch))
+        return yield* maskEcho(instances.update({ instanceId: id, expectedVersion, patch }))
+      }),
     ),
   )
 
@@ -806,28 +902,33 @@ export const transitionInstance = (
 ): UC<Instance> =>
   Effect.gen(function* () {
     yield* ensureWritablePatch(id, [field])
-    return yield* Effect.flatMap(InstanceService, (i) =>
-      i.transition({ instanceId: id, expectedVersion, field, to }),
-    )
+    const instances = yield* InstanceService
+    const inst = yield* instances.get(id)
+    yield* ensureWritableVisibility(inst.conceptId, [field])
+    return yield* maskEcho(instances.transition({ instanceId: id, expectedVersion, field, to }))
   })
 
 export const archiveInstance = (id: string, expectedVersion: number): UC<Instance> =>
   ensureUnmanagedInstance(id).pipe(
     Effect.zipRight(
-      Effect.flatMap(InstanceService, (i) => i.archive({ instanceId: id, expectedVersion })),
+      maskEcho(
+        Effect.flatMap(InstanceService, (i) => i.archive({ instanceId: id, expectedVersion })),
+      ),
     ),
   )
 
 export const restoreInstance = (id: string, expectedVersion: number): UC<Instance> =>
   ensureUnmanagedInstance(id).pipe(
     Effect.zipRight(
-      Effect.flatMap(InstanceService, (i) => i.restore({ instanceId: id, expectedVersion })),
+      maskEcho(
+        Effect.flatMap(InstanceService, (i) => i.restore({ instanceId: id, expectedVersion })),
+      ),
     ),
   )
 
 export const deleteInstance = (id: string): UC<Instance> =>
   ensureUnmanagedInstance(id).pipe(
-    Effect.zipRight(Effect.flatMap(InstanceService, (i) => i.purge({ instanceId: id }))),
+    Effect.zipRight(maskEcho(Effect.flatMap(InstanceService, (i) => i.purge({ instanceId: id })))),
   )
 
 export const linkRelation = (
@@ -841,16 +942,39 @@ export const linkRelation = (
 // ── versioning ──────────────────────────────────────────────────────────────
 
 export const listVersions = (itemId: string): UC<ReadonlyArray<Instance>> =>
-  Effect.flatMap(InstanceService, (i) => i.listVersions(itemId))
+  Effect.gen(function* () {
+    const instances = yield* InstanceService
+    const rows = yield* instances.listVersions(itemId)
+    const first = rows[0]
+    if (!first) return rows
+    // Every version of an item shares its concept, so one mask covers them all.
+    const hidden = yield* fieldMaskFor(first.conceptId)
+    return hidden.size === 0 ? rows : rows.map((r) => maskInstance(r, hidden))
+  })
 
 export const newVersion = (itemId: string): UC<Instance> =>
-  Effect.flatMap(InstanceService, (i) => i.newVersion({ itemId }))
+  Effect.gen(function* () {
+    const instances = yield* InstanceService
+    const out = yield* instances.newVersion({ itemId })
+    // A writer's response is projected exactly like a reader's.
+    return maskInstance(out, yield* fieldMaskFor(out.conceptId))
+  })
 
 export const publishVersion = (id: string, expectedVersion: number): UC<Instance> =>
-  Effect.flatMap(InstanceService, (i) => i.publishVersion({ instanceId: id, expectedVersion }))
+  Effect.gen(function* () {
+    const instances = yield* InstanceService
+    const out = yield* instances.publishVersion({ instanceId: id, expectedVersion })
+    // A writer's response is projected exactly like a reader's.
+    return maskInstance(out, yield* fieldMaskFor(out.conceptId))
+  })
 
 export const discardDraft = (id: string): UC<Instance> =>
-  Effect.flatMap(InstanceService, (i) => i.discardDraft({ instanceId: id }))
+  Effect.gen(function* () {
+    const instances = yield* InstanceService
+    const out = yield* instances.discardDraft({ instanceId: id })
+    // A writer's response is projected exactly like a reader's.
+    return maskInstance(out, yield* fieldMaskFor(out.conceptId))
+  })
 
 export const archiveItem = (itemId: string): UC<unknown> =>
   Effect.flatMap(InstanceService, (i) => i.archiveItem({ itemId }))
@@ -871,10 +995,14 @@ export const searchInstances = (conceptId: string, query?: string, limit = 20): 
       conceptsSvc.getById(conceptId),
     ])
     const titleId = titleFieldIdOf(concept.titleFieldId, defs)
+    // A hidden TITLE field must not leak through the picker's display text.
+    const hidden = yield* fieldMaskFor(conceptId)
+    const visibleTitleId = titleId && !hidden.has(titleId) ? titleId : null
     const out = rows.map((r) => ({
       itemId: r.itemId,
       instanceId: r.id,
-      label: titleId && r.state[titleId] ? String(r.state[titleId]) : "(untitled)",
+      label:
+        visibleTitleId && r.state[visibleTitleId] ? String(r.state[visibleTitleId]) : "(untitled)",
       versionSeq: r.versionSeq,
       versionStatus: r.versionStatus,
     }))
@@ -982,6 +1110,7 @@ export const resolveTaskSubjects = (subjectIds: ReadonlyArray<string>): UC<unkno
     const conceptsSvc = yield* ConceptService
     const fieldCache = new Map<string, ReadonlyArray<{ id: string; kind: string }>>()
     const titleCache = new Map<string, string | null>()
+    const maskCache = new Map<string, ReadonlySet<string>>()
 
     const resolveOne = (subjectId: string) =>
       Effect.gen(function* () {
@@ -1003,10 +1132,21 @@ export const resolveTaskSubjects = (subjectIds: ReadonlyArray<string>): UC<unkno
           titleCache.set(head.conceptId, titleFieldId)
         }
         const titleId = titleFieldIdOf(titleFieldId, fields)
+        // A hidden title field must not leak through a task's subject label. Cached
+        // per concept like the two lookups above (subjects repeat across tasks).
+        let hidden = maskCache.get(head.conceptId)
+        if (hidden === undefined) {
+          hidden = yield* fieldMaskFor(head.conceptId)
+          maskCache.set(head.conceptId, hidden)
+        }
+        const visibleTitleId = titleId && !hidden.has(titleId) ? titleId : null
         return {
           subjectId,
           instanceId: head.id,
-          label: titleId && head.state[titleId] ? String(head.state[titleId]) : "(untitled)",
+          label:
+            visibleTitleId && head.state[visibleTitleId]
+              ? String(head.state[visibleTitleId])
+              : "(untitled)",
           conceptId: head.conceptId,
         }
       }).pipe(

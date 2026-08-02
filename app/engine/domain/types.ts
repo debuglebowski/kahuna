@@ -180,6 +180,12 @@ export interface Field {
    *  kind while user fields stay null — so members may add + edit their own
    *  fields. Drives the field-level read-only guard. Keyed by kind, never name. */
   readonly managedBy: string | null
+  /** Who may READ this field's VALUES: 'visible' = any member, 'admin' =
+   *  owners/admins only. Mirrors `Concept.visibility` one level down, for a
+   *  sensitive field on a concept that must itself stay readable.
+   *  NOTE this filters the value at the USE-CASE boundary, never in `toField` /
+   *  `FieldService.listFields` — see `domain/visibility.ts` for why. */
+  readonly visibility: ConceptVisibility
   /** Optional display glyph (see `Concept.icon`): literal emoji or `lucide:Name`. */
   readonly icon: string | null
   /** Display order within the concept (ascending); ties broken by name. */
@@ -404,6 +410,7 @@ export type EventPayload =
       readonly conceptId: Id
       readonly name: string
       readonly kind: string
+      readonly visibility?: ConceptVisibility
     }
   | { readonly _tag: "FieldArchived"; readonly conceptId: Id; readonly name: string }
   | { readonly _tag: "FieldRestored"; readonly conceptId: Id; readonly name: string }

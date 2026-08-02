@@ -158,6 +158,15 @@ export const fields = pgTable(
     // can add + edit their OWN fields (e.g. a status) without touching the
     // integration's data. Drives the field-level read-only guard.
     managedBy: text("managed_by"),
+    // Who may READ this field's values: 'visible' = any member, 'admin' =
+    // owners/admins only. Mirrors `concepts.visibility` one level down, for the
+    // case where the CONCEPT must stay readable but one field must not (comp on a
+    // Person, margin on a Deal).
+    //
+    // A real column, not a `config` key, so it can be filtered in SQL and read by
+    // the raw column joins some services use. Unknown values coerce to 'admin'
+    // (fail closed) — see toField.
+    visibility: text("visibility").notNull().default("visible"),
     // Optional display glyph (see `concepts.icon`): literal emoji or "lucide:Name".
     icon: text("icon"),
     // Display order within the concept (ascending); ties broken by name. New

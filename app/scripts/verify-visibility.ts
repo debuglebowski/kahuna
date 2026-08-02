@@ -188,5 +188,71 @@ ok(
   restoredDetail.related.some((r) => r.conceptId === secret.id),
 )
 
+// ── field-level: the concept stays readable, one field does not ───────────────
+const staff = await asOwner.call((c) => c.createConcept({ name: `Staff ${Date.now()}` }))
+const sName = await asOwner.call((c) =>
+  c.addField({ conceptId: staff.id, name: "Name", kind: "text" }),
+)
+const sSalary = await asOwner.call((c) =>
+  c.addField({ conceptId: staff.id, name: "Salary", kind: "text" }),
+)
+const staffRec = await asOwner.call((c) =>
+  c.createInstance({
+    conceptId: staff.id,
+    fields: { [sName.id]: "Ada", [sSalary.id]: "250000" },
+  }),
+)
+await asOwner.call((c) => c.setFieldVisibility({ id: sSalary.id, visibility: "admin" }))
+
+const mRows = await asMember.call((c) => c.listInstances({ conceptId: staff.id }))
+ok("5. member still lists the concept's records", mRows.length === 1)
+ok("   …sees the open field", mRows[0]?.state[sName.id] === "Ada")
+ok(
+  "   …but the hidden field's value is ABSENT",
+  mRows[0]?.state[sSalary.id] === undefined,
+  JSON.stringify(mRows[0]?.state),
+)
+const mDefs = await asMember.call((c) => c.listFields({ conceptId: staff.id }))
+ok(
+  "   …and the hidden field's DEF is filtered out too",
+  mDefs.some((f) => f.id === sName.id) && !mDefs.some((f) => f.id === sSalary.id),
+  `defs=${mDefs.map((f) => f.name).join(",")}`,
+)
+const mDetail = await asMember.call((c) => c.getInstance({ id: staffRec.id }))
+ok("   getInstance masks it too", mDetail.instance.state[sSalary.id] === undefined)
+ok("   …and its detail defs exclude it", !mDetail.fields.some((f) => f.id === sSalary.id))
+
+// writing it is refused, and indistinguishably from a bogus key
+const writeCode = await asMember.code((c) =>
+  c.updateInstance({
+    id: staffRec.id,
+    expectedVersion: mDetail.instance.version,
+    patch: { [sSalary.id]: "1" },
+  }),
+)
+ok("6. member CANNOT write the hidden field", writeCode === "VALIDATION", String(writeCode))
+
+// the member's own edit must not erase it — the data-loss guard, over real HTTP
+await asMember.call((c) =>
+  c.updateInstance({
+    id: staffRec.id,
+    expectedVersion: mDetail.instance.version,
+    patch: { [sName.id]: "Grace" },
+  }),
+)
+const afterEdit = await asOwner.call((c) => c.getInstance({ id: staffRec.id }))
+ok(
+  "7. THE DATA-LOSS GUARD: member's edit did NOT erase the hidden value",
+  afterEdit.instance.state[sSalary.id] === "250000" &&
+    afterEdit.instance.state[sName.id] === "Grace",
+  JSON.stringify(afterEdit.instance.state),
+)
+
+// owner still sees everything
+const oRows = await asOwner.call((c) => c.listInstances({ conceptId: staff.id }))
+ok("8. owner reads the hidden field", oRows[0]?.state[sSalary.id] === "250000")
+const oDefs = await asOwner.call((c) => c.listFields({ conceptId: staff.id }))
+ok("   owner sees both defs", oDefs.length >= 2)
+
 console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILURE(S)`)
 process.exit(failures === 0 ? 0 : 1)

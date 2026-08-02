@@ -1,6 +1,6 @@
 import { PgClient } from "@effect/sql-pg"
 import { Effect } from "effect"
-import type { Field, FieldConfig, FieldKind } from "../domain/types"
+import type { ConceptVisibility, Field, FieldConfig, FieldKind } from "../domain/types"
 import { FieldConfigInvalid, FieldInUse, FieldNameConflict, FieldNotFound } from "../errors"
 import { EventStore } from "./EventStore"
 import { OrgContext } from "./OrgContext"
@@ -206,6 +206,36 @@ export class FieldService extends Effect.Service<FieldService>()("engine/FieldSe
      * values. The name is free to change because instance state is keyed by
      * `id`, not by name.
      */
+    /** Set who may READ this field's values. A narrow setter (like
+     *  `ConceptService.setVisibility`) rather than part of `update`'s batched patch:
+     *  it is a security control, so it must not ride along with a rename. */
+    const setVisibility = (id: string, visibility: ConceptVisibility) =>
+      sql.withTransaction(
+        Effect.gen(function* () {
+          const { orgId } = yield* OrgContext
+          yield* getById(id) // 404 if missing / cross-org
+          const rows = yield* sql<FieldRow>`
+            UPDATE fields SET visibility = ${visibility}
+            WHERE org_id = ${orgId} AND id = ${id} RETURNING *`
+          const row = rows[0]
+          if (!row) return yield* Effect.fail(new FieldNotFound({ fieldId: id }))
+          const field = toField(row)
+          yield* events.append({
+            subjectKind: "field",
+            subjectId: field.id,
+            eventType: "FieldUpdated",
+            payload: {
+              _tag: "FieldUpdated",
+              conceptId: field.conceptId,
+              name: field.name,
+              kind: field.kind,
+              visibility: field.visibility,
+            },
+          })
+          return field
+        }),
+      )
+
     const update = (input: {
       readonly id: string
       readonly name?: string
@@ -388,6 +418,7 @@ export class FieldService extends Effect.Service<FieldService>()("engine/FieldSe
       listRelationFieldsTargeting,
       getById,
       update,
+      setVisibility,
       archive,
       restore,
       purge,

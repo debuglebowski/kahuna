@@ -19,6 +19,8 @@ import {
   ArchiveRestore,
   ChevronDown,
   Columns3,
+  Eye,
+  EyeOff,
   GripVertical,
   LayoutDashboard,
   Lock,
@@ -471,6 +473,18 @@ export function ConceptEditor({
     },
   })
 
+  // Per-FIELD read visibility, for a sensitive field on a concept that must itself
+  // stay readable. Its own RPC, like the concept-level one.
+  const saveFieldVisibility = useMutation({
+    mutationFn: (v: { id: string; visibility: "visible" | "admin" }) =>
+      api.setFieldVisibility(v.id, v.visibility),
+    onSuccess: () => {
+      refetchFields()
+      // Masked values disappear from every instance read of this concept.
+      qc.invalidateQueries({ queryKey: ["instances", concept.id] })
+    },
+  })
+
   const refetchFields = () => {
     qc.invalidateQueries({ queryKey: ["fields", concept.id, "withArchived"] })
     // Keep the live list other views read (ConceptView columns) fresh too.
@@ -634,6 +648,32 @@ export function ConceptEditor({
           Title
         </span>
       )}
+      {/* Per-field read restriction. Offered on synced fields too: an integration
+          owning a field's VALUES says nothing about who may read them. */}
+      {!archived && admin && (
+        <IconButton
+          aria-label={
+            f.visibility === "admin"
+              ? `Make ${f.name} readable by members`
+              : `Restrict ${f.name} to admins`
+          }
+          title={
+            f.visibility === "admin"
+              ? "Admins only — click to let members read this field"
+              : "Readable by members — click to restrict to admins"
+          }
+          disabled={saveFieldVisibility.isPending}
+          onClick={() =>
+            saveFieldVisibility.mutate({
+              id: f.id,
+              visibility: f.visibility === "admin" ? "visible" : "admin",
+            })
+          }
+        >
+          {f.visibility === "admin" ? <EyeOff size={15} /> : <Eye size={15} />}
+        </IconButton>
+      )}
+      {f.visibility === "admin" && <Badge tone="amber">Admins only</Badge>}
       {/* Synced (integration-owned) fields are read-only — show a lock, no actions. */}
       {f.managedBy ? (
         <span
