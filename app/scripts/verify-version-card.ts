@@ -180,18 +180,25 @@ ok("registry check resolved a release", api.latest !== null, `latest=${api.lates
 // ── The card itself ──────────────────────────────────────────────────────────
 await send("Page.navigate", { url: `${BASE}/settings/organization` }, sessionId)
 await until("settings loaded", 30000, async () => (await text()).includes("Organization"))
+
+// SCOPED TO <main>, not document.body. The sidebar notice renders "New version"
+// plus BOTH version strings, so a body-wide check is satisfied by the sidebar
+// while the card is still loading — the gate below passed early and every card
+// assertion then ran against a spinner. Read the page region only.
+const mainText = () => evaljs(`document.querySelector("main")?.innerText ?? ""`) as Promise<string>
+
 // Wait for the QUERY, not just the heading. The card renders its title
 // immediately and fills in on resolve, so gating on "Version" alone raced the
 // fetch and every content assertion failed against a spinner.
 await until("version card resolved", 20000, async () => {
-  const t = await text()
+  const t = await mainText()
   if (t.includes("Version unavailable")) throw new Error("card reported Version unavailable")
   return t.includes(api.current)
 })
 
-const body = await text()
+const body = await mainText()
 if (process.env.DEBUG_CARD) {
-  console.log("--- page text ---\n", body.slice(0, 1500))
+  console.log("--- main text ---\n", body.slice(0, 1500))
   console.log(
     "--- in-page /api/version ---\n",
     await evaljs(`fetch("/api/version").then(r => r.status + " " + r.statusText)`),
@@ -207,8 +214,9 @@ if (api.updateAvailable) {
     api.latest !== null && body.includes(api.latest),
     `expected ${api.latest}`,
   )
+  // Also scoped to <main> — the sidebar modal carries a "Release notes" link too.
   const href = await evaljs(
-    `(() => { const a = [...document.querySelectorAll("a")].find(a => (a.textContent ?? "").includes("Release notes")); return a ? a.href : null })()`,
+    `(() => { const a = [...document.querySelectorAll("main a")].find(a => (a.textContent ?? "").includes("Release notes")); return a ? a.href : null })()`,
   )
   ok("links release notes", typeof href === "string" && href.includes("/releases"), String(href))
   // The whole point of staying platform-neutral: the app must not tell a
