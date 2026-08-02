@@ -40,6 +40,7 @@ import { SETTINGS_NAV, useIsAdmin } from "../pages/settings/SettingsLayout"
 import { IdentityMenu } from "./IdentityMenu"
 import { ViewNav } from "./sidebar/ViewNav"
 import { ThemeButton } from "./ThemeButton"
+import { UpdateNotice } from "./UpdateNotice"
 import { IconButton } from "./ui"
 
 /** Remember whether the user minimized the sidebar, its width, and which view is active. */
@@ -266,6 +267,9 @@ export function Layout({ children }: { children: ReactNode }) {
                 />
               </div>
             )}
+            {/* The rail has no identity block, so this is its footer. Icon only —
+                it still opens the same modal. */}
+            <UpdateNotice collapsed />
           </aside>
           <main className="flex-1 overflow-y-auto">
             <div className={cn("px-6 py-6", chrome.fillHeight && "h-full")}>{children}</div>
@@ -354,6 +358,10 @@ export function Layout({ children }: { children: ReactNode }) {
               />
             </div>
           )}
+
+          {/* Its own section above the identity block. Renders nothing at all
+              (divider included) unless a newer release exists. */}
+          <UpdateNotice collapsed={false} />
 
           <div className="border-t border-sidebar-border p-2">
             <IdentityMenu />
