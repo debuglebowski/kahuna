@@ -263,6 +263,11 @@ describe("engine (integration)", () => {
       yield* relations.create({ fieldId: m.f.on, fromId: interaction.id, toId: account.id })
 
       const atBase = yield* computed.decorate(deal)
+      // Passing pre-loaded defs (what `listInstances` does, to avoid a lookup per
+      // row) must produce exactly the same result as letting `decorate` fetch them.
+      const fields = yield* FieldService
+      const preloaded = yield* computed.decorate(deal, yield* fields.listFields(deal.conceptId))
+      expect(preloaded.state).toEqual(atBase.state)
       expect((atBase.state[m.f.decay] as DecayValue).band).toBe("fresh")
       expect((atBase.state[m.f.decay] as DecayValue).days).toBe(2)
       expect((atBase.state[m.f.momentum] as MomentumValue).label).toBe("heating")

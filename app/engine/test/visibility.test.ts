@@ -23,7 +23,7 @@ import { newOrgId, testLayer } from "./harness"
  * only way to prove the gate keys off the caller rather than the data.
  */
 /** Seed a restricted concept with one record; returns the ids a reader would use. */
-const seedRestricted = (orgId: string) =>
+const seedRestricted = () =>
   Effect.gen(function* () {
     const concepts = yield* ConceptService
     const fields = yield* FieldService
@@ -53,7 +53,7 @@ describe("concept read visibility", () => {
   it("a member cannot list, read, search or version-list a restricted concept", async () => {
     const orgId = newOrgId()
     const seeded = await Effect.runPromise(
-      seedRestricted(orgId).pipe(Effect.provide(testLayer(orgId, "seed", "system"))),
+      seedRestricted().pipe(Effect.provide(testLayer(orgId, "seed", "system"))),
     )
 
     // ── as a MEMBER ──────────────────────────────────────────────────────────
@@ -226,7 +226,7 @@ describe("concept read visibility", () => {
 
 describe("field read visibility", () => {
   /** A concept with one open + one restricted field, and a record holding both. */
-  const seedFields = (orgId: string) =>
+  const seedFields = () =>
     Effect.gen(function* () {
       const concepts = yield* ConceptService
       const fields = yield* FieldService
@@ -262,7 +262,7 @@ describe("field read visibility", () => {
     // onto it, and writes the result back. A filter there would delete the salary.
     const orgId = newOrgId()
     const f = await Effect.runPromise(
-      seedFields(orgId).pipe(Effect.provide(testLayer(orgId, "seed", "system"))),
+      seedFields().pipe(Effect.provide(testLayer(orgId, "seed", "system"))),
     )
 
     const updated = await Effect.runPromise(
@@ -323,7 +323,7 @@ describe("field read visibility", () => {
   it("rebuild after a member-scoped read leaves state byte-identical", async () => {
     const orgId = newOrgId()
     const f = await Effect.runPromise(
-      seedFields(orgId).pipe(Effect.provide(testLayer(orgId, "seed", "system"))),
+      seedFields().pipe(Effect.provide(testLayer(orgId, "seed", "system"))),
     )
     // A member reads it (which masks), then the projection is rebuilt from events.
     await Effect.runPromise(

@@ -2,7 +2,7 @@ import { PgClient } from "@effect/sql-pg"
 import { Clock, Effect } from "effect"
 import { type DecayParams, decay } from "../computed/decay"
 import { type MomentumParams, momentum } from "../computed/momentum"
-import type { Instance } from "../domain/types"
+import type { Field, Instance } from "../domain/types"
 import { FieldService } from "./FieldService"
 import { OrgContext } from "./OrgContext"
 
@@ -41,9 +41,18 @@ export class ComputedFields extends Effect.Service<ComputedFields>()("engine/Com
           .map((s) => new Date(s))
       })
 
-    const decorate = (instance: Instance) =>
+    /**
+     * Fill in a concept's computed fields.
+     *
+     * `defs` is an optional pre-loaded field list. Without it this does one
+     * `listFields` PER INSTANCE, and `listInstances` decorates every row of a
+     * concept (capped at 50 000) — a real N+1 on the hottest read in the app. Every
+     * row of one `listInstances` call shares a concept, so the caller can load the
+     * defs once and pass them here.
+     */
+    const decorate = (instance: Instance, preloaded?: ReadonlyArray<Field>) =>
       Effect.gen(function* () {
-        const defs = yield* fields.listFields(instance.conceptId)
+        const defs = preloaded ?? (yield* fields.listFields(instance.conceptId))
         const computed = defs.filter((d) => d.kind === "computed")
         if (computed.length === 0) return instance
 

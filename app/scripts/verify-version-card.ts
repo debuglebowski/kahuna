@@ -222,6 +222,72 @@ if (api.updateAvailable) {
   ok("no update badge when up to date", !body.includes("Update available"))
 }
 
+// ── The sidebar notice + its modal ───────────────────────────────────────────
+// Lives in the sidebar footer above the identity block, on every page — so check
+// it somewhere other than settings.
+await send("Page.navigate", { url: `${BASE}/` }, sessionId)
+await until("app shell loaded", 30000, async () => (await text()).includes("Kingsmaker"))
+
+const noticeSel = 'aside button[aria-label^="New version"]'
+if (api.updateAvailable) {
+  await until("sidebar notice appears", 20000, async () =>
+    Boolean(await evaljs(`Boolean(document.querySelector(${JSON.stringify(noticeSel)}))`)),
+  ).catch(() => {
+    failures++
+    console.log("FAIL  sidebar notice appears — never rendered")
+  })
+
+  const notice = await evaljs(`(() => {
+    const el = document.querySelector(${JSON.stringify(noticeSel)})
+    if (!el) return null
+    const aside = el.closest("aside")
+    const identity = aside?.querySelector('[data-slot="dropdown-menu-trigger"]')
+    // Sidebar order matters: the notice must sit ABOVE the user block.
+    const above = identity
+      ? el.compareDocumentPosition(identity) & Node.DOCUMENT_POSITION_FOLLOWING
+      : 0
+    return JSON.stringify({ text: (el.textContent ?? "").trim(), aboveIdentity: Boolean(above) })
+  })()`)
+  const n = notice ? (JSON.parse(notice) as { text: string; aboveIdentity: boolean }) : null
+  ok("notice says “New version”", Boolean(n?.text.includes("New version")), n?.text ?? "absent")
+  ok(
+    "notice shows current → latest",
+    Boolean(n?.text.includes(api.current) && api.latest !== null && n.text.includes(api.latest)),
+    n?.text ?? "absent",
+  )
+  ok("notice sits above the user block", Boolean(n?.aboveIdentity))
+
+  // Clicking it must open the instructions modal.
+  await evaljs(`document.querySelector(${JSON.stringify(noticeSel)})?.click()`)
+  await until("modal opens", 10000, async () =>
+    Boolean(await evaljs(`Boolean(document.querySelector('[role="dialog"]'))`)),
+  ).catch(() => {
+    failures++
+    console.log("FAIL  modal opens — no dialog appeared")
+  })
+
+  const modal = String(
+    (await evaljs(`document.querySelector('[role="dialog"]')?.innerText ?? ""`)) ?? "",
+  )
+  ok("modal titled “Update available”", modal.includes("Update available"))
+  ok("modal names both versions", modal.includes(api.current) && modal.includes(api.latest ?? "\0"))
+  // The instructions are the whole point: migrate must precede serve.
+  ok("modal explains migrate-before-serve", /migrat/i.test(modal))
+  ok("modal gives the compose commands", modal.includes("run --rm app migrate"))
+  ok("modal names other orchestrators", /Kubernetes|Nomad|systemd/.test(modal))
+  // The two facts that bite after a bad upgrade.
+  ok("modal warns rollback is not symmetric", /forward|restore/i.test(modal))
+  ok("modal warns uploads aren't in a DB dump", /database dump|blob/i.test(modal))
+  ok("modal states nothing was applied", /Nothing has been downloaded|not been/i.test(modal))
+  const mHref = await evaljs(
+    `(() => { const a = [...document.querySelectorAll('[role="dialog"] a')].find(a => (a.textContent ?? "").includes("Release notes")); return a ? a.href : null })()`,
+  )
+  ok("modal links release notes", typeof mHref === "string" && mHref.includes("/releases"))
+} else {
+  const present = await evaljs(`Boolean(document.querySelector(${JSON.stringify(noticeSel)}))`)
+  ok("no sidebar notice when up to date", present === false)
+}
+
 console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILED`)
 ws.close()
 // `kill()` only *asks*, and Chrome takes a moment to reap its helpers. Exiting

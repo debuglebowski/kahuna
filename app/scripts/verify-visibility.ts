@@ -265,7 +265,11 @@ const mLeaks = mFeed.filter((e) => {
   ]
   return keys.includes(sSalary.id)
 })
-ok("9. member's activity feed carries NO hidden field key", mLeaks.length === 0, `leaks=${mLeaks.length}`)
+ok(
+  "9. member's activity feed carries NO hidden field key",
+  mLeaks.length === 0,
+  `leaks=${mLeaks.length}`,
+)
 ok("   …and still reports the visible field's history", mFeed.length > 0, `n=${mFeed.length}`)
 const oFeed = await asOwner.call((c) => c.getActivity({ subjectId: staffRec.itemId }))
 const oSees = oFeed.some((e) => {

@@ -5,7 +5,18 @@ import { ConceptService, FieldService } from "#engine"
 import { auth } from "./auth"
 import { createUserDirect } from "./provision"
 import { runEngineOrThrow, sessionScope, systemScope } from "./runtime"
-import { createInstance, getActivity, setFieldVisibility, updateInstance } from "./use-cases"
+import {
+  createInstance,
+  createNote,
+  createTask,
+  getActivity,
+  listFiles,
+  listNotes,
+  listTasks,
+  setConceptVisibility,
+  setFieldVisibility,
+  updateInstance,
+} from "./use-cases"
 
 /**
  * `getActivity` is a SEPARATE leak channel from `instances.state`: it ships raw
@@ -107,8 +118,73 @@ describe("activity feed field masking", () => {
     // "200" then "100" — assert the set rather than an order-dependent single hit.
     const ownerHiddenPrevs = asOwner
       .filter((e) => e.eventType === "InstanceUpdated")
-      .map((e) => (e.previous ?? {})[schema.secretId])
+      .map((e) => e.previous?.[schema.secretId])
       .filter((v) => v !== undefined)
     expect(ownerHiddenPrevs).toEqual(expect.arrayContaining(["100", "200"]))
+  })
+})
+
+describe("subject-keyed reads on a restricted concept", () => {
+  /**
+   * `annotations.subject_id` and `attachments.item_id` carry no concept column, so
+   * these queries cannot filter on visibility themselves. Without an explicit gate a
+   * member holding a restricted record's LINEAGE id could read its notes, tasks and
+   * files — the same hole `getActivity` had.
+   */
+  it("a member cannot read notes / tasks / files of a restricted record", async () => {
+    const { orgId, userId } = await orgWithOwner()
+    const sys = systemScope(orgId, userId)
+
+    const concept = await runEngineOrThrow(
+      sys,
+      Effect.gen(function* () {
+        const concepts = yield* ConceptService
+        return yield* concepts.create({ name: `Vault ${randomUUID().slice(0, 6)}` })
+      }),
+    )
+    const rec = (await runEngineOrThrow(sys, createInstance(concept.id, {}))) as {
+      itemId: string
+    }
+    await runEngineOrThrow(sys, createNote({ subjectId: rec.itemId, body: "the combination" }))
+    await runEngineOrThrow(sys, createTask({ subjectId: rec.itemId, title: "rotate it" }))
+
+    const asMember = sessionScope(orgId, userId, "member")
+    const asOwner = sessionScope(orgId, userId, "owner")
+
+    // While VISIBLE, the member can read them — so the assertions below are about
+    // the restriction, not about a fixture they never had access to.
+    expect(((await runEngineOrThrow(asMember, listNotes(rec.itemId))) as unknown[]).length).toBe(1)
+
+    await runEngineOrThrow(sys, setConceptVisibility(concept.id, "admin"))
+
+    // Typed loosely on purpose: the four effects have different success types, and
+    // what is under test is that each REJECTS.
+    const denied: ReadonlyArray<readonly [string, () => Promise<unknown>]> = [
+      ["listNotes", () => runEngineOrThrow(asMember, listNotes(rec.itemId))],
+      ["listTasks", () => runEngineOrThrow(asMember, listTasks({ subjectId: rec.itemId }))],
+      ["listFiles", () => runEngineOrThrow(asMember, listFiles({ itemId: rec.itemId }))],
+      ["getActivity", () => runEngineOrThrow(asMember, getActivity(rec.itemId))],
+    ]
+    for (const [label, run] of denied) {
+      await expect(run(), label).rejects.toThrow()
+    }
+
+    // The owner still reads all of them.
+    expect(((await runEngineOrThrow(asOwner, listNotes(rec.itemId))) as unknown[]).length).toBe(1)
+    expect(
+      ((await runEngineOrThrow(asOwner, listTasks({ subjectId: rec.itemId }))) as unknown[]).length,
+    ).toBe(1)
+  })
+
+  it("the global task list is unaffected (it names no lineage)", async () => {
+    const { orgId, userId } = await orgWithOwner()
+    const sys = systemScope(orgId, userId)
+    await runEngineOrThrow(sys, createTask({ subjectId: null, title: "standalone" }))
+    // No subjectId → nothing to gate; a member's own task list must still work.
+    const rows = (await runEngineOrThrow(
+      sessionScope(orgId, userId, "member"),
+      listTasks({}),
+    )) as unknown[]
+    expect(rows.length).toBeGreaterThan(0)
   })
 })

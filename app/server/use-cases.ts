@@ -250,6 +250,25 @@ const maskPayload = (payload: unknown, hidden: ReadonlySet<string>): unknown => 
   return payload
 }
 
+/**
+ * Gate a read that keys purely off an item lineage id.
+ *
+ * The annotation + attachment tables (`annotations.subject_id`,
+ * `attachments.item_id`) carry no concept column, so their queries cannot filter on
+ * visibility themselves — a member holding a restricted record's item id could
+ * otherwise read its notes, tasks, files and activity. `InstanceService.getItem`
+ * carries the concept read gate, so resolving the lineage IS the check.
+ *
+ * A subject that is not an item lineage at all (annotations have their own ids)
+ * falls through rather than denying: the gate must only fire on a real, restricted
+ * lineage.
+ */
+const assertSubjectReadable = (subjectId: string): UC<void> =>
+  Effect.gen(function* () {
+    const instances = yield* InstanceService
+    yield* instances.getItem(subjectId).pipe(Effect.catchTag("ItemNotFound", () => Effect.void))
+  })
+
 /** Apply a mask to one instance (no-op when nothing is hidden). */
 const maskInstance = <T extends { readonly state: Record<string, unknown> }>(
   inst: T,
@@ -271,8 +290,12 @@ export const listInstances = (
       limit: opts.limit,
       includeArchived: opts.includeArchived,
     })
+    // Load the concept's field defs ONCE and use them for both jobs below. Without
+    // this `decorate` does its own `listFields` per instance — and this path runs
+    // with a 50 000-row cap, so that was a real N+1 on the hottest read in the app.
+    const defs = opts.decorate ? yield* (yield* FieldService).listFields(conceptId) : []
     const decorated = opts.decorate
-      ? yield* Effect.forEach(rows, (r) => computed.decorate(r))
+      ? yield* Effect.forEach(rows, (r) => computed.decorate(r, defs))
       : rows
     const hidden = yield* fieldMaskFor(conceptId)
     return hidden.size === 0 ? decorated : decorated.map((r) => maskInstance(r, hidden))
@@ -1068,7 +1091,18 @@ export const listFiles = (filter: {
   readonly conceptId?: string
   readonly includeArchived?: boolean
   readonly limit?: number
-}): UC<ReadonlyArray<Attachment>> => Effect.flatMap(AttachmentService, (a) => a.list(filter))
+}): UC<ReadonlyArray<Attachment>> =>
+  Effect.gen(function* () {
+    // `itemId` is a lineage; `conceptId` is gated by resolving the concept for read.
+    // A widget `bucketId` belongs to no record, so there is nothing to gate.
+    if (filter.itemId) yield* assertSubjectReadable(filter.itemId)
+    if (filter.conceptId) {
+      const concepts = yield* ConceptService
+      yield* concepts.getByIdForRead(filter.conceptId)
+    }
+    const attachments = yield* AttachmentService
+    return yield* attachments.list(filter)
+  })
 
 export const archiveFile = (id: string): UC<Attachment> =>
   Effect.flatMap(AttachmentService, (a) => a.archive(id))
@@ -1096,7 +1130,11 @@ export const downloadAttachment = (
 // ── annotation layer: notes ────────────────────────────────────────────────────
 
 export const listNotes = (subjectId: string, includeArchived = false): UC<ReadonlyArray<Note>> =>
-  Effect.flatMap(AnnotationService, (a) => a.listNotes(subjectId, { includeArchived }))
+  assertSubjectReadable(subjectId).pipe(
+    Effect.zipRight(
+      Effect.flatMap(AnnotationService, (a) => a.listNotes(subjectId, { includeArchived })),
+    ),
+  )
 
 export const createNote = (input: {
   readonly subjectId: string | null
@@ -1123,7 +1161,14 @@ export const deleteNote = (id: string): UC<Note> =>
 // ── annotation layer: tasks ────────────────────────────────────────────────────
 
 export const listTasks = (filter: ListTasksFilter = {}): UC<ReadonlyArray<Task>> =>
-  Effect.flatMap(AnnotationService, (a) => a.listTasks(filter))
+  Effect.gen(function* () {
+    // Only the per-record panel names a lineage; the global "My tasks" view is not
+    // subject-scoped, and its rows are already resolved through
+    // `resolveTaskSubjects`, which degrades a restricted subject to "(unavailable)".
+    if (filter.subjectId) yield* assertSubjectReadable(filter.subjectId)
+    const annotations = yield* AnnotationService
+    return yield* annotations.listTasks(filter)
+  })
 
 /**
  * Batch-resolve task subjects (item lineage ids) for display: each to its head
@@ -1248,17 +1293,8 @@ export const getActivity = (subjectId: string, limit = 100): UC<ReadonlyArray<Fe
   Effect.gen(function* () {
     const annotations = yield* AnnotationService
     const store = yield* EventStore
-    // `readActivityForSubject` keys purely off `subject_id`, so without this a
-    // member could read the whole payload stream of a record in a concept they
-    // cannot see — including `InstanceCreated.fields` and every patch. `getItem`
-    // carries the concept read gate, so resolving the lineage IS the check.
+    yield* assertSubjectReadable(subjectId)
     const instances = yield* InstanceService
-    yield* instances.getItem(subjectId).pipe(
-      // Not every subject is an item lineage (annotations have their own ids), so a
-      // miss must fall through rather than deny — the gate only fires on a real,
-      // restricted lineage.
-      Effect.catchTag("ItemNotFound", () => Effect.void),
-    )
     const events = yield* annotations.readActivityForSubject(subjectId, { limit })
     // An amendment (`VersionAmended`) is a field edit too, so it gets the same
     // before/after treatment — and its patch must join the running fold, or a later

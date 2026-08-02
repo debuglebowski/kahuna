@@ -146,9 +146,17 @@ const makeDetail = (id: string) =>
   createCollection(
     queryCollectionOptions({
       queryKey: ["live", "detail", id],
-      queryFn: async (): Promise<Array<InstanceDetail & { id: string }>> => [
-        { id, ...(await api.getInstance(id)) },
-      ],
+      // Same NOT_FOUND rule as the concept collection: a record in a concept the
+      // caller may not read comes back empty, so a record widget renders blank
+      // rather than throwing and taking its dashboard with it.
+      queryFn: async (): Promise<Array<InstanceDetail & { id: string }>> => {
+        try {
+          return [{ id, ...(await api.getInstance(id)) }]
+        } catch (e) {
+          if (isNotFound(e)) return []
+          throw e
+        }
+      },
       queryClient,
       getKey: (d) => d.id,
     }),
@@ -175,10 +183,16 @@ const makeSingleRecord = (conceptId: string) =>
     queryCollectionOptions({
       queryKey: ["live", "singleRecord", conceptId],
       queryFn: async (): Promise<Array<InstanceDetail & { id: string }>> => {
-        const d = await api.getSingleRecord(conceptId)
         // Null = the flag is on with no record behind it, which shouldn't happen.
-        // An empty collection lets the page say so instead of spinning forever.
-        return d ? [{ id: conceptId, ...d }] : []
+        // NOT_FOUND = the concept is restricted for this caller. Both yield an empty
+        // collection, so the page says so instead of spinning or erroring.
+        try {
+          const d = await api.getSingleRecord(conceptId)
+          return d ? [{ id: conceptId, ...d }] : []
+        } catch (e) {
+          if (isNotFound(e)) return []
+          throw e
+        }
       },
       queryClient,
       getKey: (d) => d.id,
@@ -201,7 +215,14 @@ const makeNotes = (subjectId: string) =>
   createCollection(
     queryCollectionOptions({
       queryKey: ["live", "notes", subjectId],
-      queryFn: async (): Promise<Note[]> => [...(await api.listNotes(subjectId))],
+      queryFn: async (): Promise<Note[]> => {
+        try {
+          return [...(await api.listNotes(subjectId))]
+        } catch (e) {
+          if (isNotFound(e)) return []
+          throw e
+        }
+      },
       queryClient,
       getKey: (n: Note) => n.id,
     }),
@@ -220,7 +241,14 @@ const makeTasks = (subjectId: string) =>
   createCollection(
     queryCollectionOptions({
       queryKey: ["live", "tasks", subjectId],
-      queryFn: async (): Promise<Task[]> => [...(await api.listTasks({ subjectId }))],
+      queryFn: async (): Promise<Task[]> => {
+        try {
+          return [...(await api.listTasks({ subjectId }))]
+        } catch (e) {
+          if (isNotFound(e)) return []
+          throw e
+        }
+      },
       queryClient,
       getKey: (t: Task) => t.id,
     }),
@@ -241,9 +269,14 @@ const makeFiles = (subjectId: string) =>
   createCollection(
     queryCollectionOptions({
       queryKey: ["live", "files", subjectId],
-      queryFn: async (): Promise<Attachment[]> => [
-        ...(await api.listFiles({ itemId: subjectId, includeArchived: true })),
-      ],
+      queryFn: async (): Promise<Attachment[]> => {
+        try {
+          return [...(await api.listFiles({ itemId: subjectId, includeArchived: true }))]
+        } catch (e) {
+          if (isNotFound(e)) return []
+          throw e
+        }
+      },
       queryClient,
       getKey: (a: Attachment) => a.id,
     }),
@@ -262,7 +295,14 @@ const makeActivity = (subjectId: string) =>
   createCollection(
     queryCollectionOptions({
       queryKey: ["live", "activity", subjectId],
-      queryFn: async (): Promise<FeedItem[]> => [...(await api.getActivity(subjectId))],
+      queryFn: async (): Promise<FeedItem[]> => {
+        try {
+          return [...(await api.getActivity(subjectId))]
+        } catch (e) {
+          if (isNotFound(e)) return []
+          throw e
+        }
+      },
       queryClient,
       getKey: (f: FeedItem) => f.id,
     }),
