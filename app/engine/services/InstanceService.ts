@@ -484,6 +484,8 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
           const row = rows[0]
           if (!row)
             return yield* Effect.fail(new InstanceNotFound({ instanceId: input.instanceId }))
+          // See THE WRITE GATE: reads refusing this record must mean writes do too.
+          yield* assertRecordWritable(row.concept_id, row.item_id, input.instanceId, row.state)
           const current = toInstance(row)
           if (current.version !== input.expectedVersion) {
             return yield* Effect.fail(
@@ -570,6 +572,8 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
           const row = rows[0]
           if (!row)
             return yield* Effect.fail(new InstanceNotFound({ instanceId: input.instanceId }))
+          // See THE WRITE GATE: reads refusing this record must mean writes do too.
+          yield* assertRecordWritable(row.concept_id, row.item_id, input.instanceId, row.state)
           const current = toInstance(row)
           if (current.version !== input.expectedVersion) {
             return yield* Effect.fail(
@@ -616,6 +620,8 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
           const row = rows[0]
           if (!row)
             return yield* Effect.fail(new InstanceNotFound({ instanceId: input.instanceId }))
+          // See THE WRITE GATE: reads refusing this record must mean writes do too.
+          yield* assertRecordWritable(row.concept_id, row.item_id, input.instanceId, row.state)
           const current = toInstance(row)
           if (current.version !== input.expectedVersion) {
             return yield* Effect.fail(
@@ -663,6 +669,14 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
           Effect.gen(function* () {
             const { orgId } = yield* OrgContext
             const instance = yield* loadAny(input.instanceId)
+            // `loadAny` is deliberately ungated (rebuild/replay need it), so the gate
+            // goes here at the mutation.
+            yield* assertRecordWritable(
+              instance.conceptId,
+              instance.itemId,
+              input.instanceId,
+              instance.state,
+            )
             const counts = yield* sql<{ readonly count: number | string }>`
             SELECT COUNT(*)::int AS count FROM relations
             WHERE org_id = ${orgId} AND archived_at IS NULL
@@ -791,6 +805,34 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
         )
           return yield* Effect.fail(new InstanceNotFound({ instanceId: failId }))
       })
+
+    /**
+     * ── THE WRITE GATE ──────────────────────────────────────────────────────
+     *
+     * A caller who cannot READ a record must not be able to write it either.
+     *
+     * Both halves are needed, and this is why they are wrapped together rather than
+     * called separately at each mutation: `assertConceptVisible` covers the concept
+     * DEFAULT (an `admin`-only or `none` concept), while `assertRecordReadable` covers
+     * per-record rules — and it deliberately no-ops when the caller holds no record
+     * rules at all, so on its own it lets an empty-policy member through.
+     *
+     * That combination was the hole: `update` and `archive` both SUCCEEDED against a
+     * record the very same caller got `InstanceNotFound` for on read. Verified before
+     * and after, and pinned by "THE WRITE GATE" in test/visibility.test.ts.
+     *
+     * Fails `InstanceNotFound`, like the read gates — a write must not become an
+     * existence oracle for a record reads refuse to confirm.
+     */
+    const assertRecordWritable = (
+      conceptId: string,
+      itemId: string,
+      failId: string,
+      knownState?: Record<string, unknown>,
+    ) =>
+      assertConceptVisible(conceptId, failId).pipe(
+        Effect.zipRight(assertRecordReadable(conceptId, itemId, failId, knownState)),
+      )
 
     const get = (instanceId: string) =>
       Effect.gen(function* () {
@@ -942,6 +984,8 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
           const row = rows[0]
           if (!row)
             return yield* Effect.fail(new InstanceNotFound({ instanceId: input.instanceId }))
+          // See THE WRITE GATE: reads refusing this record must mean writes do too.
+          yield* assertRecordWritable(row.concept_id, row.item_id, input.instanceId, row.state)
           const current = toInstance(row)
           if (current.version !== input.expectedVersion) {
             return yield* Effect.fail(
@@ -990,6 +1034,7 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
             SELECT * FROM items WHERE id = ${input.itemId} AND org_id = ${orgId} FOR UPDATE`
           const itemRow = itemRows[0]
           if (!itemRow) return yield* Effect.fail(new ItemNotFound({ itemId: input.itemId }))
+          yield* assertRecordWritable(itemRow.concept_id, input.itemId, input.itemId)
           const item = toItem(itemRow)
           const drafts = yield* sql<InstanceRow>`
             SELECT * FROM instances
@@ -1085,6 +1130,12 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
           Effect.gen(function* () {
             const { orgId } = yield* OrgContext
             const instance = yield* loadAny(input.instanceId)
+            yield* assertRecordWritable(
+              instance.conceptId,
+              instance.itemId,
+              input.instanceId,
+              instance.state,
+            )
             if (instance.versionStatus !== "draft") {
               return yield* Effect.fail(new VersionFrozen({ instanceId: instance.id }))
             }

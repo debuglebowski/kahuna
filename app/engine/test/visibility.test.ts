@@ -11,6 +11,7 @@ import {
 import { ConceptService } from "../services/ConceptService"
 import { FieldService } from "../services/FieldService"
 import { InstanceService } from "../services/InstanceService"
+import type { OrgContext } from "../services/OrgContext"
 import { QueryService } from "../services/QueryService"
 import { RelationService } from "../services/RelationService"
 import { newOrgId, testLayer } from "./harness"
@@ -454,5 +455,129 @@ describe("access rules over the visibility default", () => {
     const opened = testLayer(orgId, "tester", "member", policyWith({ resourceId: conceptId }))
     expect(await listIds(opened)).toContain(conceptId)
     expect(await readOutcome(conceptId, opened)).toBe("read")
+  })
+})
+
+/**
+ * ── THE WRITE GATE ──────────────────────────────────────────────────────────
+ *
+ * A caller who cannot READ a record must not be able to WRITE it either.
+ *
+ * This was a real hole, found by reviewing the finished feature rather than by any
+ * test: every read path was gated, and `update` / `archive` / `transition` / `purge` /
+ * `discardDraft` / the item-level writes were not. A member who got `InstanceNotFound`
+ * on read could still overwrite the record's fields by id — the value was verified
+ * TAMPERED in the database.
+ *
+ * Two halves are needed and both are easy to get wrong alone: the concept gate covers
+ * the `admin`/`none` default, and the record gate covers per-record rules but
+ * deliberately no-ops when the caller holds no record rules — so on its own it lets an
+ * empty-policy member straight through. That was the first failed fix attempt.
+ */
+describe("THE WRITE GATE: no writing what you cannot read", () => {
+  const seedRestrictedRecord = () =>
+    Effect.gen(function* () {
+      const concepts = yield* ConceptService
+      const fields = yield* FieldService
+      const instances = yield* InstanceService
+      const concept = yield* concepts.create({ name: `Sealed ${randomUUID().slice(0, 6)}` })
+      const field = yield* fields.addField({ conceptId: concept.id, name: "T", kind: "text" })
+      const inst = yield* instances.create({
+        conceptId: concept.id,
+        fields: { [field.id]: "original" },
+      })
+      yield* concepts.setVisibility(concept.id, "admin")
+      return { conceptId: concept.id, fieldId: field.id, inst }
+    })
+
+  it("a member cannot update, archive or transition a record they cannot read", async () => {
+    const orgId = newOrgId()
+    const f = await Effect.runPromise(seedRestrictedRecord().pipe(Effect.provide(testLayer(orgId))))
+    const asMember = testLayer(orgId, "intruder", "member")
+
+    const attempt = <A>(eff: Effect.Effect<A, unknown, OrgContext | InstanceService>) =>
+      Effect.runPromise(
+        eff.pipe(
+          Effect.provide(asMember),
+          Effect.map(() => "succeeded"),
+          Effect.catchAll(() => Effect.succeed("blocked")),
+        ),
+      )
+
+    // The read is refused …
+    expect(await attempt(Effect.flatMap(InstanceService, (i) => i.get(f.inst.id)))).toBe("blocked")
+    // … so every write must be too.
+    expect(
+      await attempt(
+        Effect.flatMap(InstanceService, (i) =>
+          i.update({
+            instanceId: f.inst.id,
+            expectedVersion: f.inst.version,
+            patch: { [f.fieldId]: "TAMPERED" },
+          }),
+        ),
+      ),
+    ).toBe("blocked")
+    expect(
+      await attempt(
+        Effect.flatMap(InstanceService, (i) =>
+          i.archive({ instanceId: f.inst.id, expectedVersion: f.inst.version }),
+        ),
+      ),
+    ).toBe("blocked")
+    expect(
+      await attempt(Effect.flatMap(InstanceService, (i) => i.purge({ instanceId: f.inst.id }))),
+    ).toBe("blocked")
+
+    // THE PROOF: the value is untouched. A "blocked" result that still wrote would
+    // pass every assertion above.
+    const after = await Effect.runPromise(
+      Effect.flatMap(InstanceService, (i) => i.get(f.inst.id)).pipe(
+        Effect.provide(testLayer(orgId)),
+      ),
+    )
+    expect(after.state[f.fieldId]).toBe("original")
+  })
+
+  it("an admin CAN still write it — the gate follows read access, not privilege", async () => {
+    const orgId = newOrgId()
+    const f = await Effect.runPromise(seedRestrictedRecord().pipe(Effect.provide(testLayer(orgId))))
+    const updated = await Effect.runPromise(
+      Effect.flatMap(InstanceService, (i) =>
+        i.update({
+          instanceId: f.inst.id,
+          expectedVersion: f.inst.version,
+          patch: { [f.fieldId]: "legitimate" },
+        }),
+      ).pipe(Effect.provide(testLayer(orgId, "boss", "admin"))),
+    )
+    expect(updated.state[f.fieldId]).toBe("legitimate")
+  })
+
+  it("a member CAN write a record in a visible concept — no over-blocking", async () => {
+    // The regression this fix could plausibly cause: gating writes too widely would
+    // break ordinary editing for everyone.
+    const orgId = newOrgId()
+    const open = await Effect.runPromise(
+      Effect.gen(function* () {
+        const concepts = yield* ConceptService
+        const fields = yield* FieldService
+        const instances = yield* InstanceService
+        const concept = yield* concepts.create({ name: `Open ${randomUUID().slice(0, 6)}` })
+        const field = yield* fields.addField({ conceptId: concept.id, name: "T", kind: "text" })
+        const inst = yield* instances.create({ conceptId: concept.id, fields: { [field.id]: "a" } })
+        return { fieldId: field.id, inst }
+      }).pipe(Effect.provide(testLayer(orgId))),
+    )
+    const edited = await Effect.runPromise(
+      Effect.flatMap(InstanceService, (i) =>
+        i.update({
+          instanceId: open.inst.id,
+          expectedVersion: open.inst.version,
+          patch: { [open.fieldId]: "b" },
+        }),
+      ).pipe(Effect.provide(testLayer(orgId, "member-1", "member"))),
+    )
+    expect(edited.state[open.fieldId]).toBe("b")
   })
 })
