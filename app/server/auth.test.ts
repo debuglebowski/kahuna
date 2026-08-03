@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto"
+import { readFileSync } from "node:fs"
+import path from "node:path"
 import { Effect } from "effect"
 import { describe, expect, it } from "vitest"
 import { ConceptService, FieldService, InstanceService } from "#engine"
-import { auth } from "./auth"
+import { auth, ORG_SCOPED_TABLES } from "./auth"
 import { createUserDirect } from "./provision"
 import { runEngineOrThrow, systemScope } from "./runtime"
 import { seedKingsmaker } from "./seed/seed"
@@ -119,5 +121,43 @@ describe("tier 0 (BetterAuth) + scoping", () => {
       expect(res.status).toBe(422)
       expect(res.code).toBe("ILLEGAL_TRANSITION")
     }
+  })
+})
+
+describe("org deletion purges every org-scoped table", () => {
+  /**
+   * THE DRIFT GUARD. `purgeOrgEngineData` names its tables explicitly, because
+   * `org_id` carries no DB-level FK to the BetterAuth organization row — nothing
+   * cascades. So a new org-scoped table that nobody adds to the list silently leaves
+   * rows behind on every org deletion.
+   *
+   * That already happened twice: 22 orphaned `dashboards` and (once access control
+   * landed) 28 orphaned `access_roles` with 308 orphaned `access_rules`, all belonging
+   * to orgs that no longer existed. Hence this assertion rather than a comment.
+   */
+  it("lists exactly the tables in the schema that carry org_id", () => {
+    const schema = readFileSync(path.join(import.meta.dirname, "..", "db", "schema.ts"), "utf8")
+    // Each `pgTable("name", {` whose body declares an org_id column.
+    const declared: string[] = []
+    for (const m of schema.matchAll(/pgTable\(\s*"([a-z_]+)"\s*,\s*\{/g)) {
+      const start = m.index ?? 0
+      const next = schema.indexOf("pgTable(", start + 8)
+      const body = schema.slice(start, next === -1 ? undefined : next)
+      if (/orgId:\s*text\("org_id"\)/.test(body)) declared.push(m[1]!)
+    }
+    expect(declared.length).toBeGreaterThan(20)
+
+    const missing = declared.filter((t) => !ORG_SCOPED_TABLES.includes(t))
+    expect(
+      missing,
+      `these org-scoped tables are not purged on org deletion: ${missing.join(", ")}`,
+    ).toEqual([])
+
+    // And nothing listed that no longer exists — a stale name would throw at
+    // DELETE time, aborting a deletion that should have succeeded.
+    const stale = ORG_SCOPED_TABLES.filter((t) => !declared.includes(t))
+    expect(stale, `purge list names tables that aren't in the schema: ${stale.join(", ")}`).toEqual(
+      [],
+    )
   })
 })

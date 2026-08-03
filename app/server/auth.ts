@@ -18,27 +18,61 @@ import { runEngineOrThrow, systemScope } from "./runtime"
 import { seedKingsmaker } from "./seed/seed"
 
 /**
+ * Every engine table keyed by `org_id`, in child→parent order (the engine's own
+ * FKs constrain the order; org_id itself has no DB-level FK to the BetterAuth
+ * organization row, which is exactly why this list must exist).
+ *
+ * KEEP THIS IN STEP WITH THE SCHEMA. It is asserted against `db/schema.ts` by
+ * `auth.test.ts` — a new org-scoped table that isn't listed here leaves rows behind
+ * on every org deletion, which is how 28 orphaned access_roles and 22 orphaned
+ * dashboards accumulated before the assertion existed.
+ */
+const ORG_SCOPED_TABLES: ReadonlyArray<string> = [
+  // annotation layer (references items/instances)
+  "annotations",
+  "annotation_fields",
+  "task_statuses",
+  "task_priorities",
+  "attachments",
+  // automations (runs reference automations)
+  "automation_runs",
+  "automations",
+  // access control (rules/assignments reference roles)
+  "access_rules",
+  "access_role_actors",
+  "access_roles",
+  "access_policy_versions",
+  // per-user sidecars
+  "instance_view_prefs",
+  "member_deactivations",
+  "concept_graph_layouts",
+  "instance_graph_layouts",
+  // views + dashboards
+  "sidebar_views",
+  "dashboards",
+  // the core graph (relations → instances → items → fields → concepts)
+  "relations",
+  "instances",
+  "items",
+  "fields",
+  "labels",
+  "events",
+  "concepts",
+]
+
+/**
  * Delete every engine-owned row for an org — the inverse of the create-time
- * seed. The engine tables key on `org_id` with no DB-level FK to the
- * BetterAuth `organization` row, so they must be purged explicitly or they
- * orphan. Child→parent order respects the engine's internal FKs. Throws on
- * failure so `beforeDeleteOrganization` aborts the whole deletion. (Blob
- * payloads behind attachments are left in storage — harmless, content-addressed.)
+ * seed. Throws on failure so `beforeDeleteOrganization` aborts the whole
+ * deletion. (Blob payloads behind attachments are left in storage — harmless,
+ * content-addressed.)
  */
 async function purgeOrgEngineData(orgId: string): Promise<void> {
   const client = await pool.connect()
   try {
     await client.query("BEGIN")
-    await client.query("DELETE FROM annotations WHERE org_id = $1", [orgId])
-    await client.query("DELETE FROM task_statuses WHERE org_id = $1", [orgId])
-    await client.query("DELETE FROM annotation_fields WHERE org_id = $1", [orgId])
-    await client.query("DELETE FROM attachments WHERE org_id = $1", [orgId])
-    await client.query("DELETE FROM relations WHERE org_id = $1", [orgId])
-    await client.query("DELETE FROM instances WHERE org_id = $1", [orgId])
-    await client.query("DELETE FROM items WHERE org_id = $1", [orgId])
-    await client.query("DELETE FROM fields WHERE org_id = $1", [orgId])
-    await client.query("DELETE FROM events WHERE org_id = $1", [orgId])
-    await client.query("DELETE FROM concepts WHERE org_id = $1", [orgId])
+    for (const table of ORG_SCOPED_TABLES) {
+      await client.query(`DELETE FROM ${table} WHERE org_id = $1`, [orgId])
+    }
     await client.query("COMMIT")
   } catch (e) {
     await client.query("ROLLBACK")
@@ -47,6 +81,8 @@ async function purgeOrgEngineData(orgId: string): Promise<void> {
     client.release()
   }
 }
+
+export { ORG_SCOPED_TABLES }
 
 /**
  * BetterAuth owns Tier-0 identity: user / session / account / verification plus
