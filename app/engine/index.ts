@@ -17,6 +17,28 @@ export {
   momentum,
 } from "./computed/momentum"
 export {
+  ACCESS_ACTIONS,
+  ACTION_ALL,
+  type AccessAction,
+  type AccessCondition,
+  type AccessResource,
+  type AccessResourceType,
+  type AccessRule,
+  decide,
+  decideRecord,
+  emptyPolicy,
+  matchesCondition,
+  type PolicySet,
+  recordRulesForConcept,
+  rulesFor,
+  unrestrictedPolicy,
+} from "./domain/access"
+export {
+  type CompiledFilter,
+  compileRecordFilter,
+  filterFragment,
+} from "./domain/accessSql"
+export {
   deriveRichText,
   isRichText,
   MAX_RICHTEXT_CHARS,
@@ -34,6 +56,7 @@ export * from "./errors"
 export { EngineLive, type EngineServices } from "./layers"
 export { foldEvents, foldUntil } from "./projection/fold"
 export { applyEvent, type FoldState } from "./projection/reducer"
+export { type AccessRole, AccessRoleService, BUILTIN_ROLES } from "./services/AccessRoleService"
 export {
   type AddAnnotationFieldInput,
   AnnotationFieldService,
@@ -70,6 +93,7 @@ export { LabelService } from "./services/LabelService"
 export { MemberService } from "./services/MemberService"
 // Services
 export { OrgContext, type OrgScope, type ScopeRole } from "./services/OrgContext"
+export { PolicyService } from "./services/PolicyService"
 export { type FindInstancesInput, QueryService } from "./services/QueryService"
 export { type CreateRelationInput, RelationService } from "./services/RelationService"
 export { SidebarViewService } from "./services/SidebarViewService"

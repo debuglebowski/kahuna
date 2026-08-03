@@ -7,6 +7,9 @@ import {
   OrgContext,
   type OrgScope,
   PgLive,
+  PolicyService,
+  type PolicySet,
+  unrestrictedPolicy,
 } from "#engine"
 import { S3BlobStore } from "./blob-s3"
 import type { Role } from "./policy"
@@ -90,6 +93,10 @@ export const ERROR_MAP: Record<string, { status: number; code: string }> = {
   AnnotationFieldConfigInvalid: { status: 422, code: "FIELD_CONFIG_INVALID" },
   OrgScopeViolation: { status: 403, code: "FORBIDDEN" },
   EventCorruption: { status: 500, code: "INTERNAL" },
+  // Unmapped until now, so every rejected automation reached the editor as
+  // "Internal error" and `validateActions`' prose never arrived.
+  AutomationInvalid: { status: 422, code: "AUTOMATION_INVALID" },
+  AutomationNotFound: { status: 404, code: "NOT_FOUND" },
 }
 
 /** Map an engine effect's Exit to a stable, framework-agnostic result. */
@@ -114,11 +121,21 @@ type Runnable<A, E> = Effect.Effect<A, E, OrgContext | EngineServices | PgClient
  * Build a scope for a REAL request. `role` is typed as the server's `Role`, which
  * does not include `"system"` — so a user request cannot be given engine-level
  * privilege even by mistake. Session-resolved callers must use this.
+ *
+ * `policy` is the caller's resolved access rules (see `resolvePolicy`). Optional
+ * during the migration onto the access model: absent means "no rules", so every
+ * decision falls through to the resource defaults — today's behaviour exactly.
  */
-export const sessionScope = (orgId: string, actor: string, role: Role): OrgScope => ({
+export const sessionScope = (
+  orgId: string,
+  actor: string,
+  role: Role,
+  policy?: PolicySet,
+): OrgScope => ({
   orgId,
   actor,
   role,
+  policy,
 })
 
 /**
@@ -131,7 +148,20 @@ export const systemScope = (orgId: string, actor: string): OrgScope => ({
   orgId,
   actor,
   role: "system",
+  // Explicit rather than absent: this caller is exempt from the access model, not
+  // merely un-resolved. The two mean different things to `decide()`.
+  policy: unrestrictedPolicy(actor),
 })
+
+/**
+ * Resolve an actor's access rules, memoized inside `PolicyService` on the org's
+ * policy generation — so this is a single indexed lookup on the warm path.
+ *
+ * Never fails: `PolicyService.resolve` falls back to the empty set, which grants
+ * nothing beyond resource defaults.
+ */
+export const resolvePolicy = (orgId: string, actor: string): Promise<PolicySet> =>
+  AppRuntime.runPromise(Effect.flatMap(PolicyService, (p) => p.resolve(orgId, actor)))
 
 /** Run an engine effect with a given org scope, mapping typed errors to a result. */
 export const runEngine = <A, E>(

@@ -34,7 +34,7 @@ import {
 import { auth } from "./auth"
 import { pool } from "./db"
 import { can } from "./policy"
-import { EngineBase, ERROR_MAP, sessionScope } from "./runtime"
+import { EngineBase, ERROR_MAP, resolvePolicy, sessionScope } from "./runtime"
 import { isDeactivated, roleOf } from "./session"
 import * as uc from "./use-cases"
 
@@ -99,10 +99,19 @@ const AuthMiddlewareLive = Layer.succeed(AuthMiddleware, (options) =>
         new RpcError({ code: "DEACTIVATED", message: "Member is deactivated", status: 403 }),
       )
     }
+    // The caller's access rules, resolved ONCE for the request: a list read needs
+    // the whole set before it can filter, and PolicyService memoizes on the org's
+    // policy generation, so this is one indexed lookup on the warm path.
+    //
+    // Via `resolvePolicy` (which runs on AppRuntime) rather than requiring the
+    // service here: this middleware is typed `R = never`, so it cannot carry an
+    // engine requirement. `resolvePolicy` never fails — it falls back to the empty
+    // rule set, which grants nothing beyond resource defaults.
+    const policy = yield* Effect.promise(() => resolvePolicy(orgId, session.user.id))
     // The role resolved above rides along: read visibility is enforced inside the
     // engine off `OrgContext.role` (see OrgContext.ts). `sessionScope`'s signature
     // is what guarantees a request can never claim engine ("system") privilege.
-    return sessionScope(orgId, session.user.id, role) satisfies OrgScope
+    return sessionScope(orgId, session.user.id, role, policy) satisfies OrgScope
   }),
 )
 

@@ -1,5 +1,6 @@
 import { Effect } from "effect"
 import {
+  AccessRoleService,
   ConceptService,
   DashboardService,
   FieldService,
@@ -41,6 +42,12 @@ export const seedKingsmaker = Effect.gen(function* () {
   const taskStatuses = yield* TaskStatusService
   const taskPriorities = yield* TaskPriorityService
   const dashboards = yield* DashboardService
+  const accessRoles = yield* AccessRoleService
+
+  // Access control: seed the preset roles (Owner/Admin/Member + the automation
+  // one). Idempotent per role key, and the presets reproduce today's behaviour
+  // exactly — see BUILTIN_ROLES.
+  yield* accessRoles.ensureBuiltins
 
   // Annotation layer: seed the org's default task statuses + priorities (idempotent).
   yield* taskStatuses.ensureDefaults(defaultTaskStatuses)

@@ -1,4 +1,5 @@
 import { Layer } from "effect"
+import { AccessRoleService } from "./services/AccessRoleService"
 import { AnnotationFieldService } from "./services/AnnotationFieldService"
 import { AnnotationService } from "./services/AnnotationService"
 import { AttachmentService } from "./services/AttachmentService"
@@ -12,6 +13,7 @@ import { GraphLayoutService } from "./services/GraphLayoutService"
 import { InstanceService } from "./services/InstanceService"
 import { LabelService } from "./services/LabelService"
 import { MemberService } from "./services/MemberService"
+import { PolicyService } from "./services/PolicyService"
 import { QueryService } from "./services/QueryService"
 import { RelationService } from "./services/RelationService"
 import { SidebarViewService } from "./services/SidebarViewService"
@@ -33,6 +35,8 @@ export const EngineLive = Layer.mergeAll(
   AttachmentService.Default,
   LabelService.Default,
   MemberService.Default,
+  PolicyService.Default,
+  AccessRoleService.Default,
   SidebarViewService.Default,
   DashboardService.Default,
   GraphLayoutService.Default,
@@ -55,6 +59,8 @@ export type EngineServices =
   | AttachmentService
   | LabelService
   | MemberService
+  | PolicyService
+  | AccessRoleService
   | SidebarViewService
   | DashboardService
   | GraphLayoutService

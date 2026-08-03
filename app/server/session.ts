@@ -5,7 +5,7 @@ import type { EngineServices, OrgContext } from "#engine"
 import { auth } from "./auth"
 import { db, pool } from "./db"
 import { can, type Role } from "./policy"
-import { runEngine, sessionScope, type UseCaseResult } from "./runtime"
+import { resolvePolicy, runEngine, sessionScope, type UseCaseResult } from "./runtime"
 
 /** Resolve a user's role within an org from the BetterAuth `member` table. */
 export const roleOf = async (userId: string, orgId: string): Promise<Role | null> => {
@@ -78,10 +78,14 @@ export const resolveOrg = async (request: Request): Promise<OrgResolution> => {
 
 /**
  * The single server↔engine chokepoint: read the BetterAuth session, build an
- * OrgContext (org_id + actor + role), run the engine effect, map typed errors.
- * Every `/api/*` handler is a thin adapter over this. The role comes from the
- * resolved membership via `sessionScope`, so a request can never carry engine
+ * OrgContext (org_id + actor + role + policy), run the engine effect, map typed
+ * errors. Every `/api/*` handler is a thin adapter over this. The role comes from
+ * the resolved membership via `sessionScope`, so a request can never carry engine
  * (`"system"`) privilege.
+ *
+ * The access policy is resolved ONCE here, not per query: a list read needs the
+ * whole rule set before it can filter, and `PolicyService` memoizes on the org's
+ * policy generation so this costs one indexed lookup on the warm path.
  */
 export const runScoped = async <A, E>(
   request: Request,
@@ -89,5 +93,6 @@ export const runScoped = async <A, E>(
 ): Promise<UseCaseResult<A>> => {
   const org = await resolveOrg(request)
   if (!org.ok) return { ok: false, status: org.status, code: org.code }
-  return runEngine(sessionScope(org.orgId, org.actor, org.role), effect)
+  const policy = await resolvePolicy(org.orgId, org.actor)
+  return runEngine(sessionScope(org.orgId, org.actor, org.role, policy), effect)
 }

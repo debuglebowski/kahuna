@@ -1,4 +1,5 @@
 import { Context } from "effect"
+import type { PolicySet } from "../domain/access"
 import type { Actor, OrgId } from "../domain/types"
 
 /**
@@ -32,6 +33,17 @@ export interface OrgScope {
   readonly orgId: OrgId
   readonly actor: Actor
   readonly role: ScopeRole
+  /**
+   * The caller's resolved access rules — their roles' rules plus their own shares,
+   * unioned (see `domain/access.ts`). Resolved ONCE per request at the boundary,
+   * because a list read needs the whole set before it can filter.
+   *
+   * Optional during the migration onto the access model: absent means "no rules",
+   * so every decision falls through to the resource defaults — which is exactly
+   * today's behaviour. Every real request path fills it in; tests and scripts that
+   * only exercise role-based visibility may leave it off.
+   */
+  readonly policy?: PolicySet
 }
 
 export class OrgContext extends Context.Tag("engine/OrgContext")<OrgContext, OrgScope>() {}

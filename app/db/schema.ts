@@ -76,13 +76,19 @@ export const concepts = pgTable(
     // `versioning_enabled`, where one lineage legitimately holds N version rows.
     // Makes the concept addressable without a uuid (routed at /c/<slug>).
     singleRecord: boolean("single_record").notNull().default(false),
-    // Who may READ this concept's records: 'visible' = every member of the org,
-    // 'admin' = owners/admins only. Named by who can see it (not "hidden") so a
-    // narrower value can be added later without re-meaning the existing ones.
+    // Who may READ this concept's records BY DEFAULT: 'visible' = every member of
+    // the org, 'admin' = owners/admins only, 'none' = nobody without an explicit
+    // access rule. Named by who can see it (not "hidden"), which is why the third
+    // value slotted in without re-meaning the first two.
     //
-    // Enforced INSIDE the engine off `OrgContext.role` — see ConceptService and
-    // the `assertConceptVisible` gate in InstanceService. Unknown values coerce to
-    // 'admin' (fail CLOSED), the opposite polarity to `edit_reach`; see toConcept.
+    // This is the DEFAULT layer of the access model: `access_rules` are exceptions
+    // layered on top (see engine/domain/access.ts). It stays a column because it is
+    // the cheap fast path inside list SQL and answers "who sees this normally?" in
+    // one row read.
+    //
+    // Enforced INSIDE the engine — see ConceptService and the `assertConceptVisible`
+    // gate in InstanceService. Unknown values coerce to 'admin' (fail CLOSED), the
+    // opposite polarity to `edit_reach`; see toConcept.
     visibility: text("visibility").notNull().default("visible"),
     // Org-wide default detail layout for this concept's instances: a 12-col grid
     // of tiles (`{ tiles: [...] }`), the same shape as the view-prefs custom
@@ -158,10 +164,15 @@ export const fields = pgTable(
     // can add + edit their OWN fields (e.g. a status) without touching the
     // integration's data. Drives the field-level read-only guard.
     managedBy: text("managed_by"),
-    // Who may READ this field's values: 'visible' = any member, 'admin' =
-    // owners/admins only. Mirrors `concepts.visibility` one level down, for the
-    // case where the CONCEPT must stay readable but one field must not (comp on a
-    // Person, margin on a Deal).
+    // Who may READ this field's values BY DEFAULT: 'visible' = any member, 'admin'
+    // = owners/admins only, 'none' = nobody without an explicit rule. Mirrors
+    // `concepts.visibility` one level down, for the case where the CONCEPT must stay
+    // readable but one field must not (comp on a Person, margin on a Deal).
+    //
+    // Field access is per CONCEPT, never per record: a field is visible to a role or
+    // it isn't, the same on every row. Making the mask vary per row is the one
+    // mechanic that can erase data on an ordinary edit (see THE DATA-LOSS GUARD in
+    // engine/test/visibility.test.ts), so access rules on a field are unconditional.
     //
     // A real column, not a `config` key, so it can be filtered in SQL and read by
     // the raw column joins some services use. Unknown values coerce to 'admin'
@@ -206,6 +217,14 @@ export const items = pgTable(
     // Distinct from per-version `instances.archived_at` (which hides one version,
     // rolling the item's "Latest" back to the prior published version).
     archivedAt: timestamp("archived_at", { withTimezone: true }),
+    // Who created this lineage (logical fk → bauth_user.id, or a `system:*` actor
+    // for a sync). Lives HERE, not on `instances`: the lineage is what a person
+    // owns — publishing a new version must not change who created the record.
+    //
+    // Exists for the `actorIs: "creator"` access condition ("records I created"),
+    // which needs a column to filter on in SQL. Null for anything created before
+    // the backfill, and null never matches — an unattributed record is nobody's.
+    createdBy: text("created_by"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("items_org_concept_idx").on(t.orgId, t.conceptId)],
@@ -796,3 +815,137 @@ export const automationRuns = pgTable(
     index("automation_runs_recent_idx").on(t.automationId, t.startedAt),
   ],
 )
+
+/**
+ * ── ACCESS CONTROL ───────────────────────────────────────────────────────────
+ *
+ * One mechanism for every "who may do what" question, replacing three unrelated
+ * ones (concepts.visibility, fields.visibility, dashboards.owner_id as
+ * personal/shared). See `engine/domain/access.ts` for the decision procedure and
+ * `engine/domain/visibility.ts` for the placement constraints that still hold.
+ *
+ * TWO LAYERS. The DEFAULT lives on the resource itself (the `visibility` columns
+ * above) and answers "who sees this normally?"; `access_rules` are the EXCEPTIONS
+ * layered over it. Keeping the default a column is what lets a list query filter
+ * in SQL without joining rules for the common case.
+ */
+
+/**
+ * A named, reusable bag of rules. `Owner`/`Admin`/`Member` ship as presets and are
+ * ordinary rows — editable, not hardcoded tiers — plus one non-person preset
+ * (`Automation (full access)`) that existing automations migrate onto.
+ */
+export const accessRoles = pgTable(
+  "access_roles",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: text("org_id").notNull(),
+    // Stable system key (`owner`, `admin`, `member`, `automation_full`), mirroring
+    // `concepts.slug`: the seed and the migrations pin by key, so `name` is freely
+    // renameable. Null for a user-created role, which nothing pins by.
+    key: text("key"),
+    name: text("name").notNull(),
+    description: text("description"),
+    // A preset. Its RULES stay editable (that is the point — presets are ordinary
+    // roles); the flag only drives "this one was seeded, don't offer to delete it".
+    builtin: boolean("builtin").notNull().default(false),
+    position: integer("position").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("access_roles_key_uq").on(t.orgId, t.key).where(sql`${t.key} IS NOT NULL`),
+    index("access_roles_org_idx").on(t.orgId, t.position),
+  ],
+)
+
+/**
+ * Who holds a role. `actor_id` is a user id OR a non-person actor string —
+ * `server/automations.ts` already mints `system:automation:<uuid>` via `actorFor`,
+ * and connectors key the same way. So people and machines are assigned through one
+ * table, with no second code path to keep in sync.
+ *
+ * A member may hold several roles; their access is the union, minus any deny.
+ */
+export const accessRoleActors = pgTable(
+  "access_role_actors",
+  {
+    orgId: text("org_id").notNull(),
+    roleId: uuid("role_id")
+      .notNull()
+      .references(() => accessRoles.id, { onDelete: "cascade" }),
+    actorId: text("actor_id").notNull(),
+    // Who assigned it, for the audit trail (the event log carries this too).
+    createdBy: text("created_by"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.roleId, t.actorId] }),
+    // THE hot path: every rule applying to one actor, resolved per request.
+    index("access_role_actors_actor_idx").on(t.orgId, t.actorId),
+  ],
+)
+
+/**
+ * One grant (or refusal). Attached to a role (reusable) or straight to an actor —
+ * a per-record share IS this row with `actor_id` set, which is why sharing needs no
+ * separate mechanism.
+ *
+ * DENY WINS, absolutely: no specificity ladder, no "narrower beats broader". A
+ * precedence table is what makes an access model unreadable to the person editing
+ * it — see `decide()`.
+ */
+export const accessRules = pgTable(
+  "access_rules",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: text("org_id").notNull(),
+    // Exactly one of these is set (CHECK below), mirroring `attachments_one_owner`.
+    roleId: uuid("role_id").references(() => accessRoles.id, { onDelete: "cascade" }),
+    actorId: text("actor_id"),
+    // 'allow' | 'deny'.
+    effect: text("effect").notNull().default("allow"),
+    // Action names, or `{*}` for every action present and future. See ACCESS_ACTIONS.
+    actions: text("actions").array().notNull(),
+    // 'org' | 'concept' | 'record' | 'field' | 'dashboard' | 'view' | 'automation'
+    // | 'bucket' | 'task' | 'note' | 'member'.
+    resourceType: text("resource_type").notNull(),
+    // NULL = every resource of this type. For a 'record' rule this is an
+    // **items.id** (the lineage), NEVER an instances.id: a versioned concept has N
+    // version rows per record, and a share must survive publishing a new version.
+    resourceId: uuid("resource_id"),
+    // Scopes a 'record' or 'field' rule to one concept without naming a row — how
+    // "may share any Deal" is expressed without a rule per deal.
+    conceptId: uuid("concept_id"),
+    // AccessCondition | null (null = unconditional). Every variant MUST compile to
+    // a SQL predicate, because record reads are filtered inside the query — a
+    // post-fetch filter breaks counts and truncation. See engine/domain/access.ts.
+    condition: jsonb("condition"),
+    createdBy: text("created_by"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // Role rules load by role; shares load by actor. Two indexes, one per path.
+    index("access_rules_role_idx").on(t.orgId, t.roleId).where(sql`${t.roleId} IS NOT NULL`),
+    index("access_rules_actor_idx").on(t.orgId, t.actorId).where(sql`${t.actorId} IS NOT NULL`),
+    // The Share dialog: current grants on one resource.
+    index("access_rules_resource_idx").on(t.orgId, t.resourceType, t.resourceId),
+    check("access_rules_one_subject", sql`(${t.roleId} IS NULL) <> (${t.actorId} IS NULL)`),
+  ],
+)
+
+/**
+ * Cache generation for an org's policy, bumped on EVERY access write.
+ *
+ * `PolicyService` memoizes a resolved rule set per (org, actor) and keys it on this
+ * number, so a rule change is picked up by the next request without a TTL or a
+ * process-wide flush. A missing row reads as version 0.
+ *
+ * Its own table rather than a column on the org: orgs live in BetterAuth
+ * (`bauth_organization`) and the engine must never read auth tables.
+ */
+export const accessPolicyVersions = pgTable("access_policy_versions", {
+  orgId: text("org_id").primaryKey(),
+  version: integer("version").notNull().default(1),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+})
