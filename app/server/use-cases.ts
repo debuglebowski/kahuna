@@ -2,6 +2,7 @@ import { PgClient } from "@effect/sql-pg"
 import { Effect } from "effect"
 import {
   type AccessAction,
+  type AccessCondition,
   type AccessResourceType,
   AccessRoleService,
   type AnnotationField,
@@ -46,6 +47,7 @@ import {
   MemberService,
   type Note,
   OrgContext,
+  PolicyService,
   projectState,
   QueryService,
   RelationService,
@@ -1600,4 +1602,184 @@ export const revoke = (grantId: string): UC<unknown> =>
     const grants = yield* GrantService
     yield* grants.revoke(grantId)
     return { id: grantId }
+  })
+
+// ── roles ───────────────────────────────────────────────────────────────────
+
+export const listRoles = (): UC<unknown> =>
+  Effect.flatMap(AccessRoleService, (r) => r.ensureBuiltins.pipe(Effect.zipRight(r.list())))
+
+export const rolesOfUser = (userId: string): UC<unknown> =>
+  Effect.flatMap(AccessRoleService, (r) => r.rolesOf(userId))
+
+export const listRules = (roleId: string): UC<unknown> =>
+  Effect.flatMap(AccessRoleService, (r) => r.rulesOf(roleId))
+
+export const createRole = (input: {
+  readonly name: string
+  readonly description?: string
+}): UC<unknown> => Effect.flatMap(AccessRoleService, (r) => r.create(input))
+
+export const updateRole = (input: {
+  readonly id: string
+  readonly name?: string
+  readonly description?: string | null
+}): UC<unknown> =>
+  Effect.gen(function* () {
+    const roles = yield* AccessRoleService
+    const updated = yield* roles.update(input)
+    if (!updated)
+      return yield* Effect.fail(
+        new FieldValidationError({ message: "role not found", field: "id" }),
+      )
+    return updated
+  })
+
+export const deleteRole = (id: string): UC<unknown> =>
+  Effect.gen(function* () {
+    const roles = yield* AccessRoleService
+    // THE FLOOR: refuse if this role is what keeps the org administrable. Checked
+    // BEFORE the delete, and by simulating the result rather than trusting the
+    // caller's own role — see `assertFloorHolds`.
+    yield* assertFloorHolds(roles, { removingRoleId: id })
+    const outcome = yield* roles.remove(id)
+    if (outcome === "not-found")
+      return yield* Effect.fail(
+        new FieldValidationError({ message: "role not found", field: "id" }),
+      )
+    if (outcome === "builtin")
+      return yield* Effect.fail(
+        new FieldValidationError({
+          message: "a preset role can't be deleted — edit its rules instead",
+          field: "id",
+        }),
+      )
+    return { id }
+  })
+
+export const assignRole = (roleId: string, userId: string): UC<unknown> =>
+  Effect.flatMap(AccessRoleService, (r) => r.assign(roleId, userId)).pipe(
+    Effect.map(() => ({ ok: true })),
+  )
+
+export const unassignRole = (roleId: string, userId: string): UC<unknown> =>
+  Effect.gen(function* () {
+    const roles = yield* AccessRoleService
+    yield* assertFloorHolds(roles, { unassigning: { roleId, userId } })
+    yield* roles.unassign(roleId, userId)
+    return { ok: true }
+  })
+
+export const addRule = (input: {
+  readonly roleId: string
+  readonly effect: "allow" | "deny"
+  readonly actions: ReadonlyArray<AccessAction>
+  readonly resourceType: AccessResourceType
+  readonly resourceId?: string | null
+  readonly conceptId?: string | null
+  readonly condition?: AccessCondition | null
+}): UC<unknown> => Effect.flatMap(AccessRoleService, (r) => r.addRule(input))
+
+export const removeRule = (ruleId: string): UC<unknown> =>
+  Effect.gen(function* () {
+    const roles = yield* AccessRoleService
+    yield* assertFloorHolds(roles, { removingRuleId: ruleId })
+    yield* roles.removeRule(ruleId)
+    return { id: ruleId }
+  })
+
+/**
+ * ── THE IRREDUCIBLE FLOOR ───────────────────────────────────────────────────
+ *
+ * Refuse any access change that would leave the org with NOBODY able to configure
+ * it. Presets are fully editable by design, but an org nobody can administer is
+ * bricked with no in-app recovery — the same reason member demotion already refuses
+ * to remove the last owner.
+ *
+ * Implemented by asking "who holds configure?" and refusing when the change would
+ * empty that set. Deliberately NOT "is the caller an owner": once presets are
+ * editable, membership role no longer implies configure.
+ *
+ * Conservative by construction: it only blocks when the set would become EMPTY, so
+ * it never gets in the way of ordinary edits.
+ */
+const assertFloorHolds = (
+  roles: {
+    readonly configureHolders: () => UC<ReadonlyArray<string>>
+    readonly rolesOf: (actorId: string) => UC<ReadonlyArray<{ readonly id: string }>>
+  },
+  change:
+    | { readonly removingRoleId: string }
+    | { readonly removingRuleId: string }
+    | { readonly unassigning: { readonly roleId: string; readonly userId: string } },
+): UC<void> =>
+  Effect.gen(function* () {
+    const holders = yield* roles.configureHolders()
+    // More than one holder ⇒ no single change can empty the set.
+    if (holders.length > 1) return
+    if (holders.length === 0) return // already floorless; don't block recovery attempts
+    const last = holders[0]!
+    if ("unassigning" in change) {
+      if (change.unassigning.userId !== last) return
+      // Does the last holder keep configure through some OTHER role?
+      const held = yield* roles.rolesOf(last)
+      const others = held.filter((r) => r.id !== change.unassigning.roleId)
+      if (others.length > 0) return
+      return yield* Effect.fail(
+        new FieldValidationError({
+          message: "this is the only member who can configure the org — assign someone else first",
+          field: "userId",
+        }),
+      )
+    }
+    // Deleting a role, or removing a rule from one: refuse when it is the last
+    // holder's only source of configure.
+    const held = yield* roles.rolesOf(last)
+    const roleId = "removingRoleId" in change ? change.removingRoleId : null
+    if (roleId !== null && held.length === 1 && held[0]!.id === roleId)
+      return yield* Effect.fail(
+        new FieldValidationError({
+          message: "this role is the only thing granting org configuration — it can't be removed",
+          field: "id",
+        }),
+      )
+    if ("removingRuleId" in change && held.length === 1)
+      return yield* Effect.fail(
+        new FieldValidationError({
+          message:
+            "this rule is the only thing granting org configuration — add another before removing it",
+          field: "ruleId",
+        }),
+      )
+  })
+
+/**
+ * The effective-access report: what this member can do, and what grants it.
+ *
+ * The self-serve half matters — a member who cannot see something answers "why?"
+ * themselves instead of filing a ticket. The RPC gate allows asking about yourself
+ * unconditionally and requires `configure` for anyone else.
+ */
+export const effectiveAccess = (userId: string): UC<unknown> =>
+  Effect.gen(function* () {
+    const roles = yield* AccessRoleService
+    const policies = yield* PolicyService
+    const scope = yield* OrgContext
+    const held = yield* roles.rolesOf(userId)
+    const policy = yield* policies.resolve(scope.orgId, userId)
+    const nameById = new Map(held.map((r) => [r.id, r.name]))
+    return {
+      userId,
+      roles: held,
+      rules: policy.rules.map((r) => ({
+        id: r.id,
+        viaRoleId: r.roleId,
+        viaRoleName: r.roleId ? (nameById.get(r.roleId) ?? null) : null,
+        effect: r.effect,
+        actions: r.actions,
+        resourceType: r.resourceType,
+        resourceId: r.resourceId,
+        condition: r.condition,
+      })),
+    }
   })

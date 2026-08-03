@@ -44,6 +44,7 @@ import {
   syncLinearForRequest,
   updateLinearIssueForRequest,
 } from "./linear"
+import { syncMembershipRole } from "./membership"
 import { isAdminRole } from "./policy"
 import {
   connectPosthog,
@@ -300,6 +301,9 @@ export const handleApi = async (req: Request): Promise<Response | null> => {
         body: { userId: target.id, role: memberRole, organizationId: org.orgId },
         headers: req.headers,
       })
+      // Membership and ACCESS are two tables; a member who joins must hold the
+      // matching preset or every rule-based check sees them as role-less.
+      await syncMembershipRole(org.orgId, target.id, memberRole)
       return Response.json(member, { status: 201 })
     } catch (e) {
       return Response.json({ error: "ADD_FAILED", detail: String(e) }, { status: 500 })
@@ -345,6 +349,8 @@ export const handleApi = async (req: Request): Promise<Response | null> => {
         body: { memberId: target.id, role: next, organizationId: org.orgId },
         headers: req.headers,
       })
+      // Re-point the access preset too, or a demoted admin keeps admin RULES.
+      await syncMembershipRole(org.orgId, userId, next)
       return Response.json(updated)
     } catch (e) {
       return Response.json({ error: "ROLE_UPDATE_FAILED", detail: String(e) }, { status: 500 })

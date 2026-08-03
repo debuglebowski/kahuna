@@ -13,6 +13,8 @@ import {
 } from "#engine"
 import {
   type AccessGrant,
+  type AccessRole,
+  type AccessRule,
   type AnnotationField,
   type Attachment,
   type Automation,
@@ -22,6 +24,7 @@ import {
   type ConceptGraph,
   type Dashboard,
   type DeactivatedMember,
+  type EffectiveAccess,
   type Field,
   type GraphLayout,
   type Instance,
@@ -823,6 +826,38 @@ const HandlersLive = ServerRpcs.toLayer({
         as<AccessGrant>(uc.share({ resourceType, resourceId, userId, roleId, actions })),
       ),
     ),
+  // ── roles ──────────────────────────────────────────────────────────────────
+  // Role NAMES are org vocabulary — any member may read them (they render as pills
+  // on /members and populate the Share dialog). The RULES inside a role are the
+  // sensitive half and need `configure`. See the artifact's Surfaces table.
+  listRoles: () => as<ReadonlyArray<AccessRole>>(uc.listRoles()),
+  rolesOf: ({ userId }) => as<ReadonlyArray<AccessRole>>(uc.rolesOfUser(userId)),
+  listRules: ({ roleId }) => admin<ReadonlyArray<AccessRule>>(uc.listRules(roleId)),
+  createRole: ({ name, description }) => admin<AccessRole>(uc.createRole({ name, description })),
+  updateRole: ({ id, name, description }) =>
+    admin<AccessRole>(uc.updateRole({ id, name, description })),
+  deleteRole: ({ id }) => admin<{ readonly id: string }>(uc.deleteRole(id)),
+  assignRole: ({ roleId, userId }) =>
+    admin<{ readonly ok: boolean }>(uc.assignRole(roleId, userId)),
+  unassignRole: ({ roleId, userId }) =>
+    admin<{ readonly ok: boolean }>(uc.unassignRole(roleId, userId)),
+  addRule: ({ roleId, effect, actions, resourceType, resourceId, conceptId, condition }) =>
+    admin<{ readonly id: string }>(
+      uc.addRule({ roleId, effect, actions, resourceType, resourceId, conceptId, condition }),
+    ),
+  removeRule: ({ ruleId }) => admin<{ readonly id: string }>(uc.removeRule(ruleId)),
+  /**
+   * Asking about YOURSELF is always allowed — that is the point of the self-serve
+   * report ("why can't I see this?" answered without an admin). Asking about someone
+   * else is `configure`.
+   */
+  effectiveAccess: ({ userId }) =>
+    Effect.gen(function* () {
+      const scope = yield* OrgContext
+      const target = userId ?? scope.actor
+      if (target !== scope.actor) yield* requireAction("configure")
+      return yield* as<EffectiveAccess>(uc.effectiveAccess(target))
+    }),
   revoke: ({ grantId }) =>
     Effect.gen(function* () {
       // The grant must be resolved BEFORE the gate: `share` is checked against the

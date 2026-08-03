@@ -4,6 +4,7 @@ import { organization } from "better-auth/plugins"
 import { asc, eq } from "drizzle-orm"
 import * as schema from "#db"
 import { db, pool } from "./db"
+import { syncMembershipRole } from "./membership"
 import { runEngineOrThrow, systemScope } from "./runtime"
 import { seedKingsmaker } from "./seed/seed"
 
@@ -138,6 +139,12 @@ export const auth = betterAuth({
         afterCreateOrganization: async ({ organization, user }) => {
           try {
             await runEngineOrThrow(systemScope(organization.id, user.id), seedKingsmaker)
+            // The creator's membership is `owner`, but membership and ACCESS are two
+            // tables — without this the founding owner holds no access role, and the
+            // org reads as having nobody who can configure it (which is what the
+            // irreducible-floor check counts). `seedKingsmaker` created the presets;
+            // this points the owner at theirs.
+            await syncMembershipRole(organization.id, user.id, "owner")
           } catch (error) {
             console.error(`Failed to seed org ${organization.id}:`, error)
           }

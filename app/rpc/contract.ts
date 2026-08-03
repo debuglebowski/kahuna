@@ -1336,6 +1336,62 @@ export const AccessGrant = Schema.Struct({
 })
 export type AccessGrant = Schema.Schema.Type<typeof AccessGrant>
 
+/** A condition narrowing a rule to a subset of records. Mirrors `AccessCondition`
+ *  in engine/domain/access.ts. Every variant must compile to SQL, which is why the
+ *  set is small and closed — see the note there. */
+export const AccessCondition = Schema.Union(
+  Schema.Struct({ kind: Schema.Literal("actorIs"), who: Schema.Literal("creator") }),
+  Schema.Struct({ kind: Schema.Literal("fieldIs"), fieldId: Schema.String }),
+  Schema.Struct({
+    kind: Schema.Literal("where"),
+    state: Schema.Record({ key: Schema.String, value: Schema.Unknown }),
+  }),
+)
+export type AccessCondition = Schema.Schema.Type<typeof AccessCondition>
+
+/** A role: a named, reusable bag of rules. `key` non-null = a seeded preset. */
+export const AccessRole = Schema.Struct({
+  id: Schema.String,
+  key: Schema.NullOr(Schema.String),
+  name: Schema.String,
+  description: Schema.NullOr(Schema.String),
+  builtin: Schema.Boolean,
+  position: Schema.Number,
+})
+export type AccessRole = Schema.Schema.Type<typeof AccessRole>
+
+/** One rule on a role, as the role editor lists them. */
+export const AccessRule = Schema.Struct({
+  id: Schema.String,
+  effect: Schema.Literal("allow", "deny"),
+  actions: Schema.Array(Schema.String),
+  resourceType: AccessResourceType,
+  resourceId: Schema.NullOr(Schema.String),
+  conceptId: Schema.NullOr(Schema.String),
+  condition: Schema.NullOr(AccessCondition),
+})
+export type AccessRule = Schema.Schema.Type<typeof AccessRule>
+
+/** What one member can do, resolved — the effective-access report. */
+export const EffectiveAccess = Schema.Struct({
+  userId: Schema.String,
+  roles: Schema.Array(AccessRole),
+  /** Every rule that applies, with the role it came from (null = a direct share). */
+  rules: Schema.Array(
+    Schema.Struct({
+      id: Schema.String,
+      viaRoleId: Schema.NullOr(Schema.String),
+      viaRoleName: Schema.NullOr(Schema.String),
+      effect: Schema.Literal("allow", "deny"),
+      actions: Schema.Array(Schema.String),
+      resourceType: AccessResourceType,
+      resourceId: Schema.NullOr(Schema.String),
+      condition: Schema.NullOr(AccessCondition),
+    }),
+  ),
+})
+export type EffectiveAccess = Schema.Schema.Type<typeof EffectiveAccess>
+
 export class KingsmakerRpcs extends RpcGroup.make(
   Rpc.make("listConcepts", {
     payload: {
@@ -2232,6 +2288,79 @@ export class KingsmakerRpcs extends RpcGroup.make(
   Rpc.make("revoke", {
     payload: { grantId: Schema.String },
     success: Schema.Struct({ id: Schema.String }),
+    error: RpcError,
+  }),
+  // ── roles ───────────────────────────────────────────────────────────────────
+  /** Every role in the org. Readable by ANY member: role names are org vocabulary
+   *  (they show as pills on /members and populate the Share dialog). The RULES
+   *  inside a role need `configure` — see `listRules`. */
+  Rpc.make("listRoles", { success: Schema.Array(AccessRole), error: RpcError }),
+  /** Which roles a member holds. Readable by any member (the pills). */
+  Rpc.make("rolesOf", {
+    payload: { userId: Schema.String },
+    success: Schema.Array(AccessRole),
+    error: RpcError,
+  }),
+  /** The rules a role carries. `configure` — this is the sensitive half. */
+  Rpc.make("listRules", {
+    payload: { roleId: Schema.String },
+    success: Schema.Array(AccessRule),
+    error: RpcError,
+  }),
+  Rpc.make("createRole", {
+    payload: { name: Schema.String, description: Schema.optional(Schema.String) },
+    success: AccessRole,
+    error: RpcError,
+  }),
+  Rpc.make("updateRole", {
+    payload: {
+      id: Schema.String,
+      name: Schema.optional(Schema.String),
+      description: Schema.optional(Schema.NullOr(Schema.String)),
+    },
+    success: AccessRole,
+    error: RpcError,
+  }),
+  /** Delete a custom role. A preset is refused (the seed would re-create it). */
+  Rpc.make("deleteRole", {
+    payload: { id: Schema.String },
+    success: Schema.Struct({ id: Schema.String }),
+    error: RpcError,
+  }),
+  Rpc.make("assignRole", {
+    payload: { roleId: Schema.String, userId: Schema.String },
+    success: Schema.Struct({ ok: Schema.Boolean }),
+    error: RpcError,
+  }),
+  Rpc.make("unassignRole", {
+    payload: { roleId: Schema.String, userId: Schema.String },
+    success: Schema.Struct({ ok: Schema.Boolean }),
+    error: RpcError,
+  }),
+  Rpc.make("addRule", {
+    payload: {
+      roleId: Schema.String,
+      effect: Schema.Literal("allow", "deny"),
+      actions: Schema.Array(AccessActionName),
+      resourceType: AccessResourceType,
+      resourceId: Schema.optional(Schema.NullOr(Schema.String)),
+      conceptId: Schema.optional(Schema.NullOr(Schema.String)),
+      condition: Schema.optional(Schema.NullOr(AccessCondition)),
+    },
+    success: Schema.Struct({ id: Schema.String }),
+    error: RpcError,
+  }),
+  Rpc.make("removeRule", {
+    payload: { ruleId: Schema.String },
+    success: Schema.Struct({ id: Schema.String }),
+    error: RpcError,
+  }),
+  /** "What can this member see and do, and what grants it?" Anyone may ask about
+   *  THEMSELVES (the self-serve answer to "why can't I see this?"); asking about
+   *  someone else needs `configure`. */
+  Rpc.make("effectiveAccess", {
+    payload: { userId: Schema.optional(Schema.String) },
+    success: EffectiveAccess,
     error: RpcError,
   }),
 ) {}

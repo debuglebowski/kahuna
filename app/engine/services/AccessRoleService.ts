@@ -1,7 +1,8 @@
 import { PgClient } from "@effect/sql-pg"
 import { Effect } from "effect"
-import type { AccessAction, AccessResourceType } from "../domain/access"
+import type { AccessAction, AccessCondition, AccessResourceType } from "../domain/access"
 import { ACTION_ALL } from "../domain/access"
+import { EventStore } from "./EventStore"
 import { OrgContext } from "./OrgContext"
 import { PolicyService } from "./PolicyService"
 
@@ -148,6 +149,7 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
     effect: Effect.gen(function* () {
       const sql = yield* PgClient.PgClient
       const policies = yield* PolicyService
+      const events = yield* EventStore
 
       const list = (): Effect.Effect<ReadonlyArray<AccessRole>, never, OrgContext> =>
         Effect.gen(function* () {
@@ -248,8 +250,223 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
           return rows.map((r) => r.actor_id)
         }).pipe(Effect.orDie)
 
-      return { list, getByKey, ensureBuiltins, assign, unassign, rolesOf, actorsOf } as const
+      // ── role CRUD ────────────────────────────────────────────────────────────
+
+      /**
+       * Create a custom role. `key` stays null — only the seeded presets are pinned by
+       * key, so a user-created role can be renamed freely.
+       */
+      const create = (input: { readonly name: string; readonly description?: string | null }) =>
+        Effect.gen(function* () {
+          const { orgId } = yield* OrgContext
+          const max = yield* sql<{ readonly max: number | string | null }>`
+            SELECT MAX(position) AS max FROM access_roles WHERE org_id = ${orgId}`
+          const position = Number(max[0]?.max ?? -1) + 1
+          const rows = yield* sql<AccessRoleRow>`
+            INSERT INTO access_roles (org_id, key, name, description, builtin, position)
+            VALUES (${orgId}, NULL, ${input.name.trim()}, ${input.description ?? null}, false, ${position})
+            RETURNING id, key, name, description, builtin, position`
+          const role = toRole(rows[0]!)
+          yield* events.append({
+            subjectKind: "accessRole",
+            subjectId: role.id,
+            eventType: "AccessRoleCreated",
+            payload: { _tag: "AccessRoleCreated", name: role.name } as never,
+          })
+          yield* policies.bump(orgId)
+          return role
+        }).pipe(Effect.orDie)
+
+      /** Rename / re-describe a role. Presets are renameable too — they are ordinary
+       *  rows, and `key` (not the name) is what code pins by. */
+      const update = (input: {
+        readonly id: string
+        readonly name?: string
+        readonly description?: string | null
+      }) =>
+        Effect.gen(function* () {
+          const { orgId } = yield* OrgContext
+          const rows = yield* sql<AccessRoleRow>`
+            UPDATE access_roles
+            SET name = COALESCE(${input.name?.trim() ?? null}, name),
+                description = ${input.description === undefined ? sql`description` : input.description},
+                updated_at = now()
+            WHERE org_id = ${orgId} AND id = ${input.id}
+            RETURNING id, key, name, description, builtin, position`
+          const row = rows[0]
+          if (!row) return null
+          yield* events.append({
+            subjectKind: "accessRole",
+            subjectId: input.id,
+            eventType: "AccessRoleRenamed",
+            payload: { _tag: "AccessRoleRenamed", name: row.name } as never,
+          })
+          yield* policies.bump(orgId)
+          return toRole(row)
+        }).pipe(Effect.orDie)
+
+      /**
+       * Delete a role. Its rules and assignments go with it (ON DELETE CASCADE), so
+       * every holder loses that access immediately; the history stays on the log.
+       *
+       * A PRESET is refused: the seed and the backfill pin by `key`, so removing one
+       * would make `ensureBuiltins` silently re-create it on the next provision and
+       * quietly restore access someone deliberately removed.
+       */
+      const remove = (id: string) =>
+        Effect.gen(function* () {
+          const { orgId } = yield* OrgContext
+          const rows = yield* sql<AccessRoleRow>`
+            SELECT id, key, name, description, builtin, position FROM access_roles
+            WHERE org_id = ${orgId} AND id = ${id} LIMIT 1`
+          const row = rows[0]
+          if (!row) return "not-found" as const
+          if (row.key !== null) return "builtin" as const
+          yield* sql`DELETE FROM access_roles WHERE org_id = ${orgId} AND id = ${id}`
+          yield* events.append({
+            subjectKind: "accessRole",
+            subjectId: id,
+            eventType: "AccessRoleDeleted",
+            payload: { _tag: "AccessRoleDeleted", name: row.name } as never,
+          })
+          yield* policies.bump(orgId)
+          return "deleted" as const
+        }).pipe(Effect.orDie)
+
+      // ── rules on a role ──────────────────────────────────────────────────────
+
+      /** The rules a role carries — what the role editor lists. */
+      const rulesOf = (roleId: string) =>
+        Effect.gen(function* () {
+          const { orgId } = yield* OrgContext
+          const rows = yield* sql<{
+            readonly id: string
+            readonly effect: string
+            readonly actions: ReadonlyArray<string>
+            readonly resource_type: string
+            readonly resource_id: string | null
+            readonly concept_id: string | null
+            readonly condition: unknown
+          }>`
+            SELECT id, effect, actions, resource_type, resource_id, concept_id, condition
+            FROM access_rules
+            WHERE org_id = ${orgId} AND role_id = ${roleId}
+            ORDER BY resource_type ASC, created_at ASC`
+          return rows.map((r) => ({
+            id: r.id,
+            effect: (r.effect === "allow" ? "allow" : "deny") as "allow" | "deny",
+            actions: r.actions,
+            resourceType: r.resource_type as AccessResourceType,
+            resourceId: r.resource_id,
+            conceptId: r.concept_id,
+            condition: r.condition as AccessCondition | null,
+          }))
+        }).pipe(Effect.orDie)
+
+      /** Add a rule to a role. */
+      const addRule = (input: {
+        readonly roleId: string
+        readonly effect: "allow" | "deny"
+        readonly actions: ReadonlyArray<AccessAction>
+        readonly resourceType: AccessResourceType
+        readonly resourceId?: string | null
+        readonly conceptId?: string | null
+        readonly condition?: AccessCondition | null
+      }) =>
+        Effect.gen(function* () {
+          const { orgId, actor } = yield* OrgContext
+          const rows = yield* sql<{ readonly id: string }>`
+            INSERT INTO access_rules
+              (org_id, role_id, effect, actions, resource_type, resource_id, concept_id,
+               condition, created_by)
+            VALUES (${orgId}, ${input.roleId}, ${input.effect}, ${[...input.actions]},
+                    ${input.resourceType}, ${input.resourceId ?? null},
+                    ${input.conceptId ?? null},
+                    ${input.condition ? JSON.stringify(input.condition) : null}::jsonb,
+                    ${actor})
+            RETURNING id`
+          const id = rows[0]!.id
+          yield* events.append({
+            subjectKind: "accessRule",
+            subjectId: id,
+            eventType: "AccessRuleAdded",
+            payload: {
+              _tag: "AccessRuleAdded",
+              roleId: input.roleId,
+              effect: input.effect,
+              actions: [...input.actions],
+              resourceType: input.resourceType,
+            } as never,
+          })
+          yield* policies.bump(orgId)
+          return { id }
+        }).pipe(Effect.orDie)
+
+      /** Remove one rule from a role. Idempotent. */
+      const removeRule = (ruleId: string) =>
+        Effect.gen(function* () {
+          const { orgId } = yield* OrgContext
+          const rows = yield* sql<{ readonly role_id: string | null }>`
+            DELETE FROM access_rules WHERE org_id = ${orgId} AND id = ${ruleId}
+            RETURNING role_id`
+          if (!rows[0]) return false
+          yield* events.append({
+            subjectKind: "accessRule",
+            subjectId: ruleId,
+            eventType: "AccessRuleRemoved",
+            payload: { _tag: "AccessRuleRemoved", roleId: rows[0].role_id } as never,
+          })
+          yield* policies.bump(orgId)
+          return true
+        }).pipe(Effect.orDie)
+
+      /**
+       * ── THE IRREDUCIBLE FLOOR ────────────────────────────────────────────────
+       *
+       * Would this change leave the org with NOBODY able to `configure` it?
+       *
+       * Presets are fully editable — that is the design — but an org that can no longer
+       * be administered is bricked with no in-app recovery. So the one thing that
+       * cannot be removed is the last holder of org `configure`. Mirrors the last-owner
+       * lock that already guards member demotion and deactivation.
+       *
+       * Deliberately computed from the RULES rather than from membership roles: once
+       * presets are editable, "is an owner" no longer implies "can configure".
+       */
+      const configureHolders = () =>
+        Effect.gen(function* () {
+          const { orgId } = yield* OrgContext
+          const rows = yield* sql<{ readonly actor_id: string }>`
+            SELECT DISTINCT a.actor_id
+            FROM access_role_actors a
+            JOIN access_rules r ON r.role_id = a.role_id AND r.org_id = a.org_id
+            WHERE a.org_id = ${orgId}
+              AND r.effect = 'allow'
+              AND (r.resource_type = 'org' OR r.resource_id IS NULL)
+              AND ('configure' = ANY(r.actions) OR '*' = ANY(r.actions))
+              -- A human, not an automation or connector: a bot holding configure does
+              -- not keep the org administrable by a person.
+              AND a.actor_id NOT LIKE 'system:%'`
+          return rows.map((r) => r.actor_id)
+        }).pipe(Effect.orDie)
+
+      return {
+        list,
+        getByKey,
+        ensureBuiltins,
+        assign,
+        unassign,
+        rolesOf,
+        actorsOf,
+        create,
+        update,
+        remove,
+        rulesOf: rulesOf,
+        addRule,
+        removeRule,
+        configureHolders,
+      } as const
     }),
-    dependencies: [PolicyService.Default],
+    dependencies: [PolicyService.Default, EventStore.Default],
   },
 ) {}
