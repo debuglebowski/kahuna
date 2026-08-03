@@ -326,6 +326,9 @@ describe("Linear integration", () => {
   })
 
   it("accepts a signed webhook, upserts the issue, and dedups a replay", async () => {
+    // `beforeEach` disables sync deployment-wide so the connect tests don't call
+    // out. The webhook honours that same toggle now, so re-enable it here.
+    delete process.env.LINEAR_SYNC_ENABLED
     const actor = await signUpAndOrg()
     await db.insert(linearConnection).values({
       orgId: actor.orgId,

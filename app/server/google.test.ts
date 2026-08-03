@@ -361,6 +361,11 @@ describe("Google integration", () => {
       watchToken: "token-1",
     })
 
+    // `beforeEach` disables sync deployment-wide so the OAuth-callback tests
+    // don't call out. Push honours that same toggle now, so this test — which is
+    // specifically about the push path doing work — has to turn it back on.
+    delete process.env.GOOGLE_SYNC_ENABLED
+
     let calendarCalls = 0
     setGoogleFetchForTest(async (input) => {
       const url = String(input)

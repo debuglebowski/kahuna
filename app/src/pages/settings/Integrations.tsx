@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { ChevronDown, Info, PlugZap, RefreshCw, ShieldCheck, Unplug } from "lucide-react"
 import { type ReactNode, useState } from "react"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Label } from "@/components/ui/label"
 import {
   Select,
   SelectContent,
@@ -9,7 +11,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Badge, Button, Card, CardHeader, Field, Input, Modal, Spinner } from "../../components/ui"
-import { api, type PosthogRegion } from "../../lib/api"
+import { api, type IntegrationSettings, type PosthogRegion } from "../../lib/api"
 import {
   ApolloLogo,
   ClayLogo,
@@ -344,6 +346,26 @@ function GoogleCard() {
     <IntegrationCard
       name="Google"
       icon={<GoogleLogo />}
+      settings={
+        <IntegrationSettingsPanel
+          rows={[
+            {
+              kind: "boolean",
+              key: "googleSyncEnabled",
+              label: "Sync Calendar and Gmail",
+              description:
+                "Applies to every member's Google connection in this organization — the connection is per person, this switch is not. Off also stops inbound push notifications and the Sync button.",
+            },
+            {
+              kind: "boolean",
+              key: "googleWatchEnabled",
+              label: "Keep push subscriptions alive",
+              description:
+                "Renews Calendar and Gmail watches hourly so changes arrive without polling. Needs GOOGLE_WEBHOOK_BASE_URL and a Pub/Sub topic configured on the server.",
+            },
+          ]}
+        />
+      }
       configured={configured}
       connected={connected}
       disabledHint="Google is not configured on this server. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to enable it."
@@ -419,6 +441,7 @@ export function IntegrationCard({
   disabledHint,
   action,
   children,
+  settings,
 }: {
   name: string
   icon: ReactNode
@@ -427,6 +450,9 @@ export function IntegrationCard({
   disabledHint?: string
   action?: ReactNode
   children?: ReactNode
+  /** Per-org toggles. Only rendered when connected — a toggle on a connector
+   *  nobody has set up is noise, and it has nothing to act on. */
+  settings?: ReactNode
 }) {
   const hasBody = Boolean(children)
   return (
@@ -455,7 +481,135 @@ export function IntegrationCard({
         }
       />
       {configured ? children : null}
+      {configured && connected ? settings : null}
     </Card>
+  )
+}
+
+type BooleanSettingKey = {
+  [K in keyof IntegrationSettings]: IntegrationSettings[K] extends boolean ? K : never
+}[keyof IntegrationSettings]
+type NumberSettingKey = {
+  [K in keyof IntegrationSettings]: IntegrationSettings[K] extends number ? K : never
+}[keyof IntegrationSettings]
+
+type SettingRow =
+  | { kind: "boolean"; key: BooleanSettingKey; label: string; description: string }
+  | {
+      kind: "number"
+      key: NumberSettingKey
+      label: string
+      description: string
+      unit: string
+      min: number
+    }
+
+/**
+ * The per-org settings block on a connected card.
+ *
+ * One component for all five connectors: the rows differ, the mechanics don't.
+ * Every card calls the same `["integrationSettings"]` query — react-query dedupes
+ * them into ONE request, so this stays a single fetch for the page.
+ *
+ * Admin-only, and hidden entirely for everyone else rather than shown disabled:
+ * a member has no path to change these, and the connector cards already hide
+ * actions the same way (`canManage` on ConnectedActions).
+ */
+function IntegrationSettingsPanel({ rows }: { rows: ReadonlyArray<SettingRow> }) {
+  const qc = useQueryClient()
+  const settings = useQuery({
+    queryKey: ["integrationSettings"],
+    queryFn: api.getIntegrationSettings,
+  })
+  const [bools, setBools] = useState<Record<string, boolean>>({})
+  // Numbers are held as typed TEXT, not parsed on every keystroke: parsing live
+  // means clearing the field to retype yields "" -> 0, which either snaps the
+  // input to 0 or (below `min`) silently refuses the edit and looks stuck.
+  const [nums, setNums] = useState<Record<string, string>>({})
+
+  const save = useMutation({
+    mutationFn: () => {
+      const patch: Record<string, boolean | number> = { ...bools }
+      for (const [k, raw] of Object.entries(nums)) {
+        const n = Number(raw)
+        if (raw.trim() !== "" && Number.isInteger(n)) patch[k] = n
+      }
+      return api.updateIntegrationSettings(patch)
+    },
+    onSuccess: () => {
+      setBools({})
+      setNums({})
+      qc.invalidateQueries({ queryKey: ["integrationSettings"] })
+    },
+  })
+
+  if (!settings.data?.canEdit) return null
+  const effective = settings.data.effective
+  const boolValue = (k: BooleanSettingKey) => bools[k] ?? effective[k]
+  const numValue = (k: NumberSettingKey) => nums[k] ?? String(effective[k])
+
+  // A number row is only dirty once it parses AND differs — a half-typed or
+  // empty field must not arm Save with a value the server would reject.
+  const numDirty = rows.some((r) => {
+    if (r.kind !== "number") return false
+    const raw = nums[r.key]
+    if (raw === undefined || raw.trim() === "") return false
+    const n = Number(raw)
+    return Number.isInteger(n) && n >= r.min && n !== effective[r.key]
+  })
+  const numInvalid = rows.some((r) => {
+    if (r.kind !== "number") return false
+    const raw = nums[r.key]
+    if (raw === undefined) return false
+    const n = Number(raw)
+    return raw.trim() === "" || !Number.isInteger(n) || n < r.min
+  })
+  const dirty = Object.keys(bools).length > 0 || numDirty
+
+  return (
+    <div className="space-y-4 border-t border-border p-6">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-sm font-medium text-foreground">Settings</span>
+        <Button
+          onClick={() => save.mutate()}
+          disabled={save.isPending || !dirty || numInvalid}
+          variant="secondary"
+        >
+          {save.isPending ? "Saving…" : "Save"}
+        </Button>
+      </div>
+
+      {rows.map((row) =>
+        row.kind === "boolean" ? (
+          <Label key={row.key} className="flex items-start gap-3 font-normal">
+            <Checkbox
+              className="mt-0.5"
+              checked={boolValue(row.key)}
+              onCheckedChange={(c) => setBools((d) => ({ ...d, [row.key]: c === true }))}
+            />
+            <span className="space-y-1">
+              <span className="block text-sm font-medium text-foreground">{row.label}</span>
+              <span className="block text-sm text-muted-foreground">{row.description}</span>
+            </span>
+          </Label>
+        ) : (
+          <Field key={row.key} label={row.label} hint={row.description}>
+            <div className="flex items-center gap-2">
+              <Input
+                type="number"
+                min={row.min}
+                className="w-32"
+                value={numValue(row.key)}
+                onChange={(e) => setNums((d) => ({ ...d, [row.key]: e.target.value }))}
+              />
+              <span className="text-sm text-muted-foreground">{row.unit}</span>
+            </div>
+          </Field>
+        ),
+      )}
+
+      <Feedback ok={save.isSuccess} okText="Saved." error={save.error} />
+    </div>
   )
 }
 
@@ -509,6 +663,28 @@ function PosthogCard() {
     <IntegrationCard
       name="PostHog"
       icon={<PosthogLogo />}
+      settings={
+        <IntegrationSettingsPanel
+          rows={[
+            {
+              kind: "boolean",
+              key: "posthogSyncEnabled",
+              label: "Sync people and events",
+              description:
+                "Off also makes inbound webhooks a no-op (still acknowledged, so PostHog does not disable the destination) and disables the Sync button.",
+            },
+            {
+              kind: "number",
+              key: "analyticsCacheTtlMs",
+              label: "Analytics cache",
+              description:
+                "How long an analytics widget reuses a result before querying PostHog again. 0 disables caching. Lives here because analytics runs on this connection.",
+              unit: "ms",
+              min: 0,
+            },
+          ]}
+        />
+      }
       configured
       connected={connected}
       action={
@@ -675,6 +851,19 @@ function LinearCard() {
     <IntegrationCard
       name="Linear"
       icon={<LinearLogo />}
+      settings={
+        <IntegrationSettingsPanel
+          rows={[
+            {
+              kind: "boolean",
+              key: "linearSyncEnabled",
+              label: "Mirror issues",
+              description:
+                "Off also makes inbound webhooks a no-op (still acknowledged and still signature-checked) and disables the Sync button.",
+            },
+          ]}
+        />
+      }
       configured
       connected={connected}
       action={
@@ -802,6 +991,18 @@ function SlackCard() {
     <IntegrationCard
       name="Slack"
       icon={<SlackLogo />}
+      settings={
+        <IntegrationSettingsPanel
+          rows={[
+            {
+              kind: "boolean",
+              key: "slackSyncEnabled",
+              label: "Sync channels",
+              description: "Off also disables the Sync button.",
+            },
+          ]}
+        />
+      }
       configured={configured}
       connected={connected}
       disabledHint="Slack is not configured on this server. Set SLACK_CLIENT_ID, SLACK_CLIENT_SECRET and SLACK_SIGNING_SECRET to enable it."
@@ -944,6 +1145,27 @@ function ApolloCard() {
     <IntegrationCard
       name="Apollo"
       icon={<ApolloLogo />}
+      settings={
+        <IntegrationSettingsPanel
+          rows={[
+            {
+              kind: "boolean",
+              key: "apolloEnrichCacheEnabled",
+              label: "Cache enrichment results",
+              description:
+                "Reuses a previous lookup instead of spending an Apollo credit. Turning it off does not purge what is already cached — disconnecting does.",
+            },
+            {
+              kind: "number",
+              key: "apolloEnrichCacheTtlDays",
+              label: "Cache lifetime",
+              description: "How long a cached person stays fresh before Apollo is asked again.",
+              unit: "days",
+              min: 1,
+            },
+          ]}
+        />
+      }
       configured
       connected={connected}
       action={

@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto"
 import { and, eq } from "drizzle-orm"
 import { posthogAuditLog, posthogConnection, posthogPersonMetric, posthogWebhookEvent } from "#db"
 import { db, pool } from "./db"
+import { readIntegrationSettings } from "./integrationSettings"
 import { type AuditEntry, writeAuditLog } from "./integrations/audit"
 import { decryptToken, encryptToken, webhookTokenFrom } from "./integrations/crypto"
 import { connectorFailure, publicConnectorError } from "./integrations/errors"
@@ -194,7 +195,7 @@ export async function connectPosthog(req: Request) {
     action: "connect",
     detail: { projectId: project.id, region },
   })
-  if (process.env.POSTHOG_SYNC_ENABLED !== "0") {
+  if ((await readIntegrationSettings(org.orgId)).posthogSyncEnabled) {
     await syncPosthogConnection(connection.id).catch((error) =>
       audit({
         orgId: org.orgId,
@@ -279,6 +280,9 @@ export async function syncPosthogForRequest(req: Request) {
   if (!org.ok) return json({ error: org.code }, org.status)
   const connection = await connectionForOrg(org.orgId)
   if (!connection) return json({ error: "NO_POSTHOG_CONNECTION" }, 404)
+  if (!(await readIntegrationSettings(org.orgId)).posthogSyncEnabled) {
+    return json({ error: "SYNC_DISABLED" }, 403)
+  }
   await syncPosthogConnection(connection.id)
   return json({ ok: true })
 }
@@ -461,6 +465,15 @@ export async function handlePosthogWebhook(req: Request) {
     )
     .limit(1)
   if (!connection) return json({ error: "BAD_TOKEN" }, 403)
+
+  // Gate AFTER the token check (a disabled org must still reject a bad token the
+  // same way a healthy one does) and BEFORE the dedupe insert (a key burned
+  // while disabled would make the redelivery after re-enabling look duplicate).
+  // 200, not 4xx: PostHog disables destinations that keep failing, and a toggle
+  // must not brick the registration the admin would then have to rebuild.
+  if (!(await readIntegrationSettings(connection.orgId)).posthogSyncEnabled) {
+    return json({ ok: true })
+  }
 
   const rawText = await req.text().catch(() => "")
   let body: Record<string, unknown> = {}

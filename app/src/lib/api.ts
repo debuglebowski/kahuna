@@ -181,6 +181,45 @@ const authConfigError = (code?: string, message?: string): string => {
   return message ? `${base} (${message})` : base
 }
 
+/**
+ * The per-org integration toggles. `effective` is what the server will actually
+ * do; `overrides` is null wherever this org inherits, and `defaults` is what it
+ * would inherit — the UI needs all three to render "Server default: on" next to
+ * a control the org hasn't overridden.
+ */
+export interface IntegrationSettings {
+  readonly googleSyncEnabled: boolean
+  readonly googleWatchEnabled: boolean
+  readonly slackSyncEnabled: boolean
+  readonly posthogSyncEnabled: boolean
+  readonly linearSyncEnabled: boolean
+  readonly apolloEnrichCacheEnabled: boolean
+  readonly apolloEnrichCacheTtlDays: number
+  readonly analyticsCacheTtlMs: number
+}
+export type IntegrationOverrides = {
+  readonly [K in keyof IntegrationSettings]: IntegrationSettings[K] | null
+}
+export type IntegrationSettingsPatch = {
+  readonly [K in keyof IntegrationSettings]?: IntegrationSettings[K] | null
+}
+export interface IntegrationSettingsPayload {
+  readonly effective: IntegrationSettings
+  readonly overrides: IntegrationOverrides
+  readonly defaults: IntegrationSettings
+  readonly canEdit: boolean
+}
+
+/** A sync route refused because the org turned that connector's sync off. */
+const syncError = async (res: Response, name: string): Promise<Error> => {
+  const body = (await res.json().catch(() => null)) as { error?: string } | null
+  return new Error(
+    body?.error === "SYNC_DISABLED"
+      ? `${name} sync is turned off for this organization.`
+      : `Failed to sync ${name}`,
+  )
+}
+
 export interface GoogleStatus {
   /** Server-side OAuth credentials present — false means the integration is disabled. */
   readonly configured: boolean
@@ -770,6 +809,27 @@ export const api = {
       throw new Error(authConfigError(body?.error))
     }
   },
+  // ── Integration settings (per-org toggles) ──────────────────────────────────
+  getIntegrationSettings: async (): Promise<IntegrationSettingsPayload> => {
+    const res = await fetch("/api/integrations/settings")
+    if (!res.ok) throw new Error("Failed to load integration settings")
+    return (await res.json()) as IntegrationSettingsPayload
+  },
+  updateIntegrationSettings: async (patch: IntegrationSettingsPatch): Promise<void> => {
+    const res = await fetch("/api/integrations/settings", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(patch),
+    })
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null
+      throw new Error(
+        body?.error === "FORBIDDEN"
+          ? "Only an admin can change these settings."
+          : "Failed to save integration settings.",
+      )
+    }
+  },
   // ── Google integration ──────────────────────────────────────────────────────
   getGoogleStatus: async (): Promise<GoogleStatus> => {
     const res = await fetch("/api/integrations/google/status")
@@ -782,7 +842,7 @@ export const api = {
   },
   syncGoogle: async (): Promise<void> => {
     const res = await fetch("/api/integrations/google/sync", { method: "POST" })
-    if (!res.ok) throw new Error("Failed to sync Google")
+    if (!res.ok) throw await syncError(res, "Google")
   },
   listGoogleCalendarEvents: async (): Promise<ReadonlyArray<GoogleCalendarEvent>> => {
     const res = await fetch("/api/integrations/google/calendar")
@@ -850,7 +910,7 @@ export const api = {
   },
   syncPosthog: async (): Promise<void> => {
     const res = await fetch("/api/integrations/posthog/sync", { method: "POST" })
-    if (!res.ok) throw new Error("Failed to sync PostHog")
+    if (!res.ok) throw await syncError(res, "PostHog")
   },
   listPosthogPersons: async (): Promise<ReadonlyArray<PosthogPerson>> => {
     const res = await fetch("/api/integrations/posthog/persons")
@@ -901,7 +961,7 @@ export const api = {
   },
   syncLinear: async (): Promise<void> => {
     const res = await fetch("/api/integrations/linear/sync", { method: "POST" })
-    if (!res.ok) throw new Error("Failed to sync Linear")
+    if (!res.ok) throw await syncError(res, "Linear")
   },
   listLinearIssues: async (): Promise<ReadonlyArray<LinearIssue>> => {
     const res = await fetch("/api/integrations/linear/issues")
@@ -951,7 +1011,7 @@ export const api = {
   },
   syncSlack: async (): Promise<void> => {
     const res = await fetch("/api/integrations/slack/sync", { method: "POST" })
-    if (!res.ok) throw new Error("Failed to sync Slack")
+    if (!res.ok) throw await syncError(res, "Slack")
   },
   listSlackChannels: async (): Promise<ReadonlyArray<SlackChannel>> => {
     const res = await fetch("/api/integrations/slack/channels")

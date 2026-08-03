@@ -2,6 +2,7 @@ import { and, eq, gt } from "drizzle-orm"
 import { apolloAuditLog, apolloConnection, apolloEnrichmentCache } from "#db"
 import type { OrgScope } from "#engine"
 import { db } from "./db"
+import { readIntegrationSettings } from "./integrationSettings"
 import { type AuditEntry, writeAuditLog } from "./integrations/audit"
 import { decryptToken, encryptToken } from "./integrations/crypto"
 import { connectorFailure } from "./integrations/errors"
@@ -29,8 +30,9 @@ import { createInstance, getInstance, updateInstance } from "./use-cases"
  * Compliance: Apollo data is contact PII. We store only the encrypted API key
  * plus an OPTIONAL, org-scoped, TTL'd enrichment cache (to conserve Apollo
  * credits on repeat lookups). The cache is purged on disconnect and can be
- * disabled with APOLLO_ENRICH_CACHE_ENABLED=0. Enrichment results otherwise live
- * only on the KM instance fields the operator explicitly mapped.
+ * disabled per org in Settings → Integrations (deployment default:
+ * APOLLO_ENRICH_CACHE_ENABLED=0). Enrichment results otherwise live only on the
+ * KM instance fields the operator explicitly mapped.
  *
  * DEFERRED (follow-ups, not built here): auto-enrich on instance create, Apollo
  * sequence-action writes, and a per-instance "Enrich with Apollo" Details-tile
@@ -342,12 +344,6 @@ const ctxFor = (conn: typeof apolloConnection.$inferSelect): RequestCtx => {
 
 // ── enrichment cache (credit-conserving, opt-out) ─────────────────────────────
 
-const cacheEnabled = () => process.env.APOLLO_ENRICH_CACHE_ENABLED !== "0"
-const cacheTtlMs = () => {
-  const days = Number(process.env.APOLLO_ENRICH_CACHE_TTL_DAYS)
-  return (Number.isFinite(days) && days > 0 ? days : 30) * 24 * 60 * 60 * 1000
-}
-
 /** Deterministic cache key for a lookup (order-independent, lowercased). */
 const lookupKeyFor = (query: EnrichQuery): string =>
   Object.entries(query)
@@ -368,8 +364,10 @@ async function enrichWithCache(
   query: EnrichQuery,
 ): Promise<{ person: NormalizedPerson | null; cached: boolean }> {
   const key = lookupKeyFor(query)
-  if (cacheEnabled() && key) {
-    const cutoff = new Date(Date.now() - cacheTtlMs())
+  const settings = await readIntegrationSettings(orgId)
+  const cacheOn = settings.apolloEnrichCacheEnabled
+  if (cacheOn && key) {
+    const cutoff = new Date(Date.now() - settings.apolloEnrichCacheTtlDays * 24 * 60 * 60 * 1000)
     const [hit] = await db
       .select()
       .from(apolloEnrichmentCache)
@@ -384,7 +382,7 @@ async function enrichWithCache(
     if (hit) return { person: hit.person as NormalizedPerson, cached: true }
   }
   const person = await enrichPerson(ctx, query)
-  if (person && cacheEnabled() && key) {
+  if (person && cacheOn && key) {
     await db
       .insert(apolloEnrichmentCache)
       .values({ orgId, lookupKey: key, person })

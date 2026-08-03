@@ -13,6 +13,7 @@ import {
 } from "#db"
 import type { OrgScope } from "#engine"
 import { db, pool } from "./db"
+import { readIntegrationSettings } from "./integrationSettings"
 import { type AuditEntry, writeAuditLog } from "./integrations/audit"
 import { decryptToken, encryptToken, secretMatches } from "./integrations/crypto"
 import { publicConnectorError } from "./integrations/errors"
@@ -297,7 +298,8 @@ export async function handleGoogleCallback(req: Request) {
     action: "connect",
     detail: { scopes: grantedScopes },
   })
-  if (process.env.GOOGLE_SYNC_ENABLED !== "0") {
+  const settings = await readIntegrationSettings(org.orgId)
+  if (settings.googleSyncEnabled) {
     await syncGoogleConnection(connection.id).catch((error) =>
       audit({
         orgId: org.orgId,
@@ -309,7 +311,7 @@ export async function handleGoogleCallback(req: Request) {
       }),
     )
   }
-  if (process.env.GOOGLE_WATCH_ENABLED === "1") {
+  if (settings.googleWatchEnabled) {
     await renewWatches(connection.id).catch(() => undefined)
   }
   return redirect(safeReturnTo(stored.returnTo))
@@ -430,6 +432,11 @@ export async function syncGoogleForRequest(req: Request) {
     .where(and(eq(googleConnection.orgId, org.orgId), eq(googleConnection.userId, org.actor)))
     .limit(1)
   if (!connection) return json({ error: "NO_GOOGLE_CONNECTION" }, 404)
+  // The org toggle wins over a manual click: this handler is `resolveOrg`, so
+  // without the check any member could sync past an admin's "sync off".
+  if (!(await readIntegrationSettings(org.orgId)).googleSyncEnabled) {
+    return json({ error: "SYNC_DISABLED" }, 403)
+  }
   await syncGoogleConnection(connection.id)
   return json({ ok: true })
 }
@@ -1219,7 +1226,15 @@ export async function handleGmailPush(req: Request) {
   const email = decoded?.emailAddress
   if (typeof email !== "string") return json({ error: "BAD_GMAIL_PUSH" }, 400)
   const rows = await db.select().from(googleConnection).where(eq(googleConnection.email, email))
-  for (const row of rows) await syncGmail(row.id).catch(() => undefined)
+  // Per row, not once: one address can be connected in several orgs, and each
+  // org's toggle is its own. KNOWN GAP — `markNotification` above burns the
+  // dedupe key before any org is known, so a push arriving while an org has sync
+  // off is dropped rather than replayed on re-enable. The notification is a ping,
+  // not the data; the next push or a manual sync picks the mail up.
+  for (const row of rows) {
+    if (!(await readIntegrationSettings(row.orgId)).googleSyncEnabled) continue
+    await syncGmail(row.id).catch(() => undefined)
+  }
   return json({ ok: true })
 }
 
@@ -1237,8 +1252,19 @@ export async function handleCalendarPush(req: Request) {
     .where(eq(googleCalendarSync.watchChannelId, channelId))
     .limit(1)
   if (!sync || sync.watchToken !== channelToken) return json({ error: "BAD_CHANNEL" }, 403)
-  if (state !== "sync")
-    await syncCalendar(sync.connectionId, sync.calendarId).catch(() => undefined)
+  if (state !== "sync") {
+    // The sync row carries only `connectionId`, so the org costs one lookup —
+    // taken after the channel-token check so a disabled org still 403s a forged
+    // channel, and only on real notifications (never the initial "sync" ping).
+    const [conn] = await db
+      .select({ orgId: googleConnection.orgId })
+      .from(googleConnection)
+      .where(eq(googleConnection.id, sync.connectionId))
+      .limit(1)
+    if (conn && (await readIntegrationSettings(conn.orgId)).googleSyncEnabled) {
+      await syncCalendar(sync.connectionId, sync.calendarId).catch(() => undefined)
+    }
+  }
   return json({ ok: true })
 }
 
@@ -1345,19 +1371,36 @@ async function stopCalendarWatch(connectionId: string) {
   })
 }
 
+/**
+ * Hourly watch renewal.
+ *
+ * There is deliberately NO boot-time env gate any more. The old
+ * `GOOGLE_WATCH_ENABLED !== "1"` check returned before `setInterval` was ever
+ * scheduled, so on the deployments that never opted in — exactly the population
+ * a per-org toggle exists for — no org could ever turn watches on. The env var
+ * survives as the per-org DEFAULT (still opt-in, still `=== "1"`), so a
+ * deployment that never set it renews exactly nothing; the cost is one indexed
+ * query an hour that skips every row it finds.
+ *
+ * Filtering is in TS rather than the SQL because "row absent OR column true"
+ * depends on which way the env default points — encoding that in a SQL string
+ * would duplicate the polarity into the one place it's most likely to drift.
+ */
 export function startGoogleWatchRenewal() {
-  if (process.env.GOOGLE_WATCH_ENABLED !== "1") return
   const run = async () => {
     const soon = new Date(Date.now() + 24 * 60 * 60 * 1000)
-    const rows = await pool.query<{ id: string }>(
-      `SELECT id FROM google_connection WHERE status = 'connected' AND id IN (
+    const rows = await pool.query<{ id: string; org_id: string }>(
+      `SELECT id, org_id FROM google_connection WHERE status = 'connected' AND id IN (
          SELECT connection_id FROM google_calendar_sync WHERE watch_expires_at IS NULL OR watch_expires_at < $1
          UNION
          SELECT connection_id FROM google_gmail_sync WHERE watch_expiration IS NULL OR watch_expiration < $1
        )`,
       [soon],
     )
-    for (const row of rows.rows) await renewWatches(row.id).catch(() => undefined)
+    for (const row of rows.rows) {
+      if (!(await readIntegrationSettings(row.org_id)).googleWatchEnabled) continue
+      await renewWatches(row.id).catch(() => undefined)
+    }
   }
   void run()
   setInterval(() => void run(), 60 * 60 * 1000).unref()

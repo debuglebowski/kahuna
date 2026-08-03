@@ -3,6 +3,7 @@ import { and, eq } from "drizzle-orm"
 import { linearAuditLog, linearConnection, linearIssue, linearWebhookEvent } from "#db"
 import type { OrgScope } from "#engine"
 import { db, pool } from "./db"
+import { readIntegrationSettings } from "./integrationSettings"
 import { type AuditEntry, writeAuditLog } from "./integrations/audit"
 import { decryptToken, encryptToken, webhookTokenFrom } from "./integrations/crypto"
 import { connectorFailure, publicConnectorError } from "./integrations/errors"
@@ -258,7 +259,7 @@ export async function connectLinear(req: Request) {
     action: "connect",
     detail: { viewerId: viewer.id },
   })
-  if (process.env.LINEAR_SYNC_ENABLED !== "0") {
+  if ((await readIntegrationSettings(org.orgId)).linearSyncEnabled) {
     await syncLinearConnection(connection.id).catch((error) =>
       audit({
         orgId: org.orgId,
@@ -436,6 +437,9 @@ export async function syncLinearForRequest(req: Request) {
   if (!org.ok) return json({ error: org.code }, org.status)
   const connection = await connectionForOrg(org.orgId)
   if (!connection) return json({ error: "NO_LINEAR_CONNECTION" }, 404)
+  if (!(await readIntegrationSettings(org.orgId)).linearSyncEnabled) {
+    return json({ error: "SYNC_DISABLED" }, 403)
+  }
   await syncLinearConnection(connection.id)
   return json({ ok: true })
 }
@@ -540,6 +544,14 @@ export async function handleLinearWebhook(req: Request) {
     signature.length === expected.length &&
     timingSafeEqual(Buffer.from(signature), Buffer.from(expected))
   if (!valid) return json({ error: "INVALID_SIGNATURE" }, 401)
+
+  // AFTER the HMAC, not after the token lookup: the signature is the
+  // authenticator here (the token only routes), so it must run for a disabled
+  // org too. 200 so Linear doesn't disable the webhook; before the dedupe insert
+  // so a redelivery after re-enabling isn't swallowed as a duplicate.
+  if (!(await readIntegrationSettings(connection.orgId)).linearSyncEnabled) {
+    return json({ ok: true })
+  }
 
   let body: LinearWebhookBody = {}
   try {

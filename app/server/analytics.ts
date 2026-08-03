@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto"
+import { readIntegrationSettings } from "./integrationSettings"
 import { connectorFailure } from "./integrations/errors"
 import { posthogConnectionForOrg, posthogCtxFor, posthogRequest } from "./posthog"
 import { resolveOrg } from "./session"
@@ -215,7 +216,6 @@ const sumPoints = (points: ReadonlyArray<SeriesPoint>): number =>
 
 // ── cache ─────────────────────────────────────────────────────────────────────
 
-const CACHE_TTL_MS = Number(process.env.ANALYTICS_CACHE_TTL_MS ?? 60_000)
 const cache = new Map<string, { at: number; value: AnalyticsResult }>()
 
 /**
@@ -264,9 +264,18 @@ export const runAnalyticsQuery = async (
   orgId: string,
   q: AnalyticsQuery,
 ): Promise<AnalyticsResult | { readonly error: string }> => {
+  // The TTL is per-org, so it has to be resolved before the cache check. That
+  // does NOT undo the deferral below: `readIntegrationSettings` memoizes the org
+  // row for 30s, so on the warm path this is a Map lookup and touches no DB, and
+  // the connection lookup still happens only on a miss.
+  //
+  // Rejected: stashing the TTL in the cache entry at write time. Free on hits,
+  // but lowering the TTL then wouldn't take effect until the entry it governs
+  // expired — a setting that doesn't apply until the thing it controls times out.
+  const ttlMs = (await readIntegrationSettings(orgId)).analyticsCacheTtlMs
   const key = cacheKeyFor(orgId, q)
   const hit = cache.get(key)
-  if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.value
+  if (hit && Date.now() - hit.at < ttlMs) return hit.value
 
   const custom = q.metric === "custom"
   // Fail on an unusable query before spending a connection lookup on it.

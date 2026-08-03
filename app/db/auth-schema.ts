@@ -209,6 +209,42 @@ export const orgAuthSettings = pgTable("org_auth_settings", {
     .notNull(),
 })
 
+/**
+ * Per-org overrides for the integration knobs that used to be env-only
+ * (`GOOGLE_SYNC_ENABLED`, `ANALYTICS_CACHE_TTL_MS`, …). The env vars survive as
+ * the DEPLOYMENT DEFAULT; a row here refines it for one org.
+ *
+ * Every column is NULLABLE with no default, and that is load-bearing. With
+ * `notNull().default(...)` — the shape `orgAuthSettings` above uses — the moment
+ * an admin flips ONE toggle the row materializes and the column defaults
+ * silently override the env default for the other seven. A deployment shipping
+ * `GOOGLE_SYNC_ENABLED=0` would see Google sync switch itself back on the first
+ * time someone touched the Linear toggle. NULL = "inherit the deployment
+ * default", so an absent row and an absent value are the same case and there is
+ * exactly one fallback path (server/integrationSettings.ts).
+ *
+ * Ranges are validated at the write path, not by CHECK constraints, for the same
+ * reason spelled out on `orgAuthSettings`: one place, not two. The accessor also
+ * clamps on read, so a row hand-edited in psql can't produce a NaN TTL.
+ */
+export const orgIntegrationSettings = pgTable("org_integration_settings", {
+  orgId: text("org_id")
+    .primaryKey()
+    .references(() => organization.id, { onDelete: "cascade" }),
+  googleSyncEnabled: boolean("google_sync_enabled"),
+  googleWatchEnabled: boolean("google_watch_enabled"),
+  slackSyncEnabled: boolean("slack_sync_enabled"),
+  posthogSyncEnabled: boolean("posthog_sync_enabled"),
+  linearSyncEnabled: boolean("linear_sync_enabled"),
+  apolloEnrichCacheEnabled: boolean("apollo_enrich_cache_enabled"),
+  apolloEnrichCacheTtlDays: integer("apollo_enrich_cache_ttl_days"),
+  analyticsCacheTtlMs: integer("analytics_cache_ttl_ms"),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .defaultNow()
+    .$onUpdate(() => /* @__PURE__ */ new Date())
+    .notNull(),
+})
+
 export const googleConnection = pgTable(
   "google_connection",
   {

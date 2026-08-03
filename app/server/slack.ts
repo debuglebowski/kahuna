@@ -9,6 +9,7 @@ import {
   slackUserConnection,
 } from "#db"
 import { db } from "./db"
+import { readIntegrationSettings } from "./integrationSettings"
 import { type AuditEntry, writeAuditLog } from "./integrations/audit"
 import { decryptToken, encryptToken } from "./integrations/crypto"
 import { connectorFailure, publicConnectorError } from "./integrations/errors"
@@ -463,7 +464,7 @@ export async function handleSlackCallback(req: Request) {
     action: "connect",
     detail: { teamId: data.team.id, scope: data.scope },
   })
-  if (process.env.SLACK_SYNC_ENABLED !== "0") {
+  if ((await readIntegrationSettings(org.orgId)).slackSyncEnabled) {
     await syncSlackChannels(connection.id).catch((error) =>
       audit({
         orgId: org.orgId,
@@ -658,6 +659,9 @@ export async function syncSlackForRequest(req: Request) {
   if (!org.ok) return json({ error: org.code }, org.status)
   const connection = await connectionForOrg(org.orgId)
   if (connection?.status !== "connected") return json({ error: "NO_SLACK_CONNECTION" }, 404)
+  if (!(await readIntegrationSettings(org.orgId)).slackSyncEnabled) {
+    return json({ error: "SYNC_DISABLED" }, 403)
+  }
   await syncSlackChannels(connection.id)
   return json({ ok: true })
 }

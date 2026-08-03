@@ -34,6 +34,7 @@ import {
   upsertGoogleCalendarEvent,
 } from "./google"
 import { attachmentSecurityHeaders } from "./headers"
+import { integrationSettingsStatus, updateIntegrationSettings } from "./integrationSettings"
 import {
   closeLinearIssueForRequest,
   connectLinear,
@@ -181,6 +182,13 @@ export const handleApi = async (req: Request): Promise<Response | null> => {
     if (seg[2] === "sso" && !seg[3] && m === "POST") return saveSsoProvider(req)
     if (seg[2] === "sso" && !seg[3] && m === "DELETE") return deleteSsoProvider(req)
     if (seg[2] === "methods" && !seg[3] && m === "POST") return updateAuthMethods(req)
+  }
+
+  // Per-org overrides for the connector toggles. Sibling of the connectors
+  // rather than a sub-route of any one of them — the payload covers all six.
+  if (seg[1] === "integrations" && seg[2] === "settings" && !seg[3]) {
+    if (m === "GET") return integrationSettingsStatus(req)
+    if (m === "POST") return updateIntegrationSettings(req)
   }
 
   if (seg[1] === "integrations" && seg[2] === "google") {

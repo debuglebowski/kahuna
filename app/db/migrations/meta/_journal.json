@@ -43,6 +43,13 @@
       "when": 1785769096727,
       "tag": "0005_huge_vapor",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1785783539335,
+      "tag": "0006_friendly_nightmare",
+      "breakpoints": true
     }
   ]
 }

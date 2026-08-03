@@ -7,8 +7,13 @@
 - `GOOGLE_REDIRECT_URI`
 - `INTEGRATION_ENCRYPTION_KEY`: 32 random bytes, base64 or 64-char hex. Shared
   by every connector, not just Google. Was `GOOGLE_TOKEN_ENCRYPTION_KEY`.
-- `GOOGLE_SYNC_ENABLED`: set `0` to skip callback-time sync.
-- `GOOGLE_WATCH_ENABLED`: set `1` to enable watch renewal.
+- `GOOGLE_SYNC_ENABLED`: deployment DEFAULT for the org-level sync toggle;
+  set `0` to default it off. Per-org overrides live in Settings →
+  Integrations (`org_integration_settings`) and win over this. Gates the
+  callback backfill, inbound push, and the Sync button.
+- `GOOGLE_WATCH_ENABLED`: deployment DEFAULT for watch renewal (opt-in — set
+  `1` to default it on). Per-org override as above. The hourly renewal loop
+  now always runs and skips orgs whose effective value is off.
 - `GOOGLE_WEBHOOK_BASE_URL`: public app origin for Calendar webhooks.
 - `GOOGLE_PUBSUB_TOPIC`: Gmail Pub/Sub topic, e.g. `projects/<id>/topics/<topic>`.
 - `GOOGLE_PUBSUB_VERIFICATION_TOKEN`: reserved for Pub/Sub push verification.
@@ -49,7 +54,8 @@ Gmail `gmail.metadata`, `gmail.readonly`, `gmail.compose`, and `gmail.modify` ar
 - Gmail sync stores `historyId`; HTTP 404 triggers full resync.
 - Gmail push carries email/history ID through Pub/Sub and enqueues incremental sync.
 - Calendar push carries channel headers only; handler dedupes and runs incremental sync.
-- Renewal runs hourly when `GOOGLE_WATCH_ENABLED=1`.
+- Renewal runs hourly, per connection, for orgs whose effective
+  `googleWatchEnabled` is on (`GOOGLE_WATCH_ENABLED=1` is the default).
 
 References:
 
