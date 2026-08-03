@@ -86,6 +86,7 @@ export {
   EventStore,
 } from "./services/EventStore"
 export { type AddFieldInput, FieldService } from "./services/FieldService"
+export { type CreateGrantInput, type Grant, GrantService } from "./services/GrantService"
 export {
   type GraphLayoutPositions,
   GraphLayoutService,
@@ -98,6 +99,8 @@ export { OrgContext, type OrgScope, type ScopeRole } from "./services/OrgContext
 export { PolicyService } from "./services/PolicyService"
 export { type FindInstancesInput, QueryService } from "./services/QueryService"
 export { type CreateRelationInput, RelationService } from "./services/RelationService"
+// `toVisibility` only: the rest of rows.ts is row-mapping internals.
+export { toVisibility } from "./services/rows"
 export { SidebarViewService } from "./services/SidebarViewService"
 // Infrastructure
 export { healthCheck, PgLive } from "./services/Sql"

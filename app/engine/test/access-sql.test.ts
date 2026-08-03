@@ -14,7 +14,9 @@ import { AccessRoleService } from "../services/AccessRoleService"
 import { ConceptService } from "../services/ConceptService"
 import { FieldService } from "../services/FieldService"
 import { InstanceService } from "../services/InstanceService"
+import { OrgContext } from "../services/OrgContext"
 import { PolicyService } from "../services/PolicyService"
+import { QueryService } from "../services/QueryService"
 import type { InstanceRow } from "../services/rows"
 import { newOrgId, testLayer } from "./harness"
 
@@ -294,3 +296,151 @@ describe("policy loading", () => {
     }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
 })
+
+/**
+ * ── THE LIST/DETAIL AGREEMENT ────────────────────────────────────────────────
+ *
+ * The whole point of record-level access: "you see only the rows shared with you".
+ *
+ * Two halves have to agree — `QueryService` compiles rules into SQL for lists,
+ * `InstanceService.assertRecordReadable` decides by id. A disagreement means a member
+ * opens a record their list hid, or sees a row they cannot open. These tests assert
+ * BOTH for the same fixtures, which is why they live together.
+ */
+describe("record-level access, end to end", () => {
+  const SHAREE = "user-carol"
+
+  /** A share of one record: the rule shape the Share dialog will write. */
+  const shareOf = (itemId: string, conceptId: string): PolicySet => ({
+    ...emptyPolicy(SHAREE),
+    rules: [
+      {
+        id: randomUUID(),
+        roleId: null,
+        actorId: SHAREE,
+        effect: "allow",
+        actions: ["view"],
+        resourceType: "record",
+        resourceId: itemId,
+        conceptId,
+        condition: null,
+      },
+    ],
+  })
+
+  it.effect("a restricted concept + one share = exactly that record, and it opens", () =>
+    Effect.gen(function* () {
+      const f = yield* seed()
+      const concepts = yield* ConceptService
+      // 'admin' default: a member sees no records of this concept at all…
+      yield* concepts.setVisibility(f.conceptId, "admin")
+      const policy = shareOf(f.theirs.itemId, f.conceptId)
+
+      // …except the one shared with them. THE LIST half.
+      const listed = yield* Effect.provideService(
+        Effect.flatMap(QueryService, (q) => q.findInstances({ conceptId: f.conceptId })),
+        OrgContext,
+        { orgId: ORG, actor: SHAREE, role: "member", policy },
+      )
+      expect(listed.map((r) => r.itemId)).toEqual([f.theirs.itemId])
+
+      // THE BY-ID half must agree — same record readable…
+      const opened = yield* Effect.provideService(
+        Effect.flatMap(InstanceService, (i) => i.get(f.theirs.id)),
+        OrgContext,
+        { orgId: ORG, actor: SHAREE, role: "member", policy },
+      )
+      expect(opened.itemId).toBe(f.theirs.itemId)
+
+      // …and a NON-shared record of the same concept must NOT open. This is the
+      // failure a naive `fallback = true` would introduce: the list is right while
+      // every record opens by id.
+      const other = yield* Effect.provideService(
+        Effect.flatMap(InstanceService, (i) => i.get(f.mine.id)).pipe(
+          Effect.map(() => "opened"),
+          Effect.catchTag("InstanceNotFound", () => Effect.succeed("not-found")),
+        ),
+        OrgContext,
+        { orgId: ORG, actor: SHAREE, role: "member", policy },
+      )
+      expect(other).toBe("not-found")
+    }).pipe(Effect.provide(testLayer(ORG))),
+  )
+
+  it.effect("THE COUNT GUARD: the limit bounds VISIBLE rows, not fetched rows", () =>
+    Effect.gen(function* () {
+      // Why the filter must be in the SQL. With a post-fetch filter, `limit: 2` would
+      // fetch the 2 newest rows and then drop the ones the caller can't see — so a
+      // caller entitled to 3 records would get 0-2 of them depending on ordering.
+      const f = yield* seed()
+      const concepts = yield* ConceptService
+      yield* concepts.setVisibility(f.conceptId, "admin")
+      const policy: PolicySet = {
+        ...emptyPolicy(SHAREE),
+        rules: [f.mine, f.ownedByMe, f.theirs].map((r) => ({
+          id: randomUUID(),
+          roleId: null,
+          actorId: SHAREE,
+          effect: "allow" as const,
+          actions: ["view" as const],
+          resourceType: "record" as const,
+          resourceId: r.itemId,
+          conceptId: f.conceptId,
+          condition: null,
+        })),
+      }
+      const all = yield* Effect.provideService(
+        Effect.flatMap(QueryService, (q) => q.findInstances({ conceptId: f.conceptId })),
+        OrgContext,
+        { orgId: ORG, actor: SHAREE, role: "member", policy },
+      )
+      expect(all.length).toBe(3)
+      // A limit of 2 must return 2 VISIBLE rows — not 2 fetched then filtered.
+      const limited = yield* Effect.provideService(
+        Effect.flatMap(QueryService, (q) => q.findInstances({ conceptId: f.conceptId, limit: 2 })),
+        OrgContext,
+        { orgId: ORG, actor: SHAREE, role: "member", policy },
+      )
+      expect(limited.length).toBe(2)
+    }).pipe(Effect.provide(testLayer(ORG))),
+  )
+
+  it.effect("a share survives publishing a new version (rules key on the lineage)", () =>
+    Effect.gen(function* () {
+      // Why record rules key on items.id, never instances.id: a versioned concept has
+      // N version rows per record, and a new version must not silently revoke a share.
+      const f = yield* seed()
+      const concepts = yield* ConceptService
+      const instances = yield* InstanceService
+      yield* concepts.update({ id: f.conceptId, description: null, versioningEnabled: true })
+      yield* concepts.setVisibility(f.conceptId, "admin")
+      const policy = shareOf(f.theirs.itemId, f.conceptId)
+
+      const before = yield* Effect.provideService(
+        Effect.flatMap(QueryService, (q) => q.findInstances({ conceptId: f.conceptId })),
+        OrgContext,
+        { orgId: ORG, actor: SHAREE, role: "member", policy },
+      )
+      expect(before.map((r) => r.itemId)).toEqual([f.theirs.itemId])
+
+      // Publish a fresh version of the shared record, as the owner.
+      const draft = yield* instances.newVersion({ itemId: f.theirs.itemId })
+      yield* instances.publishVersion({
+        instanceId: draft.id,
+        expectedVersion: draft.version,
+      })
+
+      const after = yield* Effect.provideService(
+        Effect.flatMap(QueryService, (q) => q.findInstances({ conceptId: f.conceptId })),
+        OrgContext,
+        { orgId: ORG, actor: SHAREE, role: "member", policy },
+      )
+      expect(after.map((r) => r.itemId)).toEqual([f.theirs.itemId])
+      // …and it is the NEW head, not the superseded row.
+      expect(after[0]!.versionSeq).toBeGreaterThan(1)
+    }).pipe(Effect.provide(testLayer(ORG))),
+  )
+})
+
+/** One org for the end-to-end block; the seed helper writes into whatever layer runs. */
+const ORG = newOrgId()

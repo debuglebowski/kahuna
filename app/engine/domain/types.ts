@@ -1123,6 +1123,10 @@ export type SubjectKind =
   | "annotationField"
   | "attachment"
   | "automation"
+  // Access control: a role and its rules are auditable subjects like anything else,
+  // so role/rule/share changes land on the ordinary event log.
+  | "accessRole"
+  | "accessRule"
 
 /** The annotation variant. Append-only; "comment" etc. may follow. */
 export type AnnotationType = "note" | "task"

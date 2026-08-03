@@ -1,6 +1,7 @@
 import { PgClient } from "@effect/sql-pg"
 import { Effect, Either } from "effect"
 import { BlobStore } from "../blob/BlobStore"
+import { decideRecord, recordRulesForConcept } from "../domain/access"
 import { isRichText, MAX_RICHTEXT_CHARS, richTextWalk } from "../domain/richtext"
 import {
   type ConceptRef,
@@ -11,7 +12,7 @@ import {
   LABELS_KEY,
 } from "../domain/types"
 import { canEditVersion, isAmendment } from "../domain/versioning"
-import { scopeCanReadConcept } from "../domain/visibility"
+import { scopeCanReadConcept, scopeConceptRead } from "../domain/visibility"
 import {
   DraftAlreadyExists,
   FieldValidationError,
@@ -390,7 +391,7 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
     const create = (input: ConceptRef & { readonly fields: Record<string, unknown> }) =>
       sql.withTransaction(
         Effect.gen(function* () {
-          const { orgId } = yield* OrgContext
+          const { orgId, actor } = yield* OrgContext
           const concept =
             "conceptId" in input
               ? yield* concepts.getById(input.conceptId)
@@ -429,8 +430,13 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
           // seq 1; on a versioned concept it's a `draft` (not referenceable until
           // published), otherwise a `published` row (the plain 1:1 model).
           const versionStatus = concept.versioningEnabled ? "draft" : "published"
+          // `created_by` is stamped on the LINEAGE, once, at creation: publishing a
+          // new version must never reassign who made the record. It is what the
+          // `actorIs: "creator"` access condition filters on ("records I created").
           const itemRows = yield* sql<ItemRow>`
-            INSERT INTO items (org_id, concept_id) VALUES (${orgId}, ${concept.id}) RETURNING *`
+            INSERT INTO items (org_id, concept_id, created_by)
+            VALUES (${orgId}, ${concept.id}, ${actor})
+            RETURNING *`
           const item = toItem(itemRows[0]!)
           const inserted = yield* sql<InstanceRow>`
             INSERT INTO instances (org_id, concept_id, item_id, state, version, version_status, version_seq)
@@ -720,6 +726,72 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
           return yield* Effect.fail(new InstanceNotFound({ instanceId }))
       })
 
+    /**
+     * Record-level read gate, layered on the concept gate above.
+     *
+     * THE LIST/DETAIL AGREEMENT: `QueryService` compiles the same rules into SQL for
+     * lists. This is the by-id half, and the two must answer identically — otherwise
+     * a member opens a record their list correctly hid, or sees a row they cannot
+     * open. `matchesCondition` and `compileCondition` are held in step by
+     * `access-sql.test.ts`; this function is what puts the by-id side on that path.
+     *
+     * Keyed by ITEM id (the lineage), like every record rule: a share must survive
+     * publishing a new version.
+     *
+     * Fast path: no record rules ⇒ nothing to decide, and no query is issued. That is
+     * the overwhelmingly common case, so a by-id read costs exactly what it did
+     * before this feature.
+     */
+    const assertRecordReadable = (
+      conceptId: string,
+      itemId: string,
+      failId: string,
+      // Passed when the caller already holds the row, to save a fetch.
+      knownState?: Record<string, unknown>,
+    ) =>
+      Effect.gen(function* () {
+        const scope = yield* OrgContext
+        if (!scope.policy || scope.policy.unrestricted) return
+        const rules = recordRulesForConcept(scope.policy, "view", conceptId)
+        if (rules.length === 0) return
+        // Only reached when a record rule exists. `created_by` lives on the lineage;
+        // `state` comes from the head version when the caller didn't supply it.
+        const rows = yield* sql<{
+          readonly created_by: string | null
+          readonly state: Record<string, unknown> | null
+          readonly visibility: string | null
+        }>`
+          SELECT i.created_by, c.visibility,
+                 (SELECT state FROM instances
+                  WHERE item_id = i.id AND version_status = 'published' AND archived_at IS NULL
+                  ORDER BY version_seq DESC LIMIT 1) AS state
+          FROM items i JOIN concepts c ON c.id = i.concept_id
+          WHERE i.id = ${itemId} LIMIT 1`
+        const record = {
+          state: knownState ?? rows[0]?.state ?? {},
+          createdBy: rows[0]?.created_by ?? null,
+        }
+        // THE FALLBACK MUST MATCH THE LIST'S. `QueryService` passes
+        // `recordsByDefault` from the same function; passing `true` here instead would
+        // let a share-only caller open ANY record of the concept while their list
+        // correctly showed one. Same inputs, same answer.
+        const { recordsByDefault } = scopeConceptRead(
+          scope,
+          conceptId,
+          toVisibility(rows[0]?.visibility ?? null),
+        )
+        if (
+          !decideRecord(
+            scope.policy,
+            "view",
+            { type: "record", id: itemId, conceptId },
+            recordsByDefault,
+            record,
+          )
+        )
+          return yield* Effect.fail(new InstanceNotFound({ instanceId: failId }))
+      })
+
     const get = (instanceId: string) =>
       Effect.gen(function* () {
         const { orgId } = yield* OrgContext
@@ -729,6 +801,7 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
         const row = rows[0]
         if (!row) return yield* Effect.fail(new InstanceNotFound({ instanceId }))
         yield* assertConceptVisible(row.concept_id, instanceId)
+        yield* assertRecordReadable(row.concept_id, row.item_id, instanceId, row.state)
         return toInstance(row)
       })
 
@@ -737,6 +810,7 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
         const meta = yield* loadAny(instanceId)
         // This one hand-builds its result and so never passes through `toInstance`.
         yield* assertConceptVisible(meta.conceptId, instanceId)
+        yield* assertRecordReadable(meta.conceptId, meta.itemId, instanceId)
         const stream = yield* events.readStream(instanceId, { upToEventId: eventId })
         const folded = foldEvents(stream)
         if (Either.isLeft(folded)) return yield* Effect.fail(folded.left)
@@ -1111,6 +1185,11 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
         const row = rows[0]
         if (!row) return yield* Effect.fail(new ItemNotFound({ itemId }))
         yield* assertConceptVisible(row.concept_id, itemId)
+        // THE ANNOTATION CHOKEPOINT: notes, tasks, files and the activity feed all
+        // resolve through here (`assertSubjectReadable` in use-cases.ts), because
+        // their tables carry no concept column. Without this a shared item id would
+        // leak a restricted record's whole annotation trail.
+        yield* assertRecordReadable(row.concept_id, itemId, itemId)
         return toItem(row)
       })
 
@@ -1127,6 +1206,7 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
         const head = rows[0]
         if (!head) return null
         yield* assertConceptVisible(head.concept_id, head.id)
+        yield* assertRecordReadable(head.concept_id, head.item_id, head.id, head.state)
         return toInstance(head)
       })
 
@@ -1156,6 +1236,7 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
         // single-record concept reads as absent rather than erroring, matching the
         // `null` a member already gets for a concept with no record yet.
         if (item) yield* assertConceptVisible(conceptId, item.id)
+        if (item) yield* assertRecordReadable(conceptId, item.id, item.id)
         if (!item) return null
         const head = yield* headOf(item.id)
         if (head) return head
@@ -1233,6 +1314,8 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
         // Every version of an item shares its concept, so one check covers them all.
         const first = rows[0]
         if (first) yield* assertConceptVisible(first.concept_id, first.id)
+        // Every version shares the lineage, so one record check covers them all.
+        if (first) yield* assertRecordReadable(first.concept_id, first.item_id, first.id)
         return rows.map(toInstance)
       })
 

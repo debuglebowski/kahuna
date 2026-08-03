@@ -1,6 +1,8 @@
 import { PgClient } from "@effect/sql-pg"
 import { Effect } from "effect"
+import { compileRecordFilter, filterFragment } from "../domain/accessSql"
 import type { ConceptRef } from "../domain/types"
+import { scopeConceptRead } from "../domain/visibility"
 import { ConceptService } from "./ConceptService"
 import { OrgContext } from "./OrgContext"
 import { type InstanceRow, toInstance } from "./rows"
@@ -28,7 +30,8 @@ export class QueryService extends Effect.Service<QueryService>()("engine/QuerySe
 
     const findInstances = (input: FindInstancesInput) =>
       Effect.gen(function* () {
-        const { orgId } = yield* OrgContext
+        const scope = yield* OrgContext
+        const { orgId } = scope
         // `getByIdForRead` (not `getById`): this is THE list read, so a restricted
         // concept must fail here rather than return rows. `getByName` is only
         // reachable from engine-internal callers (seeds/tests), which run as system.
@@ -37,6 +40,22 @@ export class QueryService extends Effect.Service<QueryService>()("engine/QuerySe
             ? yield* concepts.getByIdForRead(input.conceptId)
             : yield* concepts.getByName(input.conceptName)
         const limit = input.limit ?? 100
+
+        // ── RECORD-LEVEL ACCESS ────────────────────────────────────────────────
+        // Compiled INTO the query, never applied to the returned rows. This read
+        // carries a LIMIT (50k from the RPC boundary), so filtering afterwards would
+        // make LIMIT bound the wrong set — wrong counts, wrong truncation. See
+        // domain/accessSql.ts.
+        //
+        // The concept gate above only proved the concept is REACHABLE. Whether its
+        // records are readable without a per-record rule is a separate question — see
+        // `scopeConceptRead`. A share-only caller is reachable but `recordsByDefault`
+        // is false, so the filter below yields exactly the rows shared with them.
+        const { recordsByDefault } = scopeConceptRead(scope, concept.id, concept.visibility)
+        const fallback = recordsByDefault
+        const accessExtra = scope.policy
+          ? filterFragment(sql, compileRecordFilter(sql, scope.policy, concept.id, fallback))
+          : sql``
 
         const liveOnly = input.includeArchived ? sql`` : sql` AND archived_at IS NULL`
         const whereExtra = input.where ? sql` AND state @> ${sql.json(input.where)}` : sql``
@@ -70,7 +89,7 @@ export class QueryService extends Effect.Service<QueryService>()("engine/QuerySe
                 AND version_status = 'published' AND archived_at IS NULL${itemLive}
               ORDER BY item_id, version_seq DESC
             ) head
-            WHERE TRUE${whereExtra}${relExtra}
+            WHERE TRUE${whereExtra}${relExtra}${accessExtra}
             ORDER BY ${orderCol} ${dir}
             LIMIT ${limit}`
           return rows.map(toInstance)
@@ -78,7 +97,7 @@ export class QueryService extends Effect.Service<QueryService>()("engine/QuerySe
 
         const rows = yield* sql<InstanceRow>`
           SELECT * FROM instances
-          WHERE org_id = ${orgId} AND concept_id = ${concept.id}${liveOnly}${whereExtra}${relExtra}
+          WHERE org_id = ${orgId} AND concept_id = ${concept.id}${liveOnly}${whereExtra}${relExtra}${accessExtra}
           ORDER BY ${orderCol} ${dir}
           LIMIT ${limit}`
         return rows.map(toInstance)

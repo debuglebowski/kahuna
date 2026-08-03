@@ -120,8 +120,15 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
         //
         // Safe to filter in memory here, unlike record lists: this query has no
         // LIMIT, so dropping rows afterwards cannot skew a count or truncate a page.
+        // A RECORD rule widens too, not just a concept rule: a share of one record
+        // makes its concept reachable (see `scopeConceptRead`), otherwise the sharee
+        // cannot even request the list they are entitled to. Missing that here dropped
+        // the concept in SQL before the per-row check could restore it.
         const mayWiden =
-          scope.policy !== undefined && scope.policy.rules.some((r) => r.resourceType === "concept")
+          scope.policy !== undefined &&
+          scope.policy.rules.some(
+            (r) => r.resourceType === "concept" || r.resourceType === "record",
+          )
         const visibleOnly =
           canReadRestricted(scope.role) || mayWiden ? sql`` : sql` AND c.visibility = 'visible'`
         const rows = yield* sql<ConceptRow>`

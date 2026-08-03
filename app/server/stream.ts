@@ -1,8 +1,15 @@
 import { PgClient } from "@effect/sql-pg"
 import { Duration, Effect, Schedule, Stream } from "effect"
-import { EVENT_CHANNEL, type EventEnvelope, type SubjectKind } from "#engine"
-import { AppRuntime } from "./runtime"
-import { resolveOrg } from "./session"
+import {
+  EVENT_CHANNEL,
+  type EventEnvelope,
+  type ScopeRole,
+  type SubjectKind,
+  scopeCanReadConcept,
+  toVisibility,
+} from "#engine"
+import { AppRuntime, resolvePolicy } from "./runtime"
+import { resolveOrg, roleOf } from "./session"
 
 /**
  * In-process SSE fan-out for live/reactive sync.
@@ -14,10 +21,22 @@ import { resolveOrg } from "./session"
  * ever in its own org's set, and `dispatch` fans out by `env.org`.
  */
 
-/** An SSE subscriber; receives envelopes for its own org only. */
+/**
+ * An SSE subscriber; receives envelopes for its own org only.
+ *
+ * `maySee` additionally filters WITHIN the org. Without it the envelope leaks:
+ * it carries `concept` (the NAME), `conceptId` and `subjectId`, so a member with no
+ * access to a concept would still learn it exists, what it's called, and the ids of
+ * records changing inside it. Org isolation alone was never enough once concepts and
+ * records became individually restrictable.
+ *
+ * Synchronous by necessity — `dispatch` is called from the LISTEN fiber and must not
+ * await per subscriber — so it closes over a snapshot refreshed by `refreshVisibility`.
+ */
 interface Client {
   readonly send: (env: EventEnvelope) => void
   readonly close: () => void
+  readonly maySee?: (env: EventEnvelope) => boolean
 }
 
 const clients = new Map<string, Set<Client>>()
@@ -70,6 +89,15 @@ export const dispatch = (env: EventEnvelope): void => {
   if (!set) return
   for (const c of set) {
     try {
+      // Fail CLOSED on a throwing predicate: drop the frame rather than risk
+      // delivering a restricted concept's name or a hidden record's id.
+      let visible: boolean
+      try {
+        visible = c.maySee ? c.maySee(env) : true
+      } catch {
+        visible = false
+      }
+      if (!visible) continue
       c.send(env)
     } catch {
       unregister(env.org, c)
@@ -82,14 +110,63 @@ export const dispatch = (env: EventEnvelope): void => {
  * The org-isolation contract: the handler only ever sees `env` where
  * `env.org === orgId`. Used by the SSE endpoint and exercised by tests.
  */
-export const subscribe = (orgId: string, handler: (env: EventEnvelope) => void): (() => void) => {
-  const client: Client = { send: handler, close: () => {} }
+export const subscribe = (
+  orgId: string,
+  handler: (env: EventEnvelope) => void,
+  // The within-org filter the SSE endpoint supplies (see `visibilityFor`). Optional
+  // so existing callers are unchanged; passing it here is what lets tests exercise
+  // the REAL dispatch filter rather than a reimplementation of it.
+  maySee?: (env: EventEnvelope) => boolean,
+): (() => void) => {
+  const client: Client = { send: handler, close: () => {}, maySee }
   register(orgId, client)
   return () => unregister(orgId, client)
 }
 
 const sseFrame = (env: EventEnvelope): string =>
   `id: ${env.id}\nevent: km\ndata: ${JSON.stringify(env)}\n\n`
+
+/**
+ * Build the per-subscriber envelope filter.
+ *
+ * Resolves which concepts this caller may read ONCE, into a Set, so `dispatch` stays
+ * synchronous. Rebuilt on the interval below, which bounds how long a just-revoked
+ * subscriber can keep seeing a concept's envelopes to one refresh window; the reads
+ * behind them are gated per request regardless, so this is a metadata-leak bound,
+ * never an access decision.
+ *
+ * Instance envelopes carry `conceptId`, so a concept-level Set covers them. Envelopes
+ * with NO concept (labels, task statuses, org-level config) pass: they name no
+ * restricted material. RECORD-level filtering is deliberately not attempted here —
+ * that would need a per-envelope record read on the LISTEN fiber's hot path; the
+ * envelope carries no field values, and every read the client makes in response is
+ * gated. What the client cannot see, it cannot fetch.
+ */
+const visibilityFor = async (
+  orgId: string,
+  actor: string,
+): Promise<(env: EventEnvelope) => boolean> => {
+  const policy = await resolvePolicy(orgId, actor)
+  const role = await roleOf(actor, orgId)
+  const concepts = await AppRuntime.runPromise(
+    Effect.flatMap(
+      PgClient.PgClient,
+      (sql) =>
+        sql<{ readonly id: string; readonly visibility: string | null }>`
+        SELECT id, visibility FROM concepts WHERE org_id = ${orgId}`,
+    ),
+  ).catch(() => [] as ReadonlyArray<{ id: string; visibility: string | null }>)
+  const scope = { orgId, actor, role: (role ?? "member") as ScopeRole, policy }
+  const readable = new Set(
+    concepts
+      .filter((c) => scopeCanReadConcept(scope, c.id, toVisibility(c.visibility)))
+      .map((c) => c.id),
+  )
+  return (env) => env.conceptId === null || readable.has(env.conceptId)
+}
+
+/** How often a live subscriber's concept snapshot is rebuilt. */
+const VISIBILITY_REFRESH_MS = 30_000
 
 /** Replay missed events (id > since) for one org; conceptName resolved for instance events. */
 const replayEventsSince = (orgId: string, since: number) =>
@@ -195,10 +272,16 @@ export const streamHandler = async (req: Request): Promise<Response> => {
 
   const encoder = new TextEncoder()
   let heartbeat: ReturnType<typeof setInterval> | undefined
+  let refresher: ReturnType<typeof setInterval> | undefined
   let client: Client | undefined
+
+  // The concept-visibility snapshot this connection filters through. Starts CLOSED
+  // (nothing passes) and opens once resolved, so no frame can slip out during setup.
+  let maySee: (env: EventEnvelope) => boolean = () => false
 
   const teardown = () => {
     if (heartbeat) clearInterval(heartbeat)
+    if (refresher) clearInterval(refresher)
     if (client) unregister(orgId, client)
   }
 
@@ -227,6 +310,9 @@ export const streamHandler = async (req: Request): Promise<Response> => {
         write(sseFrame(env))
       }
       client = {
+        // Read through the mutable binding, not a captured value, so a refresh
+        // takes effect on the existing registration.
+        maySee: (env) => maySee(env),
         send,
         close: () => {
           teardown() // clear heartbeat + unregister before ending the response
@@ -240,13 +326,33 @@ export const streamHandler = async (req: Request): Promise<Response> => {
       register(orgId, client)
       write(": connected\n\n")
 
+      // Resolve visibility BEFORE the replay: `replayEventsSince` selects the concept
+      // NAME for every event in the org, so an unfiltered replay leaks exactly what
+      // the live path is careful not to.
+      maySee = await visibilityFor(orgId, org.actor).catch(() => () => false)
+      refresher = setInterval(() => {
+        void visibilityFor(orgId, org.actor)
+          .then((next) => {
+            maySee = next
+          })
+          .catch(() => {
+            // Keep the previous snapshot: reads are gated per request anyway, and
+            // dropping to closed would silently stop live sync for this connection.
+          })
+      }, VISIBILITY_REFRESH_MS)
+
       if (Number.isFinite(since)) {
         const envs = await AppRuntime.runPromise(replayEventsSince(orgId, since)).catch(
           () => [] as EventEnvelope[],
         )
         for (const env of envs) {
-          write(sseFrame(env))
+          // `maxReplayId` advances for every event the replay COVERED, filtered or
+          // not: it is a dedupe watermark, not a delivery log. Advancing it only for
+          // written frames would let a filtered tail re-deliver from the live buffer.
           if (env.id > maxReplayId) maxReplayId = env.id
+          // Same filter as the live path — one predicate, both directions.
+          if (!maySee(env)) continue
+          write(sseFrame(env))
         }
       }
 

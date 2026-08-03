@@ -5,12 +5,14 @@ import { Effect, Layer } from "effect"
 import {
   type AccessAction,
   type AccessResource,
+  type AccessResourceType,
   decide,
   type EngineServices,
   OrgContext,
   type OrgScope,
 } from "#engine"
 import {
+  type AccessGrant,
   type AnnotationField,
   type Attachment,
   type Automation,
@@ -802,6 +804,41 @@ const HandlersLive = ServerRpcs.toLayer({
   // A dry run writes nothing, but it reads every record of a concept — keep it
   // behind the same gate as the editor that launches it.
   testAutomation: ({ id, limit }) => admin<AutomationDryRun>(uc.testAutomation(id, limit)),
+
+  // ── sharing ────────────────────────────────────────────────────────────────
+  // Gated on `share` FOR THE SPECIFIC RESOURCE, not on admin: the point of the
+  // feature is that a team lead hands out access to their own deals without an
+  // admin in the loop. `requireAction` resolves it against their rules, falling
+  // back to the role default — so today's owner/admin behaviour is unchanged.
+  //
+  // Reading the grant list needs `share` too: who a record is shared with is itself
+  // sensitive, and anyone who may change it may see it.
+  listGrants: ({ resourceType, resourceId }) =>
+    requireAction("share", { type: resourceType, id: resourceId }).pipe(
+      Effect.zipRight(as<ReadonlyArray<AccessGrant>>(uc.listGrants(resourceType, resourceId))),
+    ),
+  share: ({ resourceType, resourceId, userId, roleId, actions }) =>
+    requireAction("share", { type: resourceType, id: resourceId }).pipe(
+      Effect.zipRight(
+        as<AccessGrant>(uc.share({ resourceType, resourceId, userId, roleId, actions })),
+      ),
+    ),
+  revoke: ({ grantId }) =>
+    Effect.gen(function* () {
+      // The grant must be resolved BEFORE the gate: `share` is checked against the
+      // resource the grant points at, which only the row knows. A missing grant is a
+      // no-op (idempotent revoke), so it needs no gate at all.
+      const existing = yield* as<{
+        readonly resourceType: AccessResourceType
+        readonly resourceId: string | null
+      } | null>(uc.getGrant(grantId))
+      if (!existing) return { id: grantId }
+      yield* requireAction("share", {
+        type: existing.resourceType,
+        id: existing.resourceId ?? undefined,
+      })
+      return yield* as<{ readonly id: string }>(uc.revoke(grantId))
+    }),
 }).pipe(Layer.provide(EngineBase))
 
 // HttpRouter.DefaultServices (HttpPlatform | Etag | FileSystem | Path) — pure

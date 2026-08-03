@@ -54,3 +54,50 @@ describe("stream hub — org isolation", () => {
     unsub2()
   })
 })
+
+describe("stream hub — within-org visibility", () => {
+  it("drops envelopes for concepts the subscriber may not read", () => {
+    // The envelope carries the concept NAME and the record id, so an unfiltered
+    // stream tells a member exactly what exists in a concept they cannot open.
+    const seen: EventEnvelope[] = []
+    const unsub = subscribe(
+      "orgD",
+      (e) => seen.push(e),
+      (e) => e.conceptId !== "secret-id",
+    )
+
+    dispatch({ ...env("orgD", 1), conceptId: "deal-id", concept: "Deal" })
+    dispatch({ ...env("orgD", 2), conceptId: "secret-id", concept: "Salaries" })
+    dispatch({ ...env("orgD", 3), conceptId: null, concept: null })
+
+    // The visible concept and the concept-less envelope arrive; the restricted one
+    // never does — and neither does its NAME.
+    expect(seen.map((e) => e.id)).toEqual([1, 3])
+    expect(seen.some((e) => e.concept === "Salaries")).toBe(false)
+    unsub()
+  })
+
+  it("fails CLOSED when the predicate throws", () => {
+    // A broken snapshot must drop frames, never pass them: the failure mode of a
+    // leak is unrecoverable, the failure mode of a missed refetch is a stale tab.
+    const seen: number[] = []
+    const unsub = subscribe(
+      "orgE",
+      (e) => seen.push(e.id),
+      () => {
+        throw new Error("snapshot unavailable")
+      },
+    )
+    dispatch(env("orgE", 1))
+    expect(seen).toEqual([])
+    unsub()
+  })
+
+  it("a subscriber with no predicate is unfiltered (server-side taps, tests)", () => {
+    const seen: number[] = []
+    const unsub = subscribe("orgF", (e) => seen.push(e.id))
+    dispatch(env("orgF", 1))
+    expect(seen).toEqual([1])
+    unsub()
+  })
+})

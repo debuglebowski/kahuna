@@ -1,5 +1,5 @@
 import type { OrgScope, ScopeRole } from "../services/OrgContext"
-import { decide } from "./access"
+import { decide, recordRulesForConcept, rulesFor } from "./access"
 import type { ConceptVisibility } from "./types"
 
 /**
@@ -37,28 +37,65 @@ export const canReadConcept = (visibility: ConceptVisibility, role: ScopeRole): 
   visibility === "visible" || (visibility !== "none" && canReadRestricted(role))
 
 /**
- * THE concept read gate: the default above, plus any rule that overrides it.
+ * ── THE CONCEPT READ DECISION ────────────────────────────────────────────────
  *
- * Every by-id concept read and the concept list go through this, so a restricted
- * concept can be opened for one role without touching the column, and a visible one
- * can be denied — neither of which the column alone can express.
+ * Two answers, deliberately separate, because "may I open this concept at all?" and
+ * "may I read its records by default?" are different questions:
  *
- * `scope.policy` is absent for callers not yet on the access model (tests, scripts),
- * which correctly degrades to the default-only behaviour.
+ *   reachable        — the concept resolves instead of failing NotFound.
+ *   recordsByDefault — its records are readable WITHOUT a per-record rule; this is
+ *                      the fallback the record filter subtracts denies from.
+ *
+ * They come apart in exactly the case that motivates record-level access: a concept
+ * whose default is `none` (or `admin`, for a member) where someone holds a share of
+ * ONE record. That caller must be able to reach the concept — otherwise the list they
+ * are entitled to can't even be requested — while seeing nothing but the shared row.
+ * So a record grant makes a concept `reachable` but never sets `recordsByDefault`.
+ *
+ * Collapsing these into one boolean is what makes list and by-id reads disagree, and
+ * a disagreement means a member opens a record their list hid (or the reverse).
+ */
+export interface ConceptReadDecision {
+  readonly reachable: boolean
+  readonly recordsByDefault: boolean
+}
+
+export const scopeConceptRead = (
+  scope: OrgScope,
+  conceptId: string,
+  visibility: ConceptVisibility,
+): ConceptReadDecision => {
+  const byDefault = canReadConcept(visibility, scope.role)
+  if (!scope.policy) return { reachable: byDefault, recordsByDefault: byDefault }
+  const granted = decide(scope.policy, "view", { type: "concept", id: conceptId }, byDefault, {
+    // No record in hand, so a conditional rule must not read as a blanket one.
+    unconditionalOnly: true,
+  })
+  if (granted) return { reachable: true, recordsByDefault: true }
+  // Not granted at concept level. A DENY must stay final — it cannot be reopened by
+  // holding a record share — so only fall through to record grants when nothing
+  // explicitly denied the concept.
+  const denied = rulesFor(scope.policy, "view", { type: "concept", id: conceptId }).some(
+    (r) => r.effect === "deny",
+  )
+  if (denied) return { reachable: false, recordsByDefault: false }
+  const hasRecordGrant = recordRulesForConcept(scope.policy, "view", conceptId).some(
+    (r) => r.effect === "allow",
+  )
+  return { reachable: hasRecordGrant, recordsByDefault: false }
+}
+
+/**
+ * THE concept read gate, for callers that only need the yes/no.
+ *
+ * Note this is `reachable`, not `recordsByDefault`: a share-only caller MUST get past
+ * the concept gate, and the record filter is what then limits them to the shared row.
  */
 export const scopeCanReadConcept = (
   scope: OrgScope,
   conceptId: string,
   visibility: ConceptVisibility,
-): boolean => {
-  const fallback = canReadConcept(visibility, scope.role)
-  if (!scope.policy) return fallback
-  return decide(scope.policy, "view", { type: "concept", id: conceptId }, fallback, {
-    // No record in hand, so a conditional rule must not read as a blanket one.
-    // Concept rules are unconditional in practice; this states the intent anyway.
-    unconditionalOnly: true,
-  })
-}
+): boolean => scopeConceptRead(scope, conceptId, visibility).reachable
 
 /**
  * ── WHERE FIELD-LEVEL FILTERING MAY AND MAY NOT LIVE ─────────────────────────

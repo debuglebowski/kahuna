@@ -25,8 +25,10 @@ export type VersionStatus = typeof VersionStatus.Type
  *  referencing that version sees. Ignored when versioning is off. */
 export const EditReach = Schema.Literal("draft", "any")
 
-/** Read reach for a concept: org-wide, or owners/admins only. */
-export const ConceptVisibility = Schema.Literal("visible", "admin")
+/** DEFAULT read reach for a concept or field: org-wide, owners/admins only, or
+ *  nobody-without-an-explicit-rule. The default layer of the access model; access
+ *  rules are exceptions over it. */
+export const ConceptVisibility = Schema.Literal("visible", "admin", "none")
 export type EditReach = typeof EditReach.Type
 
 const InstanceFields = {
@@ -1289,6 +1291,51 @@ const Fields = Schema.Record({ key: Schema.String, value: Schema.Unknown })
 
 // ── procedures ────────────────────────────────────────────────────────────────
 
+/** The resource kinds an access rule can target. Mirrors `AccessResourceType` in
+ *  engine/domain/access.ts — kept as a literal union so the wire rejects unknowns. */
+export const AccessResourceType = Schema.Literal(
+  "org",
+  "concept",
+  "record",
+  "field",
+  "dashboard",
+  "view",
+  "automation",
+  "bucket",
+  "task",
+  "note",
+  "member",
+)
+
+/** A grantable action. `"*"` is deliberately NOT on the wire: a client may only ever
+ *  grant named actions, so a future action is never handed out by an old dialog. */
+export const AccessActionName = Schema.Literal(
+  "view",
+  "create",
+  "edit",
+  "archive",
+  "delete",
+  "share",
+  "configure",
+)
+
+/** One grant as the Share dialog sees it. `userId`/`roleId` are exclusive. */
+export const AccessGrant = Schema.Struct({
+  id: Schema.String,
+  userId: Schema.NullOr(Schema.String),
+  roleId: Schema.NullOr(Schema.String),
+  /** The role's display name, resolved server-side so the dialog needs no second
+   *  fetch. Null for a person grant. */
+  roleName: Schema.NullOr(Schema.String),
+  effect: Schema.Literal("allow", "deny"),
+  actions: Schema.Array(Schema.String),
+  resourceType: AccessResourceType,
+  resourceId: Schema.NullOr(Schema.String),
+  createdBy: Schema.NullOr(Schema.String),
+  createdAt: Schema.Date,
+})
+export type AccessGrant = Schema.Schema.Type<typeof AccessGrant>
+
 export class KingsmakerRpcs extends RpcGroup.make(
   Rpc.make("listConcepts", {
     payload: {
@@ -2154,6 +2201,37 @@ export class KingsmakerRpcs extends RpcGroup.make(
   Rpc.make("testAutomation", {
     payload: { id: Schema.String, limit: Schema.optional(Schema.Number) },
     success: AutomationDryRun,
+    error: RpcError,
+  }),
+  // ── sharing ─────────────────────────────────────────────────────────────────
+  /** Current grants on one resource — what the Share dialog lists. */
+  Rpc.make("listGrants", {
+    payload: { resourceType: AccessResourceType, resourceId: Schema.String },
+    success: Schema.Array(AccessGrant),
+    error: RpcError,
+  }),
+  /**
+   * Grant access to a person or a role. Requires `share` on the resource, and never
+   * grants more than the sharer holds.
+   */
+  Rpc.make("share", {
+    payload: {
+      resourceType: AccessResourceType,
+      /** For a record this is the ITEM id (the lineage), so the grant survives a
+       *  new version being published. */
+      resourceId: Schema.String,
+      /** Exactly one of these. */
+      userId: Schema.optional(Schema.String),
+      roleId: Schema.optional(Schema.String),
+      actions: Schema.Array(AccessActionName),
+    },
+    success: AccessGrant,
+    error: RpcError,
+  }),
+  /** Revoke a grant. Any holder of `share` may revoke, not only the granter. */
+  Rpc.make("revoke", {
+    payload: { grantId: Schema.String },
+    success: Schema.Struct({ id: Schema.String }),
     error: RpcError,
   }),
 ) {}
