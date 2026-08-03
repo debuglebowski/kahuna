@@ -781,3 +781,59 @@ describe("writes cannot name a subject the caller may not read", () => {
     expect((await asMember(uc.createNote({ subjectId: null, body: "ok" }))).ok).toBe(true)
   })
 })
+
+describe("the org-wide event reads don't leak restricted subjects", () => {
+  /**
+   * `getChanged` and an unfiltered `listEvents` return every event in the org. Both
+   * already drop `payload` (so no field VALUES escaped), but they leaked the metadata:
+   * the ids of records changing inside concepts the caller cannot open, their event
+   * types and actors — i.e. that those records exist and how active they are.
+   *
+   * Same class as the SSE envelope leak closed in `server/stream.ts`, found by
+   * continuing the "reads gated, writes not" sweep into the org-wide reads.
+   */
+  it("filters a restricted record out of getChanged, and refuses listEvents on its concept", async () => {
+    const orgId = randomUUID()
+    const f = await runEngineOrThrow(
+      systemScope(orgId, "seed"),
+      Effect.gen(function* () {
+        const concepts = yield* ConceptService
+        const fields = yield* FieldService
+        const instances = yield* InstanceService
+        const sealed = yield* concepts.create({ name: `Sealed ${randomUUID().slice(0, 6)}` })
+        const sf = yield* fields.addField({ conceptId: sealed.id, name: "T", kind: "text" })
+        const hidden = yield* instances.create({
+          conceptId: sealed.id,
+          fields: { [sf.id]: "secret" },
+        })
+        const open = yield* concepts.create({ name: `Open ${randomUUID().slice(0, 6)}` })
+        const shown = yield* instances.create({ conceptId: open.id, fields: {} })
+        yield* concepts.setVisibility(sealed.id, "admin")
+        return { sealedId: sealed.id, hiddenId: hidden.id, shownId: shown.id }
+      }),
+    )
+
+    const asMember = { orgId, actor: "intruder", role: "member" as const }
+
+    const changed = await runEngine(asMember, uc.getChanged)
+    expect(changed.ok).toBe(true)
+    const ids = changed.ok
+      ? (changed.data as ReadonlyArray<{ subjectId: string }>).map((e) => e.subjectId)
+      : []
+    expect(ids).not.toContain(f.hiddenId)
+    // The VISIBLE record's events must survive — a filter that dropped everything
+    // would pass the assertion above.
+    expect(ids).toContain(f.shownId)
+
+    // Naming the restricted concept fails like any other read of it.
+    const scoped = await runEngine(asMember, uc.listEvents({ conceptId: f.sealedId }))
+    expect(scoped.ok).toBe(false)
+
+    // An owner still sees the lot.
+    const asOwner = await runEngine({ orgId, actor: "boss", role: "owner" }, uc.getChanged)
+    const ownerIds = asOwner.ok
+      ? (asOwner.data as ReadonlyArray<{ subjectId: string }>).map((e) => e.subjectId)
+      : []
+    expect(ownerIds).toContain(f.hiddenId)
+  })
+})

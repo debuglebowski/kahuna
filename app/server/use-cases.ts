@@ -916,9 +916,53 @@ export interface FeedItem {
   readonly previous?: Record<string, unknown>
 }
 
+/**
+ * Drop events whose subject the caller may not read.
+ *
+ * WHY: an event row carries `subject_id`, `event_type` and `actor`. The org-wide reads
+ * (`getChanged`, unfiltered `listEvents`) never gated any of it, so a member learned
+ * the ids of records changing inside concepts they cannot open, and how often. Same
+ * class as the SSE envelope leak closed in `server/stream.ts` — metadata, not values
+ * (both these use-cases already drop `payload`), but a leak either way.
+ *
+ * Resolved through `InstanceService.get`, which carries both the concept gate and the
+ * record gate — so this filter cannot disagree with what a detail read would allow.
+ * Deduped by subject, so a page of edits to one record costs one lookup.
+ *
+ * Non-instance subjects (labels, task statuses, org config) name no restricted material
+ * and pass through untouched.
+ */
+const dropUnreadableSubjects = <
+  T extends { readonly subjectKind: string; readonly subjectId: string },
+>(
+  events: ReadonlyArray<T>,
+): UC<ReadonlyArray<T>> =>
+  Effect.gen(function* () {
+    const subjects = [
+      ...new Set(events.filter((e) => e.subjectKind === "instance").map((e) => e.subjectId)),
+    ]
+    if (subjects.length === 0) return events
+    const instances = yield* InstanceService
+    // Resolved through `InstanceService.get`, which already carries BOTH read gates —
+    // so this filter can never disagree with what a detail read would allow. Deduped by
+    // subject, so a page of edits to one record costs one lookup.
+    const readable = new Map<string, boolean>()
+    for (const id of subjects) {
+      const ok = yield* instances.get(id).pipe(
+        Effect.map(() => true),
+        // Archived or purged instances fail `get` too. Dropping them is right: their
+        // events are already unreachable, and keeping them would be a fail-open guess.
+        Effect.catchAll(() => Effect.succeed(false)),
+      )
+      readable.set(id, ok)
+    }
+    return events.filter((e) => e.subjectKind !== "instance" || readable.get(e.subjectId) === true)
+  })
+
 export const getChanged: UC<ReadonlyArray<FeedItem>> = Effect.flatMap(EventStore, (e) =>
   e.readAllForOrg({ limit: 50 }),
 ).pipe(
+  Effect.flatMap(dropUnreadableSubjects),
   Effect.map((events) =>
     events.map((ev) => ({
       id: ev.id,
@@ -936,24 +980,20 @@ export const listEvents = (input: {
   readonly since?: number
   readonly limit?: number
 }): UC<ReadonlyArray<FeedItem>> =>
-  Effect.flatMap(EventStore, (e) =>
-    e.listEvents({
-      conceptId: input.conceptId ?? undefined,
-      since: input.since != null ? new Date(input.since) : undefined,
-      limit: input.limit,
-    }),
-  ).pipe(
-    Effect.map((events) =>
-      events.map((ev) => ({
-        id: ev.id,
-        occurredAt: ev.occurredAt,
-        actor: ev.actor,
-        eventType: ev.eventType,
-        subjectKind: ev.subjectKind,
-        subjectId: ev.subjectId,
-      })),
-    ),
-  )
+  Effect.gen(function* () {
+    // A named concept is gated like any other read, so asking about a restricted
+    // concept fails NotFound rather than returning its event stream.
+    if (input.conceptId)
+      yield* Effect.flatMap(ConceptService, (c) => c.getByIdForRead(input.conceptId as string))
+    const events = yield* Effect.flatMap(EventStore, (e) =>
+      e.listEvents({
+        conceptId: input.conceptId ?? undefined,
+        since: input.since != null ? new Date(input.since) : undefined,
+        limit: input.limit,
+      }),
+    )
+    return yield* dropUnreadableSubjects(events)
+  })
 
 // ── commands ──────────────────────────────────────────────────────────────────
 
