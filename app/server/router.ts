@@ -71,6 +71,7 @@ import {
   slackStatus,
   syncSlackForRequest,
 } from "./slack"
+import { authConfigStatus, deleteSsoProvider, saveSsoProvider, updateAuthMethods } from "./sso"
 import { downloadAttachment, purgeMemberData, uploadAttachment } from "./use-cases"
 import { versionInfo } from "./version"
 
@@ -170,6 +171,16 @@ export const handleApi = async (req: Request): Promise<Response | null> => {
     const org = await resolveOrg(req)
     if (!org.ok) return Response.json({ error: org.code }, { status: org.status })
     return Response.json(versionInfo())
+  }
+
+  // Org authentication config: the OIDC provider + the sign-in method toggles.
+  // Mounted at /api/auth-config, NOT under /api/auth — that whole prefix is
+  // handed to better-auth's own handler in index.ts before this router sees it.
+  if (seg[1] === "auth-config") {
+    if (seg[2] === "sso" && !seg[3] && m === "GET") return authConfigStatus(req)
+    if (seg[2] === "sso" && !seg[3] && m === "POST") return saveSsoProvider(req)
+    if (seg[2] === "sso" && !seg[3] && m === "DELETE") return deleteSsoProvider(req)
+    if (seg[2] === "methods" && !seg[3] && m === "POST") return updateAuthMethods(req)
   }
 
   if (seg[1] === "integrations" && seg[2] === "google") {

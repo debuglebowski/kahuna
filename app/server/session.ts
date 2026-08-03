@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm"
+import { and, asc, eq } from "drizzle-orm"
 import type { Effect } from "effect"
 import { member } from "#db"
 import type { EngineServices, OrgContext } from "#engine"
@@ -55,15 +55,68 @@ export const resolveAdmin = async (request: Request): Promise<OrgResolution> => 
 }
 
 /**
+ * `resolveOrg` plus an OWNER check — strictly narrower than `resolveAdmin`.
+ *
+ * For state that decides who can get into the org at all: the SSO provider and
+ * the sign-in method toggles (server/sso.ts). An admin re-pointing the org at an
+ * IdP they control would be granting themselves and anyone they like a way in,
+ * so that stays with the one role the org cannot have more than a few of.
+ */
+export const resolveOwner = async (request: Request): Promise<OrgResolution> => {
+  const org = await resolveOrg(request)
+  if (!org.ok) return org
+  if (org.role !== "owner") return { ok: false, status: 403, code: "FORBIDDEN" }
+  return org
+}
+
+/**
  * Resolve the BetterAuth session into an org scope (org_id + actor), or an
  * auth error. Shared by `runScoped` (RPC/attachments) and the SSE stream — the
  * stream NEVER trusts the client for its org; it comes from the session here.
  */
+/**
+ * Repair a session that has no active org but whose user IS a member of one.
+ *
+ * `databaseHooks.session.create.before` (auth.ts) stamps the active org from the
+ * user's first membership — but on a first SSO login there is no membership yet
+ * when it runs. The plugin creates the user and the session, THEN calls
+ * `assignOrganizationFromProvider` (verified in the installed
+ * `@better-auth/sso` callback), so the brand-new session is stamped `null` and
+ * every subsequent request would fail `NO_ACTIVE_ORG` until the user signed out
+ * and back in.
+ *
+ * Repairing here rather than reordering the hook keeps this independent of
+ * plugin internals, and covers the same race for any other path that creates a
+ * membership after a session (e.g. `POST /api/org/members` for a user who was
+ * already signed in). Returns the adopted org id, or null if there genuinely
+ * isn't one — which stays a real `NO_ACTIVE_ORG`.
+ */
+const adoptFirstOrg = async (request: Request, userId: string): Promise<string | null> => {
+  const [m] = await db
+    .select({ organizationId: member.organizationId })
+    .from(member)
+    .where(eq(member.userId, userId))
+    .orderBy(asc(member.createdAt))
+    .limit(1)
+  if (!m) return null
+  // Go through the API, not a direct UPDATE, so the org plugin stays the owner
+  // of what "active" means (and any session-cookie cache enabled later is kept
+  // in step). A failure here is not fatal: fall through and use the id anyway
+  // for THIS request; the next one retries.
+  await auth.api
+    .setActiveOrganization({ body: { organizationId: m.organizationId }, headers: request.headers })
+    .catch((e) => {
+      console.error("failed to adopt active org", { userId, error: String(e) })
+    })
+  return m.organizationId
+}
+
 export const resolveOrg = async (request: Request): Promise<OrgResolution> => {
   const session = await auth.api.getSession({ headers: request.headers })
   if (!session?.user) return { ok: false, status: 401, code: "UNAUTHENTICATED" }
 
-  const orgId = session.session.activeOrganizationId
+  const orgId =
+    session.session.activeOrganizationId ?? (await adoptFirstOrg(request, session.user.id))
   if (!orgId) return { ok: false, status: 409, code: "NO_ACTIVE_ORG" }
 
   const role = await roleOf(session.user.id, orgId)

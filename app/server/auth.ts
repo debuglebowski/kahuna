@@ -1,8 +1,17 @@
+import { sso } from "@better-auth/sso"
 import { betterAuth } from "better-auth"
 import { drizzleAdapter } from "better-auth/adapters/drizzle"
+import { APIError, createAuthMiddleware } from "better-auth/api"
 import { organization } from "better-auth/plugins"
 import { asc, eq } from "drizzle-orm"
 import * as schema from "#db"
+import {
+  domainMatches,
+  emailDomain,
+  passwordSignInAllowed,
+  readAuthMethods,
+  resolveSignInProvider,
+} from "./authMethods"
 import { db, pool } from "./db"
 import { syncMembershipRole } from "./membership"
 import { runEngineOrThrow, systemScope } from "./runtime"
@@ -106,6 +115,52 @@ export const auth = betterAuth({
   secret: authSecret(),
   baseURL: process.env.BETTER_AUTH_URL ?? "http://localhost:3100",
   trustedOrigins,
+  account: {
+    // Stated explicitly rather than left to the default, because SSO depends on
+    // it: an operator-provisioned user who later signs in through the IdP must
+    // land on their EXISTING account, not a duplicate.
+    //
+    // Note what is NOT here — SSO provider ids CANNOT be listed in
+    // `trustedProviders`. The plugin rejects that as a namespace collision
+    // (422), since a trusted-provider entry would let a registered SSO id
+    // inherit trust meant for a social provider. So linking falls back to the
+    // email-verified path: the IdP must assert `email_verified`, and the local
+    // row must have `emailVerified` — which `provision.ts` sets on purpose.
+    // Every mainstream IdP (Google, Entra, Okta) asserts it; one that doesn't
+    // will fail to link with `account_not_linked`.
+    accountLinking: { enabled: true },
+  },
+  hooks: {
+    // Enforce the per-org sign-in method toggles. Both gates run BEFORE any
+    // session exists — a blocked attempt must never mint one.
+    before: createAuthMiddleware(async (ctx) => {
+      if (ctx.path === "/sign-in/email") {
+        const email = typeof ctx.body?.email === "string" ? ctx.body.email : ""
+        if (!(await passwordSignInAllowed(email))) {
+          throw new APIError("FORBIDDEN", {
+            code: "PASSWORD_SIGN_IN_DISABLED",
+            message: "This organization requires signing in with SSO.",
+          })
+        }
+        return
+      }
+
+      if (ctx.path === "/sign-in/sso") {
+        // Resolve the provider ourselves so the org's toggle is checked before
+        // the redirect to the IdP. An unresolvable body falls through to
+        // better-auth's own error rather than one we invent.
+        const provider = await resolveSignInProvider(ctx.body ?? {})
+        if (!provider?.organizationId) return
+        const methods = await readAuthMethods(provider.organizationId)
+        if (!methods.ssoEnabled) {
+          throw new APIError("FORBIDDEN", {
+            code: "SSO_DISABLED",
+            message: "SSO is not enabled for this organization.",
+          })
+        }
+      }
+    }),
+  },
   databaseHooks: {
     session: {
       create: {
@@ -155,6 +210,63 @@ export const auth = betterAuth({
         beforeDeleteOrganization: async ({ organization }) => {
           await purgeOrgEngineData(organization.id)
         },
+      },
+    }),
+    // OIDC single sign-on, one provider per org, configured in-app by the org
+    // OWNER (see server/sso.ts). SAML is deliberately unused — `samlify` ships
+    // as a hard dependency of this package but nothing here registers a
+    // `samlConfig`, and the settings UI offers no way to.
+    sso({
+      organizationProvisioning: {
+        disabled: false,
+        // Everyone arrives as a plain member; promotion is a deliberate act in
+        // Settings → Members. No IdP-group → role mapping, so a change on the
+        // IdP side can never silently grant someone admin here.
+        defaultRole: "member",
+        // Used for its SIDE EFFECT as much as its return value. Membership and
+        // ACCESS are two tables (see membership.ts): the SSO plugin writes the
+        // `member` row through the adapter directly, so the organization
+        // plugin's own hooks never fire and the new member would hold no access
+        // role at all — the exact gap `syncMembershipRole` exists to close.
+        //
+        // This is the only hook the plugin offers that fires EXACTLY ONCE per
+        // new provisioning: `assignOrganizationFromProvider` returns early when
+        // a member row already exists, so a returning user never reaches here.
+        // (`provisionUser` is not equivalent — it keys on user REGISTRATION, so
+        // it would miss an existing account being added to a new org.)
+        // `syncMembershipRole` only writes `access_role_actors` and never reads
+        // `bauth_member`, so running before the member row lands is fine.
+        getRole: async ({ user, provider }) => {
+          if (provider.organizationId) {
+            await syncMembershipRole(provider.organizationId, user.id, "member")
+          }
+          return "member"
+        },
+      },
+      // THE DOMAIN GUARD, and the reason SSO here isn't an open door.
+      //
+      // Better-auth picks a provider from the email domain typed at sign-in,
+      // but nothing stops a caller passing `providerId` directly and then
+      // authenticating at the IdP as whoever they like. With an issuer like
+      // `accounts.google.com` — one issuer for every Google account in
+      // existence — that is the whole internet, not one company. So: reject any
+      // identity whose email domain is not one the provider was registered for.
+      //
+      // Throwing here runs BEFORE `assignOrganizationFromProvider`, so a
+      // rejected identity never gets a membership and never reaches an org. The
+      // user row better-auth created moments earlier does survive, orphaned and
+      // inert (no membership → `NO_ACTIVE_ORG` on every request, and no session
+      // cookie was set). Left in place on purpose: deleting it would risk
+      // deleting a real member whose IdP identity merely failed the check.
+      provisionUserOnEveryLogin: true,
+      provisionUser: async ({ user, provider }) => {
+        const domain = emailDomain(user.email)
+        if (!domain || !domainMatches(domain, provider.domain)) {
+          throw new APIError("FORBIDDEN", {
+            code: "SSO_DOMAIN_NOT_ALLOWED",
+            message: "This identity's email domain is not allowed for this provider.",
+          })
+        }
       },
     }),
   ],

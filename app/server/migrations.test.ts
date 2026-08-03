@@ -160,11 +160,12 @@ describe("migrations", () => {
     const first = await inspect(url)
 
     // Exact count, not a truthiness check: a partially-applied baseline would
-    // pass `> 0`. 62 tables + the instance_state_readable view.
+    // pass `> 0`. 64 tables + the instance_state_readable view.
     // (56 + automations + automation_runs from 0001, + the four access-control
     // tables from 0004: access_roles, access_role_actors, access_rules,
-    // access_policy_versions.)
-    expect(first.tableCount).toBe(63)
+    // access_policy_versions, + bauth_sso_provider and org_auth_settings from
+    // 0005.)
+    expect(first.tableCount).toBe(65)
     expect(first.hasAuthTable).toBe(true)
     expect(first.hasEngineTable).toBe(true)
     expect(first.ledgerRows).toBe(EXPECTED_LEDGER_ROWS)

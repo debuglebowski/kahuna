@@ -147,6 +147,68 @@ export const invitation = pgTable(
   ],
 )
 
+/**
+ * SSO providers — the `@better-auth/sso` plugin's OWN model, which is why this
+ * one is spelled out field-for-field rather than designed. The drizzle adapter
+ * resolves the model by EXPORT NAME (`ssoProvider`) and each field by PROPERTY
+ * KEY, so neither may be renamed; only the SQL names below are ours to pick.
+ *
+ * `samlConfig` is declared because the plugin's schema declares it — this
+ * deployment is OIDC-only and never writes it (see server/sso.ts).
+ *
+ * One provider per org is OUR constraint, not the plugin's: `providerId` is
+ * globally unique, and `sso_provider_org_uq` makes `organizationId` unique too,
+ * so a second provider for the same org fails in the DB rather than quietly
+ * shadowing the first (better-auth resolves a provider by email domain and
+ * takes the first match).
+ */
+export const ssoProvider = pgTable(
+  "bauth_sso_provider",
+  {
+    id: text("id").primaryKey(),
+    issuer: text("issuer").notNull(),
+    // Bare email domain, or a comma-separated list. Better-auth matches the
+    // domain of the address typed at sign-in against this to pick a provider.
+    domain: text("domain").notNull(),
+    // JSON blob holding clientId/clientSecret plus the discovered endpoints.
+    // NOT encrypted — the plugin reads it directly; see the note in server/sso.ts.
+    oidcConfig: text("oidc_config"),
+    samlConfig: text("saml_config"),
+    // The user who registered it (attribution). Nullable in the plugin's schema.
+    userId: text("user_id").references(() => user.id, { onDelete: "cascade" }),
+    providerId: text("provider_id").notNull().unique(),
+    organizationId: text("organization_id").references(() => organization.id, {
+      onDelete: "cascade",
+    }),
+  },
+  (table) => [
+    uniqueIndex("sso_provider_org_uq").on(table.organizationId),
+    index("sso_provider_domain_idx").on(table.domain),
+  ],
+)
+
+/**
+ * Which sign-in methods an org accepts. An ABSENT row means the defaults below
+ * — password on, SSO off — so existing orgs need no backfill and a deployment
+ * that never touches SSO behaves exactly as it did before.
+ *
+ * Both false is rejected at the write path (server/sso.ts), never in the DB: a
+ * CHECK constraint would be the obvious guard but it can't express "…and the
+ * org still has a registered provider", so the whole rule lives in one place
+ * rather than half here and half there.
+ */
+export const orgAuthSettings = pgTable("org_auth_settings", {
+  orgId: text("org_id")
+    .primaryKey()
+    .references(() => organization.id, { onDelete: "cascade" }),
+  passwordEnabled: boolean("password_enabled").notNull().default(true),
+  ssoEnabled: boolean("sso_enabled").notNull().default(false),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .defaultNow()
+    .$onUpdate(() => /* @__PURE__ */ new Date())
+    .notNull(),
+})
+
 export const googleConnection = pgTable(
   "google_connection",
   {
