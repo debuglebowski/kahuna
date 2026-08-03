@@ -1308,6 +1308,22 @@ export const AccessResourceType = Schema.Literal(
 )
 export type AccessResourceType = typeof AccessResourceType.Type
 
+/**
+ * `resourceType` as it appears on a rule the server SENDS.
+ *
+ * Deliberately looser than `AccessResourceType`, which stays a closed literal for
+ * INPUTS — a client must never invent a resource type, and the strict union is what
+ * rejects a typo at the boundary.
+ *
+ * On the way out the strictness is actively harmful: Schema validates the whole
+ * response, so ONE row with a value this client doesn't know (a newer server, or a
+ * hand-written row) makes the ENTIRE rule list fail to decode. Observed: a single
+ * unrecognised type turned a role's twelve rules into "No rules yet", which reads as
+ * "this role grants nothing" — the most dangerous possible lie for a permissions
+ * screen. The UI groups anything it can't name under "Other" instead.
+ */
+export const AccessResourceTypeOut = Schema.String
+
 /** A grantable action. `"*"` is deliberately NOT on the wire: a client may only ever
  *  grant named actions, so a future action is never handed out by an old dialog. */
 export const AccessActionName = Schema.Literal(
@@ -1331,7 +1347,9 @@ export const AccessGrant = Schema.Struct({
   roleName: Schema.NullOr(Schema.String),
   effect: Schema.Literal("allow", "deny"),
   actions: Schema.Array(Schema.String),
-  resourceType: AccessResourceType,
+  // See AccessResourceTypeOut: loose on the way OUT so one unknown value cannot
+  // blank the whole list.
+  resourceType: AccessResourceTypeOut,
   resourceId: Schema.NullOr(Schema.String),
   createdBy: Schema.NullOr(Schema.String),
   createdAt: Schema.Date,
@@ -1367,7 +1385,7 @@ export const AccessRule = Schema.Struct({
   id: Schema.String,
   effect: Schema.Literal("allow", "deny"),
   actions: Schema.Array(Schema.String),
-  resourceType: AccessResourceType,
+  resourceType: AccessResourceTypeOut,
   resourceId: Schema.NullOr(Schema.String),
   conceptId: Schema.NullOr(Schema.String),
   condition: Schema.NullOr(AccessCondition),
@@ -1386,7 +1404,7 @@ export const EffectiveAccess = Schema.Struct({
       viaRoleName: Schema.NullOr(Schema.String),
       effect: Schema.Literal("allow", "deny"),
       actions: Schema.Array(Schema.String),
-      resourceType: AccessResourceType,
+      resourceType: AccessResourceTypeOut,
       resourceId: Schema.NullOr(Schema.String),
       condition: Schema.NullOr(AccessCondition),
     }),

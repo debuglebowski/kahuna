@@ -103,9 +103,53 @@ const RESOURCE_GROUPS: ReadonlyArray<{
   },
 ]
 
-const RESOURCE_LABEL = new Map(
+const RESOURCE_LABEL = new Map<string, string>(
   RESOURCE_GROUPS.flatMap((g) => g.items).map((r) => [r.id, r.label] as const),
 )
+
+/** Which group a resource belongs to — the SAME grouping the picker offers, so the list
+ *  someone reads and the menu they choose from agree. */
+const GROUP_OF = new Map<string, string>(
+  RESOURCE_GROUPS.flatMap((g) => g.items.map((r) => [r.id, g.label] as const)),
+)
+
+/** Sort position within a group, mirroring the picker's order (Concepts before Records
+ *  before Fields, not alphabetical) so a rule sits where the reader expects it. */
+const RESOURCE_RANK = new Map<string, number>(
+  RESOURCE_GROUPS.flatMap((g) => g.items).map((r, i) => [r.id, i] as const),
+)
+
+/**
+ * Bucket a role's rules by resource group, dropping empty groups.
+ *
+ * A flat list of eleven rows made the reader scan for the row they wanted; a role's
+ * rules are almost always "everything, everywhere", so the shape of what it grants is
+ * the actual information. Groups carry a count for that reason.
+ *
+ * An unrecognised `resourceType` (a newer server than this client) falls into "Other"
+ * rather than vanishing — a rule the UI can't name is exactly the one worth showing.
+ */
+const groupRules = <T extends { readonly resourceType: string }>(
+  rules: ReadonlyArray<T>,
+): ReadonlyArray<{ readonly label: string; readonly rules: ReadonlyArray<T> }> => {
+  const order = [...RESOURCE_GROUPS.map((g) => g.label), "Other"]
+  const byGroup = new Map<string, T[]>()
+  for (const r of rules) {
+    const group = GROUP_OF.get(r.resourceType) ?? "Other"
+    const list = byGroup.get(group)
+    if (list) list.push(r)
+    else byGroup.set(group, [r])
+  }
+  return order
+    .filter((label) => byGroup.has(label))
+    .map((label) => ({
+      label,
+      rules: [...(byGroup.get(label) ?? [])].sort(
+        (a, b) =>
+          (RESOURCE_RANK.get(a.resourceType) ?? 99) - (RESOURCE_RANK.get(b.resourceType) ?? 99),
+      ),
+    }))
+}
 const ACTION_LABEL = new Map(ACTIONS.map((a) => [a.id, a.label] as const))
 
 /**
@@ -187,43 +231,56 @@ function RuleEditor({ role, onClose }: { role: AccessRole; onClose: () => void }
               </TableRow>
             </TableHeader>
             <TableBody>
-              {rules.data.map((r) => (
-                <TableRow key={r.id}>
-                  <TableCell>
-                    <Badge tone={r.effect === "deny" ? "red" : "green"}>
-                      {r.effect === "deny" ? "Deny" : "Allow"}
-                    </Badge>
+              {groupRules(rules.data).flatMap((group) => [
+                // A group header row rather than nested tables: one set of column
+                // widths keeps Effect/Can/On/Scope aligned all the way down.
+                <TableRow key={`h-${group.label}`} className="hover:bg-transparent">
+                  <TableCell
+                    colSpan={5}
+                    className="bg-muted/40 py-2 text-xs font-medium tracking-wide text-muted-foreground"
+                  >
+                    {group.label}
+                    <span className="ml-2 font-normal opacity-70">{group.rules.length}</span>
                   </TableCell>
-                  <TableCell className="font-medium text-foreground">
-                    {actionsLabel(r.actions)}
-                  </TableCell>
-                  <TableCell>{RESOURCE_LABEL.get(r.resourceType) ?? r.resourceType}</TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {/* "Scope" answers "which ones?" — the old column showed a raw
+                </TableRow>,
+                ...group.rules.map((r) => (
+                  <TableRow key={r.id}>
+                    <TableCell>
+                      <Badge tone={r.effect === "deny" ? "red" : "green"}>
+                        {r.effect === "deny" ? "Deny" : "Allow"}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="font-medium text-foreground">
+                      {actionsLabel(r.actions)}
+                    </TableCell>
+                    <TableCell>{RESOURCE_LABEL.get(r.resourceType) ?? r.resourceType}</TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {/* "Scope" answers "which ones?" — the old column showed a raw
                         `(any)` or a truncated uuid, neither of which reads as an answer. */}
-                    {r.resourceId ? (
-                      <span className="font-mono text-xs">{r.resourceId.slice(0, 8)}…</span>
-                    ) : r.condition ? (
-                      "Matching records"
-                    ) : (
-                      "All"
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <IconButton
-                      aria-label={`Remove ${actionsLabel(r.actions)} on ${
-                        RESOURCE_LABEL.get(r.resourceType) ?? r.resourceType
-                      }`}
-                      title="Remove rule"
-                      variant="danger"
-                      onClick={() => remove.mutate(r.id)}
-                      disabled={remove.isPending}
-                    >
-                      <X size={14} />
-                    </IconButton>
-                  </TableCell>
-                </TableRow>
-              ))}
+                      {r.resourceId ? (
+                        <span className="font-mono text-xs">{r.resourceId.slice(0, 8)}…</span>
+                      ) : r.condition ? (
+                        "Matching records"
+                      ) : (
+                        "All"
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <IconButton
+                        aria-label={`Remove ${actionsLabel(r.actions)} on ${
+                          RESOURCE_LABEL.get(r.resourceType) ?? r.resourceType
+                        }`}
+                        title="Remove rule"
+                        variant="danger"
+                        onClick={() => remove.mutate(r.id)}
+                        disabled={remove.isPending}
+                      >
+                        <X size={14} />
+                      </IconButton>
+                    </TableCell>
+                  </TableRow>
+                )),
+              ])}
             </TableBody>
           </Table>
         ) : (
