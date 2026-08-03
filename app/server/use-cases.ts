@@ -3,12 +3,14 @@ import { Effect } from "effect"
 import {
   type AccessAction,
   type AccessResourceType,
+  AccessRoleService,
   type AnnotationField,
   AnnotationFieldService,
   AnnotationService,
   type AnnotationType,
   type Attachment,
   AttachmentService,
+  AUTOMATION_ACTOR_PREFIX,
   type Automation,
   type AutomationAction,
   type AutomationRun,
@@ -1465,7 +1467,22 @@ export const createAutomation = (input: {
   readonly match?: ConditionMatch
   readonly actions: ReadonlyArray<AutomationAction>
   readonly enabled?: boolean
-}): UC<Automation> => Effect.flatMap(AutomationService, (s) => s.create(input))
+}): UC<Automation> =>
+  Effect.gen(function* () {
+    const automations = yield* AutomationService
+    const roles = yield* AccessRoleService
+    const created = yield* automations.create(input)
+    // An automation is a governed ACTOR (see `actorScope`), so a fresh one starts with
+    // the full-access preset — matching what every automation had before this model,
+    // and what the backfill gave the existing ones. Narrowing it is then an opt-in.
+    //
+    // Without this a new automation would resolve an EMPTY policy and every run would
+    // fail — the phase would be a breaking change dressed as a refactor.
+    yield* roles.ensureBuiltins
+    const preset = yield* roles.getByKey("automation_full")
+    if (preset) yield* roles.assign(preset.id, `${AUTOMATION_ACTOR_PREFIX}${created.id}`)
+    return created
+  })
 
 export const updateAutomation = (input: {
   readonly id: string
@@ -1484,7 +1501,17 @@ export const restoreAutomation = (id: string): UC<Automation> =>
   Effect.flatMap(AutomationService, (s) => s.restore(id))
 
 export const deleteAutomation = (id: string): UC<{ readonly id: string }> =>
-  Effect.flatMap(AutomationService, (s) => s.remove(id)).pipe(Effect.map(() => ({ id })))
+  Effect.gen(function* () {
+    const automations = yield* AutomationService
+    const roles = yield* AccessRoleService
+    yield* automations.remove(id)
+    // Drop the automation's role assignment too. The actor can never authenticate, so
+    // a leftover row grants nothing — but they accumulate forever, and a stale
+    // assignment showing up in a "who holds this role?" list would be a lie.
+    const preset = yield* roles.getByKey("automation_full")
+    if (preset) yield* roles.unassign(preset.id, `${AUTOMATION_ACTOR_PREFIX}${id}`)
+    return { id }
+  })
 
 export const listAutomationRuns = (
   automationId: string,

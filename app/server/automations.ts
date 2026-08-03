@@ -25,7 +25,7 @@ import {
 } from "#engine"
 import { matchInstance } from "../src/lib/conditions"
 import { fetchGuardedJson, UnsafeUrlError } from "./integrations/url-guard"
-import { AppRuntime, systemScope } from "./runtime"
+import { AppRuntime, actorScope, systemScope } from "./runtime"
 import { postMessageForOrg } from "./slack"
 import { tap } from "./stream"
 
@@ -218,6 +218,27 @@ interface ActOn {
   readonly conceptId: string
 }
 
+/**
+ * Turn an engine failure into a run-log note a human can act on.
+ *
+ * THE POINT: once an automation is a scoped actor, a write its role does not cover
+ * fails as `InstanceNotFound` — the engine deliberately reports "not found" rather
+ * than "forbidden" so a caller cannot probe for existence. That is right for a user
+ * request and useless in a run log, where it is indistinguishable from "the record was
+ * deleted mid-run".
+ *
+ * The subject was resolved moments earlier by the runner (which is unrestricted), so
+ * if the record has gone missing BY THE TIME THIS AUTOMATION touches it, the cause is
+ * this automation's own access. Saying so is what makes narrowing an automation's role
+ * debuggable instead of mystifying — the artifact's "fails visibly in the run log".
+ */
+export const noteForFailure = (e: unknown, subject: ActOn | null): string => {
+  const tag = (e as { _tag?: string })?._tag
+  if (subject && (tag === "InstanceNotFound" || tag === "ItemNotFound"))
+    return "forbidden: this automation's role does not cover that record"
+  return String(tag ?? e)
+}
+
 const runAction = (
   action: AutomationAction,
   ctx: {
@@ -369,7 +390,7 @@ const runAction = (
       Effect.succeed({
         kind: action.kind,
         ok: false,
-        note: String((e as { _tag?: string })?._tag ?? e),
+        note: noteForFailure(e, ctx.subject),
       } satisfies AutomationActionOutcome),
     ),
   )
@@ -599,7 +620,14 @@ export const handleEnvelope = (env: EventEnvelope) =>
       }).pipe(
         // Every write this run makes is attributed to THIS automation, so the
         // one-hop guard fires and the activity trail names the culprit.
-        Effect.provideService(OrgContext, systemScope(env.org, actorFor(automation.id))),
+        //
+        // `actorScope`, NOT `systemScope`: an automation is an actor with its own
+        // role, so it is governed by the access model rather than exempt from it. It
+        // behaves the same whoever tripped it, and can be scoped down per automation.
+        Effect.provideServiceEffect(
+          OrgContext,
+          Effect.promise(() => actorScope(env.org, actorFor(automation.id))),
+        ),
         Effect.catchAllCause((cause) =>
           // A crash mid-run must still close the row, or the automation would
           // look permanently "running" and the event could never be retried.
@@ -653,6 +681,16 @@ export const startAutomationRunner = (): void => {
         // The runner acts as the automation itself; OrgContext's actor is
         // overridden per-automation inside the run, but the org must be the
         // event's own org — this is the isolation boundary for automations.
+        //
+        // DELIBERATELY still `systemScope`, unlike the per-run scopes below. This
+        // outer pass resolves the triggering record and matches triggers BEFORE it
+        // knows which automations apply, so it cannot use any one automation's policy.
+        //
+        // What that means, stated plainly: an automation's CONDITIONS are evaluated
+        // against the full record, so scoping an automation limits what it WRITES, not
+        // what it can branch on. That is not an escalation — creating or editing an
+        // automation needs `configure`, and a caller with `configure` can read the
+        // record anyway. Narrowing is about blast radius, not secrecy.
         Effect.provideService(OrgContext, systemScope(env.org, AUTOMATION_ACTOR_PREFIX)),
         Effect.tapErrorCause((cause) => Effect.logError("automation runner error", cause)),
         Effect.catchAllCause(() => Effect.void),
@@ -744,8 +782,11 @@ const runScheduled = (orgId: string, automationId: string) =>
       }).pipe(Effect.catchAllCause(() => Effect.void))
     }
   }).pipe(
-    // Same attribution as the event path: writes carry this automation's actor.
-    Effect.provideService(OrgContext, systemScope(orgId, actorFor(automationId))),
+    // Same attribution AND the same governance as the event path.
+    Effect.provideServiceEffect(
+      OrgContext,
+      Effect.promise(() => actorScope(orgId, actorFor(automationId))),
+    ),
   )
 
 let tickStarted = false

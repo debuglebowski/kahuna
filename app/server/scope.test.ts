@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs"
 import path from "node:path"
 import { describe, expect, it } from "vitest"
-import { sessionScope, systemScope } from "./runtime"
+import { actorScope, sessionScope, systemScope } from "./runtime"
 
 /**
  * `OrgScope.role` drives READ visibility inside the engine, so "could a user
@@ -23,9 +23,27 @@ describe("org scope roles", () => {
       orgId: "org",
       actor: "user",
       role: "member",
+      policy: undefined,
     })
     expect(sessionScope("org", "user", "owner").role).toBe("owner")
     expect(systemScope("org", "runner").role).toBe("system")
+  })
+
+  it("systemScope is UNRESTRICTED and sessionScope never is", () => {
+    // The access-model half of the same question. `systemScope` carries an explicit
+    // unrestricted policy (migrations/seeds/the decay tick are exempt); a session
+    // scope's policy is resolved from the caller's rules and can never be exempt.
+    expect(systemScope("org", "runner").policy?.unrestricted).toBe(true)
+    expect(sessionScope("org", "user", "owner").policy).toBeUndefined()
+  })
+
+  it("an actorScope is GOVERNED, not exempt — that is the whole point", async () => {
+    // An automation must be an actor with a role, not a passthrough for engine
+    // privilege: that is what lets it be scoped, and what makes it behave the same
+    // whoever tripped it. If this ever returns `unrestricted`, P4 has been undone.
+    const scope = await actorScope("org-none", "system:automation:none")
+    expect(scope.policy?.unrestricted).toBe(false)
+    expect(scope.role).not.toBe("system")
   })
 
   // The two modules that turn a request into a scope. If either ever reaches for
@@ -34,6 +52,21 @@ describe("org scope roles", () => {
     for (const f of ["session.ts", "rpc.ts"]) {
       expect(read(f), `${f} must not reference systemScope`).not.toContain("systemScope")
     }
+  })
+
+  it("the automation runner's PER-RUN scopes are actor scopes, not system scopes", () => {
+    // The runner still holds one systemScope for its OUTER pass (it resolves the
+    // triggering record before it knows which automations match, so it cannot use any
+    // one automation's policy — see the comment there). But every scope a RUN executes
+    // under must be an actorScope, or automations are ungoverned again.
+    const src = read("automations.ts")
+    const systemUses = src
+      .split("\n")
+      .filter((l) => l.includes("systemScope(") && !l.trimStart().startsWith("//"))
+    expect(systemUses).toHaveLength(1)
+    expect(src).toContain("actorScope(")
+    // Both per-run attribution sites (event-triggered and scheduled).
+    expect(src.split("actorScope(").length - 1).toBeGreaterThanOrEqual(2)
   })
 
   it('`role: "system"` is written in exactly one place', () => {

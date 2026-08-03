@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { type AutomationTrigger, isAutomationActor, nextRunAfter } from "#engine"
-import { renderTemplate, resolveTransition, triggerMatches } from "./automations"
+import { noteForFailure, renderTemplate, resolveTransition, triggerMatches } from "./automations"
 
 const trig = (t: Partial<AutomationTrigger> & { kind: AutomationTrigger["kind"] }) =>
   t as AutomationTrigger
@@ -275,5 +275,28 @@ describe("resolveTransition — what {{trigger.from|to}} mean", () => {
         nextState: null,
       }),
     ).toEqual({ from: undefined, to: "won" })
+  })
+})
+
+describe("automations are governed actors (P4)", () => {
+  /**
+   * The behavioural contract of making an automation an actor:
+   *   1. A fresh automation gets the full-access preset, so nothing breaks on rollout.
+   *   2. A write outside its role fails with a note a human can act on — "forbidden",
+   *      never the bare `InstanceNotFound` the engine reports to avoid an existence
+   *      oracle (right for a user request, useless in a run log).
+   */
+  it("noteForFailure translates a policy block into prose, and passes other errors through", () => {
+    // With a subject in hand, a missing record means THIS automation's access — the
+    // runner resolved that record moments earlier, unrestricted.
+    const subject = { instance: { id: "i1" } as never, conceptId: "c1" }
+    expect(noteForFailure({ _tag: "InstanceNotFound" }, subject)).toContain("forbidden")
+    expect(noteForFailure({ _tag: "ItemNotFound" }, subject)).toContain("forbidden")
+    // Everything else keeps its tag — a validation failure must not read as a
+    // permission problem.
+    expect(noteForFailure({ _tag: "FieldValidationError" }, subject)).toBe("FieldValidationError")
+    expect(noteForFailure({ _tag: "VersionConflict" }, subject)).toBe("VersionConflict")
+    // With NO subject there was nothing to be forbidden from.
+    expect(noteForFailure({ _tag: "InstanceNotFound" }, null)).toBe("InstanceNotFound")
   })
 })

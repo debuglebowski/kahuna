@@ -473,6 +473,15 @@ const EVENT_CONCEPT: ProvisionConceptSpec = {
 
 const googleScopeOf = (conn: typeof googleConnection.$inferSelect): OrgScope =>
   // A connector sync runs on no session at all — engine privilege, not a member.
+  //
+  // DELIBERATELY still exempt, unlike automations (which became scoped actors —
+  // see `actorScope`). The actor here is `conn.userId`, the id of the PERSON who
+  // connected the integration, so resolving a policy from it would make the sync
+  // inherit that member's access: a connector set up by a member would silently stop
+  // mirroring anything they cannot see. Scoping connectors properly needs a distinct
+  // connector identity (e.g. `system:connector:<kind>`), which rewrites `events.actor`
+  // for every synced row and so changes the activity feed and the one-hop automation
+  // guard. That is its own change, not a rider on this one.
   systemScope(conn.orgId, conn.userId)
 
 /** Ensure the org's Event concept exists; reuse the ids stored on the connection

@@ -163,6 +163,31 @@ export const systemScope = (orgId: string, actor: string): OrgScope => ({
 export const resolvePolicy = (orgId: string, actor: string): Promise<PolicySet> =>
   AppRuntime.runPromise(Effect.flatMap(PolicyService, (p) => p.resolve(orgId, actor)))
 
+/**
+ * Build a scope for a NON-PERSON actor that is nonetheless governed: an automation,
+ * or an integration connector.
+ *
+ * The distinction from `systemScope` is the whole point. `systemScope` is exempt
+ * (migrations, seeds, the decay tick — operator work outside the app). An automation
+ * is an ACTOR WITH ITS OWN ROLE, so:
+ *
+ *  - it behaves identically no matter who tripped it (never the trigger-er's access),
+ *  - it can be scoped ("may edit Deals and nothing else"),
+ *  - and a run that exceeds its role fails VISIBLY in the run log rather than
+ *    silently doing less than the author intended.
+ *
+ * `role` is `"member"`, not `"system"`: the role only supplies the DEFAULT that rules
+ * layer over, and an automation must not inherit admin-by-default. Existing
+ * automations are assigned the `automation_full` preset by the backfill, which grants
+ * `*` — so behaviour is preserved on rollout and narrowing is an opt-in.
+ */
+export const actorScope = async (orgId: string, actor: string): Promise<OrgScope> => ({
+  orgId,
+  actor,
+  role: "member",
+  policy: await resolvePolicy(orgId, actor),
+})
+
 /** Run an engine effect with a given org scope, mapping typed errors to a result. */
 export const runEngine = <A, E>(
   scope: OrgScope,
