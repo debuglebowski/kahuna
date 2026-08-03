@@ -128,7 +128,7 @@ RUN test -f app/db/migrations/0000_baseline.sql \
 # pool and starts listening at import time), which is not something a build stage
 # should do.
 COPY app/scripts/check-image-imports.ts ./app/scripts/
-RUN cd app && bun scripts/check-image-imports.ts server/index.ts
+RUN cd app && bun scripts/check-image-imports.ts server/index.ts scripts/bootstrap.ts
 
 COPY docker-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh \

@@ -95,9 +95,12 @@ const specifiersOf = (src: string): ReadonlyArray<string> => {
   return out
 }
 
-const entry = process.argv[2]
-if (!entry) {
-  console.error("usage: bun scripts/check-image-imports.ts <entry.ts>")
+// Several entries, because the image has more than one: the server plus every
+// deploy-path script the entrypoint runs. A script reached only by `migrate`
+// would otherwise go unchecked until it failed mid-deploy.
+const entries = process.argv.slice(2)
+if (entries.length === 0) {
+  console.error("usage: bun scripts/check-image-imports.ts <entry.ts> [entry.ts ...]")
   process.exit(2)
 }
 
@@ -131,7 +134,7 @@ const walk = (file: string): void => {
   }
 }
 
-walk(entry)
+for (const entry of entries) walk(entry)
 
 if (missing.length > 0) {
   console.error(`\n${missing.length} unresolved first-party import(s):\n`)
@@ -141,4 +144,6 @@ if (missing.length > 0) {
   process.exit(1)
 }
 
-console.log(`import graph ok — ${seen.size} first-party modules resolved from ${entry}`)
+console.log(
+  `import graph ok — ${seen.size} first-party modules resolved from ${entries.join(", ")}`,
+)

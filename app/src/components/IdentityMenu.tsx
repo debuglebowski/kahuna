@@ -1,6 +1,4 @@
-import { useQuery } from "@tanstack/react-query"
-import { Building2, Check, ChevronRight, LogOut, Settings } from "lucide-react"
-import { useState } from "react"
+import { ChevronRight, LogOut, Settings } from "lucide-react"
 import { useNavigate } from "react-router-dom"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import {
@@ -9,54 +7,29 @@ import {
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { authClient, signOut, useSession } from "../lib/auth-client"
-import { cn, initialsOf } from "../lib/utils"
+import { signOut, useSession } from "../lib/auth-client"
+import { initialsOf } from "../lib/utils"
 import { useFullOrg } from "../pages/settings/SettingsLayout"
 
 /** Sidebar footer identity menu — the single resting affordance at the bottom of
  *  the sidebar. The trigger shows who you are (avatar + name) and where you are
- *  (active org); one click opens a menu that folds together org switching
- *  (BetterAuth `setActive` → full reload re-scopes all data), org creation, and
- *  account actions (settings, sign out). Built on the shadcn {@link DropdownMenu},
- *  which owns open state, outside-click, Escape, and keyboard navigation. */
+ *  (the org); one click opens account actions (settings, sign out). Built on the
+ *  shadcn {@link DropdownMenu}, which owns open state, outside-click, Escape, and
+ *  keyboard navigation.
+ *
+ *  There is no org switcher and no "new organization": a deployment holds exactly
+ *  one org (`createOrgDirect` in server/provision.ts refuses a second), so the
+ *  org name here is a label, not a control. */
 export function IdentityMenu() {
   const navigate = useNavigate()
   const { data: session } = useSession()
   const current = useFullOrg()
-  const orgs = useQuery({
-    queryKey: ["orgList"],
-    queryFn: async () => {
-      const { data, error } = await authClient.organization.list()
-      if (error) throw new Error(error.message ?? "Failed to load organizations")
-      return data ?? []
-    },
-  })
 
-  const [switching, setSwitching] = useState(false)
-  const [switchError, setSwitchError] = useState<string | null>(null)
-
-  const currentId = current.data?.id
   const user = session?.user
   const name = user?.name?.trim() || user?.email || "Account"
   const email = user?.email ?? ""
-
-  const switchTo = async (id: string) => {
-    if (id === currentId) return
-    setSwitching(true)
-    setSwitchError(null)
-    const { error } = await authClient.organization.setActive({ organizationId: id })
-    if (error) {
-      setSwitchError(error.message ?? "Failed to switch organization")
-      setSwitching(false)
-      return
-    }
-    window.location.reload()
-  }
 
   const avatar = (
     <Avatar>
@@ -87,41 +60,6 @@ export function IdentityMenu() {
           </div>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
-
-        <DropdownMenuSub>
-          <DropdownMenuSubTrigger>
-            <Building2 size={14} />
-            Organizations
-          </DropdownMenuSubTrigger>
-          <DropdownMenuSubContent className="min-w-48">
-            {orgs.isPending && (
-              <p className="px-2 py-1.5 text-xs text-muted-foreground">Loading…</p>
-            )}
-            {orgs.error && (
-              <p className="px-2 py-1.5 text-xs text-destructive">Couldn't load organizations.</p>
-            )}
-            {switchError && <p className="px-2 py-1.5 text-xs text-destructive">{switchError}</p>}
-            {orgs.data?.map((o) => {
-              const active = o.id === currentId
-              return (
-                <DropdownMenuItem
-                  key={o.id}
-                  disabled={switching}
-                  onSelect={() => switchTo(o.id)}
-                  className={cn(active && "font-medium")}
-                >
-                  <span className="min-w-0 flex-1 truncate">{o.name}</span>
-                  {active && <Check size={14} className="shrink-0 text-muted-foreground" />}
-                </DropdownMenuItem>
-              )
-            })}
-            {/* No "New organization" entry: the server refuses member-created
-                  orgs (`allowUserToCreateOrganization: false` in auth.ts), so the
-                  button could only ever 403. Orgs are provisioned with
-                  `scripts/create-admin.ts`. CreateOrgModal is kept for when/if
-                  that policy is relaxed. */}
-          </DropdownMenuSubContent>
-        </DropdownMenuSub>
 
         <DropdownMenuItem onSelect={() => navigate("/settings/profile")}>
           <Settings size={14} />

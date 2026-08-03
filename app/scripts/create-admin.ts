@@ -1,10 +1,16 @@
 import "../server/env"
 
-import { createOrgDirect, createUserDirect } from "../server/provision"
+import { createOrgDirect, createUserDirect, makeOrgSlug } from "../server/provision"
 
 /**
  * CLI: `bun scripts/create-admin.ts <email> <password> <name> <orgName>` —
  * bootstrap a brand-new deployment: one owner account plus one seeded org.
+ *
+ * NOT the usual path any more: setting INITIAL_ADMIN_EMAIL /
+ * INITIAL_ADMIN_PASSWORD does this automatically on first boot (see
+ * server/bootstrap.ts). This stays as the manual escape hatch — a deployment
+ * that already has accounts (so the automatic guard declines), a second org, or
+ * an explicit name.
  *
  * Needed because self-serve sign-up AND self-serve org creation are both closed
  * (see server/auth.ts), so there is otherwise no way to get the FIRST account
@@ -31,19 +37,20 @@ if (!email || !password || !name || !orgName) {
   process.exit(1)
 }
 
-/** URL-safe unique slug. Mirrors `src/lib/org.ts` (never surfaced in the UI). */
-const slugFor = (raw: string): string => {
-  const base = raw
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-  return `${base || "org"}-${Math.random().toString(36).slice(2, 7)}`
-}
-
 const user = await createUserDirect({ email, password, name })
 if (!user.created) console.log(`note: ${user.email} already existed — reusing it`)
 
-const org = await createOrgDirect({ userId: user.userId, name: orgName, slug: slugFor(orgName) })
+// One org per deployment, so this refuses when one already exists. That is the
+// common case for a mistaken re-run — report it as a single line rather than a
+// stack trace, since it is an operator error and not a crash.
+const org = await createOrgDirect({
+  userId: user.userId,
+  name: orgName,
+  slug: makeOrgSlug(orgName),
+}).catch((err: unknown) => {
+  console.error(`failed: ${err instanceof Error ? err.message : String(err)}`)
+  process.exit(1)
+})
 
 console.log(`owner:  ${user.email} (${user.userId})`)
 console.log(`org:    ${orgName} (${org.id}) — seeded`)

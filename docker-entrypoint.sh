@@ -2,7 +2,8 @@
 # Kingsmaker container entrypoint.
 #
 #   serve     (default) run the HTTP server
-#   migrate            apply migrations, then exit
+#   migrate            apply migrations, bootstrap the initial admin, then exit
+#   bootstrap          initial admin only (migrations already applied)
 #   <anything else>    exec'd verbatim (e.g. `sh`, `bun scripts/...`)
 #
 # Migration is a SEPARATE command, not part of `serve`. Two reasons:
@@ -27,6 +28,17 @@ case "${1:-serve}" in
     echo "==> Applying migrations"
     cd /srv/kingsmaker/app && bunx drizzle-kit migrate
     echo "==> Migrations complete"
+    # Bootstrap rides along here rather than in `serve` for the same two reasons
+    # migrations do: this step is single-instance, so N replicas cannot race it,
+    # and a failure fails its own command instead of being buried in startup
+    # logs. It is a no-op unless the deployment is empty AND the INITIAL_ADMIN_*
+    # vars are set, so running it on every deploy is safe.
+    echo "==> Bootstrapping initial admin"
+    bun scripts/bootstrap.ts
+    ;;
+  bootstrap)
+    echo "==> Bootstrapping initial admin"
+    cd /srv/kingsmaker/app && bun scripts/bootstrap.ts
     ;;
   *)
     exec "$@"

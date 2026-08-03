@@ -5,6 +5,9 @@
 #   docker compose -f docker-compose.prod.yml up -d
 #
 # `migrate` is a separate one-shot command by design — see docker-entrypoint.sh.
+# It also creates the initial admin from INITIAL_ADMIN_EMAIL /
+# INITIAL_ADMIN_PASSWORD when the database has no accounts yet; set those in
+# .env.production before the first run or you will have no way to sign in.
 #
 # Differs from the dev docker-compose.yml in three ways that matter on a public
 # host: Postgres is bound to loopback (dev publishes 0.0.0.0:5544), the password
