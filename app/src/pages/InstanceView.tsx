@@ -5,11 +5,13 @@ import {
   EllipsisVertical,
   LayoutDashboard,
   Pencil,
+  Share2,
   Trash2,
   TriangleAlert,
 } from "lucide-react"
 import { useMemo, useState } from "react"
 import { useNavigate, useParams, useSearchParams } from "react-router-dom"
+import { ShareDialog } from "@/components/ShareDialog"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -82,6 +84,7 @@ export function InstanceViewBody({
   const myRole = org.data?.members?.find((m) => m.userId === session?.user.id)?.role
   const admin = isAdminRole(myRole)
   const [dialog, setDialog] = useState<"archive" | "delete" | null>(null)
+  const [sharing, setSharing] = useState(false)
 
   // All concepts — to resolve relation targets' versioningEnabled in the picker.
   const allConcepts = useQuery({ queryKey: ["concepts"], queryFn: () => api.listConcepts() })
@@ -204,6 +207,14 @@ export function InstanceViewBody({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+              {/* Sharing is keyed on the ITEM lineage, not this version — a grant must
+                  survive publishing a new version. Gated server-side on `share` for
+                  this record; the dialog says so rather than hiding itself, because
+                  hiding it would leave "can I share this?" unanswerable. */}
+              <DropdownMenuItem onSelect={() => setSharing(true)}>
+                <Share2 size={15} />
+                Share
+              </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => navigate(`/settings/concepts/${concept.id}`)}>
                 <Pencil size={15} />
                 Edit concept
@@ -273,6 +284,15 @@ export function InstanceViewBody({
         </div>
       ) : (
         <NoRecordView concept={concept} />
+      )}
+
+      {sharing && (
+        <ShareDialog
+          resourceType="record"
+          resourceId={instance.itemId}
+          title={label}
+          onClose={() => setSharing(false)}
+        />
       )}
 
       {dialog === "archive" && (

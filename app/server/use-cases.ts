@@ -208,8 +208,7 @@ const fieldMaskFor = (conceptId: string): UC<ReadonlySet<string>> =>
  *  stay a no-op for the overwhelmingly common case of no field rules at all. */
 const hasFieldRules = (scope: {
   readonly policy?: { readonly rules: ReadonlyArray<{ readonly resourceType: string }> }
-}): boolean =>
-  scope.policy !== undefined && scope.policy.rules.some((r) => r.resourceType === "field")
+}): boolean => scope.policy?.rules.some((r) => r.resourceType === "field") ?? false
 
 /** Run a write and project its echoed instance, so a writer's response carries no
  *  more than a reader's would. */

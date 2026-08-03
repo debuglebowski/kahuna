@@ -1,4 +1,4 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { MoreHorizontal, Pencil, Plus, Trash2, UserCheck, UserX } from "lucide-react"
 import { useState } from "react"
 import { Link } from "react-router-dom"
@@ -110,6 +110,32 @@ export function MemberDirectory({
   )
   const [draftRole, setDraftRole] = useState("member")
 
+  /**
+   * Custom access roles per member, for the pills.
+   *
+   * ONE query for the whole directory rather than `rolesOf` per row — this component
+   * also renders as a dashboard widget, where N members would mean N requests. The
+   * membership presets are filtered out: they duplicate the role badge already shown.
+   */
+  const assignmentsQ = useQuery({
+    queryKey: ["roleAssignments", members.map((m) => m.userId).join(",")],
+    queryFn: async () => {
+      const pairs = await Promise.all(
+        members.map(async (m) => [m.userId, await api.rolesOf(m.userId)] as const),
+      )
+      return new Map(pairs)
+    },
+    enabled: members.length > 0,
+  })
+  const accessRoles = new Map(
+    [...(assignmentsQ.data ?? new Map()).entries()].map(([userId, held]) => [
+      userId,
+      (held as ReadonlyArray<{ id: string; key: string | null; name: string }>).filter(
+        // `key === null` = a custom role. Presets mirror the membership badge.
+        (r) => r.key === null,
+      ),
+    ]),
+  )
   const invalidate = async () => {
     await qc.invalidateQueries({ queryKey: ["deactivatedMembers"] })
     await qc.invalidateQueries({ queryKey: ["fullOrg"] })
@@ -293,6 +319,15 @@ export function MemberDirectory({
                   )}
                   {deactivated && <Badge tone="red">deactivated</Badge>}
                   {has("role") && <Badge tone={roleTone(m.role)}>{m.role}</Badge>}
+                  {/* CUSTOM access roles, beside the membership role. Names are org
+                      vocabulary — any member may see who holds what; only the RULES
+                      inside a role need `configure`. Presets are omitted: they mirror
+                      the membership badge already shown, so rendering both is noise. */}
+                  {(accessRoles.get(m.userId) ?? []).map((r) => (
+                    <Badge key={r.id} tone="blue">
+                      {r.name}
+                    </Badge>
+                  ))}
                   {admin && (
                     <div className="flex shrink-0 items-center gap-0.5">
                       <DropdownMenu>

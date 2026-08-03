@@ -125,10 +125,9 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
         // cannot even request the list they are entitled to. Missing that here dropped
         // the concept in SQL before the per-row check could restore it.
         const mayWiden =
-          scope.policy !== undefined &&
-          scope.policy.rules.some(
+          scope.policy?.rules.some(
             (r) => r.resourceType === "concept" || r.resourceType === "record",
-          )
+          ) ?? false
         const visibleOnly =
           canReadRestricted(scope.role) || mayWiden ? sql`` : sql` AND c.visibility = 'visible'`
         const rows = yield* sql<ConceptRow>`

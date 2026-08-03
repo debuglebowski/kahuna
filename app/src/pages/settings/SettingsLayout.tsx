@@ -1,11 +1,13 @@
 import { useQuery } from "@tanstack/react-query"
 import {
   Building2,
+  KeyRound,
   LayoutDashboard,
   ListTodo,
   PanelLeft,
   Plug,
   Shapes,
+  ShieldCheck,
   Tags,
   UserRound,
   Users,
@@ -48,6 +50,9 @@ export const SETTINGS_NAV: ReadonlyArray<SettingsGroup> = [
     title: "Organization",
     items: [
       { to: "organization", label: "Organization", admin: true, icon: <Building2 size={16} /> },
+      // `admin` is the coarse route gate; the page itself narrows writes to the
+      // OWNER, because this decides who can get into the org at all.
+      { to: "authentication", label: "Authentication", admin: true, icon: <KeyRound size={16} /> },
       { to: "concepts", label: "Concepts", admin: false, icon: <Shapes size={16} /> },
       {
         to: "dashboards",
@@ -64,6 +69,9 @@ export const SETTINGS_NAV: ReadonlyArray<SettingsGroup> = [
       // (see App.tsx) — not links out — so entering through settings keeps the
       // settings sidebar. `dual` marks them for the route guard below.
       { to: "members", label: "Members", admin: false, icon: <Users size={16} />, dual: true },
+      // The rules inside a role are the sensitive half of the access model, so this
+      // tab is admin-only — unlike Members, where role NAMES are org vocabulary.
+      { to: "roles", label: "Roles", admin: true, icon: <ShieldCheck size={16} /> },
       {
         to: "automations",
         label: "Automations",

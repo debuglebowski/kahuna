@@ -1306,6 +1306,7 @@ export const AccessResourceType = Schema.Literal(
   "note",
   "member",
 )
+export type AccessResourceType = typeof AccessResourceType.Type
 
 /** A grantable action. `"*"` is deliberately NOT on the wire: a client may only ever
  *  grant named actions, so a future action is never handed out by an old dialog. */
@@ -1318,6 +1319,7 @@ export const AccessActionName = Schema.Literal(
   "share",
   "configure",
 )
+export type AccessActionName = typeof AccessActionName.Type
 
 /** One grant as the Share dialog sees it. `userId`/`roleId` are exclusive. */
 export const AccessGrant = Schema.Struct({

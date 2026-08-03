@@ -11,12 +11,14 @@ import { InstanceView } from "./pages/InstanceView"
 import { MemberProfile } from "./pages/MemberProfile"
 import { MembersDirectory } from "./pages/MembersDirectory"
 import { Overview } from "./pages/Overview"
+import { Authentication } from "./pages/settings/Authentication"
 import { Concepts } from "./pages/settings/Concepts"
 import { Dashboards as DashboardsSettings } from "./pages/settings/Dashboards"
 import { Integrations } from "./pages/settings/Integrations"
 import { Labels } from "./pages/settings/Labels"
 import { Organization } from "./pages/settings/Organization"
 import { Profile } from "./pages/settings/Profile"
+import { Roles } from "./pages/settings/Roles"
 import { SettingsLayout } from "./pages/settings/SettingsLayout"
 import { Tasks as TasksSettings } from "./pages/settings/Tasks"
 import { Views } from "./pages/settings/Views"
@@ -59,6 +61,7 @@ export function App() {
           <Route path="profile" element={<Profile />} />
           <Route path="security" element={<Navigate to="/settings/profile" replace />} />
           <Route path="organization" element={<Organization />} />
+          <Route path="authentication" element={<Authentication />} />
           {/* Members and Automations render at TWO urls each — here and at the
               top level — from one implementation. Self-links inside them follow
               the mounted base (see `useSectionBase`), so entering through
@@ -69,6 +72,7 @@ export function App() {
           <Route path="concepts/:id" element={<Concepts />} />
           <Route path="concepts-graph" element={<Navigate to="/settings/concepts" replace />} />
           <Route path="labels" element={<Labels />} />
+          <Route path="roles" element={<Roles />} />
           <Route path="tasks" element={<TasksSettings />} />
           <Route path="integrations" element={<Integrations />} />
           <Route path="sidebar" element={<Views />} />

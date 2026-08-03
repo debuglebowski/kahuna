@@ -2,6 +2,9 @@ import { FetchHttpClient } from "@effect/platform"
 import { RpcClient, RpcSerialization } from "@effect/rpc"
 import { Context, Effect, Layer, ManagedRuntime } from "effect"
 import {
+  type AccessActionName,
+  type AccessCondition,
+  type AccessResourceType,
   type AutomationAction,
   type AutomationTrigger,
   type DashboardBody,
@@ -19,6 +22,12 @@ import {
 } from "../../rpc/contract"
 
 export type {
+  AccessActionName,
+  AccessCondition,
+  AccessGrant,
+  AccessResourceType,
+  AccessRole,
+  AccessRule,
   AnnotationField,
   AnnotationType,
   Attachment,
@@ -38,6 +47,7 @@ export type {
   DashboardWidget,
   DeactivatedMember,
   EditReach,
+  EffectiveAccess,
   FeedItem,
   Field,
   FieldConfig,
@@ -117,6 +127,58 @@ export interface VersionInfo {
   readonly updateAvailable: boolean
   readonly checkedAt: string | null
   readonly checkDisabled: boolean
+}
+
+/** Which sign-in methods the active org accepts. Never both false. */
+export interface AuthMethods {
+  readonly passwordEnabled: boolean
+  readonly ssoEnabled: boolean
+}
+
+export interface SsoProvider {
+  readonly providerId: string
+  readonly issuer: string
+  readonly domain: string
+  readonly clientId: string
+  /** A secret is stored. The value itself is never sent to the client. */
+  readonly hasSecret: boolean
+}
+
+export interface SsoProviderInput {
+  readonly issuer: string
+  readonly domain: string
+  readonly clientId: string
+  readonly clientSecret: string
+}
+
+export interface AuthConfig {
+  readonly methods: AuthMethods
+  readonly provider: SsoProvider | null
+  /** Redirect URI to register at the IdP — server-computed, never guessed. */
+  readonly callbackUrl: string
+  /** The caller is the org owner. Admins get this read-only. */
+  readonly canEdit: boolean
+}
+
+/**
+ * Server error codes → something an operator can act on. The handlers return
+ * bare codes (see server/sso.ts); anything unmapped falls through to the code
+ * itself rather than a generic message, so an unexpected one is still legible.
+ */
+const AUTH_CONFIG_ERRORS: Record<string, string> = {
+  FORBIDDEN: "Only the organization owner can change authentication settings.",
+  MISSING_FIELDS: "Fill in every field.",
+  INVALID_ISSUER: "The issuer must be a valid URL.",
+  ISSUER_MUST_BE_HTTPS: "The issuer must use https.",
+  INVALID_DOMAIN: "Enter bare domains (e.g. acme.com), not emails or URLs.",
+  NO_SIGN_IN_METHOD: "At least one sign-in method must stay enabled.",
+  NO_SSO_PROVIDER: "Configure an identity provider before enabling SSO.",
+  REGISTER_FAILED: "The identity provider could not be reached.",
+}
+
+const authConfigError = (code?: string, message?: string): string => {
+  const base = AUTH_CONFIG_ERRORS[code ?? ""] ?? code ?? "Request failed"
+  return message ? `${base} (${message})` : base
 }
 
 export interface GoogleStatus {
@@ -671,6 +733,43 @@ export const api = {
     if (!res.ok) throw new Error("Failed to load version")
     return (await res.json()) as VersionInfo
   },
+  // ── Org authentication config (SSO + sign-in methods) ───────────────────────
+  getAuthConfig: async (): Promise<AuthConfig> => {
+    const res = await fetch("/api/auth-config/sso")
+    if (!res.ok) throw new Error("Failed to load authentication settings")
+    return (await res.json()) as AuthConfig
+  },
+  saveSsoProvider: async (input: SsoProviderInput): Promise<void> => {
+    const res = await fetch("/api/auth-config/sso", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    })
+    if (!res.ok) {
+      // `message` carries the IdP's own discovery failure, which is the only
+      // thing that tells the operator WHICH field is wrong.
+      const body = (await res.json().catch(() => null)) as {
+        error?: string
+        message?: string
+      } | null
+      throw new Error(authConfigError(body?.error, body?.message))
+    }
+  },
+  deleteSsoProvider: async (): Promise<void> => {
+    const res = await fetch("/api/auth-config/sso", { method: "DELETE" })
+    if (!res.ok) throw new Error("Failed to remove the SSO provider")
+  },
+  updateAuthMethods: async (methods: AuthMethods): Promise<void> => {
+    const res = await fetch("/api/auth-config/methods", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(methods),
+    })
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null
+      throw new Error(authConfigError(body?.error))
+    }
+  },
   // ── Google integration ──────────────────────────────────────────────────────
   getGoogleStatus: async (): Promise<GoogleStatus> => {
     const res = await fetch("/api/integrations/google/status")
@@ -1110,4 +1209,41 @@ export const api = {
   /** Dry run — reports what WOULD happen, writes nothing. */
   testAutomation: (id: string, opts?: { limit?: number }) =>
     call((c) => c.testAutomation({ id, limit: opts?.limit })),
+
+  // ── access control ──────────────────────────────────────────────────────────
+  /** Role NAMES — readable by any member (pills, the Share dialog). */
+  listRoles: () => call((c) => c.listRoles()),
+  rolesOf: (userId: string) => call((c) => c.rolesOf({ userId })),
+  /** The rules inside a role — `configure` only. */
+  listRules: (roleId: string) => call((c) => c.listRules({ roleId })),
+  createRole: (name: string, description?: string) =>
+    call((c) => c.createRole({ name, description })),
+  updateRole: (id: string, patch: { name?: string; description?: string | null }) =>
+    call((c) => c.updateRole({ id, ...patch })),
+  deleteRole: (id: string) => call((c) => c.deleteRole({ id })),
+  assignRole: (roleId: string, userId: string) => call((c) => c.assignRole({ roleId, userId })),
+  unassignRole: (roleId: string, userId: string) => call((c) => c.unassignRole({ roleId, userId })),
+  addRule: (input: {
+    roleId: string
+    effect: "allow" | "deny"
+    actions: ReadonlyArray<AccessActionName>
+    resourceType: AccessResourceType
+    resourceId?: string | null
+    conceptId?: string | null
+    condition?: AccessCondition | null
+  }) => call((c) => c.addRule(input)),
+  removeRule: (ruleId: string) => call((c) => c.removeRule({ ruleId })),
+  /** Omit `userId` for yourself — always allowed, no `configure` needed. */
+  effectiveAccess: (userId?: string) => call((c) => c.effectiveAccess({ userId })),
+  /** Current grants on one resource. Needs `share` on it. */
+  listGrants: (resourceType: AccessResourceType, resourceId: string) =>
+    call((c) => c.listGrants({ resourceType, resourceId })),
+  share: (input: {
+    resourceType: AccessResourceType
+    resourceId: string
+    userId?: string
+    roleId?: string
+    actions: ReadonlyArray<AccessActionName>
+  }) => call((c) => c.share(input)),
+  revokeGrant: (grantId: string) => call((c) => c.revoke({ grantId })),
 }
