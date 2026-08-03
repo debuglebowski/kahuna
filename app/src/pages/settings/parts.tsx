@@ -13,11 +13,14 @@ export function Feedback({
   error?: unknown
 }) {
   if (error) {
-    return (
-      <p className="text-sm text-destructive">
-        {(error as Error)?.message ?? "Something went wrong."}
-      </p>
-    )
+    // Accepts EITHER a thrown error or an already-mapped string. Reading `.message`
+    // alone silently discarded every caller that passed prose — a string has no
+    // `.message`, so eight call sites which had carefully mapped their errors all
+    // rendered "Something went wrong" instead. Found when the access floor guard's
+    // explanation never reached the user.
+    const text =
+      typeof error === "string" ? error : ((error as Error)?.message ?? "Something went wrong.")
+    return <p className="text-sm text-destructive">{text}</p>
   }
   if (ok) return <p className="text-sm text-green-600">{okText ?? "Saved."}</p>
   return null

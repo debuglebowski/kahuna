@@ -1,7 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { X } from "lucide-react"
 import { useState } from "react"
-import { Badge, Button, Modal, Spinner } from "@/components/ui"
+import { Badge, Button, Field, Modal, Spinner, ToggleChip } from "@/components/ui"
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { type AccessActionName, type AccessResourceType, api } from "@/lib/api"
 import { memberLabel, useMembers } from "@/lib/members"
 import { Feedback } from "@/pages/settings/parts"
@@ -18,7 +27,24 @@ import { Feedback } from "@/pages/settings/parts"
  * may not manage sharing for this", not "something broke".
  */
 
-const GRANTABLE: ReadonlyArray<AccessActionName> = ["view", "edit", "archive", "delete", "share"]
+/** What a share can grant, in escalating order. Title Cased for display — the wire
+ *  values are lowercase engine vocabulary. `configure` and `create` are absent: neither
+ *  means anything scoped to a single existing record. */
+const GRANTABLE: ReadonlyArray<{ id: AccessActionName; label: string }> = [
+  { id: "view", label: "View" },
+  { id: "edit", label: "Edit" },
+  { id: "archive", label: "Archive" },
+  { id: "delete", label: "Delete" },
+  { id: "share", label: "Share" },
+]
+
+const ACTION_LABEL = new Map(GRANTABLE.map((a) => [a.id, a.label] as const))
+
+/** How a grant's actions read in the list. */
+const actionsLabel = (actions: ReadonlyArray<string>): string =>
+  actions.includes("*")
+    ? "Everything"
+    : actions.map((a) => ACTION_LABEL.get(a as AccessActionName) ?? a).join(", ")
 
 export function ShareDialog({
   resourceType,
@@ -96,7 +122,7 @@ export function ShareDialog({
                       {g.roleId ? (g.roleName ?? "a role") : labelFor(g.userId ?? "")}
                     </span>
                     {g.roleId ? <Badge tone="blue">role</Badge> : null}
-                    <span className="text-muted-foreground">{g.actions.join(", ")}</span>
+                    <span className="text-muted-foreground">{actionsLabel(g.actions)}</span>
                     {g.effect === "deny" ? <Badge tone="red">deny</Badge> : null}
                     {/* A plain button, NOT IconButton: that wraps its child in a Radix
                         Tooltip, and when this row unmounts on a successful revoke the
@@ -124,43 +150,47 @@ export function ShareDialog({
 
             <div className="space-y-2 rounded-md border p-3">
               <span className="block text-sm font-medium">Add</span>
-              <select
-                className="h-9 w-full rounded-md border bg-background px-2 text-sm"
-                value={subject}
-                onChange={(e) => setSubject(e.target.value)}
-              >
-                <option value="">Choose a person or role…</option>
-                <optgroup label="People">
-                  {members.map((m) => (
-                    <option key={m.userId} value={`user:${m.userId}`}>
-                      {memberLabel(m, m.userId)}
-                    </option>
+              <Field label="Who">
+                <Select value={subject} onValueChange={setSubject}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Choose a person or role…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {/* One control, two subject kinds — a share is the same rule row
+                        whether it names a person or a role, so the picker shouldn't
+                        make them look like different features. */}
+                    <SelectGroup>
+                      <SelectLabel>People</SelectLabel>
+                      {members.map((m) => (
+                        <SelectItem key={m.userId} value={`user:${m.userId}`}>
+                          {memberLabel(m, m.userId)}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                    <SelectGroup>
+                      <SelectLabel>Roles</SelectLabel>
+                      {(roles.data ?? []).map((r) => (
+                        <SelectItem key={r.id} value={`role:${r.id}`}>
+                          {r.name}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </Field>
+              <Field label="Can">
+                <div className="flex flex-wrap gap-1.5">
+                  {GRANTABLE.map((a) => (
+                    <ToggleChip
+                      key={a.id}
+                      pressed={actions.includes(a.id)}
+                      onPressedChange={() => toggle(a.id)}
+                    >
+                      {a.label}
+                    </ToggleChip>
                   ))}
-                </optgroup>
-                <optgroup label="Roles">
-                  {(roles.data ?? []).map((r) => (
-                    <option key={r.id} value={`role:${r.id}`}>
-                      {r.name}
-                    </option>
-                  ))}
-                </optgroup>
-              </select>
-              <div className="flex flex-wrap gap-1.5">
-                {GRANTABLE.map((a) => (
-                  <button
-                    key={a}
-                    type="button"
-                    onClick={() => toggle(a)}
-                    className={`rounded-full border px-2.5 py-1 text-xs ${
-                      actions.includes(a)
-                        ? "border-primary bg-primary/10 text-foreground"
-                        : "text-muted-foreground"
-                    }`}
-                  >
-                    {a}
-                  </button>
-                ))}
-              </div>
+                </div>
+              </Field>
               <Button
                 size="sm"
                 onClick={() => add.mutate()}

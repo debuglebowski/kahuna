@@ -2,14 +2,33 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Lock, Plus, Trash2, X } from "lucide-react"
 import { useState } from "react"
 import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
+import {
   Badge,
   Button,
   Card,
   ConfirmDialog,
+  Field,
   IconButton,
   Input,
   Modal,
   Spinner,
+  ToggleChip,
   Toolbar,
 } from "../../components/ui"
 import { type AccessActionName, type AccessResourceType, type AccessRole, api } from "../../lib/api"
@@ -27,36 +46,100 @@ import { Feedback } from "./parts"
  * NAMES are readable by any member and render as pills on /members.
  */
 
-const ACTIONS: ReadonlyArray<AccessActionName> = [
-  "view",
-  "create",
-  "edit",
-  "archive",
-  "delete",
-  "share",
-  "configure",
+/**
+ * Actions in the order they escalate — view, then the write verbs, then the two that
+ * are admin-only by default. Not alphabetical: the list is read as "how much power is
+ * this?", so `delete` and `configure` sitting last is information.
+ */
+const ACTIONS: ReadonlyArray<{ id: AccessActionName; label: string; hint: string }> = [
+  { id: "view", label: "View", hint: "Read it" },
+  { id: "create", label: "Create", hint: "Add new ones" },
+  { id: "edit", label: "Edit", hint: "Change existing ones" },
+  { id: "archive", label: "Archive", hint: "Hide, restorably" },
+  { id: "delete", label: "Delete", hint: "Destroy permanently" },
+  { id: "share", label: "Share", hint: "Grant access to others" },
+  { id: "configure", label: "Configure", hint: "Change its setup" },
 ]
 
-const RESOURCES: ReadonlyArray<AccessResourceType> = [
-  "org",
-  "concept",
-  "record",
-  "field",
-  "dashboard",
-  "view",
-  "automation",
-  "bucket",
-  "task",
-  "note",
-  "member",
+/**
+ * Resources grouped the way someone thinks about them, with plain-English names —
+ * the wire values (`record`, `bucket`, `view`) are engine vocabulary and mean little
+ * on their own.
+ */
+const RESOURCE_GROUPS: ReadonlyArray<{
+  label: string
+  items: ReadonlyArray<{ id: AccessResourceType; label: string; hint: string }>
+}> = [
+  {
+    label: "Data",
+    items: [
+      { id: "concept", label: "Concepts", hint: "The types themselves — Deal, Company" },
+      { id: "record", label: "Records", hint: "Individual entries" },
+      { id: "field", label: "Fields", hint: "Values on a record" },
+    ],
+  },
+  {
+    label: "Workspace",
+    items: [
+      { id: "dashboard", label: "Dashboards", hint: "Widget canvases" },
+      { id: "view", label: "Sidebar views", hint: "Nav layouts" },
+      { id: "bucket", label: "File buckets", hint: "Files on a widget" },
+    ],
+  },
+  {
+    label: "Collaboration",
+    items: [
+      { id: "task", label: "Tasks", hint: "" },
+      { id: "note", label: "Notes", hint: "" },
+      { id: "member", label: "Members", hint: "People in the org" },
+    ],
+  },
+  {
+    label: "Administration",
+    items: [
+      { id: "automation", label: "Automations", hint: "" },
+      { id: "org", label: "Organisation", hint: "Org-wide settings" },
+    ],
+  },
 ]
+
+const RESOURCE_LABEL = new Map(
+  RESOURCE_GROUPS.flatMap((g) => g.items).map((r) => [r.id, r.label] as const),
+)
+const ACTION_LABEL = new Map(ACTIONS.map((a) => [a.id, a.label] as const))
+
+/**
+ * How a rule's actions read in the table.
+ *
+ * `["*"]` is the wildcard the presets carry; showing a literal asterisk in a column
+ * headed "Can" told the reader nothing. Named actions are Title Cased and joined.
+ */
+const actionsLabel = (actions: ReadonlyArray<string>): string => {
+  if (actions.includes("*")) return "Everything"
+  if (actions.length === 0) return "Nothing"
+  return actions.map((a) => ACTION_LABEL.get(a as AccessActionName) ?? a).join(", ")
+}
 
 /** Engine errors reach the client as a code + prose; surface the prose when it is
  *  meant for a human (the floor guard's messages are). */
 function roleMsg(e: unknown): string {
   const err = e as { code?: string; message?: string }
-  if (err?.code === "FORBIDDEN") return "Admins only."
-  return err?.message ?? "Something went wrong."
+  const raw = err?.message ?? ""
+  if (err?.code === "FORBIDDEN" || raw.includes("Admin only")) return "Admins only."
+  // The engine's user-facing prose arrives inside a rendered Effect cause, so it is
+  // matched rather than read off a field (same approach as `labelMsg` in Labels.tsx).
+  // These two are the FLOOR guard, and its whole value is the reader learning WHY —
+  // "Something went wrong" made a working safety rail look like a bug.
+  if (raw.includes("only thing granting org configuration"))
+    return "This is the only rule granting org configuration — add another before removing it."
+  if (raw.includes("only member who can configure"))
+    return "This is the only member who can configure the org — assign someone else first."
+  if (raw.includes("preset role can't be deleted"))
+    return "Preset roles can't be deleted. Edit their rules instead."
+  if (raw.includes("role not found")) return "That role no longer exists."
+  // Anything else: pass the server's own text through when it looks like prose (the
+  // engine's messages are written for humans), else a neutral fallback.
+  return raw && !raw.trimStart().startsWith("{") ? raw : "Something went wrong."
 }
 
 function RuleEditor({ role, onClose }: { role: AccessRole; onClose: () => void }) {
@@ -83,94 +166,146 @@ function RuleEditor({ role, onClose }: { role: AccessRole; onClose: () => void }
 
   return (
     <Modal onClose={onClose} title={`Rules — ${role.name}`} size="wide">
-      <div className="space-y-4">
-        <p className="text-sm text-muted-foreground">
-          Rules are exceptions layered over each resource's own default. A <b>deny</b> always wins,
+      <div className="space-y-6">
+        <p className="max-w-2xl text-sm text-muted-foreground">
+          Rules grant access <span className="text-foreground">on top of</span> what each item
+          already allows by default. A <span className="text-foreground">Deny</span> always wins,
           whatever else grants access.
         </p>
 
         {rules.isPending ? (
           <Spinner />
         ) : rules.data && rules.data.length > 0 ? (
-          <div className="divide-y rounded-md border">
-            {rules.data.map((r) => (
-              <div key={r.id} className="flex items-center gap-2 px-3 py-2 text-sm">
-                <Badge tone={r.effect === "deny" ? "red" : "green"}>{r.effect}</Badge>
-                <span className="font-medium">{r.actions.join(", ")}</span>
-                <span className="text-muted-foreground">on</span>
-                <span>{r.resourceType}</span>
-                {r.resourceId ? (
-                  <span className="text-muted-foreground">#{r.resourceId.slice(0, 8)}</span>
-                ) : (
-                  <span className="text-muted-foreground">(any)</span>
-                )}
-                {r.condition ? <Badge tone="blue">conditional</Badge> : null}
-                <span className="ml-auto">
-                  <IconButton
-                    aria-label="Remove rule"
-                    title="Remove rule"
-                    onClick={() => remove.mutate(r.id)}
-                    disabled={remove.isPending}
-                  >
-                    <X size={14} />
-                  </IconButton>
-                </span>
-              </div>
-            ))}
-          </div>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-28">Effect</TableHead>
+                <TableHead>Can</TableHead>
+                <TableHead>On</TableHead>
+                <TableHead className="w-40">Scope</TableHead>
+                <TableHead className="w-12" />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rules.data.map((r) => (
+                <TableRow key={r.id}>
+                  <TableCell>
+                    <Badge tone={r.effect === "deny" ? "red" : "green"}>
+                      {r.effect === "deny" ? "Deny" : "Allow"}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="font-medium text-foreground">
+                    {actionsLabel(r.actions)}
+                  </TableCell>
+                  <TableCell>{RESOURCE_LABEL.get(r.resourceType) ?? r.resourceType}</TableCell>
+                  <TableCell className="text-muted-foreground">
+                    {/* "Scope" answers "which ones?" — the old column showed a raw
+                        `(any)` or a truncated uuid, neither of which reads as an answer. */}
+                    {r.resourceId ? (
+                      <span className="font-mono text-xs">{r.resourceId.slice(0, 8)}…</span>
+                    ) : r.condition ? (
+                      "Matching records"
+                    ) : (
+                      "All"
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <IconButton
+                      aria-label={`Remove ${actionsLabel(r.actions)} on ${
+                        RESOURCE_LABEL.get(r.resourceType) ?? r.resourceType
+                      }`}
+                      title="Remove rule"
+                      variant="danger"
+                      onClick={() => remove.mutate(r.id)}
+                      disabled={remove.isPending}
+                    >
+                      <X size={14} />
+                    </IconButton>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         ) : (
-          <p className="text-sm text-muted-foreground">
-            No rules yet — this role grants nothing beyond what every member gets.
-          </p>
+          <div className="rounded-lg border border-dashed px-6 py-8 text-center">
+            <p className="text-sm font-medium">No rules yet</p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              This role grants nothing beyond what every member already sees.
+            </p>
+          </div>
         )}
         <Feedback error={remove.error ? roleMsg(remove.error) : undefined} />
 
-        <div className="space-y-2 rounded-md border p-3">
+        <div className="space-y-4 rounded-lg border p-6">
           <span className="block text-sm font-medium">Add a rule</span>
-          <div className="flex flex-wrap items-center gap-2">
-            <select
-              className="h-9 rounded-md border bg-background px-2 text-sm"
-              value={effect}
-              onChange={(e) => setEffect(e.target.value as "allow" | "deny")}
-            >
-              <option value="allow">allow</option>
-              <option value="deny">deny</option>
-            </select>
-            <select
-              className="h-9 rounded-md border bg-background px-2 text-sm"
-              value={resourceType}
-              onChange={(e) => setResourceType(e.target.value as AccessResourceType)}
-            >
-              {RESOURCES.map((r) => (
-                <option key={r} value={r}>
-                  {r}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="flex flex-wrap gap-1.5">
-            {ACTIONS.map((a) => (
-              <button
-                key={a}
-                type="button"
-                onClick={() => toggle(a)}
-                className={`rounded-full border px-2.5 py-1 text-xs ${
-                  actions.includes(a)
-                    ? "border-primary bg-primary/10 text-foreground"
-                    : "text-muted-foreground"
-                }`}
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Effect">
+              <Select value={effect} onValueChange={(v) => setEffect(v as "allow" | "deny")}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="allow">Allow</SelectItem>
+                  <SelectItem value="deny">Deny — always wins</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field label="Applies to">
+              <Select
+                value={resourceType}
+                onValueChange={(v) => setResourceType(v as AccessResourceType)}
               >
-                {a}
-              </button>
-            ))}
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {/* Grouped, because eleven flat engine words are a lookup table, not
+                      a menu someone can scan. */}
+                  {RESOURCE_GROUPS.map((g) => (
+                    <SelectGroup key={g.label}>
+                      <SelectLabel>{g.label}</SelectLabel>
+                      {g.items.map((r) => (
+                        <SelectItem key={r.id} value={r.id}>
+                          {r.label}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Field>
           </div>
-          <Button
-            onClick={() => add.mutate()}
-            disabled={add.isPending || actions.length === 0}
-            size="sm"
-          >
-            Add rule
-          </Button>
+          <Field label="Can" hint="Pick one or more.">
+            <div className="flex flex-wrap gap-1.5">
+              {ACTIONS.map((a) => (
+                <ToggleChip
+                  key={a.id}
+                  pressed={actions.includes(a.id)}
+                  onPressedChange={() => toggle(a.id)}
+                >
+                  {a.label}
+                </ToggleChip>
+              ))}
+            </div>
+          </Field>
+          <div className="flex items-center gap-3">
+            <Button
+              onClick={() => add.mutate()}
+              disabled={add.isPending || actions.length === 0}
+              size="sm"
+            >
+              <Plus size={15} />
+              {add.isPending ? "Adding…" : "Add rule"}
+            </Button>
+            {/* The one thing a reader can get badly wrong: thinking a `view` rule is
+                how you open a restricted concept to everyone. It isn't — it outranks
+                the default, which is why no preset carries one. */}
+            {actions.includes("view") ? (
+              <span className="text-xs text-muted-foreground">
+                A View rule overrides the item's own default visibility.
+              </span>
+            ) : null}
+          </div>
           <Feedback error={add.error ? roleMsg(add.error) : undefined} />
         </div>
       </div>
