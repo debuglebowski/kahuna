@@ -12,9 +12,16 @@ import {
  * ciphertext format (`v1.<iv>.<tag>.<body>`, all base64url) is unchanged and
  * existing rows keep decrypting.
  *
- * The 32-byte key comes from `INTEGRATION_TOKEN_ENCRYPTION_KEY` (preferred) or
- * the legacy `GOOGLE_TOKEN_ENCRYPTION_KEY` (back-compat) as base64 or 64-char
- * hex.
+ * The 32-byte key comes from `INTEGRATION_ENCRYPTION_KEY` as base64 or 64-char
+ * hex. It protects API keys and webhook secrets as well as OAuth tokens, which
+ * is why the name no longer says "TOKEN".
+ *
+ * The two earlier names — `INTEGRATION_TOKEN_ENCRYPTION_KEY` and
+ * `GOOGLE_TOKEN_ENCRYPTION_KEY` — are NOT read anymore. A deployment still on
+ * one of them fails closed in production (the throw below) rather than falling
+ * back to a key the operator did not choose. Outside production it would
+ * silently derive a different key and stop decrypting existing rows, so rename
+ * the variable before starting a dev server that holds real tokens.
  *
  * FALLBACK, non-production only: a key derived from `BETTER_AUTH_SECRET`, so a
  * local checkout needs no extra config. Two guard rails on it, because this used
@@ -34,8 +41,7 @@ const DEV_PLACEHOLDER_SECRET = "dev-secret-change-me"
 let warnedAboutDerivedKey = false
 
 const encryptionKey = (): Buffer => {
-  const raw =
-    process.env.INTEGRATION_TOKEN_ENCRYPTION_KEY ?? process.env.GOOGLE_TOKEN_ENCRYPTION_KEY
+  const raw = process.env.INTEGRATION_ENCRYPTION_KEY
   if (raw) {
     if (/^[0-9a-f]{64}$/i.test(raw)) return Buffer.from(raw, "hex")
     const decoded = Buffer.from(raw, "base64")
@@ -44,23 +50,23 @@ const encryptionKey = (): Buffer => {
     // Falling through to the derived key would encrypt real tokens under
     // something the operator did not choose and cannot reproduce.
     throw new Error(
-      "INTEGRATION_TOKEN_ENCRYPTION_KEY is set but malformed — need 32 bytes as base64 or 64-char hex",
+      "INTEGRATION_ENCRYPTION_KEY is set but malformed — need 32 bytes as base64 or 64-char hex",
     )
   }
   if (process.env.NODE_ENV === "production") {
-    throw new Error("INTEGRATION_TOKEN_ENCRYPTION_KEY must be 32 bytes as base64 or 64-char hex")
+    throw new Error("INTEGRATION_ENCRYPTION_KEY must be 32 bytes as base64 or 64-char hex")
   }
   const authSecret = process.env.BETTER_AUTH_SECRET
   if (!authSecret || authSecret === DEV_PLACEHOLDER_SECRET) {
     throw new Error(
-      "Set INTEGRATION_TOKEN_ENCRYPTION_KEY (32 bytes base64/hex), or a real BETTER_AUTH_SECRET to derive it from. " +
+      "Set INTEGRATION_ENCRYPTION_KEY (32 bytes base64/hex), or a real BETTER_AUTH_SECRET to derive it from. " +
         `Refusing to encrypt tokens under the published placeholder "${DEV_PLACEHOLDER_SECRET}".`,
     )
   }
   if (!warnedAboutDerivedKey) {
     warnedAboutDerivedKey = true
     console.warn(
-      "[integrations/crypto] No INTEGRATION_TOKEN_ENCRYPTION_KEY; deriving the token key from " +
+      "[integrations/crypto] No INTEGRATION_ENCRYPTION_KEY; deriving the token key from " +
         "BETTER_AUTH_SECRET. Rotating that secret will make every stored integration token " +
         "undecryptable. Set a dedicated key before storing tokens you care about.",
     )

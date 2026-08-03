@@ -63,7 +63,7 @@ describe("Google integration", () => {
     process.env.GOOGLE_CLIENT_ID = "client"
     process.env.GOOGLE_CLIENT_SECRET = "secret"
     process.env.GOOGLE_REDIRECT_URI = "http://localhost/api/integrations/google/callback"
-    process.env.GOOGLE_TOKEN_ENCRYPTION_KEY =
+    process.env.INTEGRATION_ENCRYPTION_KEY =
       "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
     process.env.GOOGLE_SYNC_ENABLED = "0"
     process.env.GOOGLE_WATCH_ENABLED = "0"

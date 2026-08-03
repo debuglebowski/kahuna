@@ -5,7 +5,8 @@
 - `GOOGLE_CLIENT_ID`
 - `GOOGLE_CLIENT_SECRET`
 - `GOOGLE_REDIRECT_URI`
-- `GOOGLE_TOKEN_ENCRYPTION_KEY`: 32 random bytes, base64 or 64-char hex.
+- `INTEGRATION_ENCRYPTION_KEY`: 32 random bytes, base64 or 64-char hex. Shared
+  by every connector, not just Google. Was `GOOGLE_TOKEN_ENCRYPTION_KEY`.
 - `GOOGLE_SYNC_ENABLED`: set `0` to skip callback-time sync.
 - `GOOGLE_WATCH_ENABLED`: set `1` to enable watch renewal.
 - `GOOGLE_WEBHOOK_BASE_URL`: public app origin for Calendar webhooks.

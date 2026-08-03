@@ -72,7 +72,7 @@ describe("Linear integration", () => {
   const oldEnv = { ...process.env }
 
   beforeEach(() => {
-    process.env.INTEGRATION_TOKEN_ENCRYPTION_KEY =
+    process.env.INTEGRATION_ENCRYPTION_KEY =
       "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
     process.env.LINEAR_SYNC_ENABLED = "0"
   })
@@ -448,7 +448,7 @@ describe("Linear → Kingsmaker concept mirror (Phase 1)", () => {
   const oldEnv = { ...process.env }
 
   beforeEach(() => {
-    process.env.INTEGRATION_TOKEN_ENCRYPTION_KEY =
+    process.env.INTEGRATION_ENCRYPTION_KEY =
       "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
     process.env.LINEAR_SYNC_ENABLED = "0"
   })
