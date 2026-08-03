@@ -1,9 +1,21 @@
-import type { ScopeRole } from "../services/OrgContext"
+import type { OrgScope, ScopeRole } from "../services/OrgContext"
+import { decide } from "./access"
 import type { ConceptVisibility } from "./types"
 
 /**
  * Read-visibility predicates. Pure, so they are unit-testable without a database
  * and usable from both the engine services and the use-case boundary.
+ *
+ * ── HOW THE TWO LAYERS COMPOSE ───────────────────────────────────────────────
+ *
+ * The `visibility` column is the DEFAULT: who may read this normally, decided by
+ * role. `access_rules` are EXCEPTIONS over that default, and `decide()` resolves
+ * the pair — deny beats everything, then an explicit allow, then the default.
+ *
+ * So the role-only functions below are not dead: they compute the DEFAULT that
+ * `decide()` falls back to. Keeping them separate is what makes the access model a
+ * strict superset of today's behaviour rather than a replacement for it — an org
+ * with no rules behaves exactly as it did.
  *
  * The privilege order is deliberately explicit rather than a rank comparison: a
  * new role must be classified here on purpose, not inherit access by sorting
@@ -15,13 +27,38 @@ export const canReadRestricted = (role: ScopeRole): boolean =>
   role === "owner" || role === "admin" || role === "system"
 
 /**
- * May this role read a concept with this visibility?
+ * The DEFAULT answer for a concept: may this role read one with this visibility?
  *
- * Note the default direction: an unrecognised visibility never reaches here,
- * because `toConcept` already coerces anything it doesn't know to `"admin"`.
+ * Note the direction: an unrecognised visibility never reaches here, because
+ * `toConcept` already coerces anything it doesn't know to `"admin"`. `"none"` is
+ * readable by nobody by default — only an explicit rule opens it.
  */
 export const canReadConcept = (visibility: ConceptVisibility, role: ScopeRole): boolean =>
-  visibility === "visible" || canReadRestricted(role)
+  visibility === "visible" || (visibility !== "none" && canReadRestricted(role))
+
+/**
+ * THE concept read gate: the default above, plus any rule that overrides it.
+ *
+ * Every by-id concept read and the concept list go through this, so a restricted
+ * concept can be opened for one role without touching the column, and a visible one
+ * can be denied — neither of which the column alone can express.
+ *
+ * `scope.policy` is absent for callers not yet on the access model (tests, scripts),
+ * which correctly degrades to the default-only behaviour.
+ */
+export const scopeCanReadConcept = (
+  scope: OrgScope,
+  conceptId: string,
+  visibility: ConceptVisibility,
+): boolean => {
+  const fallback = canReadConcept(visibility, scope.role)
+  if (!scope.policy) return fallback
+  return decide(scope.policy, "view", { type: "concept", id: conceptId }, fallback, {
+    // No record in hand, so a conditional rule must not read as a blanket one.
+    // Concept rules are unconditional in practice; this states the intent anyway.
+    unconditionalOnly: true,
+  })
+}
 
 /**
  * ── WHERE FIELD-LEVEL FILTERING MAY AND MAY NOT LIVE ─────────────────────────
@@ -44,14 +81,48 @@ export const canReadConcept = (visibility: ConceptVisibility, role: ScopeRole): 
  * of filtered reads greppable and auditable.
  */
 
-/** Ids of the fields this role may not read. Empty for a privileged caller. */
+/** Ids of the fields this role may not read, by DEFAULT (no rules consulted).
+ *  Empty for a privileged caller. */
 export const hiddenFieldIds = (
   defs: ReadonlyArray<{ readonly id: string; readonly visibility: ConceptVisibility }>,
   role: ScopeRole,
 ): ReadonlySet<string> =>
   canReadRestricted(role)
     ? new Set<string>()
-    : new Set(defs.filter((d) => d.visibility === "admin").map((d) => d.id))
+    : new Set(defs.filter((d) => d.visibility !== "visible").map((d) => d.id))
+
+/**
+ * Ids of the fields this scope may not read: the defaults above, with rules applied.
+ *
+ * Field access is per CONCEPT — a field is visible to a caller or it isn't, the same
+ * on every record. Field rules are therefore evaluated unconditionally, and a
+ * condition on one is ignored by construction (`unconditionalOnly`) rather than
+ * quietly making the mask vary per row: that variance is what THE DATA-LOSS GUARD in
+ * `test/visibility.test.ts` exists to prevent.
+ */
+export const scopeHiddenFieldIds = (
+  scope: OrgScope,
+  defs: ReadonlyArray<{
+    readonly id: string
+    readonly conceptId: string
+    readonly visibility: ConceptVisibility
+  }>,
+): ReadonlySet<string> => {
+  const byDefault = hiddenFieldIds(defs, scope.role)
+  if (!scope.policy) return byDefault
+  const hidden = new Set<string>()
+  for (const def of defs) {
+    const readable = decide(
+      scope.policy,
+      "view",
+      { type: "field", id: def.id, conceptId: def.conceptId },
+      !byDefault.has(def.id),
+      { unconditionalOnly: true },
+    )
+    if (!readable) hidden.add(def.id)
+  }
+  return hidden
+}
 
 /**
  * Drop hidden keys from an instance's state. Returns the SAME object when nothing

@@ -269,10 +269,13 @@ describe("policy loading", () => {
       const after = yield* policies.resolve(org, ACTOR)
       expect(after.version).toBeGreaterThan(before.version)
       expect(after.rules.length).toBeGreaterThan(0)
-      // The seeded Member role reproduces today's behaviour: everything except
-      // configure (admin-gated) and delete (already admin-only at the RPC tier).
+      // The seeded Member role reproduces today's behaviour: the write actions a
+      // member has, minus configure (admin-gated) and delete (already admin-only at
+      // the RPC tier) — and NOT `view`, which is the default layer's job. A blanket
+      // view rule would outrank the visibility column; see THE BLANKET-VIEW GUARD.
       const actions = new Set(after.rules.flatMap((r) => r.actions))
-      expect(actions.has("view")).toBe(true)
+      expect(actions.has("view")).toBe(false)
+      expect(actions.has("create")).toBe(true)
       expect(actions.has("edit")).toBe(true)
       expect(actions.has("archive")).toBe(true)
       expect(actions.has("configure")).toBe(false)

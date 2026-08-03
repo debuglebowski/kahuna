@@ -1,7 +1,7 @@
 import { PgClient } from "@effect/sql-pg"
 import { Effect } from "effect"
 import type { ConceptVisibility, EditReach, InstanceViewLayout } from "../domain/types"
-import { canReadConcept, canReadRestricted } from "../domain/visibility"
+import { canReadRestricted, scopeCanReadConcept } from "../domain/visibility"
 import {
   ConceptInUse,
   ConceptNameConflict,
@@ -63,9 +63,11 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
      */
     const getByIdForRead = (id: string) =>
       Effect.gen(function* () {
-        const { role } = yield* OrgContext
+        const scope = yield* OrgContext
         const concept = yield* getById(id)
-        if (!canReadConcept(concept.visibility, role))
+        // The visibility column is the DEFAULT; an access rule may open a restricted
+        // concept for one role or deny a visible one. See scopeCanReadConcept.
+        if (!scopeCanReadConcept(scope, concept.id, concept.visibility))
           return yield* Effect.fail(new ConceptNotFound({ concept: id }))
         return concept
       })
@@ -73,14 +75,14 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
     /** Look up a concept by its stable slug (the handle the app pins by). */
     const getBySlug = (slug: string) =>
       Effect.gen(function* () {
-        const { orgId, role } = yield* OrgContext
+        const scope = yield* OrgContext
         const rows = yield* sql<ConceptRow>`
-          SELECT * FROM concepts WHERE org_id = ${orgId} AND slug = ${slug} LIMIT 1`
+          SELECT * FROM concepts WHERE org_id = ${scope.orgId} AND slug = ${slug} LIMIT 1`
         const row = rows[0]
         if (!row) return yield* Effect.fail(new ConceptNotFound({ concept: slug }))
         const concept = toConcept(row)
         // Only ever reached from a read (`/c/<slug>` resolution), so gate here.
-        if (!canReadConcept(concept.visibility, role))
+        if (!scopeCanReadConcept(scope, concept.id, concept.visibility))
           return yield* Effect.fail(new ConceptNotFound({ concept: slug }))
         return concept
       })
@@ -93,7 +95,8 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
       opts: { readonly includeArchived?: boolean; readonly withCounts?: boolean } = {},
     ) =>
       Effect.gen(function* () {
-        const { orgId, role } = yield* OrgContext
+        const scope = yield* OrgContext
+        const { orgId } = scope
         const liveOnly = opts.includeArchived ? sql`` : sql` AND archived_at IS NULL`
         // Count ITEMS, not version rows: a versioned concept counts distinct
         // lineages (each item has ≥1 version); a non-versioned concept counts
@@ -108,11 +111,25 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
         // Restricted concepts are FILTERED OUT for a member, not an error: this is
         // the read every nav/picker/graph goes through, and a throw would break a
         // whole page rather than just omitting an entry.
-        const visibleOnly = canReadRestricted(role) ? sql`` : sql` AND c.visibility = 'visible'`
+        //
+        // The column filter stays in SQL for the no-rules case (the overwhelmingly
+        // common one, so the query is unchanged), but it can only be applied when NO
+        // rule could widen the result — a rule granting `view` on a restricted
+        // concept must still surface it. With any concept rule present, fetch
+        // unfiltered and let `scopeCanReadConcept` decide per row.
+        //
+        // Safe to filter in memory here, unlike record lists: this query has no
+        // LIMIT, so dropping rows afterwards cannot skew a count or truncate a page.
+        const mayWiden =
+          scope.policy !== undefined && scope.policy.rules.some((r) => r.resourceType === "concept")
+        const visibleOnly =
+          canReadRestricted(scope.role) || mayWiden ? sql`` : sql` AND c.visibility = 'visible'`
         const rows = yield* sql<ConceptRow>`
           SELECT c.*${countCol} FROM concepts c
           WHERE c.org_id = ${orgId}${liveOnly}${visibleOnly} ORDER BY c.name ASC`
-        return rows.map(toConcept)
+        const concepts = rows.map(toConcept)
+        if (!mayWiden && !canReadRestricted(scope.role)) return concepts
+        return concepts.filter((c) => scopeCanReadConcept(scope, c.id, c.visibility))
       })
 
     const create = (input: {

@@ -28,7 +28,6 @@ import {
   FieldValidationError,
   type GraphLayoutPositions,
   GraphLayoutService,
-  hiddenFieldIds,
   type Instance,
   InstanceService,
   type InstanceViewLayout,
@@ -48,6 +47,7 @@ import {
   type SidebarCondition,
   type SidebarViewBody,
   SidebarViewService,
+  scopeHiddenFieldIds,
   type Task,
   type TaskPriority,
   TaskPriorityService,
@@ -184,14 +184,24 @@ export interface ListOpts {
  */
 const fieldMaskFor = (conceptId: string): UC<ReadonlySet<string>> =>
   Effect.gen(function* () {
-    const { role } = yield* OrgContext
-    if (canReadRestricted(role)) return new Set<string>()
+    const scope = yield* OrgContext
+    // No early return for privileged roles: a DENY rule must be able to hide a field
+    // from an admin, and only `scopeHiddenFieldIds` knows that. It still short-
+    // circuits internally when the caller is privileged and holds no field rules.
+    if (canReadRestricted(scope.role) && !hasFieldRules(scope)) return new Set<string>()
     const fields = yield* FieldService
     // includeArchived: an archived field's values linger in `state`, so a hidden
     // one must stay masked after it is archived.
     const defs = yield* fields.listFields(conceptId, { includeArchived: true })
-    return hiddenFieldIds(defs, role)
+    return scopeHiddenFieldIds(scope, defs)
   })
+
+/** Does this caller hold any field-scoped rule? Lets the privileged fast path above
+ *  stay a no-op for the overwhelmingly common case of no field rules at all. */
+const hasFieldRules = (scope: {
+  readonly policy?: { readonly rules: ReadonlyArray<{ readonly resourceType: string }> }
+}): boolean =>
+  scope.policy !== undefined && scope.policy.rules.some((r) => r.resourceType === "field")
 
 /** Run a write and project its echoed instance, so a writer's response carries no
  *  more than a reader's would. */

@@ -57,12 +57,27 @@ interface RoleSpec {
  * administer. So:
  *
  *   owner / admin → everything, `configure` included
- *   member        → everything except `configure` and `delete`
+ *   member        → write actions, but not `configure` or `delete`
  *
  * `delete` is withheld from `member` because hard-delete is already admin-gated at
  * the RPC boundary today (see the `admin<>()` handlers) — granting it here would
  * be a widening, not a reproduction. `archive` IS granted, which is also today's
  * behaviour: instance archive/restore is any member.
+ *
+ * ── WHY `member` DOES NOT GRANT `view` ───────────────────────────────────────
+ *
+ * Read access is the DEFAULT LAYER's job — the `visibility` column. Rules are
+ * exceptions layered over it, so a rule granting `view` on every concept
+ * (`resource_id = null`) would OUTRANK the column and hand members every
+ * `admin`-visibility concept, silently undoing concept and field visibility.
+ *
+ * So the presets grant write actions only, and `view` appears in a rule solely as
+ * a deliberate exception: a share of one record, a role opening one restricted
+ * concept, or a deny. `owner`/`admin` still hold `*`, which is correct — they can
+ * read restricted material today.
+ *
+ * `access.test.ts` pins this ("the member preset must not grant blanket view").
+ * Do not "complete" the member preset by adding `view` to it.
  *
  * They are ordinary rows and fully editable. `builtin` only means "seeded".
  */
@@ -103,9 +118,11 @@ export const BUILTIN_ROLES: ReadonlyArray<RoleSpec> = [
   {
     key: "member",
     name: "Member",
-    description: "Reads and edits everything; cannot configure or delete.",
+    // No `view`: reading is governed by each resource's own default. See the
+    // comment above — granting it here would override concept/field visibility.
+    description: "Creates and edits; cannot configure or delete. Reads what is visible.",
     position: 2,
-    rules: everything(["view", "create", "edit", "archive", "share"]),
+    rules: everything(["create", "edit", "archive", "share"]),
   },
   {
     // Existing automations migrate onto this, so nothing changes behaviour the day

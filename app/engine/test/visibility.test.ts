@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto"
 import { describe, expect, it } from "@effect/vitest"
 import { Effect } from "effect"
+import { type AccessRule, emptyPolicy, type PolicySet } from "../domain/access"
 import {
   canReadConcept,
   canReadRestricted,
@@ -341,5 +342,117 @@ describe("field read visibility", () => {
     )
     expect(rebuilt[f.salaryId]).toBe("250000")
     expect(rebuilt[f.nameId]).toBe("Ada")
+  })
+})
+
+/**
+ * ── RULES OVER DEFAULTS ──────────────────────────────────────────────────────
+ *
+ * The tests above assert the DEFAULT layer (the `visibility` column) in isolation:
+ * they pass no policy, so they still describe the pre-access-model behaviour exactly.
+ *
+ * These assert the layer ON TOP — that a rule can open a restricted concept and
+ * close a visible one. Without them, P2 could have swapped every gate to `decide()`
+ * while the rules branch never actually ran.
+ */
+describe("access rules over the visibility default", () => {
+  const BASE: AccessRule = {
+    id: "r1",
+    roleId: null,
+    actorId: "tester",
+    effect: "allow",
+    actions: ["view"],
+    resourceType: "concept",
+    resourceId: null,
+    conceptId: null,
+    condition: null,
+  }
+  const policyWith = (over: Partial<AccessRule>): PolicySet => ({
+    ...emptyPolicy("tester"),
+    rules: [{ ...BASE, ...over }],
+  })
+  const readOutcome = (conceptId: string, layer: ReturnType<typeof testLayer>) =>
+    Effect.runPromise(
+      Effect.flatMap(ConceptService, (c) => c.getByIdForRead(conceptId)).pipe(
+        Effect.provide(layer),
+        Effect.map(() => "read"),
+        Effect.catchTag("ConceptNotFound", () => Effect.succeed("not-found")),
+      ),
+    )
+  const listIds = (layer: ReturnType<typeof testLayer>) =>
+    Effect.runPromise(
+      Effect.flatMap(ConceptService, (c) => c.list()).pipe(
+        Effect.map((cs) => cs.map((c) => c.id)),
+        Effect.provide(layer),
+      ),
+    )
+
+  it("an allow rule opens ONE restricted concept, and only that one", async () => {
+    const orgId = newOrgId()
+    const seeded = await Effect.runPromise(
+      Effect.gen(function* () {
+        const concepts = yield* ConceptService
+        const open = yield* concepts.create({ name: `Open ${randomUUID().slice(0, 6)}` })
+        const shut = yield* concepts.create({ name: `Shut ${randomUUID().slice(0, 6)}` })
+        yield* concepts.setVisibility(open.id, "admin")
+        yield* concepts.setVisibility(shut.id, "admin")
+        return { open: open.id, shut: shut.id }
+      }).pipe(Effect.provide(testLayer(orgId))),
+    )
+
+    // A member with no rules sees neither — the default.
+    const bare = await listIds(testLayer(orgId, "tester", "member"))
+    expect(bare).not.toContain(seeded.open)
+    expect(bare).not.toContain(seeded.shut)
+
+    // With a rule naming ONE of them, the list widens by exactly one entry.
+    const layer = testLayer(orgId, "tester", "member", policyWith({ resourceId: seeded.open }))
+    const listed = await listIds(layer)
+    expect(listed).toContain(seeded.open)
+    expect(listed).not.toContain(seeded.shut)
+
+    // The by-id read must AGREE with the list: a mismatch means a member sees an
+    // entry they cannot open, or can open one the list hid.
+    expect(await readOutcome(seeded.open, layer)).toBe("read")
+    expect(await readOutcome(seeded.shut, layer)).toBe("not-found")
+  })
+
+  it("a deny rule closes a VISIBLE concept, even for an owner", async () => {
+    // Deny wins over both the default AND privilege. If this fails, "deny always
+    // wins" is only true on paper.
+    const orgId = newOrgId()
+    const conceptId = await Effect.runPromise(
+      Effect.flatMap(ConceptService, (c) =>
+        c.create({ name: `Public ${randomUUID().slice(0, 6)}` }),
+      ).pipe(
+        Effect.map((c) => c.id),
+        Effect.provide(testLayer(orgId)),
+      ),
+    )
+    const layer = testLayer(
+      orgId,
+      "tester",
+      "owner",
+      policyWith({ effect: "deny", resourceId: conceptId }),
+    )
+    expect(await listIds(layer)).not.toContain(conceptId)
+    expect(await readOutcome(conceptId, layer)).toBe("not-found")
+  })
+
+  it("'none' is readable by nobody by default — not even an owner", async () => {
+    const orgId = newOrgId()
+    const conceptId = await Effect.runPromise(
+      Effect.gen(function* () {
+        const concepts = yield* ConceptService
+        const c = yield* concepts.create({ name: `Locked ${randomUUID().slice(0, 6)}` })
+        yield* concepts.setVisibility(c.id, "none")
+        return c.id
+      }).pipe(Effect.provide(testLayer(orgId))),
+    )
+    expect(await listIds(testLayer(orgId, "tester", "owner"))).not.toContain(conceptId)
+    // …but an explicit rule still reaches it. That is what 'none' is FOR.
+    const opened = testLayer(orgId, "tester", "member", policyWith({ resourceId: conceptId }))
+    expect(await listIds(opened)).toContain(conceptId)
+    expect(await readOutcome(conceptId, opened)).toBe("read")
   })
 })

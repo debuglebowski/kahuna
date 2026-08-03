@@ -51,6 +51,8 @@ export {
   canReadRestricted,
   hiddenFieldIds,
   projectState,
+  scopeCanReadConcept,
+  scopeHiddenFieldIds,
 } from "./domain/visibility"
 export * from "./errors"
 export { EngineLive, type EngineServices } from "./layers"

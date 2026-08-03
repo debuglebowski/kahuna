@@ -2,7 +2,7 @@ import { PgClient } from "@effect/sql-pg"
 import { Effect } from "effect"
 import type { Id } from "../domain/types"
 import { canEditVersion } from "../domain/versioning"
-import { canReadRestricted } from "../domain/visibility"
+import { scopeCanReadConcept } from "../domain/visibility"
 import {
   FieldNotFound,
   FieldValidationError,
@@ -17,7 +17,7 @@ import {
 import { EventStore } from "./EventStore"
 import { FieldService } from "./FieldService"
 import { OrgContext } from "./OrgContext"
-import { type RelationRow, toRelation } from "./rows"
+import { type RelationRow, toRelation, toVisibility } from "./rows"
 
 export interface CreateRelationInput {
   /** The relation field def (kind=relation) this edge realises. */
@@ -101,11 +101,11 @@ export class RelationService extends Effect.Service<RelationService>()("engine/R
      *  exist, so it is not an existence oracle either. */
     const assertTargetReadable = (conceptId: string, targetId: string) =>
       Effect.gen(function* () {
-        const { role } = yield* OrgContext
-        if (canReadRestricted(role)) return
+        const scope = yield* OrgContext
         const rows = yield* sql<{ readonly visibility: string | null }>`
           SELECT visibility FROM concepts WHERE id = ${conceptId} LIMIT 1`
-        if (rows[0]?.visibility !== "visible")
+        const visibility = toVisibility(rows[0]?.visibility ?? null)
+        if (!scopeCanReadConcept(scope, conceptId, visibility))
           return yield* Effect.fail(new InstanceNotFound({ instanceId: targetId }))
       })
 

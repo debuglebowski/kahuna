@@ -11,6 +11,7 @@ import {
   rulesFor,
   unrestrictedPolicy,
 } from "../domain/access"
+import { BUILTIN_ROLES } from "../services/AccessRoleService"
 
 /**
  * The decision procedure, tested without a database.
@@ -172,5 +173,51 @@ describe("access conditions", () => {
     const r = rec({})
     expect(matchesCondition({ kind: "all", of: [] }, ACTOR, r)).toBe(true)
     expect(matchesCondition({ kind: "any", of: [] }, ACTOR, r)).toBe(false)
+  })
+})
+
+describe("the presets reproduce today's behaviour", () => {
+  const byKey = (key: string) => BUILTIN_ROLES.find((r) => r.key === key)!
+
+  it("THE BLANKET-VIEW GUARD: the member preset must not grant view", () => {
+    // Read access is the DEFAULT LAYER's job (the `visibility` column). A preset
+    // rule granting `view` on every concept has `resource_id = null`, so it would
+    // OUTRANK that column and hand members every admin-only concept — silently
+    // undoing concept and field visibility.
+    //
+    // The engine tests would NOT catch that regression: `testLayer` provides a role
+    // but no policy, so they fall through to the fallback and pass either way. Only
+    // a real request resolves the blanket rule. Hence this assertion.
+    for (const rule of byKey("member").rules) {
+      expect(rule.actions, `member grants view on ${rule.resourceType}`).not.toContain("view")
+      expect(rule.actions).not.toContain("*")
+    }
+  })
+
+  it("member holds the write actions it has today, and not the two it doesn't", () => {
+    const actions = new Set(byKey("member").rules.flatMap((r) => r.actions))
+    expect(actions.has("create")).toBe(true)
+    expect(actions.has("edit")).toBe(true)
+    // Instance archive/restore is any member today.
+    expect(actions.has("archive")).toBe(true)
+    // Both are admin-gated at the RPC boundary today; granting either would widen.
+    expect(actions.has("delete")).toBe(false)
+    expect(actions.has("configure")).toBe(false)
+  })
+
+  it("owner and admin hold the wildcard, so restricted reads still work for them", () => {
+    for (const key of ["owner", "admin"]) {
+      const actions = new Set(byKey(key).rules.flatMap((r) => r.actions))
+      expect(actions.has("*"), `${key} must hold the wildcard`).toBe(true)
+    }
+  })
+
+  it("a blanket view rule DOES override a closed default — which is why none is seeded", () => {
+    // Demonstrates the mechanism the guard above protects against, so the reason
+    // for that guard is executable rather than only written down.
+    const blanket: AccessRule = rule({ actions: ["view"], resourceType: "concept" })
+    expect(decide(policy([blanket]), "view", { type: "concept", id: "restricted" }, false)).toBe(
+      true,
+    )
   })
 })

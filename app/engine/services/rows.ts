@@ -11,6 +11,7 @@ import type {
   AutomationRunStatus,
   AutomationTrigger,
   Concept,
+  ConceptVisibility,
   ConditionMatch,
   Dashboard,
   DashboardBody,
@@ -207,6 +208,17 @@ const toDashboardBody = (raw: unknown): DashboardBody => {
   }
 }
 
+/**
+ * Narrow a `visibility` column to the typed union, failing CLOSED.
+ *
+ * Only the three known values pass through; anything else (a future 'team:eng', a
+ * typo) becomes 'admin' — restrictive — rather than org-visible. Shared by concepts,
+ * fields, and the raw-column read gates in Instance/RelationService, so no two paths
+ * can coerce differently.
+ */
+export const toVisibility = (raw: string | null): ConceptVisibility =>
+  raw === "visible" ? "visible" : raw === "none" ? "none" : "admin"
+
 export const toConcept = (r: ConceptRow): Concept => ({
   id: r.id,
   orgId: r.org_id,
@@ -227,7 +239,11 @@ export const toConcept = (r: ConceptRow): Concept => ({
   // Same exhaustive-coercion rule as `editReach` above, but the OPPOSITE polarity:
   // here the safe default is the RESTRICTIVE one. An older server meeting a future
   // value (say 'team:eng') must fail CLOSED rather than treat it as org-visible.
-  visibility: r.visibility === "visible" ? "visible" : "admin",
+  //
+  // 'none' is narrower than 'admin' and must pass through as itself: coercing it to
+  // 'admin' would silently hand admins material meant to be reachable ONLY via an
+  // explicit rule (a personal dashboard, an individually-shared concept).
+  visibility: toVisibility(r.visibility),
   instanceView: toInstanceViewLayout(r.instance_view),
   titleFieldId: r.title_field_id,
   createdAt: r.created_at,
@@ -263,7 +279,7 @@ export const toField = (r: FieldRow): Field => ({
   config: toFieldConfig(r.config),
   managedBy: r.managed_by,
   // Fail CLOSED on anything unrecognised, same rule as `toConcept.visibility`.
-  visibility: r.visibility === "visible" ? "visible" : "admin",
+  visibility: toVisibility(r.visibility),
   icon: r.icon,
   position: Number(r.position),
   archivedAt: r.archived_at,

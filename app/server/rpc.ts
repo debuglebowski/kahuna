@@ -2,7 +2,14 @@ import { Etag, FileSystem, HttpPlatform, Path } from "@effect/platform"
 import { RpcMiddleware, RpcSerialization, RpcServer } from "@effect/rpc"
 import type { PgClient } from "@effect/sql-pg"
 import { Effect, Layer } from "effect"
-import { type EngineServices, OrgContext, type OrgScope } from "#engine"
+import {
+  type AccessAction,
+  type AccessResource,
+  decide,
+  type EngineServices,
+  OrgContext,
+  type OrgScope,
+} from "#engine"
 import {
   type AnnotationField,
   type Attachment,
@@ -33,7 +40,7 @@ import {
 } from "../rpc/contract"
 import { auth } from "./auth"
 import { pool } from "./db"
-import { can } from "./policy"
+import { isAdminRole } from "./policy"
 import { EngineBase, ERROR_MAP, resolvePolicy, sessionScope } from "./runtime"
 import { isDeactivated, roleOf } from "./session"
 import * as uc from "./use-cases"
@@ -168,18 +175,42 @@ const mapErr = <A, E, R>(eff: Effect.Effect<A, E, R>) =>
   eff.pipe(Effect.catchAll((e) => Effect.fail(toRpcError(e))))
 
 /**
- * Admin gate for schema-mutating RPCs (concept configuration). Reuses the
- * role AuthMiddleware already resolved onto the scope — no extra lookup.
+ * THE WRITE GATE. Resolves `action` against the caller's access rules, falling back
+ * to the role-derived default — so an org with no rules behaves exactly as it did
+ * under `policy.ts:can()`.
+ *
+ * Both inputs come off the scope AuthMiddleware already resolved, so this costs no
+ * lookup. `"system"` is refused outright: an engine-level caller must never arrive
+ * over HTTP, and `sessionScope`'s type makes that unreachable — this is the
+ * belt-and-braces check that survives a future refactor.
  */
-const requireAdmin: Effect.Effect<void, RpcError, OrgContext> = Effect.gen(function* () {
-  // The role is already on the scope (AuthMiddleware resolved it) — no lookup.
-  const { role } = yield* OrgContext
-  if (role === "system" || !can(role, "admin")) {
-    return yield* Effect.fail(
-      new RpcError({ code: "FORBIDDEN", message: "Admin only", status: 403 }),
-    )
-  }
-})
+const requireAction = (
+  action: AccessAction,
+  resource: AccessResource = { type: "org" },
+): Effect.Effect<void, RpcError, OrgContext> =>
+  Effect.gen(function* () {
+    const scope = yield* OrgContext
+    if (scope.role === "system") {
+      return yield* Effect.fail(
+        new RpcError({ code: "FORBIDDEN", message: "Admin only", status: 403 }),
+      )
+    }
+    // The DEFAULT: exactly what `can(role, "admin")` answered before — `configure` is
+    // owner/admin-only; every other action was open to any member.
+    const fallback = action === "configure" || action === "delete" ? isAdminRole(scope.role) : true
+    const allowed = scope.policy
+      ? decide(scope.policy, action, resource, fallback, { unconditionalOnly: true })
+      : fallback
+    if (!allowed) {
+      return yield* Effect.fail(
+        new RpcError({ code: "FORBIDDEN", message: "Admin only", status: 403 }),
+      )
+    }
+  })
+
+/** The gate every schema-mutating RPC used before actions existed. Kept as the name
+ *  ~40 handlers already read well with; `configure` is what it always meant. */
+const requireAdmin: Effect.Effect<void, RpcError, OrgContext> = requireAction("configure")
 
 /** Run an admin-only use-case behind the gate, mapping engine errors. */
 const admin = <A>(eff: Effect.Effect<unknown, unknown, OrgContext | EngineServices>) =>
@@ -310,7 +341,7 @@ async function assertCanMutateAnnotation(orgId: string, actor: string, id: strin
   if (!row) return
   if (row.created_by === actor || row.assignee === actor) return
   const role = await roleOf(actor, orgId)
-  if (role && can(role, "admin")) return
+  if (role && isAdminRole(role)) return
   throw new RpcError({
     code: "FORBIDDEN",
     message: "Only the author, assignee, or an admin may modify this",
@@ -330,7 +361,7 @@ async function assertCanMutateAttachment(orgId: string, actor: string, id: strin
   if (!row) return
   if (row.created_by === actor) return
   const role = await roleOf(actor, orgId)
-  if (role && can(role, "admin")) return
+  if (role && isAdminRole(role)) return
   throw new RpcError({
     code: "FORBIDDEN",
     message: "Only the uploader or an admin may modify this file",
@@ -348,7 +379,7 @@ async function assertCanPurgeBucket(orgId: string, actor: string, bucketId: stri
   )
   if (r.rows.every((row) => row.created_by === actor)) return
   const role = await roleOf(actor, orgId)
-  if (role && can(role, "admin")) return
+  if (role && isAdminRole(role)) return
   throw new RpcError({
     code: "FORBIDDEN",
     message: "This widget holds files uploaded by someone else — only an admin may delete them",

@@ -40,8 +40,12 @@ const RESOURCES = [
   "member",
 ] as const
 
-/** Must match BUILTIN_ROLES. `member` withholds `configure` and `delete`, which are
- *  already admin-gated at the RPC boundary today — granting them would widen. */
+/** Must match BUILTIN_ROLES (asserted by server/access-backfill.test.ts).
+ *
+ *  `member` withholds `configure` and `delete`, which are already admin-gated at the
+ *  RPC boundary today — granting them would widen. It also withholds **`view`**:
+ *  read access is the default layer's job (the `visibility` column), and a blanket
+ *  `view` rule would outrank it and expose every admin-only concept. */
 const PRESETS = [
   {
     key: "owner",
@@ -60,9 +64,9 @@ const PRESETS = [
   {
     key: "member",
     name: "Member",
-    description: "Reads and edits everything; cannot configure or delete.",
+    description: "Creates and edits; cannot configure or delete. Reads what is visible.",
     position: 2,
-    actions: ["view", "create", "edit", "archive", "share"],
+    actions: ["create", "edit", "archive", "share"],
   },
   {
     key: "automation_full",

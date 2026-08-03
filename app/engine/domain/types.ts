@@ -221,13 +221,20 @@ export type VersionStatus = "draft" | "published"
  *    `getAsOf` still reconstructs the pre-amendment state. */
 export type EditReach = "draft" | "any"
 
-/** Read reach for a concept's records.
+/** DEFAULT read reach for a concept's records (or a field's values).
  *  - `visible`: any member of the org may read it. The default.
  *  - `admin`: only owners/admins. A member sees it as if it does not exist —
  *    absent from `listConcepts`, and every by-id read fails `ConceptNotFound`
  *    (deliberately NOT a distinct 403, which would confirm it exists).
- *  Engine-level callers (`role: "system"` — syncs, automations, seeds) bypass it. */
-export type ConceptVisibility = "visible" | "admin"
+ *  - `none`: nobody by default, not even an admin. Reserved for material reachable
+ *    ONLY through an explicit access rule — a personal dashboard, or a concept whose
+ *    records are individually shared.
+ *
+ *  This is the DEFAULT layer of the access model: `access_rules` are exceptions over
+ *  it, and `scopeCanReadConcept` resolves the pair. Unknown values coerce to `admin`
+ *  (fail closed) in `rows.ts`.
+ *  Engine-level callers (`role: "system"` — syncs, seeds) bypass it. */
+export type ConceptVisibility = "visible" | "admin" | "none"
 
 export interface Instance {
   readonly id: Id
@@ -1297,7 +1304,8 @@ export type AutomationAction =
   | {
       readonly kind: "setField"
       readonly fieldId: string
-      /** Template-interpolated when a string (see `AUTOMATION_TOKENS`). */
+      /** Template-interpolated when a string (see `TEMPLATE_TOKENS` in
+       *  `src/pages/settings/automationText.ts`, rendered by `renderTemplate`). */
       readonly value: unknown
     }
   | { readonly kind: "addLabel"; readonly labelId: string }

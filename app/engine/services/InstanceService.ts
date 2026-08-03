@@ -11,7 +11,7 @@ import {
   LABELS_KEY,
 } from "../domain/types"
 import { canEditVersion, isAmendment } from "../domain/versioning"
-import { canReadRestricted } from "../domain/visibility"
+import { scopeCanReadConcept } from "../domain/visibility"
 import {
   DraftAlreadyExists,
   FieldValidationError,
@@ -33,7 +33,14 @@ import { EventStore } from "./EventStore"
 import { FieldService } from "./FieldService"
 import { LabelService } from "./LabelService"
 import { OrgContext } from "./OrgContext"
-import { type InstanceRow, type ItemRow, type RelationRow, toInstance, toItem } from "./rows"
+import {
+  type InstanceRow,
+  type ItemRow,
+  type RelationRow,
+  toInstance,
+  toItem,
+  toVisibility,
+} from "./rows"
 
 /** Built-in `config.format` validators for text / number scalars. */
 const TEXT_FORMATS: Record<string, (v: string) => boolean> = {
@@ -700,12 +707,16 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
      */
     const assertConceptVisible = (conceptId: string, instanceId: string) =>
       Effect.gen(function* () {
-        const { role } = yield* OrgContext
-        if (canReadRestricted(role)) return
+        const scope = yield* OrgContext
+        // NO early return for privileged roles any more: a DENY rule must be able to
+        // close a concept even for an admin, and only `scopeCanReadConcept` knows
+        // that. The column lookup stays cheap and indexed (primary key).
         const rows = yield* sql<{ readonly visibility: string | null }>`
           SELECT visibility FROM concepts WHERE id = ${conceptId} LIMIT 1`
-        // Unknown/absent reads as restricted — same fail-closed rule as toConcept.
-        if (rows[0]?.visibility !== "visible")
+        // Unknown/absent reads as restricted — the SAME coercion `toConcept` uses,
+        // shared so the two can never disagree.
+        const visibility = toVisibility(rows[0]?.visibility ?? null)
+        if (!scopeCanReadConcept(scope, conceptId, visibility))
           return yield* Effect.fail(new InstanceNotFound({ instanceId }))
       })
 
