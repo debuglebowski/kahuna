@@ -286,6 +286,24 @@ const assertSubjectReadable = (subjectId: string): UC<void> =>
     yield* instances.getItem(subjectId).pipe(Effect.catchTag("ItemNotFound", () => Effect.void))
   })
 
+/**
+ * Gate a WRITE whose subject is an item lineage.
+ *
+ * The mirror of `assertSubjectReadable`, and needed for the same reason the instance
+ * write gate is (see THE WRITE GATE in engine/services/InstanceService.ts): every READ
+ * of an annotation was gated while `createNote` / `createTask` named the subject
+ * directly and were not. A member could attach content to a record they cannot see.
+ *
+ * `null` is an ORG-LEVEL annotation — it belongs to no record, so there is nothing to
+ * gate and it must stay allowed (the global Tasks page creates these).
+ *
+ * Deliberately reuses the read gate: "may I write to this subject?" is answered by
+ * "may I read it?", so the two can never disagree. Per-annotation mutation rights
+ * (author / assignee / admin) are a separate, additional check at the RPC boundary.
+ */
+const assertSubjectWritable = (subjectId: string | null): UC<void> =>
+  subjectId === null ? Effect.void : assertSubjectReadable(subjectId)
+
 /** Apply a mask to one instance (no-op when nothing is hidden). */
 const maskInstance = <T extends { readonly state: Record<string, unknown> }>(
   inst: T,
@@ -1099,7 +1117,15 @@ export const uploadAttachment = (
   mimeType: string | undefined,
   data: Uint8Array,
 ): UC<Attachment> =>
-  Effect.flatMap(AttachmentService, (a) => a.upload({ owner, filename, mimeType, data }))
+  // Gate the OWNER when it is a record, mirroring `listFiles` (which already gates the
+  // read). Without this a member could upload onto a record they cannot see — and then
+  // not be able to list it back. A `bucketId` owner belongs to a Files widget rather
+  // than a record, so there is nothing to gate.
+  assertSubjectWritable("itemId" in owner ? owner.itemId : null).pipe(
+    Effect.zipRight(
+      Effect.flatMap(AttachmentService, (a) => a.upload({ owner, filename, mimeType, data })),
+    ),
+  )
 
 export const listFiles = (filter: {
   readonly itemId?: string
@@ -1157,7 +1183,14 @@ export const createNote = (input: {
   readonly subjectId: string | null
   readonly body: string
   readonly customFields?: Record<string, unknown>
-}): UC<Note> => Effect.flatMap(AnnotationService, (a) => a.createNote(input))
+}): UC<Note> =>
+  // Gate the SUBJECT, not just reads of it. Attaching a note to a record you cannot
+  // read was possible: the write landed and the read of it was then refused, so the
+  // author couldn't even see what they'd planted. A null subject is an org-level note,
+  // which belongs to no record and needs no gate.
+  assertSubjectWritable(input.subjectId).pipe(
+    Effect.zipRight(Effect.flatMap(AnnotationService, (a) => a.createNote(input))),
+  )
 
 export const updateNote = (input: {
   readonly id: string
@@ -1261,7 +1294,11 @@ export const createTask = (input: {
   readonly assignee?: string | null
   readonly dueAt?: string | null
   readonly customFields?: Record<string, unknown>
-}): UC<Task> => Effect.flatMap(AnnotationService, (a) => a.createTask(input))
+}): UC<Task> =>
+  // Same gate as `createNote` — see there.
+  assertSubjectWritable(input.subjectId).pipe(
+    Effect.zipRight(Effect.flatMap(AnnotationService, (a) => a.createTask(input))),
+  )
 
 export const updateTask = (input: {
   readonly id: string

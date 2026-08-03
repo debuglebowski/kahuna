@@ -11,6 +11,7 @@ import {
 } from "#engine"
 import { runEngine, runEngineOrThrow, systemScope } from "./runtime"
 import { seedKingsmaker } from "./seed/seed"
+import * as uc from "./use-cases"
 import {
   addField,
   archiveConcept,
@@ -710,5 +711,73 @@ describe("single-record concepts (use-case layer)", () => {
 
     await run(org, deleteConcept(concept.id))
     expect(has(await run(org, listConcepts(true)), concept.id)).toBe(false)
+  })
+})
+
+/**
+ * ── SUBJECT WRITE GATES ─────────────────────────────────────────────────────
+ *
+ * The annotation/attachment analogue of THE WRITE GATE (engine InstanceService).
+ *
+ * Every READ of a note, task, file or activity feed was gated through
+ * `assertSubjectReadable`, because those tables carry no concept column. The three
+ * paths that name a subject to WRITE it — `createNote`, `createTask`,
+ * `uploadAttachment` — were not. A member could attach content to a record they
+ * cannot see, and then be refused when reading it back.
+ *
+ * Found by probing after the instance-write hole, on the theory that "reads gated,
+ * writes not" would repeat. It did, in three more places.
+ */
+describe("writes cannot name a subject the caller may not read", () => {
+  const seedSealed = () =>
+    Effect.gen(function* () {
+      const concepts = yield* ConceptService
+      const fields = yield* FieldService
+      const instances = yield* InstanceService
+      const sealed = yield* concepts.create({ name: `Sealed ${randomUUID().slice(0, 6)}` })
+      const f = yield* fields.addField({ conceptId: sealed.id, name: "T", kind: "text" })
+      const rec = yield* instances.create({ conceptId: sealed.id, fields: { [f.id]: "secret" } })
+      const open = yield* concepts.create({ name: `Open ${randomUUID().slice(0, 6)}` })
+      const openRec = yield* instances.create({ conceptId: open.id, fields: {} })
+      yield* concepts.setVisibility(sealed.id, "admin")
+      return { sealedItemId: rec.itemId, openItemId: openRec.itemId }
+    })
+
+  it("refuses a note, task or upload on a restricted record — but allows them on a visible one", async () => {
+    const orgId = randomUUID()
+    const f = await runEngineOrThrow(systemScope(orgId, "seed"), seedSealed())
+
+    const asMember = <A>(eff: Effect.Effect<A, unknown, OrgContext | EngineServices>) =>
+      runEngine({ orgId, actor: "intruder", role: "member" }, eff)
+
+    // Restricted subject: all three writes refused.
+    expect((await asMember(uc.createNote({ subjectId: f.sealedItemId, body: "x" }))).ok).toBe(false)
+    expect((await asMember(uc.createTask({ subjectId: f.sealedItemId, title: "x" }))).ok).toBe(
+      false,
+    )
+    expect(
+      (
+        await asMember(
+          uc.uploadAttachment(
+            { itemId: f.sealedItemId },
+            "x.txt",
+            "text/plain",
+            new TextEncoder().encode("hi"),
+          ),
+        )
+      ).ok,
+    ).toBe(false)
+
+    // NOTHING was planted — a refusal that still wrote would pass the assertions above.
+    const notes = await runEngineOrThrow(systemScope(orgId, "seed"), uc.listNotes(f.sealedItemId))
+    expect(notes).toHaveLength(0)
+
+    // CONTROL: the same writes on a visible record must still succeed, or this fix
+    // has broken ordinary note-taking for everyone.
+    expect((await asMember(uc.createNote({ subjectId: f.openItemId, body: "ok" }))).ok).toBe(true)
+    expect((await asMember(uc.createTask({ subjectId: f.openItemId, title: "ok" }))).ok).toBe(true)
+    // CONTROL: an org-level annotation names no record, so it is never gated (the
+    // global Tasks page creates these).
+    expect((await asMember(uc.createNote({ subjectId: null, body: "ok" }))).ok).toBe(true)
   })
 })
