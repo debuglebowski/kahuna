@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest"
 import { Effect } from "effect"
+import { emptyPolicy, type PolicySet } from "../domain/access"
 import type { DashboardBody, DashboardWidget } from "../domain/types"
 import { ConceptService } from "../services/ConceptService"
 import { DashboardService } from "../services/DashboardService"
@@ -397,4 +398,130 @@ describe("dashboards (DashboardService)", () => {
       expect(ok.name).toBe("Renamed")
     }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
+})
+
+/**
+ * ── SHARING A PERSONAL DASHBOARD ─────────────────────────────────────────────
+ *
+ * The claim P5 rests on: a personal dashboard is ALREADY "default deny, one implicit
+ * grant to the owner", so `owner_id` needs no migration — access rules just layer on
+ * top. These tests prove the layering actually works, in both directions.
+ */
+describe("dashboard access: rules over the owner_id default", () => {
+  const OWNER = "user-owner"
+  const OTHER = "user-other"
+
+  const grant = (id: string, action: "view" | "edit" | "delete"): PolicySet => ({
+    ...emptyPolicy(OTHER),
+    rules: [
+      {
+        id: "g1",
+        roleId: null,
+        actorId: OTHER,
+        effect: "allow",
+        actions: [action],
+        resourceType: "dashboard",
+        resourceId: id,
+        conceptId: null,
+        condition: null,
+      },
+    ],
+  })
+
+  /** A personal dashboard belonging to OWNER. */
+  const seedPersonal = (orgId: string) =>
+    Effect.runPromise(
+      Effect.flatMap(DashboardService, (d) =>
+        d.create({
+          name: `Mine ${Math.abs(orgId.charCodeAt(0))}`,
+          scope: "personal",
+          body: { widgets: [] },
+        }),
+      ).pipe(Effect.provide(testLayer(orgId, OWNER, "member"))),
+    )
+
+  it("another member cannot see it by default, and CAN once shared", async () => {
+    const orgId = newOrgId()
+    const mine = await seedPersonal(orgId)
+
+    const withoutRule = await Effect.runPromise(
+      Effect.flatMap(DashboardService, (d) => d.list()).pipe(
+        Effect.provide(testLayer(orgId, OTHER, "member")),
+      ),
+    )
+    expect(withoutRule.map((d) => d.id)).not.toContain(mine.id)
+
+    const withRule = await Effect.runPromise(
+      Effect.flatMap(DashboardService, (d) => d.list()).pipe(
+        Effect.provide(testLayer(orgId, OTHER, "member", grant(mine.id, "view"))),
+      ),
+    )
+    expect(withRule.map((d) => d.id)).toContain(mine.id)
+  })
+
+  it("a `view` share does NOT confer edit — the actions are separate", async () => {
+    const orgId = newOrgId()
+    const mine = await seedPersonal(orgId)
+    // Visible, but not writable: `findForWrite` asks for `edit`, which this rule
+    // doesn't grant, so the row resolves as not-found for the write.
+    const outcome = await Effect.runPromise(
+      Effect.flatMap(DashboardService, (d) => d.update({ id: mine.id, name: "Hijacked" })).pipe(
+        Effect.provide(testLayer(orgId, OTHER, "member", grant(mine.id, "view"))),
+        Effect.map(() => "edited"),
+        Effect.catchTag("DashboardNotFound", () => Effect.succeed("not-found")),
+      ),
+    )
+    expect(outcome).toBe("not-found")
+  })
+
+  it("an `edit` share makes the write land, and the owner still owns it", async () => {
+    const orgId = newOrgId()
+    const mine = await seedPersonal(orgId)
+    const edited = await Effect.runPromise(
+      Effect.flatMap(DashboardService, (d) => d.update({ id: mine.id, name: "Collaborated" })).pipe(
+        Effect.provide(testLayer(orgId, OTHER, "member", grant(mine.id, "edit"))),
+      ),
+    )
+    expect(edited.name).toBe("Collaborated")
+    // Editing another's dashboard must not silently transfer ownership to the editor.
+    const stillOwners = await Effect.runPromise(
+      Effect.flatMap(DashboardService, (d) => d.list()).pipe(
+        Effect.provide(testLayer(orgId, OWNER, "member")),
+      ),
+    )
+    expect(stillOwners.map((d) => d.id)).toContain(mine.id)
+  })
+
+  it("a deny closes an ORG-SHARED dashboard for one member", async () => {
+    // The other direction: rules narrow as well as widen, so a shared dashboard can be
+    // hidden from someone without making it personal.
+    const orgId = newOrgId()
+    const shared = await Effect.runPromise(
+      Effect.flatMap(DashboardService, (d) =>
+        d.create({ name: "Team", scope: "org", body: { widgets: [] } }),
+      ).pipe(Effect.provide(testLayer(orgId, OWNER, "member"))),
+    )
+    const denied: PolicySet = {
+      ...emptyPolicy(OTHER),
+      rules: [
+        {
+          id: "d1",
+          roleId: null,
+          actorId: OTHER,
+          effect: "deny",
+          actions: ["view"],
+          resourceType: "dashboard",
+          resourceId: shared.id,
+          conceptId: null,
+          condition: null,
+        },
+      ],
+    }
+    const seen = await Effect.runPromise(
+      Effect.flatMap(DashboardService, (d) => d.list()).pipe(
+        Effect.provide(testLayer(orgId, OTHER, "member", denied)),
+      ),
+    )
+    expect(seen.map((d) => d.id)).not.toContain(shared.id)
+  })
 })

@@ -1,8 +1,9 @@
 import { PgClient } from "@effect/sql-pg"
 import { Effect } from "effect"
+import { decide } from "../domain/access"
 import type { SidebarViewBody } from "../domain/types"
 import { SidebarViewNotFound, SidebarViewProtected } from "../errors"
-import { OrgContext } from "./OrgContext"
+import { OrgContext, type OrgScope } from "./OrgContext"
 import { type SidebarViewRow, toSidebarView } from "./rows"
 
 /**
@@ -45,16 +46,66 @@ export class SidebarViewService extends Effect.Service<SidebarViewService>()(
           )`
       })
 
+      /**
+       * ── VIEW ACCESS: DEFAULT + EXCEPTIONS ───────────────────────────────────
+       *
+       * Same shape as DashboardService: `owner_id` IS the default layer (null =
+       * org-shared, non-null = personal to that user), and access rules layer over it.
+       * See the longer note there for why that means personal views needed no
+       * migration.
+       */
+      const hasRules = (scope: OrgScope): boolean =>
+        scope.policy?.rules.some((r) => r.resourceType === "view") ?? false
+
+      /** The default, per row: shared, or mine. */
+      const byDefaultFor = (scope: OrgScope, ownerId: string | null): boolean =>
+        ownerId === null || ownerId === scope.actor
+
+      /** Resolve one view for a write, honouring both layers. A rule granting `edit`
+       *  on someone else's personal view must be reachable, so the default cannot stay
+       *  a WHERE clause. Fails not-found either way — never a distinct 403. */
+      const findForWrite = (id: string, action: "edit" | "delete") =>
+        Effect.gen(function* () {
+          const scope = yield* OrgContext
+          const rows = yield* sql<SidebarViewRow>`
+            SELECT * FROM sidebar_views WHERE org_id = ${scope.orgId} AND id = ${id} LIMIT 1`
+          const row = rows[0]
+          if (!row) return null
+          const fallback = byDefaultFor(scope, row.owner_id)
+          const allowed = scope.policy
+            ? decide(scope.policy, action, { type: "view", id }, fallback, {
+                unconditionalOnly: true,
+              })
+            : fallback
+          return allowed ? row : null
+        })
+
       /** Everything the caller can see: all org-shared views + their own personal. */
       const list = () =>
         Effect.gen(function* () {
-          const { orgId, actor } = yield* OrgContext
+          const scope = yield* OrgContext
+          const { orgId, actor } = scope
           yield* ensureDefault
+          // No LIMIT on this query, so applying the exception layer in memory cannot
+          // skew a count or truncate a page (unlike record lists, where the filter
+          // must be compiled into the SQL).
+          const gate = hasRules(scope) ? sql`TRUE` : sql`(owner_id IS NULL OR owner_id = ${actor})`
           const rows = yield* sql<SidebarViewRow>`
             SELECT * FROM sidebar_views
-            WHERE org_id = ${orgId} AND (owner_id IS NULL OR owner_id = ${actor})
+            WHERE org_id = ${orgId} AND ${gate}
             ORDER BY position ASC, created_at ASC`
-          return rows.map(toSidebarView)
+          const visible = hasRules(scope)
+            ? rows.filter((r) =>
+                decide(
+                  scope.policy!,
+                  "view",
+                  { type: "view", id: r.id },
+                  byDefaultFor(scope, r.owner_id),
+                  { unconditionalOnly: true },
+                ),
+              )
+            : rows
+          return visible.map(toSidebarView)
         })
 
       const create = (input: {
@@ -89,11 +140,7 @@ export class SidebarViewService extends Effect.Service<SidebarViewService>()(
       }) =>
         Effect.gen(function* () {
           const { orgId, actor } = yield* OrgContext
-          const found = yield* sql<SidebarViewRow>`
-            SELECT * FROM sidebar_views
-            WHERE org_id = ${orgId} AND id = ${input.id}
-              AND (owner_id IS NULL OR owner_id = ${actor}) LIMIT 1`
-          const cur = found[0]
+          const cur = yield* findForWrite(input.id, "edit")
           if (!cur) return yield* Effect.fail(new SidebarViewNotFound({ id: input.id }))
           // Name is optional — an explicit empty string clears it (icon-only view).
           const name = input.name === undefined ? cur.name : input.name.trim()
@@ -114,12 +161,8 @@ export class SidebarViewService extends Effect.Service<SidebarViewService>()(
       const remove = (id: string) =>
         sql.withTransaction(
           Effect.gen(function* () {
-            const { orgId, actor } = yield* OrgContext
-            const found = yield* sql<SidebarViewRow>`
-              SELECT * FROM sidebar_views
-              WHERE org_id = ${orgId} AND id = ${id}
-                AND (owner_id IS NULL OR owner_id = ${actor}) LIMIT 1`
-            const row = found[0]
+            const { orgId } = yield* OrgContext
+            const row = yield* findForWrite(id, "delete")
             if (!row) return yield* Effect.fail(new SidebarViewNotFound({ id }))
             // The list must never empty for anyone — refuse to delete the last
             // shared view (every member sees the shared views).

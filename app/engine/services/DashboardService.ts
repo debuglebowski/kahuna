@@ -1,5 +1,6 @@
 import { PgClient } from "@effect/sql-pg"
 import { Effect } from "effect"
+import { decide } from "../domain/access"
 import type { DashboardBody } from "../domain/types"
 import {
   ConceptNotFound,
@@ -7,7 +8,7 @@ import {
   DashboardNotFound,
   DashboardProtected,
 } from "../errors"
-import { OrgContext } from "./OrgContext"
+import { OrgContext, type OrgScope } from "./OrgContext"
 import { type DashboardRow, toDashboard } from "./rows"
 
 /**
@@ -48,31 +49,70 @@ export class DashboardService extends Effect.Service<DashboardService>()(
           )`
       })
 
+      /**
+       * ── DASHBOARD ACCESS: DEFAULT + EXCEPTIONS ─────────────────────────────
+       *
+       * `owner_id` IS the default layer, already: null = org-shared (everyone),
+       * non-null = personal (that user only). That is exactly the "everyone / no one"
+       * default the access model describes, expressed as a column — so it stays, and
+       * access rules layer over it rather than replacing it.
+       *
+       * This is why personal dashboards needed no migration: a personal dashboard is
+       * already "default deny, one implicit grant to the owner". Sharing one adds an
+       * explicit rule; nothing about the existing rows changes.
+       *
+       * The SQL predicate below is the default. Rules can only ever WIDEN it here (a
+       * share of someone else's personal dashboard), so when the caller holds any
+       * dashboard rule we fetch unfiltered and decide per row. Safe to filter in
+       * memory: these queries carry no LIMIT, so dropping rows cannot skew a count or
+       * truncate a page — unlike record lists, where the filter must be in the SQL.
+       */
+      const ownDefault = (actor: string) => sql`(owner_id IS NULL OR owner_id = ${actor})`
+
+      /** Does this caller hold any dashboard-scoped rule? */
+      const hasRules = (scope: OrgScope): boolean =>
+        scope.policy?.rules.some((r) => r.resourceType === "dashboard") ?? false
+
+      /** Apply the exception layer to rows fetched under the default. */
+      const applyRules = (scope: OrgScope, rows: ReadonlyArray<DashboardRow>) =>
+        rows.filter((r) =>
+          decide(
+            scope.policy!,
+            "view",
+            { type: "dashboard", id: r.id },
+            // The default, per row: shared, or mine.
+            r.owner_id === null || r.owner_id === scope.actor,
+            { unconditionalOnly: true },
+          ),
+        )
+
       /** The switcher: PAGE dashboards the caller can see (org-shared + own personal).
        *  Record dashboards are per-concept templates — see `listRecordDashboards`. */
       const list = () =>
         Effect.gen(function* () {
-          const { orgId, actor } = yield* OrgContext
+          const scope = yield* OrgContext
+          const { orgId, actor } = scope
           yield* ensureDefault
+          const gate = hasRules(scope) ? sql`TRUE` : ownDefault(actor)
           const rows = yield* sql<DashboardRow>`
             SELECT * FROM dashboards
-            WHERE org_id = ${orgId} AND kind = 'page'
-              AND (owner_id IS NULL OR owner_id = ${actor})
+            WHERE org_id = ${orgId} AND kind = 'page' AND ${gate}
             ORDER BY position ASC, created_at ASC`
-          return rows.map(toDashboard)
+          return (hasRules(scope) ? applyRules(scope, rows) : rows).map(toDashboard)
         })
 
       /** A concept's record dashboards the caller can see — org-shared + their own
        *  personal — in `position` order (the FIRST is what a bare reference opens). */
       const listRecordDashboards = (conceptId: string) =>
         Effect.gen(function* () {
-          const { orgId, actor } = yield* OrgContext
+          const scope = yield* OrgContext
+          const { orgId, actor } = scope
+          const gate = hasRules(scope) ? sql`TRUE` : ownDefault(actor)
           const rows = yield* sql<DashboardRow>`
             SELECT * FROM dashboards
-            WHERE org_id = ${orgId} AND kind = 'record' AND concept_id = ${conceptId}
-              AND (owner_id IS NULL OR owner_id = ${actor})
+            WHERE org_id = ${orgId} AND kind = 'record' AND concept_id = ${conceptId} AND ${gate}
             ORDER BY position ASC, created_at ASC`
-          return rows.map(toDashboard)
+          return (hasRules(scope) ? applyRules(scope, rows) : rows).map(toDashboard)
         })
 
       /** EVERY dashboard the caller can see — page + record — for the settings
@@ -80,13 +120,40 @@ export class DashboardService extends Effect.Service<DashboardService>()(
        *  record dashboards per concept. */
       const listAll = () =>
         Effect.gen(function* () {
-          const { orgId, actor } = yield* OrgContext
+          const scope = yield* OrgContext
+          const { orgId, actor } = scope
           yield* ensureDefault
+          const gate = hasRules(scope) ? sql`TRUE` : ownDefault(actor)
           const rows = yield* sql<DashboardRow>`
             SELECT * FROM dashboards
-            WHERE org_id = ${orgId} AND (owner_id IS NULL OR owner_id = ${actor})
+            WHERE org_id = ${orgId} AND ${gate}
             ORDER BY position ASC, created_at ASC`
-          return rows.map(toDashboard)
+          return (hasRules(scope) ? applyRules(scope, rows) : rows).map(toDashboard)
+        })
+
+      /**
+       * Resolve one dashboard for a WRITE, honouring both layers.
+       *
+       * Fetches by id, then applies the default (shared, or mine) plus any rule. The
+       * default cannot be a SQL predicate here as it was: a rule may grant `edit` on
+       * someone else's personal dashboard, and a WHERE clause that hid the row would
+       * make that grant unreachable. Fails `DashboardNotFound` either way, so an
+       * unshared dashboard is indistinguishable from a missing one.
+       */
+      const findForWrite = (id: string, action: "edit" | "delete") =>
+        Effect.gen(function* () {
+          const scope = yield* OrgContext
+          const rows = yield* sql<DashboardRow>`
+            SELECT * FROM dashboards WHERE org_id = ${scope.orgId} AND id = ${id} LIMIT 1`
+          const row = rows[0]
+          if (!row) return null
+          const byDefault = row.owner_id === null || row.owner_id === scope.actor
+          const allowed = scope.policy
+            ? decide(scope.policy, action, { type: "dashboard", id }, byDefault, {
+                unconditionalOnly: true,
+              })
+            : byDefault
+          return allowed ? row : null
         })
 
       const create = (input: {
@@ -150,11 +217,7 @@ export class DashboardService extends Effect.Service<DashboardService>()(
         sql.withTransaction(
           Effect.gen(function* () {
             const { orgId, actor } = yield* OrgContext
-            const found = yield* sql<DashboardRow>`
-              SELECT * FROM dashboards
-              WHERE org_id = ${orgId} AND id = ${input.id}
-                AND (owner_id IS NULL OR owner_id = ${actor}) LIMIT 1`
-            const cur = found[0]
+            const cur = yield* findForWrite(input.id, "edit")
             if (!cur) return yield* Effect.fail(new DashboardNotFound({ id: input.id }))
             if (
               input.expectedUpdatedAt !== undefined &&
@@ -205,12 +268,8 @@ export class DashboardService extends Effect.Service<DashboardService>()(
       const remove = (id: string) =>
         sql.withTransaction(
           Effect.gen(function* () {
-            const { orgId, actor } = yield* OrgContext
-            const found = yield* sql<DashboardRow>`
-              SELECT * FROM dashboards
-              WHERE org_id = ${orgId} AND id = ${id}
-                AND (owner_id IS NULL OR owner_id = ${actor}) LIMIT 1`
-            const row = found[0]
+            const { orgId } = yield* OrgContext
+            const row = yield* findForWrite(id, "delete")
             if (!row) return yield* Effect.fail(new DashboardNotFound({ id }))
             // The home must never empty — refuse to delete the last shared PAGE
             // dashboard. Record templates (concept_id set) are exempt from the guard.
