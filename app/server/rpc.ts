@@ -34,6 +34,7 @@ import {
   type Item,
   KingsmakerRpcs,
   type Label,
+  type MentionRef,
   type Note,
   type Relation,
   RpcError,
@@ -290,6 +291,40 @@ export async function assertMembers(
       status: 422,
     })
   }
+}
+
+/**
+ * Resolve `person` mentions to member names. Auth-tier, so it lives here rather
+ * than in a use-case: the engine treats a user id as an opaque logical FK and
+ * never touches `bauth_*`.
+ *
+ * DEACTIVATED members resolve normally, unlike in `assertMembers`. The rules
+ * differ on purpose: that one governs ASSIGNING work, where a deactivated user
+ * would create a value nobody can act on. This one governs displaying a name
+ * someone already wrote — the person is still real and still has a profile page,
+ * and blanking the mention would rewrite history to hide that they were here.
+ *
+ * A user id with no member row (purged, or from another org) resolves to a null
+ * href, which the chip renders as an inert "former member"-style pill.
+ */
+async function resolvePeopleMentions(
+  orgId: string,
+  userIds: ReadonlyArray<string>,
+): Promise<Map<string, { label: string; href: string; icon: null }>> {
+  const out = new Map<string, { label: string; href: string; icon: null }>()
+  if (userIds.length === 0) return out
+  const rows = await pool.query<{ user_id: string; name: string | null; email: string | null }>(
+    `SELECT m.user_id, u.name, u.email FROM bauth_member m
+       JOIN bauth_user u ON u.id = m.user_id
+      WHERE m.organization_id = $1 AND m.user_id = ANY($2::text[])`,
+    [orgId, [...new Set(userIds)]],
+  )
+  for (const r of rows.rows) {
+    // Mirrors the client's `memberLabel`: name, else email, else the raw id.
+    const label = r.name?.trim() || r.email || r.user_id
+    out.set(r.user_id, { label, href: `/members/${r.user_id}`, icon: null })
+  }
+  return out
 }
 
 /** Resolve an instance's concept, then run the member check against the patch. */
@@ -621,6 +656,25 @@ const HandlersLive = ServerRpcs.toLayer({
     ),
   resolveTaskSubjects: ({ subjectIds }) =>
     as<ReadonlyArray<TaskSubjectRef>>(uc.resolveTaskSubjects(subjectIds)),
+  // The engine resolves every kind it can gate itself; `person` is auth-tier and
+  // is overlaid here (see `resolvePeopleMentions`). `page` stays null by design —
+  // it is resolved client-side from the static nav table.
+  resolveMentions: ({ refs }) =>
+    Effect.gen(function* () {
+      const { orgId } = yield* OrgContext
+      const resolved = yield* as<ReadonlyArray<MentionRef>>(uc.resolveMentions(refs))
+      const personIds = refs.filter((r) => r.kind === "person").map((r) => r.targetId)
+      if (personIds.length === 0) return resolved
+      const people = yield* Effect.tryPromise({
+        try: () => resolvePeopleMentions(orgId, personIds),
+        catch: toRpcError,
+      })
+      return resolved.map((r) => {
+        if (r.kind !== "person") return r
+        const hit = people.get(r.targetId)
+        return hit ? { ...r, href: hit.href, label: hit.label, icon: hit.icon } : r
+      })
+    }),
   createTask: ({
     subjectId,
     title,
@@ -849,6 +903,8 @@ const HandlersLive = ServerRpcs.toLayer({
     admin<{ readonly id: string }>(
       uc.updateRule({ ruleId, effect, actions, resourceType, resourceId, conceptId, condition }),
     ),
+  setScopedRules: ({ roleId, resourceType, entries }) =>
+    admin<{ readonly ok: boolean }>(uc.setScopedRules({ roleId, resourceType, entries })),
   removeRule: ({ ruleId }) => admin<{ readonly id: string }>(uc.removeRule(ruleId)),
   /**
    * Asking about YOURSELF is always allowed — that is the point of the self-serve

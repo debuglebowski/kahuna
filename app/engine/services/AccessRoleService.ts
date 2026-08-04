@@ -478,6 +478,70 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
             : null
         }).pipe(Effect.orDie)
 
+      /**
+       * Replace every TARGETED rule of one resource type on a role, in one transaction.
+       *
+       * This is what the permissions matrix writes. Setting a whole column means
+       * touching every row, and doing that as N add/update/remove round-trips would be
+       * both chatty and non-atomic — a half-applied column is a permissions bug, not a
+       * cosmetic one. So the client sends the desired state and this reconciles.
+       *
+       * ONLY rules with a `resource_id` are replaced. Blanket rules (`resource_id IS
+       * NULL`) are left alone: they are not represented in the grid, so treating their
+       * absence from the payload as "delete them" would silently drop access the matrix
+       * never showed. The UI surfaces them separately.
+       *
+       * `org` is refused outright — org-level configure is what the irreducible floor
+       * protects, and it has no place in a per-item grid.
+       */
+      const setScopedRules = (input: {
+        readonly roleId: string
+        readonly resourceType: AccessResourceType
+        readonly entries: ReadonlyArray<{
+          readonly resourceId: string
+          readonly allow: ReadonlyArray<AccessAction>
+          readonly deny: ReadonlyArray<AccessAction>
+        }>
+      }) =>
+        sql
+          .withTransaction(
+            Effect.gen(function* () {
+              const { orgId, actor } = yield* OrgContext
+              yield* sql`
+                DELETE FROM access_rules
+                WHERE org_id = ${orgId} AND role_id = ${input.roleId}
+                  AND resource_type = ${input.resourceType}
+                  AND resource_id IS NOT NULL`
+              for (const e of input.entries) {
+                // One row per (item, effect), holding that effect's action set —
+                // the shape the grid reads back cell by cell.
+                for (const [effect, actions] of [
+                  ["allow", e.allow],
+                  ["deny", e.deny],
+                ] as const) {
+                  if (actions.length === 0) continue
+                  yield* sql`
+                    INSERT INTO access_rules
+                      (org_id, role_id, effect, actions, resource_type, resource_id, created_by)
+                    VALUES (${orgId}, ${input.roleId}, ${effect}, ${[...actions]},
+                            ${input.resourceType}, ${e.resourceId}, ${actor})`
+                }
+              }
+              yield* events.append({
+                subjectKind: "accessRole",
+                subjectId: input.roleId,
+                eventType: "AccessRulesReplaced",
+                payload: {
+                  _tag: "AccessRulesReplaced",
+                  resourceType: input.resourceType,
+                  items: input.entries.length,
+                } as never,
+              })
+              yield* policies.bump(orgId)
+            }),
+          )
+          .pipe(Effect.orDie)
+
       /** Remove one rule from a role. Idempotent. */
       const removeRule = (ruleId: string) =>
         Effect.gen(function* () {
@@ -540,6 +604,7 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
         rulesOf: rulesOf,
         addRule,
         updateRule,
+        setScopedRules,
         getRule,
         removeRule,
         configureHolders,

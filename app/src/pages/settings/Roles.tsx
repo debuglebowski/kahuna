@@ -32,6 +32,7 @@ import {
   Toolbar,
 } from "../../components/ui"
 import { type AccessActionName, type AccessResourceType, type AccessRole, api } from "../../lib/api"
+import { PermissionMatrix } from "./PermissionMatrix"
 import { Feedback } from "./parts"
 
 /**
@@ -101,6 +102,13 @@ const RESOURCE_GROUPS: ReadonlyArray<{
       { id: "org", label: "Organisation", hint: "Org-wide settings" },
     ],
   },
+]
+
+/** The rail. `all` is the full rule list — the escape hatch for everything a grid
+ *  cannot express (conditions, blanket rules, resource types with no item list yet). */
+const AREAS: ReadonlyArray<{ id: AccessResourceType | "all"; label: string }> = [
+  { id: "concept", label: "Concepts" },
+  { id: "all", label: "All rules" },
 ]
 
 const RESOURCE_LABEL = new Map<string, string>(
@@ -227,6 +235,8 @@ function RuleEditor({ role, onClose }: { role: AccessRole; onClose: () => void }
   /** null while adding; the rule's id while editing one. Drives the form's copy and
    *  which mutation the submit runs. */
   const [editingId, setEditingId] = useState<string | null>(null)
+  /** Which pane the rail is showing: a per-area grid, or the full rule list. */
+  const [area, setArea] = useState<AccessResourceType | "all">("concept")
 
   const resetDraft = () => {
     setEffect("allow")
@@ -302,225 +312,265 @@ function RuleEditor({ role, onClose }: { role: AccessRole; onClose: () => void }
 
   return (
     <Modal onClose={onClose} title={`Rules — ${role.name}`} size="wide">
-      <div className="space-y-6">
-        <p className="max-w-2xl text-sm text-muted-foreground">
-          Rules grant access <span className="text-foreground">on top of</span> what each item
-          already allows by default. A <span className="text-foreground">Deny</span> always wins,
-          whatever else grants access.
-        </p>
+      <div className="flex min-h-0 gap-6">
+        {/* Area rail. The grid is per-area by necessity — one matrix over every
+            resource type at once would have no meaningful row axis — so the areas
+            become navigation rather than another dropdown. */}
+        <nav className="w-40 shrink-0 space-y-0.5 border-r pr-3">
+          {AREAS.map((a) => (
+            <button
+              key={a.id}
+              type="button"
+              onClick={() => setArea(a.id)}
+              className={`block w-full rounded-md px-3 py-1.5 text-left text-sm transition ${
+                area === a.id
+                  ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                  : "text-muted-foreground hover:bg-accent hover:text-foreground"
+              }`}
+            >
+              {a.label}
+            </button>
+          ))}
+        </nav>
+        <div className="min-w-0 flex-1 space-y-6">
+          {area !== "all" ? (
+            <PermissionMatrix
+              roleId={role.id}
+              resourceType={area}
+              items={(concepts.data ?? []).map((c) => ({ id: c.id, name: c.name }))}
+              itemsLabel="Concept"
+              actions={ACTIONS}
+              rules={rules.data ?? []}
+              loading={rules.isPending || concepts.isPending}
+            />
+          ) : (
+            <>
+              <p className="max-w-2xl text-sm text-muted-foreground">
+                Rules grant access <span className="text-foreground">on top of</span> what each item
+                already allows by default. A <span className="text-foreground">Deny</span> always
+                wins, whatever else grants access.
+              </p>
 
-        {rules.isPending ? (
-          <Spinner />
-        ) : rules.data && rules.data.length > 0 ? (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-28">Effect</TableHead>
-                <TableHead>Can</TableHead>
-                <TableHead>On</TableHead>
-                <TableHead className="w-40">Scope</TableHead>
-                <TableHead className="w-12" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {groupRules(rules.data).flatMap((group) => [
-                // A group header row rather than nested tables: one set of column
-                // widths keeps Effect/Can/On/Scope aligned all the way down.
-                <TableRow key={`h-${group.label}`} className="hover:bg-transparent">
-                  <TableCell
-                    colSpan={5}
-                    className="bg-muted/40 py-2 text-xs font-medium tracking-wide text-muted-foreground"
-                  >
-                    {group.label}
-                    <span className="ml-2 font-normal opacity-70">{group.rules.length}</span>
-                  </TableCell>
-                </TableRow>,
-                ...group.rules.map((r) => (
-                  <TableRow
-                    key={r.id}
-                    // The whole row opens the editor; the remove button stops the event
-                    // so a delete never reads as "edit this".
-                    className={`cursor-pointer ${editingId === r.id ? "bg-accent" : ""}`}
-                    onClick={() => startEditing(r)}
-                  >
-                    <TableCell>
-                      <Badge tone={r.effect === "deny" ? "red" : "green"}>
-                        {r.effect === "deny" ? "Deny" : "Allow"}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="font-medium text-foreground">
-                      {actionsLabel(r.actions)}
-                    </TableCell>
-                    <TableCell>{RESOURCE_LABEL.get(r.resourceType) ?? r.resourceType}</TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {/* "Scope" answers "which ones?" — a raw `(any)` or a truncated
+              {rules.isPending ? (
+                <Spinner />
+              ) : rules.data && rules.data.length > 0 ? (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-28">Effect</TableHead>
+                      <TableHead>Can</TableHead>
+                      <TableHead>On</TableHead>
+                      <TableHead className="w-40">Scope</TableHead>
+                      <TableHead className="w-12" />
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {groupRules(rules.data).flatMap((group) => [
+                      // A group header row rather than nested tables: one set of column
+                      // widths keeps Effect/Can/On/Scope aligned all the way down.
+                      <TableRow key={`h-${group.label}`} className="hover:bg-transparent">
+                        <TableCell
+                          colSpan={5}
+                          className="bg-muted/40 py-2 text-xs font-medium tracking-wide text-muted-foreground"
+                        >
+                          {group.label}
+                          <span className="ml-2 font-normal opacity-70">{group.rules.length}</span>
+                        </TableCell>
+                      </TableRow>,
+                      ...group.rules.map((r) => (
+                        <TableRow
+                          key={r.id}
+                          // The whole row opens the editor; the remove button stops the event
+                          // so a delete never reads as "edit this".
+                          className={`cursor-pointer ${editingId === r.id ? "bg-accent" : ""}`}
+                          onClick={() => startEditing(r)}
+                        >
+                          <TableCell>
+                            <Badge tone={r.effect === "deny" ? "red" : "green"}>
+                              {r.effect === "deny" ? "Deny" : "Allow"}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="font-medium text-foreground">
+                            {actionsLabel(r.actions)}
+                          </TableCell>
+                          <TableCell>
+                            {RESOURCE_LABEL.get(r.resourceType) ?? r.resourceType}
+                          </TableCell>
+                          <TableCell className="text-muted-foreground">
+                            {/* "Scope" answers "which ones?" — a raw `(any)` or a truncated
                           uuid told the reader a rule was narrowed, but not to what,
                           which is the one thing they need. */}
-                      {scopeLabel(r)}
-                    </TableCell>
-                    <TableCell>
-                      <IconButton
-                        aria-label={`Remove ${actionsLabel(r.actions)} on ${
-                          RESOURCE_LABEL.get(r.resourceType) ?? r.resourceType
-                        }`}
-                        title="Remove rule"
-                        variant="danger"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          remove.mutate(r.id)
-                        }}
-                        disabled={remove.isPending}
-                      >
-                        <X size={14} />
-                      </IconButton>
-                    </TableCell>
-                  </TableRow>
-                )),
-              ])}
-            </TableBody>
-          </Table>
-        ) : (
-          <div className="rounded-lg border border-dashed px-6 py-8 text-center">
-            <p className="text-sm font-medium">No rules yet</p>
-            <p className="mt-1 text-sm text-muted-foreground">
-              This role grants nothing beyond what every member already sees.
-            </p>
-          </div>
-        )}
-        <Feedback error={remove.error ? roleMsg(remove.error) : undefined} />
+                            {scopeLabel(r)}
+                          </TableCell>
+                          <TableCell>
+                            <IconButton
+                              aria-label={`Remove ${actionsLabel(r.actions)} on ${
+                                RESOURCE_LABEL.get(r.resourceType) ?? r.resourceType
+                              }`}
+                              title="Remove rule"
+                              variant="danger"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                remove.mutate(r.id)
+                              }}
+                              disabled={remove.isPending}
+                            >
+                              <X size={14} />
+                            </IconButton>
+                          </TableCell>
+                        </TableRow>
+                      )),
+                    ])}
+                  </TableBody>
+                </Table>
+              ) : (
+                <div className="rounded-lg border border-dashed px-6 py-8 text-center">
+                  <p className="text-sm font-medium">No rules yet</p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    This role grants nothing beyond what every member already sees.
+                  </p>
+                </div>
+              )}
+              <Feedback error={remove.error ? roleMsg(remove.error) : undefined} />
 
-        {!adding ? (
-          <Button variant="outline" size="sm" onClick={() => setAdding(true)}>
-            <Plus size={15} />
-            Add rule
-          </Button>
-        ) : (
-          <div className="space-y-4 rounded-lg border p-6">
-            <span className="block text-sm font-medium">
-              {editingId ? "Edit rule" : "Add a rule"}
-            </span>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="Effect">
-                <Select value={effect} onValueChange={(v) => setEffect(v as "allow" | "deny")}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="allow">Allow</SelectItem>
-                    <SelectItem value="deny">Deny — always wins</SelectItem>
-                  </SelectContent>
-                </Select>
-              </Field>
-              <Field label="Applies to">
-                <Select
-                  value={resourceType}
-                  onValueChange={(v) => {
-                    setResourceType(v as AccessResourceType)
-                    // Drop the target: a concept id is meaningless against `dashboard`,
-                    // and carrying it over would silently scope the new rule.
-                    setTargetId("")
-                  }}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {/* Grouped, because eleven flat engine words are a lookup table, not
+              {!adding ? (
+                <Button variant="outline" size="sm" onClick={() => setAdding(true)}>
+                  <Plus size={15} />
+                  Add rule
+                </Button>
+              ) : (
+                <div className="space-y-4 rounded-lg border p-6">
+                  <span className="block text-sm font-medium">
+                    {editingId ? "Edit rule" : "Add a rule"}
+                  </span>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <Field label="Effect">
+                      <Select
+                        value={effect}
+                        onValueChange={(v) => setEffect(v as "allow" | "deny")}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="allow">Allow</SelectItem>
+                          <SelectItem value="deny">Deny — always wins</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </Field>
+                    <Field label="Applies to">
+                      <Select
+                        value={resourceType}
+                        onValueChange={(v) => {
+                          setResourceType(v as AccessResourceType)
+                          // Drop the target: a concept id is meaningless against `dashboard`,
+                          // and carrying it over would silently scope the new rule.
+                          setTargetId("")
+                        }}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {/* Grouped, because eleven flat engine words are a lookup table, not
                       a menu someone can scan. */}
-                    {RESOURCE_GROUPS.map((g) => (
-                      <SelectGroup key={g.label}>
-                        <SelectLabel>{g.label}</SelectLabel>
-                        {g.items.map((r) => (
-                          <SelectItem key={r.id} value={r.id}>
-                            {r.label}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </Field>
-            </div>
-            {resourceType === "concept" || resourceType === "record" ? (
-              <Field
-                label={resourceType === "record" ? "In which concept?" : "Which concept?"}
-                hint={
-                  resourceType === "record"
-                    ? "Leave as All to cover records everywhere."
-                    : "Leave as All to cover every concept."
-                }
-              >
-                <Select
-                  value={targetId || "__all"}
-                  onValueChange={(v) => setTargetId(v === "__all" ? "" : v)}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {/* Radix forbids an empty SelectItem value, so "all" rides a
+                          {RESOURCE_GROUPS.map((g) => (
+                            <SelectGroup key={g.label}>
+                              <SelectLabel>{g.label}</SelectLabel>
+                              {g.items.map((r) => (
+                                <SelectItem key={r.id} value={r.id}>
+                                  {r.label}
+                                </SelectItem>
+                              ))}
+                            </SelectGroup>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </Field>
+                  </div>
+                  {resourceType === "concept" || resourceType === "record" ? (
+                    <Field
+                      label={resourceType === "record" ? "In which concept?" : "Which concept?"}
+                      hint={
+                        resourceType === "record"
+                          ? "Leave as All to cover records everywhere."
+                          : "Leave as All to cover every concept."
+                      }
+                    >
+                      <Select
+                        value={targetId || "__all"}
+                        onValueChange={(v) => setTargetId(v === "__all" ? "" : v)}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {/* Radix forbids an empty SelectItem value, so "all" rides a
                       sentinel mapped back to "" — the project's standard workaround. */}
-                    <SelectItem value="__all">All</SelectItem>
-                    {(concepts.data ?? []).map((c) => (
-                      <SelectItem key={c.id} value={c.id}>
-                        {c.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </Field>
-            ) : null}
-            <Field label="Can" hint="Pick one or more.">
-              <div className="flex flex-wrap gap-1.5">
-                {ACTIONS.map((a) => (
-                  <ToggleChip
-                    key={a.id}
-                    pressed={actions.includes(a.id)}
-                    onPressedChange={() => toggle(a.id)}
-                  >
-                    {a.label}
-                  </ToggleChip>
-                ))}
-              </div>
-            </Field>
-            <div className="flex items-center gap-3">
-              <Button
-                onClick={() => add.mutate()}
-                disabled={add.isPending || actions.length === 0}
-                size="sm"
-              >
-                {add.isPending
-                  ? editingId
-                    ? "Saving…"
-                    : "Adding…"
-                  : editingId
-                    ? "Save changes"
-                    : "Add rule"}
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setAdding(false)
-                  resetDraft()
-                  add.reset()
-                }}
-                disabled={add.isPending}
-              >
-                Cancel
-              </Button>
-              {/* The one thing a reader can get badly wrong: thinking a `view` rule is
+                          <SelectItem value="__all">All</SelectItem>
+                          {(concepts.data ?? []).map((c) => (
+                            <SelectItem key={c.id} value={c.id}>
+                              {c.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </Field>
+                  ) : null}
+                  <Field label="Can" hint="Pick one or more.">
+                    <div className="flex flex-wrap gap-1.5">
+                      {ACTIONS.map((a) => (
+                        <ToggleChip
+                          key={a.id}
+                          pressed={actions.includes(a.id)}
+                          onPressedChange={() => toggle(a.id)}
+                        >
+                          {a.label}
+                        </ToggleChip>
+                      ))}
+                    </div>
+                  </Field>
+                  <div className="flex items-center gap-3">
+                    <Button
+                      onClick={() => add.mutate()}
+                      disabled={add.isPending || actions.length === 0}
+                      size="sm"
+                    >
+                      {add.isPending
+                        ? editingId
+                          ? "Saving…"
+                          : "Adding…"
+                        : editingId
+                          ? "Save changes"
+                          : "Add rule"}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setAdding(false)
+                        resetDraft()
+                        add.reset()
+                      }}
+                      disabled={add.isPending}
+                    >
+                      Cancel
+                    </Button>
+                    {/* The one thing a reader can get badly wrong: thinking a `view` rule is
                 how you open a restricted concept to everyone. It isn't — it outranks
                 the default, which is why no preset carries one. */}
-              {actions.includes("view") ? (
-                <span className="text-xs text-muted-foreground">
-                  A View rule overrides the item's own default visibility.
-                </span>
-              ) : null}
-            </div>
-            <Feedback error={add.error ? roleMsg(add.error) : undefined} />
-          </div>
-        )}
+                    {actions.includes("view") ? (
+                      <span className="text-xs text-muted-foreground">
+                        A View rule overrides the item's own default visibility.
+                      </span>
+                    ) : null}
+                  </div>
+                  <Feedback error={add.error ? roleMsg(add.error) : undefined} />
+                </div>
+              )}
+            </>
+          )}
+        </div>
       </div>
     </Modal>
   )

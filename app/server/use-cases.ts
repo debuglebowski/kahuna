@@ -43,6 +43,7 @@ import {
   type Label,
   LabelService,
   type ListTasksFilter,
+  MAX_MENTIONS_PER_DOC,
   ManagedConceptReadonly,
   MemberService,
   type Note,
@@ -1324,6 +1325,185 @@ export const resolveTaskSubjects = (subjectIds: ReadonlyArray<string>): UC<unkno
     return yield* Effect.forEach([...new Set(subjectIds)].slice(0, 1000), resolveOne)
   })
 
+/**
+ * Batch-resolve the `@` mentions in one document to live labels and routes.
+ *
+ * The read gate IS the resolution: each kind is looked up through the engine
+ * method that already carries its permission check, and a failure degrades that
+ * one ref rather than the batch. Nothing here decides "may they?" separately —
+ * that would be a second, driftable copy of the rule.
+ *
+ * `href: null` is the enforcement signal (see `MentionRef`): unreachable-for-you
+ * and has-no-page are deliberately the same answer. `label: null` means "keep the
+ * document's own label", so a restricted target is passed over silently instead of
+ * being replaced by a sentinel that announces it.
+ *
+ * `person` is NOT resolved here — membership lives in the auth tier, which the
+ * engine has no access to; `rpc.ts` overlays it. `page` is not resolved here
+ * either: `GLOBAL_NAV` is a static client table with no permission dimension.
+ */
+export const resolveMentions = (
+  refs: ReadonlyArray<{ readonly kind: string; readonly targetId: string }>,
+): UC<unknown> =>
+  Effect.gen(function* () {
+    const instances = yield* InstanceService
+    const fieldsSvc = yield* FieldService
+    const conceptsSvc = yield* ConceptService
+    const dashboardsSvc = yield* DashboardService
+    const attachmentsSvc = yield* AttachmentService
+
+    const fieldCache = new Map<string, ReadonlyArray<{ id: string; kind: string }>>()
+    const titleCache = new Map<string, string | null>()
+    const maskCache = new Map<string, ReadonlySet<string>>()
+    const conceptCache = new Map<string, { name: string; icon: string | null }>()
+
+    interface Resolved {
+      readonly kind: string
+      readonly targetId: string
+      readonly href: string | null
+      readonly label: string | null
+      readonly subtitle: string | null
+      readonly icon: string | null
+    }
+
+    const unresolved = (kind: string, targetId: string): Resolved => ({
+      kind,
+      targetId,
+      href: null,
+      label: null,
+      subtitle: null,
+      icon: null,
+    })
+
+    /** A record mention: lineage → head version → title, with the concept's own
+     *  field mask applied to the LABEL, not just to state. */
+    const resolveRecord = (targetId: string): UC<Resolved> =>
+      Effect.gen(function* () {
+        yield* instances.getItem(targetId) // the gate
+        const head =
+          (yield* instances.headOf(targetId)) ??
+          (yield* instances.listVersions(targetId)).at(-1) ??
+          null
+        if (!head) return unresolved("record", targetId)
+
+        let fields = fieldCache.get(head.conceptId)
+        if (!fields) {
+          fields = yield* fieldsSvc.listFields(head.conceptId)
+          fieldCache.set(head.conceptId, fields)
+        }
+        let concept = conceptCache.get(head.conceptId)
+        if (!concept) {
+          // `getById`, not `getByIdForRead`: `getItem` already gated the concept,
+          // so the guarded variant would only repeat the query.
+          const c = yield* conceptsSvc.getById(head.conceptId)
+          concept = { name: c.name, icon: c.icon }
+          conceptCache.set(head.conceptId, concept)
+          if (!titleCache.has(head.conceptId)) titleCache.set(head.conceptId, c.titleFieldId)
+        }
+        const titleId = titleFieldIdOf(titleCache.get(head.conceptId) ?? null, fields)
+        let hidden = maskCache.get(head.conceptId)
+        if (hidden === undefined) {
+          hidden = yield* fieldMaskFor(head.conceptId)
+          maskCache.set(head.conceptId, hidden)
+        }
+        const visibleTitleId = titleId && !hidden.has(titleId) ? titleId : null
+        return {
+          kind: "record",
+          targetId,
+          href: `/instances/${head.id}`,
+          label:
+            visibleTitleId && head.state[visibleTitleId]
+              ? String(head.state[visibleTitleId])
+              : "(untitled)",
+          subtitle: concept.name,
+          icon: concept.icon,
+        }
+      })
+
+    /** A concept mention routes to `/c/<slug>` — which is the single RECORD of a
+     *  single-record concept, not a concept page. Any other concept has no
+     *  member-reachable page at all (the schema editor is admin-gated), so it
+     *  resolves label-only and renders inert. */
+    const resolveConcept = (targetId: string): UC<Resolved> =>
+      Effect.gen(function* () {
+        const c = yield* conceptsSvc.getByIdForRead(targetId) // the gate
+        const reachable = c.singleRecord && c.archivedAt === null
+        return {
+          kind: "concept",
+          targetId,
+          href: reachable ? `/c/${c.slug}` : null,
+          label: c.name,
+          subtitle: null,
+          icon: c.icon,
+        }
+      })
+
+    /** Dashboards are already actor-scoped by the service (`owner_id IS NULL OR
+     *  owner_id = actor`), so a personal dashboard simply isn't in the list for
+     *  anyone else. Record-kind dashboards are per-concept TEMPLATES, not pages. */
+    const resolveDashboard = (targetId: string): UC<Resolved> =>
+      Effect.gen(function* () {
+        const all = yield* dashboardsSvc.listAll()
+        const d = all.find((x) => x.id === targetId)
+        if (!d || d.kind !== "page") return unresolved("dashboard", targetId)
+        return {
+          kind: "dashboard",
+          targetId,
+          href: `/dashboards/${d.id}`,
+          label: d.name,
+          subtitle: d.ownerId ? "personal" : null,
+          icon: d.icon,
+        }
+      })
+
+    /** A file has no SPA route — its target is the inline-preview endpoint. It
+     *  carries no concept column, so the read gate goes through its host lineage,
+     *  exactly as `listFiles` does. A bucket file has no lineage to check. */
+    const resolveFile = (targetId: string): UC<Resolved> =>
+      Effect.gen(function* () {
+        const a = yield* attachmentsSvc.get(targetId)
+        if (a.itemId) yield* assertSubjectReadable(a.itemId)
+        return {
+          kind: "file",
+          targetId,
+          href: `/api/attachments/${a.id}/download?inline=1`,
+          label: a.filename,
+          subtitle: a.mimeType,
+          icon: null,
+        }
+      })
+
+    const resolveOne = (ref: {
+      readonly kind: string
+      readonly targetId: string
+    }): UC<Resolved> => {
+      const fallback: UC<Resolved> = Effect.succeed(unresolved(ref.kind, ref.targetId))
+      const run =
+        ref.kind === "record"
+          ? resolveRecord(ref.targetId)
+          : ref.kind === "concept"
+            ? resolveConcept(ref.targetId)
+            : ref.kind === "dashboard"
+              ? resolveDashboard(ref.targetId)
+              : ref.kind === "file"
+                ? resolveFile(ref.targetId)
+                : // `person` is overlaid by the handler; `page` is client-side; an
+                  // unknown kind (a newer build's) passes through untouched.
+                  fallback
+      return run.pipe(Effect.catchAll(() => fallback))
+    }
+
+    // Deduped by (kind, targetId) — so the response is NOT positionally aligned
+    // with the request, and callers join on those two. Capped to match the
+    // extractor's per-document ceiling; this is a per-document render, not a page
+    // of rows.
+    const deduped = [...new Map(refs.map((r) => [`${r.kind} ${r.targetId}`, r])).values()].slice(
+      0,
+      MAX_MENTIONS_PER_DOC,
+    )
+    return yield* Effect.forEach(deduped, resolveOne)
+  })
+
 export const createTask = (input: {
   readonly subjectId: string | null
   readonly title: string
@@ -1788,9 +1968,34 @@ export const updateRule = (input: {
     const stillGranting =
       input.effect === "allow" &&
       grantsConfigure(input.actions, input.resourceType, input.resourceId ?? null)
-    if (wasGranting && !stillGranting) yield* assertFloorHolds(roles, { removingRuleId: input.ruleId })
+    if (wasGranting && !stillGranting)
+      yield* assertFloorHolds(roles, { removingRuleId: input.ruleId })
     yield* roles.updateRule(input)
     return { id: input.ruleId }
+  })
+
+export const setScopedRules = (input: {
+  readonly roleId: string
+  readonly resourceType: AccessResourceType
+  readonly entries: ReadonlyArray<{
+    readonly resourceId: string
+    readonly allow: ReadonlyArray<AccessAction>
+    readonly deny: ReadonlyArray<AccessAction>
+  }>
+}): UC<unknown> =>
+  Effect.gen(function* () {
+    // `org` has no per-item grid and is what the irreducible floor protects — a bulk
+    // replace there could empty the configure set in one call.
+    if (input.resourceType === "org")
+      return yield* Effect.fail(
+        new FieldValidationError({
+          message: "org-level access can't be set from the grid",
+          field: "resourceType",
+        }),
+      )
+    const roles = yield* AccessRoleService
+    yield* roles.setScopedRules(input)
+    return { ok: true }
   })
 
 export const removeRule = (ruleId: string): UC<unknown> =>

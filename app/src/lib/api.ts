@@ -15,6 +15,7 @@ import {
   type InstanceViewLayout,
   type InstanceViewPrefsBody,
   KingsmakerRpcs,
+  type MentionTarget,
   type RichTextEnvelope,
   type SidebarCondition,
   type SidebarViewBody,
@@ -62,6 +63,9 @@ export type {
   InstanceViewTile,
   Item,
   Label,
+  MentionKind,
+  MentionRef,
+  MentionTarget,
   Note,
   RelatedInstance,
   Relation,
@@ -681,6 +685,9 @@ export const api = {
   }) => call((c) => c.listTasks(filter ?? {})),
   resolveTaskSubjects: (subjectIds: ReadonlyArray<string>) =>
     call((c) => c.resolveTaskSubjects({ subjectIds })),
+  /** Resolve a document's `@` mentions. Deduped server-side, so join the result
+   *  on (kind, targetId) rather than by index. */
+  resolveMentions: (refs: ReadonlyArray<MentionTarget>) => call((c) => c.resolveMentions({ refs })),
   createTask: (input: {
     subjectId: string | null
     title: string
@@ -1301,6 +1308,15 @@ export const api = {
     conceptId?: string | null
     condition?: AccessCondition | null
   }) => call((c) => c.updateRule(input)),
+  setScopedRules: (input: {
+    roleId: string
+    resourceType: AccessResourceType
+    entries: ReadonlyArray<{
+      resourceId: string
+      allow: ReadonlyArray<AccessActionName>
+      deny: ReadonlyArray<AccessActionName>
+    }>
+  }) => call((c) => c.setScopedRules(input)),
   removeRule: (ruleId: string) => call((c) => c.removeRule({ ruleId })),
   /** Omit `userId` for yourself — always allowed, no `configure` needed. */
   effectiveAccess: (userId?: string) => call((c) => c.effectiveAccess({ userId })),

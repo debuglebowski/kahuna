@@ -1087,6 +1087,61 @@ export const TaskSubjectRef = Schema.Struct({
 })
 export type TaskSubjectRef = typeof TaskSubjectRef.Type
 
+// ── @ mentions ──────────────────────────────────────────────────────────────────
+
+/** What an `@` mention can point at. Mirrored by `engine/domain/mentions.ts` and
+ *  the web client's `lib/mentionKinds.tsx`. */
+export const MentionKind = Schema.Literal(
+  "record",
+  "person",
+  "page",
+  "concept",
+  "dashboard",
+  "file",
+)
+export type MentionKind = typeof MentionKind.Type
+
+/** One mention, as stored in the document: the three node attrs. */
+export const MentionTarget = Schema.Struct({
+  kind: MentionKind,
+  targetId: Schema.String,
+})
+export type MentionTarget = typeof MentionTarget.Type
+
+/**
+ * A mention resolved for display.
+ *
+ * `href: null` is THE enforcement signal — it means "not reachable by you",
+ * covering both "you may not read this" and "this has no page", deliberately
+ * indistinguishably. Naming which applies would confirm that a record exists in a
+ * concept the reader is barred from, the same existence oracle restricted reads
+ * avoid by failing as NotFound rather than 403. A null href renders as inert text.
+ *
+ * `label: null` means "keep the label already in the document". Unlike
+ * `TaskSubjectRef`, this never substitutes an "(unavailable)" sentinel: a task row
+ * must show something, whereas a mention already has the author's own prose in
+ * place — replacing it with a sentinel would ANNOUNCE the restriction rather than
+ * pass over it.
+ *
+ * `page` is resolved CLIENT-side (see `lib/mentionKinds.tsx`): `GLOBAL_NAV` is a
+ * static nav table with no permission dimension, and the server has no business
+ * owning a copy of it. Those refs come back all-null by design — do not "fix" it.
+ *
+ * The response is NOT positionally aligned with the request: it is deduped by
+ * (kind, targetId), so callers must join on those rather than by index.
+ */
+export const MentionRef = Schema.Struct({
+  kind: MentionKind,
+  targetId: Schema.String,
+  href: Schema.NullOr(Schema.String),
+  label: Schema.NullOr(Schema.String),
+  /** Secondary text (concept name, "personal", a file's type). Null when unresolvable. */
+  subtitle: Schema.NullOr(Schema.String),
+  /** Emoji or `lucide:Name`, the `ConceptIcon` vocabulary. */
+  icon: Schema.NullOr(Schema.String),
+})
+export type MentionRef = typeof MentionRef.Type
+
 // ── member deactivation ─────────────────────────────────────────────────────────
 // Deactivation is the member analogue of archive — a restorable marker that
 // blocks org access and hides the user from pickers.
@@ -1914,6 +1969,14 @@ export class KingsmakerRpcs extends RpcGroup.make(
     success: Schema.Array(TaskSubjectRef),
     error: RpcError,
   }),
+  // Batch-resolve the `@` mentions in one document to live labels + routes.
+  // Never fails on an individual target: an unresolvable one degrades to a null
+  // href, which is how mention permissions are enforced. See `MentionRef`.
+  Rpc.make("resolveMentions", {
+    payload: { refs: Schema.Array(MentionTarget) },
+    success: Schema.Array(MentionRef),
+    error: RpcError,
+  }),
   Rpc.make("createTask", {
     payload: {
       subjectId: Schema.NullOr(Schema.String),
@@ -2382,6 +2445,23 @@ export class KingsmakerRpcs extends RpcGroup.make(
       condition: Schema.optional(Schema.NullOr(AccessCondition)),
     },
     success: Schema.Struct({ id: Schema.String }),
+    error: RpcError,
+  }),
+  /** Replace every targeted rule of one resource type on a role — what the
+   *  permissions matrix writes. Blanket rules are untouched. */
+  Rpc.make("setScopedRules", {
+    payload: {
+      roleId: Schema.String,
+      resourceType: AccessResourceType,
+      entries: Schema.Array(
+        Schema.Struct({
+          resourceId: Schema.String,
+          allow: Schema.Array(AccessActionName),
+          deny: Schema.Array(AccessActionName),
+        }),
+      ),
+    },
+    success: Schema.Struct({ ok: Schema.Boolean }),
     error: RpcError,
   }),
   Rpc.make("removeRule", {
