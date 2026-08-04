@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query"
-import { Check, Minus, X } from "lucide-react"
+import { Check, Slash, X } from "lucide-react"
 import { useEffect, useState } from "react"
 import {
   Table,
@@ -9,6 +9,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Button, Spinner } from "../../components/ui"
 import { type AccessActionName, type AccessResourceType, api } from "../../lib/api"
 import { Feedback } from "./parts"
@@ -42,11 +43,29 @@ import { Feedback } from "./parts"
 
 export type CellState = "allow" | "inherit" | "deny"
 
-const CYCLE: Record<CellState, CellState> = {
-  inherit: "allow",
-  allow: "deny",
-  deny: "inherit",
-}
+/**
+ * The three states, in the order they appear in every cell: negative, neutral,
+ * positive. Fixed order matters more than it looks — the eye reads a column of
+ * segmented controls by POSITION, so a row whose highlight sits on the left is
+ * scannable as "denied" without reading the icon.
+ */
+const STATES: ReadonlyArray<{
+  readonly id: CellState
+  readonly label: string
+  readonly hint: string
+}> = [
+  {
+    id: "deny",
+    label: "Deny",
+    hint: "Refuse it. A deny beats every allow, here or anywhere else.",
+  },
+  {
+    id: "inherit",
+    label: "Inherit",
+    hint: "No rule. Whatever this resource allows by default decides.",
+  },
+  { id: "allow", label: "Allow", hint: "Grant it, on top of the default." },
+]
 
 /** A rule as the grid consumes it. */
 export interface MatrixRule {
@@ -123,37 +142,79 @@ const stateFrom = (
   return out
 }
 
-function CellButton({
+/** The icon for each state. `Slash` is the neutral one: a dash read as "off", which
+ *  is exactly the confusion between "no rule" and "denied" this control exists to
+ *  prevent. */
+const ICON: Record<CellState, typeof Check> = { allow: Check, inherit: Slash, deny: X }
+
+/**
+ * How the SELECTED segment is painted.
+ *
+ * Inherit gets no fill — only a darkened icon. It is the resting state of nearly
+ * every cell, so giving it the same weight as Allow and Deny would fill the grid
+ * with highlights and bury the handful of rows that actually decide something. The
+ * eye should land on colour, and colour should mean "a rule exists here".
+ */
+const SELECTED: Record<CellState, string> = {
+  allow: "bg-success/15 text-success",
+  inherit: "text-foreground",
+  deny: "bg-destructive/15 text-destructive",
+}
+
+/**
+ * One cell: a three-way button group, not a cycling toggle.
+ *
+ * A cycler hides two of its three states behind repeated clicks — you cannot see
+ * what the options are, and reaching Deny from Allow means passing THROUGH Inherit,
+ * which for a heartbeat is a different (and weaker) permission. Three segments make
+ * every state visible, one click away, and impossible to overshoot.
+ */
+function StateGroup({
   state,
-  onClick,
-  label,
+  onSelect,
+  describe,
+  size = "default",
 }: {
-  state: CellState
-  onClick: () => void
-  label: string
+  /** null = no single value (a column whose rows disagree): nothing is highlighted. */
+  state: CellState | null
+  onSelect: (next: CellState) => void
+  /** The segment's accessible name, e.g. "Allow view on Policy". The state's own
+   *  explanation is appended for the tooltip only — repeating it in the name makes a
+   *  screen reader say the same sentence twice, since Radix also describes by it. */
+  describe: (s: (typeof STATES)[number]) => string
+  size?: "default" | "sm"
 }) {
-  const look =
-    state === "allow"
-      ? "bg-success/15 text-success"
-      : state === "deny"
-        ? "bg-destructive/15 text-destructive"
-        : "text-muted-foreground/50 hover:bg-accent"
+  const box = size === "sm" ? "size-5" : "size-6"
+  const icon = size === "sm" ? 12 : 14
   return (
-    <button
-      type="button"
-      aria-label={label}
-      title={`${label} — click to change`}
-      onClick={onClick}
-      className={`flex size-7 items-center justify-center rounded-md transition ${look}`}
-    >
-      {state === "allow" ? (
-        <Check size={15} />
-      ) : state === "deny" ? (
-        <X size={15} />
-      ) : (
-        <Minus size={14} />
-      )}
-    </button>
+    <fieldset className="inline-flex overflow-hidden rounded-md border border-border/70 bg-background">
+      {STATES.map((s) => {
+        const Icon = ICON[s.id]
+        const on = state === s.id
+        return (
+          <Tooltip key={s.id}>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                aria-pressed={on}
+                aria-label={describe(s)}
+                onClick={() => onSelect(s.id)}
+                className={`flex ${box} items-center justify-center border-border/70 transition not-last:border-r ${
+                  on
+                    ? SELECTED[s.id]
+                    : "text-muted-foreground/40 hover:bg-accent hover:text-foreground"
+                }`}
+              >
+                <Icon size={icon} />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>
+              {describe(s)} — {s.hint}
+            </TooltipContent>
+          </Tooltip>
+        )
+      })}
+    </fieldset>
   )
 }
 
@@ -238,40 +299,35 @@ export function PermissionMatrix({
     },
   })
 
-  /**
-   * Advance one cell. The next state is computed INSIDE the updater, off the current
-   * draft — not off the one captured when this render ran. Two clicks landing in the
-   * same frame both read the pre-click value otherwise, so a quick Inherit → Allow →
-   * Deny double-click silently stops at Allow.
-   */
-
-  const cycleCell = (itemId: string, action: string) => {
-    setDraft((cur) => {
-      const k = key(itemId, action)
-      return new Map(cur).set(k, CYCLE[cur.get(k) ?? "inherit"])
-    })
+  const setCell = (itemId: string, action: string, next: CellState) => {
+    setDraft((cur) => new Map(cur).set(key(itemId, action), next))
     setDirty(true)
   }
 
   /**
-   * Set a whole column. Cycles off the column's CURRENT shared state so the header
-   * behaves like a big cell: if the column is mixed, the first click makes it uniform
-   * rather than jumping past the state you probably wanted.
+   * Set a whole column at once — the reason the header carries its own control.
+   *
+   * The DEFAULT row is deliberately excluded: "set Delete for every concept" must not
+   * also rewrite the rule covering concepts this grid never listed, which is a far
+   * broader change than the click looks like.
    */
-  const cycleColumn = (action: string) => {
+  const setColumn = (action: string, next: CellState) => {
     setDraft((cur) => {
-      // Same reason as `cycleCell`: read the column's state from `cur`, not from the
-      // render closure, so repeated header clicks keep advancing.
-      // The default row is deliberately EXCLUDED: "set this column for every concept"
-      // should not also rewrite the rule that covers concepts the grid never listed.
-      const states = items.map((it) => cur.get(key(it.id, action)) ?? "inherit")
-      const uniform = states.every((s) => s === states[0]) ? states[0] : undefined
-      const next = uniform === undefined ? "allow" : CYCLE[uniform]
       const m = new Map(cur)
       for (const it of items) m.set(key(it.id, action), next)
       return m
     })
     setDirty(true)
+  }
+
+  /** The column's shared state, or null when its rows disagree — so a mixed column
+   *  highlights nothing rather than claiming a value it doesn't have. */
+  const columnState = (action: string): CellState | null => {
+    if (items.length === 0) return null
+    const first = draft.get(key(items[0]!.id, action)) ?? "inherit"
+    return items.every((it) => (draft.get(key(it.id, action)) ?? "inherit") === first)
+      ? first
+      : null
   }
 
   // The one rule shape the grid still cannot represent — a cell has nowhere to put a
@@ -313,14 +369,19 @@ export function PermissionMatrix({
               <TableHead className="min-w-48">{itemsLabel}</TableHead>
               {actions.map((a) => (
                 <TableHead key={a.id} className="text-center">
-                  <button
-                    type="button"
-                    onClick={() => cycleColumn(a.id)}
-                    title={`Set ${a.label} for every ${itemsLabel.toLowerCase()}`}
-                    className="rounded px-1.5 py-0.5 text-xs font-medium hover:bg-accent"
-                  >
-                    {a.label}
-                  </button>
+                  <div className="flex flex-col items-center gap-1 py-1">
+                    <span className="text-xs font-medium">{a.label}</span>
+                    {/* The bulk control. Smaller and unlabelled: it is the same three
+                        choices, applied to every row at once. */}
+                    <StateGroup
+                      size="sm"
+                      state={columnState(a.id)}
+                      onSelect={(next) => setColumn(a.id, next)}
+                      describe={(st) =>
+                        `${st.label} ${a.label.toLowerCase()} for every ${itemsLabel.toLowerCase()}`
+                      }
+                    />
+                  </div>
                 </TableHead>
               ))}
             </TableRow>
@@ -333,25 +394,20 @@ export function PermissionMatrix({
                 the thing someone must not skim past. */}
             <TableRow className="border-b-2 hover:bg-transparent">
               <TableCell className="font-medium text-foreground">
-                {allLabel}
-                <span className="ml-2 rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
-                  default
-                </span>
+                Default value
+                <span className="ml-2 text-xs font-normal text-muted-foreground">{allLabel}</span>
               </TableCell>
-              {actions.map((a) => {
-                const state = draft.get(key(DEFAULT_ROW, a.id)) ?? "inherit"
-                return (
-                  <TableCell key={a.id} className="text-center">
-                    <div className="flex justify-center">
-                      <CellButton
-                        state={state}
-                        label={`${a.label} on ${allLabel}: ${state}`}
-                        onClick={() => cycleCell(DEFAULT_ROW, a.id)}
-                      />
-                    </div>
-                  </TableCell>
-                )
-              })}
+              {actions.map((a) => (
+                <TableCell key={a.id} className="text-center">
+                  <div className="flex justify-center">
+                    <StateGroup
+                      state={draft.get(key(DEFAULT_ROW, a.id)) ?? "inherit"}
+                      onSelect={(next) => setCell(DEFAULT_ROW, a.id, next)}
+                      describe={(st) => `${st.label} ${a.label.toLowerCase()} by default`}
+                    />
+                  </div>
+                </TableCell>
+              ))}
             </TableRow>
             {/* No items is not an empty screen: the default above still governs every
                 resource of this type, including ones created later. */}
@@ -369,20 +425,17 @@ export function PermissionMatrix({
             {items.map((it) => (
               <TableRow key={it.id} className="hover:bg-transparent">
                 <TableCell className="font-medium text-foreground">{it.name}</TableCell>
-                {actions.map((a) => {
-                  const state = draft.get(key(it.id, a.id)) ?? "inherit"
-                  return (
-                    <TableCell key={a.id} className="text-center">
-                      <div className="flex justify-center">
-                        <CellButton
-                          state={state}
-                          label={`${a.label} on ${it.name}: ${state}`}
-                          onClick={() => cycleCell(it.id, a.id)}
-                        />
-                      </div>
-                    </TableCell>
-                  )
-                })}
+                {actions.map((a) => (
+                  <TableCell key={a.id} className="text-center">
+                    <div className="flex justify-center">
+                      <StateGroup
+                        state={draft.get(key(it.id, a.id)) ?? "inherit"}
+                        onSelect={(next) => setCell(it.id, a.id, next)}
+                        describe={(st) => `${st.label} ${a.label.toLowerCase()} on ${it.name}`}
+                      />
+                    </div>
+                  </TableCell>
+                ))}
               </TableRow>
             ))}
           </TableBody>
@@ -414,7 +467,7 @@ export function PermissionMatrix({
           </Button>
         ) : null}
         <span className="text-xs text-muted-foreground">
-          Click a cell to cycle Inherit → Allow → Deny. A column header sets the whole column.
+          Deny beats every allow. Inherit (/) means no rule — the resource's own default decides.
         </span>
         <Feedback error={save.error ? (save.error as Error).message : undefined} />
       </div>
