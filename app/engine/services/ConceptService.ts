@@ -1,7 +1,7 @@
 import { PgClient } from "@effect/sql-pg"
 import { Effect } from "effect"
 import type { ConceptVisibility, EditReach, InstanceViewLayout } from "../domain/types"
-import { canReadRestricted, scopeCanReadConcept } from "../domain/visibility"
+import { scopeCanReadConcept } from "../domain/visibility"
 import {
   ConceptInUse,
   ConceptNameConflict,
@@ -69,7 +69,7 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
         const concept = yield* getById(id)
         // The visibility column is the DEFAULT; an access rule may open a restricted
         // concept for one role or deny a visible one. See scopeCanReadConcept.
-        if (!scopeCanReadConcept(scope, concept.id, concept.visibility))
+        if (!scopeCanReadConcept(scope, concept.id))
           return yield* Effect.fail(new ConceptNotFound({ concept: id }))
         return concept
       })
@@ -84,7 +84,7 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
         if (!row) return yield* Effect.fail(new ConceptNotFound({ concept: slug }))
         const concept = toConcept(row)
         // Only ever reached from a read (`/c/<slug>` resolution), so gate here.
-        if (!scopeCanReadConcept(scope, concept.id, concept.visibility))
+        if (!scopeCanReadConcept(scope, concept.id))
           return yield* Effect.fail(new ConceptNotFound({ concept: slug }))
         return concept
       })
@@ -110,34 +110,22 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
                     ELSE (SELECT COUNT(*)::int FROM instances i WHERE i.org_id = c.org_id AND i.concept_id = c.id)
                   END) AS item_count`
           : sql``
-        // Restricted concepts are FILTERED OUT for a member, not an error: this is
-        // the read every nav/picker/graph goes through, and a throw would break a
-        // whole page rather than just omitting an entry.
+        // Unreadable concepts are FILTERED OUT, not an error: this is the read every
+        // nav/picker/graph goes through, and a throw would break a whole page rather
+        // than just omitting an entry.
         //
-        // The column filter stays in SQL for the no-rules case (the overwhelmingly
-        // common one, so the query is unchanged), but it can only be applied when NO
-        // rule could widen the result — a rule granting `view` on a restricted
-        // concept must still surface it. With any concept rule present, fetch
-        // unfiltered and let `scopeCanReadConcept` decide per row.
+        // There is no SQL predicate any more. The old `AND c.visibility = 'visible'`
+        // fast path had a subject — a column — and access is now a rule per (concept,
+        // role), which cannot be expressed as a WHERE clause without joining the
+        // policy back in. So: fetch, then decide per row.
         //
-        // Safe to filter in memory here, unlike record lists: this query has no
-        // LIMIT, so dropping rows afterwards cannot skew a count or truncate a page.
-        // A RECORD rule widens too, not just a concept rule: a share of one record
-        // makes its concept reachable (see `scopeConceptRead`), otherwise the sharee
-        // cannot even request the list they are entitled to. Missing that here dropped
-        // the concept in SQL before the per-row check could restore it.
-        const mayWiden =
-          scope.policy?.rules.some(
-            (r) => r.resourceType === "concept" || r.resourceType === "record",
-          ) ?? false
-        const visibleOnly =
-          canReadRestricted(scope.role) || mayWiden ? sql`` : sql` AND c.visibility = 'visible'`
+        // Safe here, unlike record lists, ONLY because this query has no LIMIT —
+        // dropping rows afterwards cannot skew a count or truncate a page. If a LIMIT
+        // is ever added, this filter has to move into the query first.
         const rows = yield* sql<ConceptRow>`
           SELECT c.*${countCol} FROM concepts c
-          WHERE c.org_id = ${orgId}${liveOnly}${visibleOnly} ORDER BY c.name ASC`
-        const concepts = rows.map(toConcept)
-        if (!mayWiden && !canReadRestricted(scope.role)) return concepts
-        return concepts.filter((c) => scopeCanReadConcept(scope, c.id, c.visibility))
+          WHERE c.org_id = ${orgId}${liveOnly} ORDER BY c.name ASC`
+        return rows.map(toConcept).filter((c) => scopeCanReadConcept(scope, c.id))
       })
 
     const create = (input: {

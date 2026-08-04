@@ -75,4 +75,28 @@ describe("org scope roles", () => {
     const hits = src.split("\n").filter((l) => l.includes('role: "system"') && !l.includes("*"))
     expect(hits).toHaveLength(1)
   })
+
+  /**
+   * THE RESOLVED-POLICY GUARD.
+   *
+   * Access is one layer now: absent a policy, nothing on a concept, record,
+   * dashboard, view or automation is granted. So a request path that builds a
+   * session scope WITHOUT resolving one does not fail loudly — it 404s every record
+   * it touches, which reads as "the data is gone". Two connectors shipped exactly
+   * that bug the day the fallback flipped.
+   *
+   * Every `sessionScope(` in a request path must therefore pass a fourth argument.
+   * `runtime.ts` is where it is defined and `rpc.ts`/`session.ts` resolve it at the
+   * boundary; the rest are checked here.
+   */
+  it("every request path resolves a policy before building a session scope", () => {
+    const files = ["apollo.ts", "clay.ts", "session.ts", "rpc.ts"]
+    for (const file of files) {
+      const src = read(`./${file}`)
+      for (const m of src.matchAll(/sessionScope\(([^)]*)\)/g)) {
+        const args = m[1]!.split(",").length
+        expect(args, `${file}: sessionScope(${m[1]}) resolves no policy`).toBeGreaterThanOrEqual(4)
+      }
+    }
+  })
 })

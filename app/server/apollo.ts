@@ -8,7 +8,7 @@ import { decryptToken, encryptToken } from "./integrations/crypto"
 import { connectorFailure } from "./integrations/errors"
 import { sleepBeforeRetry } from "./integrations/http"
 import { connectionForOrgIn } from "./integrations/rows"
-import { runEngine, sessionScope } from "./runtime"
+import { resolvePolicy, runEngine, sessionScope } from "./runtime"
 import { resolveAdmin, resolveOrg } from "./session"
 import { createInstance, getInstance, updateInstance } from "./use-cases"
 
@@ -528,7 +528,14 @@ export async function enrichInstanceForRequest(req: Request) {
   if (!mapping || typeof mapping !== "object" || Object.keys(mapping).length === 0)
     return json({ error: "MAPPING_REQUIRED" }, 400)
 
-  const scope = sessionScope(org.orgId, org.actor, org.role)
+  // The policy MUST be resolved: without it nothing on a templated type is granted,
+  // so every instance read here would 404. Same reason `runScoped` resolves one.
+  const scope = sessionScope(
+    org.orgId,
+    org.actor,
+    org.role,
+    await resolvePolicy(org.orgId, org.actor),
+  )
   const instRes = await runEngine(scope, getInstance(instanceId))
   if (!instRes.ok) return json({ error: instRes.code, detail: instRes.detail }, instRes.status)
   const state = instRes.data.state as Record<string, unknown>
@@ -640,7 +647,7 @@ export async function importForRequest(req: Request) {
   if (!Array.isArray(people)) return json({ error: "PEOPLE_REQUIRED" }, 400)
 
   const result = await bulkImport(
-    sessionScope(org.orgId, org.actor, org.role),
+    sessionScope(org.orgId, org.actor, org.role, await resolvePolicy(org.orgId, org.actor)),
     people,
     conceptId,
     mapping,

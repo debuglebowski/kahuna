@@ -366,11 +366,6 @@ export class AutomationService extends Effect.Service<AutomationService>()(
             })
           : true
 
-      /** Does this caller hold any automation-scoped rule? Skips the per-row decide
-       *  for the overwhelmingly common case of no rules at all. */
-      const hasRules = (scope: OrgScope): boolean =>
-        scope.policy?.rules.some((r) => r.resourceType === "automation") ?? false
-
       const list = (opts: { readonly includeArchived?: boolean } = {}) =>
         Effect.gen(function* () {
           const scope = yield* OrgContext
@@ -380,7 +375,10 @@ export class AutomationService extends Effect.Service<AutomationService>()(
             ORDER BY created_at DESC`
           // In memory, not in the SQL: this query carries no LIMIT, so dropping rows
           // cannot skew a count or truncate a page (unlike record lists).
-          const visible = hasRules(scope) ? rows.filter((r) => allowed(scope, r.id, "view")) : rows
+          // Every row is decided now. The old short-circuit ("no automation rules →
+          // show everything") was the default layer, and with it gone "no rules" means
+          // "nothing", not "everything".
+          const visible = rows.filter((r) => allowed(scope, r.id, "view"))
           return visible.map(toAutomation)
         }).pipe(Effect.orDie)
 

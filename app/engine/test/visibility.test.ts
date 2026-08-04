@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto"
 import { describe, expect, it } from "@effect/vitest"
 import { Effect } from "effect"
-import { type AccessRule, emptyPolicy, type PolicySet } from "../domain/access"
+import { type AccessRule, emptyPolicy, type PolicySet, unrestrictedPolicy } from "../domain/access"
 import {
   canReadConcept,
   canReadRestricted,
@@ -14,7 +14,7 @@ import { InstanceService } from "../services/InstanceService"
 import type { OrgContext } from "../services/OrgContext"
 import { QueryService } from "../services/QueryService"
 import { RelationService } from "../services/RelationService"
-import { newOrgId, testLayer } from "./harness"
+import { newOrgId, ordinaryMember, testLayer } from "./harness"
 
 /**
  * Concept-level READ visibility. `visibility: "admin"` must make a concept read as
@@ -103,7 +103,9 @@ describe("concept read visibility", () => {
           value: (yield* instances.get(seeded.instance.id)).state[seeded.fieldId],
           versions: (yield* instances.listVersions(seeded.instance.itemId)).length,
         }
-      }).pipe(Effect.provide(testLayer(orgId, "admin-user", "admin"))),
+      }).pipe(
+        Effect.provide(testLayer(orgId, "admin-user", "admin", unrestrictedPolicy("admin-user"))),
+      ),
     )
     expect(asAdmin.listed).toContain(seeded.conceptId)
     expect(asAdmin.byId).toBe(seeded.conceptId)
@@ -137,7 +139,9 @@ describe("concept read visibility", () => {
           value: (yield* instances.get(open.instanceId)).state[open.fieldId],
           visibility: (yield* concepts.getByIdForRead(open.conceptId)).visibility,
         }
-      }).pipe(Effect.provide(testLayer(orgId, "member-user", "member"))),
+      }).pipe(
+        Effect.provide(testLayer(orgId, "member-user", "member", ordinaryMember("member-user"))),
+      ),
     )
     expect(seen.listed).toContain(open.conceptId)
     expect(seen.rows).toBe(1)
@@ -190,7 +194,9 @@ describe("concept read visibility", () => {
           fromId: setup.fromId,
           toItemId: setup.toItemId,
         })
-      }).pipe(Effect.provide(testLayer(orgId, "admin-user", "admin"))),
+      }).pipe(
+        Effect.provide(testLayer(orgId, "admin-user", "admin", unrestrictedPolicy("admin-user"))),
+      ),
     )
     expect(allowed.id).toBeTruthy()
   })
@@ -276,7 +282,9 @@ describe("field read visibility", () => {
           expectedVersion: cur.version,
           patch: { [f.nameId]: "Grace" },
         })
-      }).pipe(Effect.provide(testLayer(orgId, "member-user", "member"))),
+      }).pipe(
+        Effect.provide(testLayer(orgId, "member-user", "member", ordinaryMember("member-user"))),
+      ),
     )
     expect(updated.state[f.nameId]).toBe("Grace")
 
@@ -332,7 +340,9 @@ describe("field read visibility", () => {
       Effect.gen(function* () {
         const instances = yield* InstanceService
         yield* instances.get(f.rec.id)
-      }).pipe(Effect.provide(testLayer(orgId, "member-user", "member"))),
+      }).pipe(
+        Effect.provide(testLayer(orgId, "member-user", "member", ordinaryMember("member-user"))),
+      ),
     )
     const rebuilt = await Effect.runPromise(
       Effect.gen(function* () {
@@ -549,7 +559,7 @@ describe("THE WRITE GATE: no writing what you cannot read", () => {
           expectedVersion: f.inst.version,
           patch: { [f.fieldId]: "legitimate" },
         }),
-      ).pipe(Effect.provide(testLayer(orgId, "boss", "admin"))),
+      ).pipe(Effect.provide(testLayer(orgId, "boss", "admin", unrestrictedPolicy("boss")))),
     )
     expect(updated.state[f.fieldId]).toBe("legitimate")
   })
@@ -576,7 +586,7 @@ describe("THE WRITE GATE: no writing what you cannot read", () => {
           expectedVersion: open.inst.version,
           patch: { [open.fieldId]: "b" },
         }),
-      ).pipe(Effect.provide(testLayer(orgId, "member-1", "member"))),
+      ).pipe(Effect.provide(testLayer(orgId, "member-1", "member", ordinaryMember("member-1")))),
     )
     expect(edited.state[open.fieldId]).toBe("b")
   })

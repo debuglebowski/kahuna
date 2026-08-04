@@ -1,6 +1,6 @@
 import { PgClient } from "@effect/sql-pg"
 import { Effect } from "effect"
-import { decide } from "../domain/access"
+import { ACTION_ALL, type AccessAction, decide } from "../domain/access"
 import type { SidebarViewBody } from "../domain/types"
 import { SidebarViewNotFound, SidebarViewProtected } from "../errors"
 import { AccessDefaultsService } from "./AccessDefaultsService"
@@ -61,12 +61,39 @@ export class SidebarViewService extends Effect.Service<SidebarViewService>()(
        * See the longer note there for why that means personal views needed no
        * migration.
        */
-      const hasRules = (scope: OrgScope): boolean =>
-        scope.policy?.rules.some((r) => r.resourceType === "view") ?? false
+      /** Ownership is per-ACTOR and orthogonal to roles — see the long note in
+       *  DashboardService for why folding it into per-role values breaks sharing. */
+      const isMine = (scope: OrgScope, ownerId: string | null): boolean =>
+        ownerId !== null && ownerId === scope.actor
 
-      /** The default, per row: shared, or mine. */
-      const byDefaultFor = (scope: OrgScope, ownerId: string | null): boolean =>
-        ownerId === null || ownerId === scope.actor
+      /** Does a rule NAME this view? A blanket rule covers every view of the type and
+       *  must not sweep up other people's personal ones — see DashboardService. */
+      const namedGrant = (scope: OrgScope, id: string, action: AccessAction): boolean =>
+        scope.policy?.rules.some(
+          (r) =>
+            r.resourceType === "view" &&
+            r.resourceId === id &&
+            r.effect === "allow" &&
+            r.condition === null &&
+            (r.actions.includes(action) || r.actions.includes(ACTION_ALL)),
+        ) ?? false
+
+      /** Ownership first and unoverridable; a shared view is governed by rules. Same
+       *  shape as DashboardService — see the longer note there. */
+      const maySee = (
+        scope: OrgScope,
+        id: string,
+        ownerId: string | null,
+        action: AccessAction = "view",
+      ): boolean =>
+        isMine(scope, ownerId) ||
+        namedGrant(scope, id, action) ||
+        (ownerId === null &&
+          (scope.role === "system" ||
+            (scope.policy !== undefined &&
+              decide(scope.policy, action, { type: "view", id }, false, {
+                unconditionalOnly: true,
+              }))))
 
       /** Resolve one view for a write, honouring both layers. A rule granting `edit`
        *  on someone else's personal view must be reachable, so the default cannot stay
@@ -78,41 +105,23 @@ export class SidebarViewService extends Effect.Service<SidebarViewService>()(
             SELECT * FROM sidebar_views WHERE org_id = ${scope.orgId} AND id = ${id} LIMIT 1`
           const row = rows[0]
           if (!row) return null
-          const fallback = byDefaultFor(scope, row.owner_id)
-          const allowed = scope.policy
-            ? decide(scope.policy, action, { type: "view", id }, fallback, {
-                unconditionalOnly: true,
-              })
-            : fallback
-          return allowed ? row : null
+          return maySee(scope, id, row.owner_id, action) ? row : null
         })
 
       /** Everything the caller can see: all org-shared views + their own personal. */
       const list = () =>
         Effect.gen(function* () {
           const scope = yield* OrgContext
-          const { orgId, actor } = scope
+          const { orgId } = scope
           yield* ensureDefault
           // No LIMIT on this query, so applying the exception layer in memory cannot
           // skew a count or truncate a page (unlike record lists, where the filter
           // must be compiled into the SQL).
-          const gate = hasRules(scope) ? sql`TRUE` : sql`(owner_id IS NULL OR owner_id = ${actor})`
           const rows = yield* sql<SidebarViewRow>`
             SELECT * FROM sidebar_views
-            WHERE org_id = ${orgId} AND ${gate}
+            WHERE org_id = ${orgId}
             ORDER BY position ASC, created_at ASC`
-          const visible = hasRules(scope)
-            ? rows.filter((r) =>
-                decide(
-                  scope.policy!,
-                  "view",
-                  { type: "view", id: r.id },
-                  byDefaultFor(scope, r.owner_id),
-                  { unconditionalOnly: true },
-                ),
-              )
-            : rows
-          return visible.map(toSidebarView)
+          return rows.filter((r) => maySee(scope, r.id, r.owner_id)).map(toSidebarView)
         })
 
       const create = (input: {

@@ -27,11 +27,13 @@ export const canReadRestricted = (role: ScopeRole): boolean =>
   role === "owner" || role === "admin" || role === "system"
 
 /**
- * The DEFAULT answer for a concept: may this role read one with this visibility?
+ * The OLD default answer for a concept: may this role read one with this visibility?
  *
- * Note the direction: an unrecognised visibility never reaches here, because
- * `toConcept` already coerces anything it doesn't know to `"admin"`. `"none"` is
- * readable by nobody by default — only an explicit rule opens it.
+ * No longer consulted at request time — concept access is now an explicit rule per
+ * (concept, role), and `scopeConceptRead` fails closed without one. This survives
+ * ONLY so `scripts/backfill-access-values.ts` and its proof can compute what access
+ * used to answer, which is how the migration proves it changed nothing. It goes when
+ * the `visibility` column does.
  */
 export const canReadConcept = (visibility: ConceptVisibility, role: ScopeRole): boolean =>
   visibility === "visible" || (visibility !== "none" && canReadRestricted(role))
@@ -60,14 +62,16 @@ export interface ConceptReadDecision {
   readonly recordsByDefault: boolean
 }
 
-export const scopeConceptRead = (
-  scope: OrgScope,
-  conceptId: string,
-  visibility: ConceptVisibility,
-): ConceptReadDecision => {
-  const byDefault = canReadConcept(visibility, scope.role)
-  if (!scope.policy) return { reachable: byDefault, recordsByDefault: byDefault }
-  const granted = decide(scope.policy, "view", { type: "concept", id: conceptId }, byDefault, {
+export const scopeConceptRead = (scope: OrgScope, conceptId: string): ConceptReadDecision => {
+  // The engine itself — migrations, seeds, the decay tick — is exempt. It is the ONLY
+  // exemption: `sessionScope`'s type makes "system" unreachable from a request, so
+  // this cannot be claimed over HTTP.
+  if (scope.role === "system") return { reachable: true, recordsByDefault: true }
+  // FAIL CLOSED. There is no `visibility` column behind this any more: a concept is
+  // readable because a rule says so, full stop. An absent policy therefore grants
+  // nothing rather than falling through to a default.
+  if (!scope.policy) return { reachable: false, recordsByDefault: false }
+  const granted = decide(scope.policy, "view", { type: "concept", id: conceptId }, false, {
     // No record in hand, so a conditional rule must not read as a blanket one.
     unconditionalOnly: true,
   })
@@ -91,11 +95,8 @@ export const scopeConceptRead = (
  * Note this is `reachable`, not `recordsByDefault`: a share-only caller MUST get past
  * the concept gate, and the record filter is what then limits them to the shared row.
  */
-export const scopeCanReadConcept = (
-  scope: OrgScope,
-  conceptId: string,
-  visibility: ConceptVisibility,
-): boolean => scopeConceptRead(scope, conceptId, visibility).reachable
+export const scopeCanReadConcept = (scope: OrgScope, conceptId: string): boolean =>
+  scopeConceptRead(scope, conceptId).reachable
 
 /**
  * ── WHERE FIELD-LEVEL FILTERING MAY AND MAY NOT LIVE ─────────────────────────

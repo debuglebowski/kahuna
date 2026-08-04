@@ -8,7 +8,7 @@ import { decryptToken, encryptToken, secretMatches } from "./integrations/crypto
 import { connectorFailure, publicConnectorError } from "./integrations/errors"
 import { sleepBeforeRetry } from "./integrations/http"
 import { connectionForOrgIn } from "./integrations/rows"
-import { runEngine, sessionScope, systemScope } from "./runtime"
+import { resolvePolicy, runEngine, sessionScope, systemScope } from "./runtime"
 import { resolveAdmin, resolveOrg } from "./session"
 import { createInstance, getInstance, updateInstance } from "./use-cases"
 
@@ -346,11 +346,15 @@ export async function enrichForRequest(req: Request) {
   if (!mapping || typeof mapping !== "object" || Object.keys(mapping).length === 0)
     return json({ error: "MAPPING_REQUIRED" }, 400)
 
-  const result = await pushRow(sessionScope(org.orgId, org.actor, org.role), connection, {
-    instanceId,
-    mapping,
-    extra: body?.extra,
-  })
+  const result = await pushRow(
+    sessionScope(org.orgId, org.actor, org.role, await resolvePolicy(org.orgId, org.actor)),
+    connection,
+    {
+      instanceId,
+      mapping,
+      extra: body?.extra,
+    },
+  )
   if (!result.ok) {
     await audit({
       orgId: org.orgId,

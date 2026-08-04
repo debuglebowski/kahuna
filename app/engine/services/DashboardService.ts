@@ -1,6 +1,6 @@
 import { PgClient } from "@effect/sql-pg"
 import { Effect } from "effect"
-import { decide } from "../domain/access"
+import { ACTION_ALL, type AccessAction, decide } from "../domain/access"
 import type { DashboardBody } from "../domain/types"
 import {
   ConceptNotFound,
@@ -63,53 +63,79 @@ export class DashboardService extends Effect.Service<DashboardService>()(
       /**
        * ── DASHBOARD ACCESS: DEFAULT + EXCEPTIONS ─────────────────────────────
        *
-       * `owner_id` IS the default layer, already: null = org-shared (everyone),
-       * non-null = personal (that user only). That is exactly the "everyone / no one"
-       * default the access model describes, expressed as a column — so it stays, and
-       * access rules layer over it rather than replacing it.
+       * TWO INDEPENDENT THINGS, and keeping them apart is the point.
        *
-       * This is why personal dashboards needed no migration: a personal dashboard is
-       * already "default deny, one implicit grant to the owner". Sharing one adds an
-       * explicit rule; nothing about the existing rows changes.
+       * OWNERSHIP (`owner_id`) is per-ACTOR: a personal dashboard is mine, and no role
+       * grants or withholds that. It stays a column, and it stays the reason a
+       * personal dashboard needs no rules at all.
        *
-       * The SQL predicate below is the default. Rules can only ever WIDEN it here (a
-       * share of someone else's personal dashboard), so when the caller holds any
-       * dashboard rule we fetch unfiltered and decide per row. Safe to filter in
-       * memory: these queries carry no LIMIT, so dropping rows cannot skew a count or
-       * truncate a page — unlike record lists, where the filter must be in the SQL.
+       * ROLE ACCESS is per-role rules on SHARED dashboards, materialized at creation.
+       * There is no longer a "shared means everyone" default behind them — a shared
+       * dashboard is visible because a rule says so, so the fallback is `false`.
+       *
+       * Folding ownership INTO roles was considered and rejected: it would mean
+       * writing deny-for-every-role on each personal dashboard, and a deny beats the
+       * actor grant that sharing writes — so the dashboard could never be shared again.
        */
-      const ownDefault = (actor: string) => sql`(owner_id IS NULL OR owner_id = ${actor})`
+      const isMine = (scope: OrgScope, ownerId: string | null): boolean =>
+        ownerId !== null && ownerId === scope.actor
 
-      /** Does this caller hold any dashboard-scoped rule? */
-      const hasRules = (scope: OrgScope): boolean =>
-        scope.policy?.rules.some((r) => r.resourceType === "dashboard") ?? false
+      /**
+       * Does a rule NAME this dashboard? Not "does some rule cover it" — a rule with
+       * `resource_id = null` covers every dashboard of its type, and that must not
+       * sweep up other people's PERSONAL ones. A share names the id; a role's blanket
+       * grant does not.
+       */
+      const namedGrant = (scope: OrgScope, id: string, action: AccessAction): boolean =>
+        scope.policy?.rules.some(
+          (r) =>
+            r.resourceType === "dashboard" &&
+            r.resourceId === id &&
+            r.effect === "allow" &&
+            r.condition === null &&
+            (r.actions.includes(action) || r.actions.includes(ACTION_ALL)),
+        ) ?? false
 
-      /** Apply the exception layer to rows fetched under the default. */
+      /**
+       * May this caller see one row?
+       *
+       * OWNERSHIP FIRST, and it is not overridable. A personal dashboard belongs to
+       * its owner; sharing one works by NAMING it (that is what a grant writes), but
+       * neither `system` nor a role's blanket allow may sweep up everyone's private
+       * canvases. Getting this wrong is not a visible bug — it is a quiet privacy
+       * leak that no page looks wrong on.
+       *
+       * A SHARED dashboard is then ordinary governed data: readable because a rule
+       * says so, with `system` (migrations, seeds) exempt.
+       */
+      const maySee = (scope: OrgScope, r: DashboardRow, action: AccessAction = "view"): boolean =>
+        isMine(scope, r.owner_id) ||
+        namedGrant(scope, r.id, action) ||
+        (r.owner_id === null &&
+          (scope.role === "system" ||
+            (scope.policy !== undefined &&
+              decide(scope.policy, action, { type: "dashboard", id: r.id }, false, {
+                unconditionalOnly: true,
+              }))))
+
+      /** Apply the decision to rows fetched unfiltered. Safe in memory: these queries
+       *  carry no LIMIT, so dropping rows cannot skew a count or truncate a page —
+       *  unlike record lists, where the filter must be compiled into the SQL. */
       const applyRules = (scope: OrgScope, rows: ReadonlyArray<DashboardRow>) =>
-        rows.filter((r) =>
-          decide(
-            scope.policy!,
-            "view",
-            { type: "dashboard", id: r.id },
-            // The default, per row: shared, or mine.
-            r.owner_id === null || r.owner_id === scope.actor,
-            { unconditionalOnly: true },
-          ),
-        )
+        rows.filter((r) => maySee(scope, r))
 
       /** The switcher: PAGE dashboards the caller can see (org-shared + own personal).
        *  Record dashboards are per-concept templates — see `listRecordDashboards`. */
       const list = () =>
         Effect.gen(function* () {
           const scope = yield* OrgContext
-          const { orgId, actor } = scope
+          const { orgId } = scope
           yield* ensureDefault
-          const gate = hasRules(scope) ? sql`TRUE` : ownDefault(actor)
           const rows = yield* sql<DashboardRow>`
             SELECT * FROM dashboards
-            WHERE org_id = ${orgId} AND kind = 'page' AND ${gate}
+            WHERE org_id = ${orgId} AND kind = 'page'
             ORDER BY position ASC, created_at ASC`
-          return (hasRules(scope) ? applyRules(scope, rows) : rows).map(toDashboard)
+          return applyRules(scope, rows).map(toDashboard)
         })
 
       /** A concept's record dashboards the caller can see — org-shared + their own
@@ -117,13 +143,12 @@ export class DashboardService extends Effect.Service<DashboardService>()(
       const listRecordDashboards = (conceptId: string) =>
         Effect.gen(function* () {
           const scope = yield* OrgContext
-          const { orgId, actor } = scope
-          const gate = hasRules(scope) ? sql`TRUE` : ownDefault(actor)
+          const { orgId } = scope
           const rows = yield* sql<DashboardRow>`
             SELECT * FROM dashboards
-            WHERE org_id = ${orgId} AND kind = 'record' AND concept_id = ${conceptId} AND ${gate}
+            WHERE org_id = ${orgId} AND kind = 'record' AND concept_id = ${conceptId}
             ORDER BY position ASC, created_at ASC`
-          return (hasRules(scope) ? applyRules(scope, rows) : rows).map(toDashboard)
+          return applyRules(scope, rows).map(toDashboard)
         })
 
       /** EVERY dashboard the caller can see — page + record — for the settings
@@ -132,14 +157,13 @@ export class DashboardService extends Effect.Service<DashboardService>()(
       const listAll = () =>
         Effect.gen(function* () {
           const scope = yield* OrgContext
-          const { orgId, actor } = scope
+          const { orgId } = scope
           yield* ensureDefault
-          const gate = hasRules(scope) ? sql`TRUE` : ownDefault(actor)
           const rows = yield* sql<DashboardRow>`
             SELECT * FROM dashboards
-            WHERE org_id = ${orgId} AND ${gate}
+            WHERE org_id = ${orgId}
             ORDER BY position ASC, created_at ASC`
-          return (hasRules(scope) ? applyRules(scope, rows) : rows).map(toDashboard)
+          return applyRules(scope, rows).map(toDashboard)
         })
 
       /**
@@ -158,12 +182,7 @@ export class DashboardService extends Effect.Service<DashboardService>()(
             SELECT * FROM dashboards WHERE org_id = ${scope.orgId} AND id = ${id} LIMIT 1`
           const row = rows[0]
           if (!row) return null
-          const byDefault = row.owner_id === null || row.owner_id === scope.actor
-          const allowed = scope.policy
-            ? decide(scope.policy, action, { type: "dashboard", id }, byDefault, {
-                unconditionalOnly: true,
-              })
-            : byDefault
+          const allowed = maySee(scope, row, action)
           return allowed ? row : null
         })
 

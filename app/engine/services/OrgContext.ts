@@ -38,10 +38,14 @@ export interface OrgScope {
    * unioned (see `domain/access.ts`). Resolved ONCE per request at the boundary,
    * because a list read needs the whole set before it can filter.
    *
-   * Optional during the migration onto the access model: absent means "no rules",
-   * so every decision falls through to the resource defaults — which is exactly
-   * today's behaviour. Every real request path fills it in; tests and scripts that
-   * only exercise role-based visibility may leave it off.
+   * STILL OPTIONAL IN THE TYPE, but absent no longer means "fall through to the
+   * resource's default" — there is no default layer any more, so it means NOTHING IS
+   * GRANTED on the five templated types. A request path that forgets to resolve one
+   * therefore 404s every record it touches, which is why `runScoped` and the RPC
+   * middleware both resolve it and why the connectors do too.
+   *
+   * `role: "system"` remains exempt regardless, so seeds, migrations and the decay
+   * tick keep working without one.
    */
   readonly policy?: PolicySet
 }

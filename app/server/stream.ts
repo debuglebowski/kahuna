@@ -6,7 +6,6 @@ import {
   type ScopeRole,
   type SubjectKind,
   scopeCanReadConcept,
-  toVisibility,
 } from "#engine"
 import { AppRuntime, resolvePolicy } from "./runtime"
 import { resolveOrg, roleOf } from "./session"
@@ -158,9 +157,7 @@ const visibilityFor = async (
   ).catch(() => [] as ReadonlyArray<{ id: string; visibility: string | null }>)
   const scope = { orgId, actor, role: (role ?? "member") as ScopeRole, policy }
   const readable = new Set(
-    concepts
-      .filter((c) => scopeCanReadConcept(scope, c.id, toVisibility(c.visibility)))
-      .map((c) => c.id),
+    concepts.filter((c) => scopeCanReadConcept(scope, c.id)).map((c) => c.id),
   )
   return (env) => env.conceptId === null || readable.has(env.conceptId)
 }

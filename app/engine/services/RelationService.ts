@@ -104,8 +104,8 @@ export class RelationService extends Effect.Service<RelationService>()("engine/R
         const scope = yield* OrgContext
         const rows = yield* sql<{ readonly visibility: string | null }>`
           SELECT visibility FROM concepts WHERE id = ${conceptId} LIMIT 1`
-        const visibility = toVisibility(rows[0]?.visibility ?? null)
-        if (!scopeCanReadConcept(scope, conceptId, visibility))
+        const _visibility = toVisibility(rows[0]?.visibility ?? null)
+        if (!scopeCanReadConcept(scope, conceptId))
           return yield* Effect.fail(new InstanceNotFound({ instanceId: targetId }))
       })
 

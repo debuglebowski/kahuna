@@ -3,11 +3,15 @@ import type { PgClient } from "@effect/sql-pg"
 import { Effect } from "effect"
 import { describe, expect, it } from "vitest"
 import {
+  ACTION_ALL,
   ConceptService,
   type EngineServices,
+  emptyPolicy,
   FieldService,
   InstanceService,
   type OrgContext,
+  type PolicySet,
+  unrestrictedPolicy,
 } from "#engine"
 import { runEngine, runEngineOrThrow, systemScope } from "./runtime"
 import { seedKingsmaker } from "./seed/seed"
@@ -728,6 +732,31 @@ describe("single-record concepts (use-case layer)", () => {
  * Found by probing after the instance-write hole, on the theory that "reads gated,
  * writes not" would repeat. It did, in three more places.
  */
+/**
+ * A member who may see SOME concepts and not others.
+ *
+ * "Restricted" used to mean `visibility = 'admin'` on the concept. It now means the
+ * role holds no rule naming it — access is one layer, and the column is gone. So a
+ * test that used to seal a concept now grants the others instead, which is the same
+ * assertion stated from the other side.
+ */
+const memberSeeing = (actor: string, conceptIds: ReadonlyArray<string>): PolicySet => ({
+  ...emptyPolicy(actor),
+  rules: conceptIds.flatMap((conceptId, i) =>
+    (["concept", "record"] as const).map((resourceType, j) => ({
+      id: `t${i}-${j}`,
+      roleId: "test-role",
+      actorId: null,
+      effect: "allow" as const,
+      actions: [ACTION_ALL],
+      resourceType,
+      resourceId: resourceType === "concept" ? conceptId : null,
+      conceptId: resourceType === "record" ? conceptId : null,
+      condition: null,
+    })),
+  ),
+})
+
 describe("writes cannot name a subject the caller may not read", () => {
   const seedSealed = () =>
     Effect.gen(function* () {
@@ -739,16 +768,17 @@ describe("writes cannot name a subject the caller may not read", () => {
       const rec = yield* instances.create({ conceptId: sealed.id, fields: { [f.id]: "secret" } })
       const open = yield* concepts.create({ name: `Open ${randomUUID().slice(0, 6)}` })
       const openRec = yield* instances.create({ conceptId: open.id, fields: {} })
-      yield* concepts.setVisibility(sealed.id, "admin")
-      return { sealedItemId: rec.itemId, openItemId: openRec.itemId }
+      return { sealedItemId: rec.itemId, openItemId: openRec.itemId, openId: open.id }
     })
 
   it("refuses a note, task or upload on a restricted record — but allows them on a visible one", async () => {
     const orgId = randomUUID()
     const f = await runEngineOrThrow(systemScope(orgId, "seed"), seedSealed())
 
+    // Sees the open concept, holds nothing naming the sealed one.
+    const policy = memberSeeing("intruder", [f.openId])
     const asMember = <A>(eff: Effect.Effect<A, unknown, OrgContext | EngineServices>) =>
-      runEngine({ orgId, actor: "intruder", role: "member" }, eff)
+      runEngine({ orgId, actor: "intruder", role: "member", policy }, eff)
 
     // Restricted subject: all three writes refused.
     expect((await asMember(uc.createNote({ subjectId: f.sealedItemId, body: "x" }))).ok).toBe(false)
@@ -808,12 +838,16 @@ describe("the org-wide event reads don't leak restricted subjects", () => {
         })
         const open = yield* concepts.create({ name: `Open ${randomUUID().slice(0, 6)}` })
         const shown = yield* instances.create({ conceptId: open.id, fields: {} })
-        yield* concepts.setVisibility(sealed.id, "admin")
-        return { sealedId: sealed.id, hiddenId: hidden.id, shownId: shown.id }
+        return { sealedId: sealed.id, hiddenId: hidden.id, shownId: shown.id, openId: open.id }
       }),
     )
 
-    const asMember = { orgId, actor: "intruder", role: "member" as const }
+    const asMember = {
+      orgId,
+      actor: "intruder",
+      role: "member" as const,
+      policy: memberSeeing("intruder", [f.openId]),
+    }
 
     const changed = await runEngine(asMember, uc.getChanged)
     expect(changed.ok).toBe(true)
@@ -829,8 +863,12 @@ describe("the org-wide event reads don't leak restricted subjects", () => {
     const scoped = await runEngine(asMember, uc.listEvents({ conceptId: f.sealedId }))
     expect(scoped.ok).toBe(false)
 
-    // An owner still sees the lot.
-    const asOwner = await runEngine({ orgId, actor: "boss", role: "owner" }, uc.getChanged)
+    // An owner still sees the lot. In a live org that is the Owner role's blanket
+    // `*`; `unrestrictedPolicy` is the test stand-in for holding one.
+    const asOwner = await runEngine(
+      { orgId, actor: "boss", role: "owner", policy: unrestrictedPolicy("boss") },
+      uc.getChanged,
+    )
     const ownerIds = asOwner.ok
       ? (asOwner.data as ReadonlyArray<{ subjectId: string }>).map((e) => e.subjectId)
       : []

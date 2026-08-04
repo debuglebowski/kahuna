@@ -51,7 +51,7 @@ export class QueryService extends Effect.Service<QueryService>()("engine/QuerySe
         // records are readable without a per-record rule is a separate question — see
         // `scopeConceptRead`. A share-only caller is reachable but `recordsByDefault`
         // is false, so the filter below yields exactly the rows shared with them.
-        const { recordsByDefault } = scopeConceptRead(scope, concept.id, concept.visibility)
+        const { recordsByDefault } = scopeConceptRead(scope, concept.id)
         const fallback = recordsByDefault
         const accessExtra = scope.policy
           ? filterFragment(sql, compileRecordFilter(sql, scope.policy, concept.id, fallback))

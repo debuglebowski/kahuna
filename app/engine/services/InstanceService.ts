@@ -798,8 +798,8 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
           SELECT visibility FROM concepts WHERE id = ${conceptId} LIMIT 1`
         // Unknown/absent reads as restricted — the SAME coercion `toConcept` uses,
         // shared so the two can never disagree.
-        const visibility = toVisibility(rows[0]?.visibility ?? null)
-        if (!scopeCanReadConcept(scope, conceptId, visibility))
+        const _visibility = toVisibility(rows[0]?.visibility ?? null)
+        if (!scopeCanReadConcept(scope, conceptId))
           return yield* Effect.fail(new InstanceNotFound({ instanceId }))
       })
 
@@ -852,11 +852,7 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
         // `recordsByDefault` from the same function; passing `true` here instead would
         // let a share-only caller open ANY record of the concept while their list
         // correctly showed one. Same inputs, same answer.
-        const { recordsByDefault } = scopeConceptRead(
-          scope,
-          conceptId,
-          toVisibility(rows[0]?.visibility ?? null),
-        )
+        const { recordsByDefault } = scopeConceptRead(scope, conceptId)
         if (
           !decideRecord(
             scope.policy,

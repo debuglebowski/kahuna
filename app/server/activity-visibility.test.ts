@@ -1,7 +1,14 @@
 import { randomUUID } from "node:crypto"
 import { Effect } from "effect"
 import { describe, expect, it } from "vitest"
-import { ConceptService, FieldService } from "#engine"
+import {
+  ACTION_ALL,
+  ConceptService,
+  emptyPolicy,
+  FieldService,
+  type PolicySet,
+  unrestrictedPolicy,
+} from "#engine"
 import { auth } from "./auth"
 import { createUserDirect } from "./provision"
 import { runEngineOrThrow, sessionScope, systemScope } from "./runtime"
@@ -13,7 +20,6 @@ import {
   listFiles,
   listNotes,
   listTasks,
-  setConceptVisibility,
   setFieldVisibility,
   updateInstance,
 } from "./use-cases"
@@ -47,6 +53,31 @@ type FeedEntry = {
   readonly previous?: Record<string, unknown>
 }
 
+/**
+ * A policy granting full access to the named concepts and their records.
+ *
+ * Concept access used to come from the `visibility` column, so a test only had to
+ * pick a role. It is now an explicit rule per (concept, role), written when the
+ * concept is created — and a test that builds fixtures through the services directly
+ * skips that, so it has to say what the caller may see.
+ */
+const seeing = (actor: string, conceptIds: ReadonlyArray<string>): PolicySet => ({
+  ...emptyPolicy(actor),
+  rules: conceptIds.flatMap((conceptId, i) =>
+    (["concept", "record"] as const).map((resourceType, j) => ({
+      id: `t${i}-${j}`,
+      roleId: "test-role",
+      actorId: null,
+      effect: "allow" as const,
+      actions: [ACTION_ALL],
+      resourceType,
+      resourceId: resourceType === "concept" ? conceptId : null,
+      conceptId: resourceType === "record" ? conceptId : null,
+      condition: null,
+    })),
+  ),
+})
+
 describe("activity feed field masking", () => {
   it("masks hidden keys in payload AND previous, without corrupting the fold", async () => {
     const { orgId, userId } = await orgWithOwner()
@@ -77,9 +108,12 @@ describe("activity feed field masking", () => {
     await runEngineOrThrow(sys, updateInstance(rec.id, v2.version, { [schema.secretId]: "300" }))
     await runEngineOrThrow(sys, setFieldVisibility(schema.secretId, "admin"))
 
+    // The record's CONCEPT must be readable for the feed to resolve at all — that is
+    // now a rule, not a column. Field masking (what this test is about) is a separate
+    // mechanism layered on top, still driven by `fields.visibility`.
     const feedFor = async (role: "member" | "owner") =>
       (await runEngineOrThrow(
-        sessionScope(orgId, userId, role),
+        sessionScope(orgId, userId, role, seeing(userId, [schema.conceptId])),
         getActivity(rec.itemId),
       )) as ReadonlyArray<FeedEntry>
 
@@ -148,14 +182,18 @@ describe("subject-keyed reads on a restricted concept", () => {
     await runEngineOrThrow(sys, createNote({ subjectId: rec.itemId, body: "the combination" }))
     await runEngineOrThrow(sys, createTask({ subjectId: rec.itemId, title: "rotate it" }))
 
-    const asMember = sessionScope(orgId, userId, "member")
-    const asOwner = sessionScope(orgId, userId, "owner")
+    // "Restricted" is now the ABSENCE of a rule naming the concept, not a column on
+    // it — so the member is given access first and it is taken away by dropping the
+    // rule, which is the same before/after the old `setConceptVisibility` produced.
+    const withAccess = sessionScope(orgId, userId, "member", seeing(userId, [concept.id]))
+    const asMember = sessionScope(orgId, userId, "member", emptyPolicy(userId))
+    const asOwner = sessionScope(orgId, userId, "owner", unrestrictedPolicy(userId))
 
-    // While VISIBLE, the member can read them — so the assertions below are about
+    // While readable, the member can read them — so the assertions below are about
     // the restriction, not about a fixture they never had access to.
-    expect(((await runEngineOrThrow(asMember, listNotes(rec.itemId))) as unknown[]).length).toBe(1)
-
-    await runEngineOrThrow(sys, setConceptVisibility(concept.id, "admin"))
+    expect(((await runEngineOrThrow(withAccess, listNotes(rec.itemId))) as unknown[]).length).toBe(
+      1,
+    )
 
     // Typed loosely on purpose: the four effects have different success types, and
     // what is under test is that each REJECTS.
