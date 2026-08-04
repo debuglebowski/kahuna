@@ -497,6 +497,17 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
       const setScopedRules = (input: {
         readonly roleId: string
         readonly resourceType: AccessResourceType
+        /**
+         * Which column the entry id lands in.
+         *
+         * "resource" — the item itself (a concept, a dashboard).
+         * "concept"  — the CONTAINER. Used by the Records grid, whose rows are
+         *              concepts but whose rules mean "records IN this concept", which
+         *              the model expresses as `concept_id` with a null `resource_id`.
+         *              The two are different grants over the same id and must not be
+         *              written to the same column.
+         */
+        readonly scopeBy?: "resource" | "concept"
         readonly entries: ReadonlyArray<{
           readonly resourceId: string
           readonly allow: ReadonlyArray<AccessAction>
@@ -507,11 +518,20 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
           .withTransaction(
             Effect.gen(function* () {
               const { orgId, actor } = yield* OrgContext
-              yield* sql`
-                DELETE FROM access_rules
-                WHERE org_id = ${orgId} AND role_id = ${input.roleId}
-                  AND resource_type = ${input.resourceType}
-                  AND resource_id IS NOT NULL`
+              const byConcept = input.scopeBy === "concept"
+              // Delete only the column this grid owns, so the concept-scoped and
+              // resource-scoped grids over the same type never clobber each other.
+              yield* byConcept
+                ? sql`
+                    DELETE FROM access_rules
+                    WHERE org_id = ${orgId} AND role_id = ${input.roleId}
+                      AND resource_type = ${input.resourceType}
+                      AND concept_id IS NOT NULL AND resource_id IS NULL`
+                : sql`
+                    DELETE FROM access_rules
+                    WHERE org_id = ${orgId} AND role_id = ${input.roleId}
+                      AND resource_type = ${input.resourceType}
+                      AND resource_id IS NOT NULL`
               for (const e of input.entries) {
                 // One row per (item, effect), holding that effect's action set —
                 // the shape the grid reads back cell by cell.
@@ -522,9 +542,13 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
                   if (actions.length === 0) continue
                   yield* sql`
                     INSERT INTO access_rules
-                      (org_id, role_id, effect, actions, resource_type, resource_id, created_by)
+                      (org_id, role_id, effect, actions, resource_type, resource_id,
+                       concept_id, created_by)
                     VALUES (${orgId}, ${input.roleId}, ${effect}, ${[...actions]},
-                            ${input.resourceType}, ${e.resourceId}, ${actor})`
+                            ${input.resourceType},
+                            ${byConcept ? null : e.resourceId},
+                            ${byConcept ? e.resourceId : null},
+                            ${actor})`
                 }
               }
               yield* events.append({

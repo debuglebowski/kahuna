@@ -723,6 +723,13 @@ export const listFields = (conceptId: string, includeArchived = false): UC<unkno
     return hidden.size === 0 ? defs : defs.filter((f) => !hidden.has(f.id))
   })
 
+/** One field by id — the RPC gate uses it to resolve which CONCEPT a field write
+ *  belongs to, so "may configure Deals" covers Deals' schema. Unmasked on purpose:
+ *  the caller has already passed the read gate for whatever it is about to do, and
+ *  masking here would turn a permission check into a 404 for admins. */
+export const getField = (id: string): UC<{ readonly conceptId: string }> =>
+  Effect.flatMap(FieldService, (f) => f.getById(id)) as UC<{ readonly conceptId: string }>
+
 // ── sidebar views (configurable nav layouts) ───────────────────────────────────
 
 export const listViews: UC<unknown> = Effect.flatMap(SidebarViewService, (s) => s.list())
@@ -2143,6 +2150,7 @@ export const updateRule = (input: {
 export const setScopedRules = (input: {
   readonly roleId: string
   readonly resourceType: AccessResourceType
+  readonly scopeBy?: "resource" | "concept"
   readonly entries: ReadonlyArray<{
     readonly resourceId: string
     readonly allow: ReadonlyArray<AccessAction>

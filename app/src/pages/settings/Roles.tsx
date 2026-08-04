@@ -32,7 +32,7 @@ import {
   Toolbar,
 } from "../../components/ui"
 import { type AccessActionName, type AccessResourceType, type AccessRole, api } from "../../lib/api"
-import { PermissionMatrix } from "./PermissionMatrix"
+import { PermissionMatrix, type ScopeBy } from "./PermissionMatrix"
 import { Feedback } from "./parts"
 
 /**
@@ -104,12 +104,80 @@ const RESOURCE_GROUPS: ReadonlyArray<{
   },
 ]
 
-/** The rail. `all` is the full rule list — the escape hatch for everything a grid
- *  cannot express (conditions, blanket rules, resource types with no item list yet). */
-const AREAS: ReadonlyArray<{ id: AccessResourceType | "all"; label: string }> = [
-  { id: "concept", label: "Concepts" },
-  { id: "all", label: "All rules" },
+/**
+ * The rail: one grid per area, plus the full rule list.
+ *
+ * `actions` is NOT the full seven everywhere, and that is the point. A column only
+ * appears where the engine actually decides that action against that resource — a
+ * cell that writes a rule nothing ever consults is worse than no cell, because it
+ * reads as a permission that was granted. Dashboards and views resolve view/edit/
+ * delete per row; automations now do too; a `record` rule is only ever consulted for
+ * `view`, so the Records grid has the one column. `share` is decided per resource by
+ * the share RPC, so it appears wherever there is a resource to name.
+ *
+ * `all` is the escape hatch for everything a grid cannot express: conditions,
+ * blanket rules, and the resource types with no item list (fields, tasks, notes,
+ * buckets, members, the org itself).
+ */
+interface Area {
+  readonly id: string
+  readonly label: string
+  readonly resourceType: AccessResourceType
+  /** "concept" when the rows are CONTAINERS rather than the resources themselves. */
+  readonly scopeBy?: ScopeBy
+  readonly itemsLabel: string
+  readonly actions: ReadonlyArray<AccessActionName>
+  readonly note?: string
+  /** Plural noun for the resource, when the rows are named something else. */
+  readonly resourceNoun?: string
+}
+
+const AREAS: ReadonlyArray<Area> = [
+  {
+    id: "concept",
+    label: "Concepts",
+    resourceType: "concept",
+    itemsLabel: "Concept",
+    actions: ["view", "archive", "delete", "share", "configure"],
+    note: "Configure covers the concept and its fields. View decides whether the concept is reachable at all.",
+  },
+  {
+    id: "record",
+    label: "Records",
+    resourceType: "record",
+    scopeBy: "concept",
+    itemsLabel: "Concept",
+    resourceNoun: "records",
+    actions: ["view"],
+    note: "Each row is a concept; the cell covers every record in it. Denying view here hides the records while leaving the concept itself reachable.",
+  },
+  {
+    id: "dashboard",
+    label: "Dashboards",
+    resourceType: "dashboard",
+    itemsLabel: "Dashboard",
+    actions: ["view", "edit", "delete", "share"],
+    note: "By default a dashboard is visible if it is shared with the org, or personal and yours. These are the exceptions to that.",
+  },
+  {
+    id: "view",
+    label: "Sidebar views",
+    resourceType: "view",
+    itemsLabel: "Sidebar view",
+    actions: ["view", "edit", "delete", "share"],
+  },
+  {
+    id: "automation",
+    label: "Automations",
+    resourceType: "automation",
+    itemsLabel: "Automation",
+    actions: ["view", "edit", "archive", "delete", "share"],
+    note: "Automations are readable by anyone and editable by admins by default, so a deny here is the lever that narrows one.",
+  },
 ]
+
+/** The rail entry for the full rule list. */
+const ALL_AREA = "all" as const
 
 const RESOURCE_LABEL = new Map<string, string>(
   RESOURCE_GROUPS.flatMap((g) => g.items).map((r) => [r.id, r.label] as const),
@@ -236,7 +304,7 @@ function RuleEditor({ role, onClose }: { role: AccessRole; onClose: () => void }
    *  which mutation the submit runs. */
   const [editingId, setEditingId] = useState<string | null>(null)
   /** Which pane the rail is showing: a per-area grid, or the full rule list. */
-  const [area, setArea] = useState<AccessResourceType | "all">("concept")
+  const [area, setArea] = useState<string>("concept")
 
   const resetDraft = () => {
     setEffect("allow")
@@ -273,6 +341,47 @@ function RuleEditor({ role, onClose }: { role: AccessRole; onClose: () => void }
   // Not gated on the selected type: the table needs names for rules that are already
   // there, whatever the form happens to be set to.
   const concepts = useQuery({ queryKey: ["concepts"], queryFn: () => api.listConcepts() })
+  // The other grids' rows. All four load with the modal rather than on tab change: they
+  // are small, already-cached lists, and a spinner between rail clicks makes an
+  // overview screen feel like navigation.
+  const dashboards = useQuery({
+    queryKey: ["dashboards", "all"],
+    queryFn: () => api.listAllDashboards(),
+  })
+  const views = useQuery({ queryKey: ["views"], queryFn: () => api.listViews() })
+  const automations = useQuery({
+    queryKey: ["automations", "all"],
+    queryFn: () => api.listAutomations({ includeArchived: true }),
+  })
+
+  /** Rows + loading state for one area. Concepts back BOTH the concept grid and the
+   *  record grid — the record grid's rows are the concepts its rules are scoped to. */
+  const itemsFor = (
+    a: Area,
+  ): { items: ReadonlyArray<{ id: string; name: string }>; busy: boolean } => {
+    switch (a.resourceType) {
+      case "dashboard":
+        return {
+          items: (dashboards.data ?? []).map((d) => ({ id: d.id, name: d.name })),
+          busy: dashboards.isPending,
+        }
+      case "view":
+        return {
+          items: (views.data ?? []).map((v) => ({ id: v.id, name: v.name })),
+          busy: views.isPending,
+        }
+      case "automation":
+        return {
+          items: (automations.data ?? []).map((x) => ({ id: x.id, name: x.name })),
+          busy: automations.isPending,
+        }
+      default:
+        return {
+          items: (concepts.data ?? []).map((c) => ({ id: c.id, name: c.name })),
+          busy: concepts.isPending,
+        }
+    }
+  }
 
   const add = useMutation({
     mutationFn: () => {
@@ -303,6 +412,7 @@ function RuleEditor({ role, onClose }: { role: AccessRole; onClose: () => void }
   const toggle = (a: AccessActionName) =>
     setActions((cur) => (cur.includes(a) ? cur.filter((x) => x !== a) : [...cur, a]))
 
+  const current = AREAS.find((a) => a.id === area) ?? null
   const conceptName = (id: string) => (concepts.data ?? []).find((c) => c.id === id)?.name
   const scopeLabel = (r: {
     resourceId: string | null
@@ -317,7 +427,10 @@ function RuleEditor({ role, onClose }: { role: AccessRole; onClose: () => void }
             resource type at once would have no meaningful row axis — so the areas
             become navigation rather than another dropdown. */}
         <nav className="w-40 shrink-0 space-y-0.5 border-r pr-3">
-          {AREAS.map((a) => (
+          {[
+            ...AREAS.map((a) => ({ id: a.id, label: a.label })),
+            { id: ALL_AREA, label: "All rules" },
+          ].map((a) => (
             <button
               key={a.id}
               type="button"
@@ -333,15 +446,21 @@ function RuleEditor({ role, onClose }: { role: AccessRole; onClose: () => void }
           ))}
         </nav>
         <div className="min-w-0 flex-1 space-y-6">
-          {area !== "all" ? (
+          {current ? (
             <PermissionMatrix
+              // Remount per area: the grid holds a draft, and carrying one across a
+              // rail click would offer to save cells from a different resource type.
+              key={current.id}
               roleId={role.id}
-              resourceType={area}
-              items={(concepts.data ?? []).map((c) => ({ id: c.id, name: c.name }))}
-              itemsLabel="Concept"
-              actions={ACTIONS}
+              resourceType={current.resourceType}
+              scopeBy={current.scopeBy}
+              items={itemsFor(current).items}
+              itemsLabel={current.itemsLabel}
+              actions={ACTIONS.filter((a) => current.actions.includes(a.id))}
               rules={rules.data ?? []}
-              loading={rules.isPending || concepts.isPending}
+              note={current.note}
+              resourceNoun={current.resourceNoun}
+              loading={rules.isPending || itemsFor(current).busy}
             />
           ) : (
             <>

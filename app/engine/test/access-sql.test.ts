@@ -285,6 +285,53 @@ describe("policy loading", () => {
     }).pipe(Effect.provide(testLayer(org))),
   )
 
+  /**
+   * THE SCOPE-COLUMN GUARD.
+   *
+   * The Records grid's rows are CONCEPTS — a cell there means "records in this
+   * concept", stored as `concept_id`. The Concepts grid writes `resource_id` for the
+   * same uuid. They are different grants, so each grid must own exactly one column:
+   * if `setScopedRules` wrote (or deleted) the wrong one, saving one grid would
+   * silently wipe the other's rules for the same concept.
+   */
+  it.effect("scopeBy keeps the concept-scoped and resource-scoped grids apart", () =>
+    Effect.gen(function* () {
+      const roles = yield* AccessRoleService
+      const role = yield* roles.create({ name: "Grid" })
+      const conceptId = randomUUID()
+
+      yield* roles.setScopedRules({
+        roleId: role.id,
+        resourceType: "record",
+        scopeBy: "concept",
+        entries: [{ resourceId: conceptId, allow: ["view"], deny: [] }],
+      })
+      yield* roles.setScopedRules({
+        roleId: role.id,
+        resourceType: "concept",
+        entries: [{ resourceId: conceptId, allow: ["view"], deny: [] }],
+      })
+
+      const rules = yield* roles.rulesOf(role.id)
+      const recordRule = rules.find((r) => r.resourceType === "record")
+      const conceptRule = rules.find((r) => r.resourceType === "concept")
+      // Both survived: the concept write did not delete the record-scoped row.
+      expect(recordRule).toBeDefined()
+      expect(conceptRule).toBeDefined()
+      // …and each landed in its own column.
+      expect(recordRule!.conceptId).toBe(conceptId)
+      expect(recordRule!.resourceId).toBeNull()
+      expect(conceptRule!.resourceId).toBe(conceptId)
+      expect(conceptRule!.conceptId).toBeNull()
+
+      // Clearing one grid clears only its own column.
+      yield* roles.setScopedRules({ roleId: role.id, resourceType: "concept", entries: [] })
+      const left = yield* roles.rulesOf(role.id)
+      expect(left.filter((r) => r.resourceType === "concept").length).toBe(0)
+      expect(left.filter((r) => r.resourceType === "record").length).toBe(1)
+    }).pipe(Effect.provide(testLayer(newOrgId()))),
+  )
+
   it.effect("ensureBuiltins is idempotent — a second run seeds nothing", () =>
     Effect.gen(function* () {
       const roles = yield* AccessRoleService

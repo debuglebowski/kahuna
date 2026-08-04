@@ -1318,6 +1318,7 @@ export const api = {
   setScopedRules: (input: {
     roleId: string
     resourceType: AccessResourceType
+    scopeBy?: "resource" | "concept"
     entries: ReadonlyArray<{
       resourceId: string
       allow: ReadonlyArray<AccessActionName>

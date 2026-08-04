@@ -177,7 +177,7 @@ const toRpcError = (e: unknown): RpcError => {
 }
 
 // R-agnostic (it only rewraps the error channel), so it also passes through the
-// `PgClient` a self-transacting use-case carries — see `adminSql`.
+// `PgClient` a self-transacting use-case carries — see `adminSqlOn`.
 const mapErr = <A, E, R>(eff: Effect.Effect<A, E, R>) =>
   eff.pipe(Effect.catchAll((e) => Effect.fail(toRpcError(e))))
 
@@ -224,16 +224,54 @@ const admin = <A>(eff: Effect.Effect<unknown, unknown, OrgContext | EngineServic
   requireAdmin.pipe(Effect.zipRight(as<A>(eff)))
 
 /**
- * `admin` for a use-case that opens its OWN transaction, so it also needs
+ * `admin`, but decided against ONE resource instead of the org.
+ *
+ * This is what makes a per-item permission grid mean anything. `admin` resolves
+ * `configure` on `{type:"org"}`, so a rule naming a single concept could only ever
+ * be consulted AFTER the org-wide gate had already answered — a grid cell granting
+ * a member `configure` on Deals would be dead, and one denying an admin would never
+ * be reached. Deciding on the resource itself makes the cell work in both
+ * directions: an allow WIDENS (this role may configure Deals and nothing else), a
+ * deny NARROWS (admins, but not this concept).
+ *
+ * The fallback is unchanged — `isAdminRole` for `configure`/`delete`, open
+ * otherwise — so an org with no rules behaves exactly as before.
+ */
+const adminOn = <A>(
+  action: AccessAction,
+  resource: AccessResource,
+  eff: Effect.Effect<unknown, unknown, OrgContext | EngineServices>,
+) => requireAction(action, resource).pipe(Effect.zipRight(as<A>(eff)))
+
+/**
+ * `adminOn` for a handler that names a FIELD but must be governed by the field's
+ * CONCEPT — "may configure Deals" has to cover adding and editing Deals' fields, or
+ * a deny would leave the schema editable through a side door. Costs one indexed
+ * lookup, on admin-rare paths only.
+ */
+const adminOnFieldConcept = <A>(
+  action: AccessAction,
+  fieldId: string,
+  eff: Effect.Effect<unknown, unknown, OrgContext | EngineServices>,
+) =>
+  as<{ readonly conceptId: string }>(uc.getField(fieldId)).pipe(
+    Effect.flatMap((f) => requireAction(action, { type: "concept", id: f.conceptId })),
+    Effect.zipRight(as<A>(eff)),
+  )
+
+/**
+ * `adminOn` for a use-case that opens its OWN transaction, so it also needs
  * `PgClient` (only `deleteConcept`'s single-record cascade, so far). `EngineBase`
  * is built with `provideMerge` and therefore surfaces `PgClient` — the extra
  * requirement is satisfied by the same layer, it just can't be hidden behind
  * `as`'s narrower cast.
  */
-const adminSql = <A>(
+const adminSqlOn = <A>(
+  action: AccessAction,
+  resource: AccessResource,
   eff: Effect.Effect<unknown, unknown, OrgContext | EngineServices | PgClient.PgClient>,
 ) =>
-  requireAdmin.pipe(Effect.zipRight(mapErr(eff))) as Effect.Effect<
+  requireAction(action, resource).pipe(Effect.zipRight(mapErr(eff))) as Effect.Effect<
     A,
     RpcError,
     OrgContext | EngineServices | PgClient.PgClient
@@ -503,7 +541,9 @@ const HandlersLive = ServerRpcs.toLayer({
     staticLabelIds,
     defaultLabelIds,
   }) =>
-    admin<Concept>(
+    adminOn<Concept>(
+      "configure",
+      { type: "concept", id },
       uc.updateConcept(id, {
         name,
         pluralName,
@@ -519,16 +559,21 @@ const HandlersLive = ServerRpcs.toLayer({
   // Not admin-gated: any member may shape a concept's default instance layout.
   setConceptInstanceView: ({ id, instanceView }) =>
     as<Concept>(uc.setConceptInstanceView(id, instanceView)),
-  setFieldVisibility: ({ id, visibility }) => admin<Field>(uc.setFieldVisibility(id, visibility)),
+  setFieldVisibility: ({ id, visibility }) =>
+    adminOnFieldConcept<Field>("configure", id, uc.setFieldVisibility(id, visibility)),
   setConceptVisibility: ({ id, visibility }) =>
-    admin<Concept>(uc.setConceptVisibility(id, visibility)),
+    adminOn<Concept>("configure", { type: "concept", id }, uc.setConceptVisibility(id, visibility)),
   setConceptTitleField: ({ id, titleFieldId }) =>
-    admin<Concept>(uc.setConceptTitleField(id, titleFieldId)),
+    adminOn<Concept>(
+      "configure",
+      { type: "concept", id },
+      uc.setConceptTitleField(id, titleFieldId),
+    ),
   // Admin + the member check `createInstance` does: `fields` seeds a real record,
   // so any `user`-kind value in it must be an actual org member. Without this the
   // toggle would be a hole in a rule every other write path enforces.
   setConceptSingleRecord: ({ conceptId, singleRecord, fields }) =>
-    requireAdmin.pipe(
+    requireAction("configure", { type: "concept", id: conceptId }).pipe(
       Effect.zipRight(
         checkThen(
           (orgId) => assertMembers(orgId, conceptId, fields ?? {}),
@@ -536,10 +581,13 @@ const HandlersLive = ServerRpcs.toLayer({
         ),
       ),
     ) as Effect.Effect<Concept, RpcError, OrgContext | EngineServices>,
-  archiveConcept: ({ id }) => admin<Concept>(uc.archiveConcept(id)),
-  restoreConcept: ({ id }) => admin<Concept>(uc.restoreConcept(id)),
+  archiveConcept: ({ id }) =>
+    adminOn<Concept>("archive", { type: "concept", id }, uc.archiveConcept(id)),
+  restoreConcept: ({ id }) =>
+    adminOn<Concept>("archive", { type: "concept", id }, uc.restoreConcept(id)),
   // Not `admin`: the single-record cascade needs its own transaction, hence PgClient.
-  deleteConcept: ({ id }) => adminSql<Concept>(uc.deleteConcept(id)),
+  deleteConcept: ({ id }) =>
+    adminSqlOn<Concept>("delete", { type: "concept", id }, uc.deleteConcept(id)),
   listLabels: ({ includeArchived }) => as<ReadonlyArray<Label>>(uc.listLabels(includeArchived)),
   createLabel: ({ name, color, primary }) => admin<Label>(uc.createLabel(name, color, primary)),
   renameLabel: ({ id, name, color, primary }) =>
@@ -556,14 +604,26 @@ const HandlersLive = ServerRpcs.toLayer({
   saveInstanceGraphLayout: ({ itemId, positions }) =>
     as<GraphLayout>(uc.saveInstanceGraphLayout(itemId, positions)),
   addField: ({ conceptId, name, kind, config, formula, icon }) =>
-    admin<Field>(uc.addField({ conceptId, name, kind, config, formula, icon })),
+    adminOn<Field>(
+      "configure",
+      { type: "concept", id: conceptId },
+      uc.addField({ conceptId, name, kind, config, formula, icon }),
+    ),
   updateField: ({ id, name, config, formula, icon }) =>
-    admin<Field>(uc.updateField({ id, name, config, formula, icon })),
-  archiveField: ({ id }) => admin<Field>(uc.archiveField(id)),
-  restoreField: ({ id }) => admin<Field>(uc.restoreField(id)),
-  deleteField: ({ id }) => admin<Field>(uc.deleteField(id)),
+    adminOnFieldConcept<Field>(
+      "configure",
+      id,
+      uc.updateField({ id, name, config, formula, icon }),
+    ),
+  archiveField: ({ id }) => adminOnFieldConcept<Field>("configure", id, uc.archiveField(id)),
+  restoreField: ({ id }) => adminOnFieldConcept<Field>("configure", id, uc.restoreField(id)),
+  deleteField: ({ id }) => adminOnFieldConcept<Field>("configure", id, uc.deleteField(id)),
   reorderFields: ({ conceptId, orders }) =>
-    admin<ReadonlyArray<Field>>(uc.reorderFields(conceptId, orders)),
+    adminOn<ReadonlyArray<Field>>(
+      "configure",
+      { type: "concept", id: conceptId },
+      uc.reorderFields(conceptId, orders),
+    ),
   listInstances: ({ conceptId, includeArchived }) =>
     mapErr(
       uc.listInstances(conceptId, { decorate: true, includeArchived, limit: LIST_INSTANCES_LIMIT }),
@@ -907,8 +967,8 @@ const HandlersLive = ServerRpcs.toLayer({
     admin<{ readonly id: string }>(
       uc.updateRule({ ruleId, effect, actions, resourceType, resourceId, conceptId, condition }),
     ),
-  setScopedRules: ({ roleId, resourceType, entries }) =>
-    admin<{ readonly ok: boolean }>(uc.setScopedRules({ roleId, resourceType, entries })),
+  setScopedRules: ({ roleId, resourceType, scopeBy, entries }) =>
+    admin<{ readonly ok: boolean }>(uc.setScopedRules({ roleId, resourceType, scopeBy, entries })),
   removeRule: ({ ruleId }) => admin<{ readonly id: string }>(uc.removeRule(ruleId)),
   /**
    * Asking about YOURSELF is always allowed — that is the point of the self-serve

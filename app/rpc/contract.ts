@@ -2497,6 +2497,8 @@ export class KingsmakerRpcs extends RpcGroup.make(
     payload: {
       roleId: Schema.String,
       resourceType: AccessResourceType,
+      /** "concept" scopes by CONTAINER — the Records grid, whose rows are concepts. */
+      scopeBy: Schema.optional(Schema.Literal("resource", "concept")),
       entries: Schema.Array(
         Schema.Struct({
           resourceId: Schema.String,

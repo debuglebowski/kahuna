@@ -1,5 +1,7 @@
 import { PgClient } from "@effect/sql-pg"
 import { Effect } from "effect"
+import type { AccessAction } from "../domain/access"
+import { decide } from "../domain/access"
 import type {
   Automation,
   AutomationAction,
@@ -12,7 +14,7 @@ import type {
 } from "../domain/types"
 import { AutomationInvalid, AutomationNotFound } from "../errors"
 import { EventStore } from "./EventStore"
-import { OrgContext } from "./OrgContext"
+import { OrgContext, type OrgScope } from "./OrgContext"
 import { type AutomationRow, type AutomationRunRow, toAutomation, toAutomationRun } from "./rows"
 
 /** Trigger kinds this build accepts. Append-only — a stored row with an unknown
@@ -116,22 +118,22 @@ const webhookUrlProblem = (raw: string): string | null => {
 const validateTrigger = (t: AutomationTrigger) =>
   Effect.gen(function* () {
     if (!TRIGGER_KINDS.has(t.kind)) {
-      return yield* Effect.fail(new AutomationInvalid({ reason: `unknown trigger "${t.kind}"` }))
+      return yield* Effect.fail(new AutomationInvalid({ message: `unknown trigger "${t.kind}"` }))
     }
     if (t.kind === "schedule") {
       if (t.every !== "day" && t.every !== "week" && t.every !== "month") {
         return yield* Effect.fail(
-          new AutomationInvalid({ reason: "a schedule needs every = day | week | month" }),
+          new AutomationInvalid({ message: "a schedule needs every = day | week | month" }),
         )
       }
       const hour = t.hour ?? 9
       if (!Number.isInteger(hour) || hour < 0 || hour > 23) {
-        return yield* Effect.fail(new AutomationInvalid({ reason: "hour must be 0-23" }))
+        return yield* Effect.fail(new AutomationInvalid({ message: "hour must be 0-23" }))
       }
       if (t.every === "week") {
         const wd = t.weekday ?? 1
         if (!Number.isInteger(wd) || wd < 0 || wd > 6) {
-          return yield* Effect.fail(new AutomationInvalid({ reason: "weekday must be 0-6" }))
+          return yield* Effect.fail(new AutomationInvalid({ message: "weekday must be 0-6" }))
         }
       }
       if (t.every === "month") {
@@ -139,13 +141,13 @@ const validateTrigger = (t: AutomationTrigger) =>
         // Capped at 28 so every month actually contains the day — no "the 31st
         // silently never runs in February".
         if (!Number.isInteger(d) || d < 1 || d > 28) {
-          return yield* Effect.fail(new AutomationInvalid({ reason: "day must be 1-28" }))
+          return yield* Effect.fail(new AutomationInvalid({ message: "day must be 1-28" }))
         }
       }
     }
     if (t.kind === "record.band.changed" && !t.fieldId) {
       return yield* Effect.fail(
-        new AutomationInvalid({ reason: "a band trigger needs a computed field" }),
+        new AutomationInvalid({ message: "a band trigger needs a computed field" }),
       )
     }
   })
@@ -155,30 +157,32 @@ const validateTrigger = (t: AutomationTrigger) =>
 const validateActions = (actions: ReadonlyArray<AutomationAction>) =>
   Effect.gen(function* () {
     if (actions.length === 0) {
-      return yield* Effect.fail(new AutomationInvalid({ reason: "add at least one action" }))
+      return yield* Effect.fail(new AutomationInvalid({ message: "add at least one action" }))
     }
     for (const a of actions) {
       if (!ACTION_KINDS.has(a.kind)) {
-        return yield* Effect.fail(new AutomationInvalid({ reason: `unknown action "${a.kind}"` }))
+        return yield* Effect.fail(new AutomationInvalid({ message: `unknown action "${a.kind}"` }))
       }
       if (a.kind === "setField" && !a.fieldId) {
-        return yield* Effect.fail(new AutomationInvalid({ reason: "setField needs a field" }))
+        return yield* Effect.fail(new AutomationInvalid({ message: "setField needs a field" }))
       }
       if ((a.kind === "addLabel" || a.kind === "removeLabel") && !a.labelId) {
-        return yield* Effect.fail(new AutomationInvalid({ reason: `${a.kind} needs a label` }))
+        return yield* Effect.fail(new AutomationInvalid({ message: `${a.kind} needs a label` }))
       }
       if (a.kind === "createTask" && !a.title.trim()) {
-        return yield* Effect.fail(new AutomationInvalid({ reason: "createTask needs a title" }))
+        return yield* Effect.fail(new AutomationInvalid({ message: "createTask needs a title" }))
       }
       if (a.kind === "createRecord" && !a.conceptId) {
-        return yield* Effect.fail(new AutomationInvalid({ reason: "createRecord needs a concept" }))
+        return yield* Effect.fail(
+          new AutomationInvalid({ message: "createRecord needs a concept" }),
+        )
       }
       if (a.kind === "notifySlack" && !a.channel.trim()) {
-        return yield* Effect.fail(new AutomationInvalid({ reason: "notifySlack needs a channel" }))
+        return yield* Effect.fail(new AutomationInvalid({ message: "notifySlack needs a channel" }))
       }
       if (a.kind === "webhook") {
         const reason = webhookUrlProblem(a.url ?? "")
-        if (reason) return yield* Effect.fail(new AutomationInvalid({ reason }))
+        if (reason) return yield* Effect.fail(new AutomationInvalid({ message: reason }))
       }
     }
   })
@@ -237,24 +241,67 @@ export class AutomationService extends Effect.Service<AutomationService>()(
       const sql = yield* PgClient.PgClient
       const events = yield* EventStore
 
+      /**
+       * The exception layer for ONE automation.
+       *
+       * Unlike dashboards and views, an automation has no owner column, so its DEFAULT
+       * is simply what the RPC boundary already allowed: reads are open to any member,
+       * writes are `configure`-gated there. Rules therefore NARROW — a deny hides or
+       * freezes a single automation for a role, while an allow on a resource that is
+       * already readable is a no-op. That asymmetry is the model working as designed
+       * (rules are exceptions over defaults), and it is what the grid's Inherit state
+       * means for this area.
+       *
+       * `unconditionalOnly`: automations carry no record state for a condition to read.
+       */
+      const allowed = (scope: OrgScope, id: string, action: AccessAction): boolean =>
+        scope.policy
+          ? decide(scope.policy, action, { type: "automation", id }, true, {
+              unconditionalOnly: true,
+            })
+          : true
+
+      /** Does this caller hold any automation-scoped rule? Skips the per-row decide
+       *  for the overwhelmingly common case of no rules at all. */
+      const hasRules = (scope: OrgScope): boolean =>
+        scope.policy?.rules.some((r) => r.resourceType === "automation") ?? false
+
       const list = (opts: { readonly includeArchived?: boolean } = {}) =>
         Effect.gen(function* () {
-          const { orgId } = yield* OrgContext
+          const scope = yield* OrgContext
           const liveOnly = opts.includeArchived ? sql`` : sql` AND archived_at IS NULL`
           const rows = yield* sql<AutomationRow>`
-            SELECT * FROM automations WHERE org_id = ${orgId}${liveOnly}
+            SELECT * FROM automations WHERE org_id = ${scope.orgId}${liveOnly}
             ORDER BY created_at DESC`
-          return rows.map(toAutomation)
+          // In memory, not in the SQL: this query carries no LIMIT, so dropping rows
+          // cannot skew a count or truncate a page (unlike record lists).
+          const visible = hasRules(scope) ? rows.filter((r) => allowed(scope, r.id, "view")) : rows
+          return visible.map(toAutomation)
         }).pipe(Effect.orDie)
 
       const getById = (id: string) =>
         Effect.gen(function* () {
-          const { orgId } = yield* OrgContext
+          const scope = yield* OrgContext
           const rows = yield* sql<AutomationRow>`
-            SELECT * FROM automations WHERE org_id = ${orgId} AND id = ${id} LIMIT 1`
+            SELECT * FROM automations WHERE org_id = ${scope.orgId} AND id = ${id} LIMIT 1`
           const row = rows[0]
           if (!row) return yield* Effect.fail(new AutomationNotFound({ automationId: id }))
+          // Not-found, never a distinct 403 — the existence of an automation a role may
+          // not see is itself information.
+          if (!allowed(scope, id, "view"))
+            return yield* Effect.fail(new AutomationNotFound({ automationId: id }))
           return toAutomation(row)
+        })
+
+      /** `getById` plus a write check. Every mutating entry point goes through this so
+       *  a `view`-only grant can never edit, and a deny on `edit` freezes the row. */
+      const getForWrite = (id: string, action: AccessAction) =>
+        Effect.gen(function* () {
+          const scope = yield* OrgContext
+          const automation = yield* getById(id)
+          if (!allowed(scope, id, action))
+            return yield* Effect.fail(new AutomationNotFound({ automationId: id }))
+          return automation
         })
 
       const create = (input: {
@@ -317,7 +364,7 @@ export class AutomationService extends Effect.Service<AutomationService>()(
         sql.withTransaction(
           Effect.gen(function* () {
             const { orgId } = yield* OrgContext
-            const cur = yield* getById(input.id)
+            const cur = yield* getForWrite(input.id, "edit")
             const trigger = input.trigger ?? cur.trigger
             const actions = input.actions ?? cur.actions
             if (input.trigger !== undefined) yield* validateTrigger(trigger)
@@ -406,7 +453,7 @@ export class AutomationService extends Effect.Service<AutomationService>()(
         sql.withTransaction(
           Effect.gen(function* () {
             const { orgId } = yield* OrgContext
-            yield* getById(id)
+            yield* getForWrite(id, "archive")
             // Archiving also stops it: a paused-but-armed schedule would keep
             // claiming rows that no list shows.
             const rows = yield* sql<AutomationRow>`
@@ -427,7 +474,7 @@ export class AutomationService extends Effect.Service<AutomationService>()(
         sql.withTransaction(
           Effect.gen(function* () {
             const { orgId } = yield* OrgContext
-            yield* getById(id)
+            yield* getForWrite(id, "archive")
             // Restores DISABLED (enabled stays false): silently resuming writes
             // on restore is exactly the surprise this feature must avoid.
             const rows = yield* sql<AutomationRow>`
@@ -448,7 +495,7 @@ export class AutomationService extends Effect.Service<AutomationService>()(
         sql.withTransaction(
           Effect.gen(function* () {
             const { orgId } = yield* OrgContext
-            const automation = yield* getById(id)
+            const automation = yield* getForWrite(id, "delete")
             // Append BEFORE the delete: the tombstone must outlive the row, and
             // the runs cascade away with it.
             yield* events.append({

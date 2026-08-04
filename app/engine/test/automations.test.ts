@@ -1,12 +1,19 @@
 import { randomUUID } from "node:crypto"
 import { describe, expect, it } from "@effect/vitest"
 import { Effect } from "effect"
+import type { AccessAction } from "../domain/access"
+import { emptyPolicy } from "../domain/access"
 import { AutomationService } from "../services/AutomationService"
 import { ConceptService } from "../services/ConceptService"
 import { EventStore } from "../services/EventStore"
 import { FieldService } from "../services/FieldService"
 import { InstanceService } from "../services/InstanceService"
 import { newOrgId, testLayer } from "./harness"
+
+/** Orgs shared between a fixture-building layer and the layer that reads it back
+ *  under a policy — the id has to be the same on both sides. */
+const ORG_A = newOrgId()
+const ORG_B = newOrgId()
 
 /** A minimal valid rule: post to Slack when a Deal changes. */
 const baseInput = {
@@ -335,6 +342,85 @@ describe("org isolation", () => {
           const notFound = yield* automations.getById(id).pipe(Effect.flip)
           expect(notFound._tag).toBe("AutomationNotFound")
         }).pipe(Effect.provide(testLayer(newOrgId()))),
+      ),
+    ),
+  )
+})
+
+/**
+ * Automations have no owner column, so their DEFAULT is what the RPC boundary already
+ * allows: anyone reads, admins write. Rules are therefore a NARROWING device, and the
+ * Automations permission grid is only honest if a deny actually bites — in the list,
+ * by id, and on every write path.
+ */
+describe("per-automation access rules", () => {
+  const ACTOR = "user-dana"
+
+  const denyOn = (automationId: string, actions: ReadonlyArray<AccessAction>) => ({
+    ...emptyPolicy(ACTOR),
+    rules: [
+      {
+        id: "r1",
+        roleId: null,
+        actorId: ACTOR,
+        effect: "deny" as const,
+        actions,
+        resourceType: "automation" as const,
+        resourceId: automationId,
+        conceptId: null,
+        condition: null,
+      },
+    ],
+  })
+
+  it.effect("a view deny hides one automation from the list and by id", () =>
+    Effect.gen(function* () {
+      const automations = yield* AutomationService
+      const hidden = yield* automations.create(baseInput)
+      const shown = yield* automations.create({ ...baseInput, name: "Other" })
+      return { org: null, hidden: hidden.id, shown: shown.id }
+    }).pipe(
+      Effect.provide(testLayer(ORG_A)),
+      Effect.flatMap(({ hidden, shown }) =>
+        Effect.gen(function* () {
+          const automations = yield* AutomationService
+          const list = yield* automations.list()
+          expect(list.map((x) => x.id)).not.toContain(hidden)
+          // The deny is surgical: everything else still lists.
+          expect(list.map((x) => x.id)).toContain(shown)
+          // Not-found, not a distinct error — the existence of a hidden automation
+          // is itself information.
+          const err = yield* automations.getById(hidden).pipe(Effect.flip)
+          expect(err._tag).toBe("AutomationNotFound")
+        }).pipe(Effect.provide(testLayer(ORG_A, ACTOR, "admin", denyOn(hidden, ["view"])))),
+      ),
+    ),
+  )
+
+  it.effect("an edit deny freezes an automation that is still readable", () =>
+    Effect.gen(function* () {
+      const automations = yield* AutomationService
+      const a = yield* automations.create(baseInput)
+      return a.id
+    }).pipe(
+      Effect.provide(testLayer(ORG_B)),
+      Effect.flatMap((id) =>
+        Effect.gen(function* () {
+          const automations = yield* AutomationService
+          // Readable…
+          expect((yield* automations.getById(id)).id).toBe(id)
+          // …but every write path refuses, including the ones that only "pause" it.
+          const edit = yield* automations.update({ id, name: "Renamed" }).pipe(Effect.flip)
+          expect(edit._tag).toBe("AutomationNotFound")
+          const archived = yield* automations.archive(id).pipe(Effect.flip)
+          expect(archived._tag).toBe("AutomationNotFound")
+          const removed = yield* automations.remove(id).pipe(Effect.flip)
+          expect(removed._tag).toBe("AutomationNotFound")
+        }).pipe(
+          Effect.provide(
+            testLayer(ORG_B, ACTOR, "admin", denyOn(id, ["edit", "archive", "delete"])),
+          ),
+        ),
       ),
     ),
   )

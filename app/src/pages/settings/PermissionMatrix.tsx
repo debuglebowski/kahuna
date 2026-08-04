@@ -32,6 +32,12 @@ import { Feedback } from "./parts"
  *   - BLANKET rules (no target), which apply to every row at once. Those are surfaced
  *     as a banner rather than silently painted across the grid, because a row showing
  *     Inherit while a blanket allow grants it would be a lie.
+ *
+ * WHAT A ROW IS. Usually the resource itself — one concept, one dashboard. The Records
+ * grid is the exception: its rows are CONCEPTS and each cell means "records inside this
+ * concept", which the model stores as `concept_id` rather than `resource_id`. That is
+ * `scopeBy`, and it must match on both read and write or the grid reads one set of rules
+ * and writes another.
  */
 
 export type CellState = "allow" | "inherit" | "deny"
@@ -58,8 +64,21 @@ export interface MatrixItem {
   readonly name: string
 }
 
+/** Which column a row's id lives in. See the header comment. */
+export type ScopeBy = "resource" | "concept"
+
 /** Key for the local edit map. */
 const key = (itemId: string, action: string) => `${itemId}:${action}`
+
+/**
+ * The row a rule belongs to, or null if it is not a row-scoped rule of this shape.
+ *
+ * A concept-scoped RECORD rule and a resource-scoped one are different grants over the
+ * same uuid, so each grid reads only its own column — otherwise the Records grid would
+ * show (and then overwrite) rules meant for individual records.
+ */
+const targetOf = (r: MatrixRule, scopeBy: ScopeBy): string | null =>
+  scopeBy === "concept" ? (r.resourceId ? null : r.conceptId) : r.resourceId
 
 /**
  * Fold the role's rules into cell states.
@@ -71,13 +90,16 @@ const stateFrom = (
   rules: ReadonlyArray<MatrixRule>,
   resourceType: AccessResourceType,
   actions: ReadonlyArray<AccessActionName>,
+  scopeBy: ScopeBy,
 ): Map<string, CellState> => {
   const out = new Map<string, CellState>()
   for (const r of rules) {
-    if (r.resourceType !== resourceType || !r.resourceId || r.condition) continue
+    if (r.resourceType !== resourceType || r.condition) continue
+    const target = targetOf(r, scopeBy)
+    if (!target) continue
     for (const a of actions) {
       if (!r.actions.includes(a) && !r.actions.includes("*")) continue
-      const k = key(r.resourceId, a)
+      const k = key(target, a)
       // A deny already recorded is never downgraded by a later allow.
       if (out.get(k) === "deny") continue
       out.set(k, r.effect)
@@ -128,15 +150,26 @@ export function PermissionMatrix({
   actions,
   rules,
   loading,
+  scopeBy = "resource",
+  note,
+  resourceNoun,
 }: {
   roleId: string
   resourceType: AccessResourceType
   items: ReadonlyArray<MatrixItem>
-  /** Plural noun for the first column header, e.g. "Concept". */
+  /** Singular noun for the first column header, e.g. "Concept". */
   itemsLabel: string
   actions: ReadonlyArray<{ id: AccessActionName; label: string }>
   rules: ReadonlyArray<MatrixRule>
   loading?: boolean
+  /** "concept" for the Records grid, whose rows are containers. Default "resource". */
+  scopeBy?: ScopeBy
+  /** One line explaining what a cell means, when it is not self-evident. */
+  note?: string
+  /** Plural noun for the RESOURCE, when it differs from the row noun — the Records
+   *  grid's rows are concepts but its rules are about records, and a banner reading
+   *  "covering all concepts" there would name the wrong thing. */
+  resourceNoun?: string
 }) {
   const qc = useQueryClient()
   const [draft, setDraft] = useState<Map<string, CellState>>(new Map())
@@ -151,9 +184,10 @@ export function PermissionMatrix({
         rules,
         resourceType,
         actions.map((a) => a.id),
+        scopeBy,
       ),
     )
-  }, [rules, resourceType, actions, dirty])
+  }, [rules, resourceType, actions, dirty, scopeBy])
 
   const save = useMutation({
     mutationFn: () => {
@@ -166,7 +200,7 @@ export function PermissionMatrix({
         // An all-inherit row needs no rule at all; sending it would write nothing but
         // makes the payload harder to read in the log.
         .filter((e) => e.allow.length > 0 || e.deny.length > 0)
-      return api.setScopedRules({ roleId, resourceType, entries })
+      return api.setScopedRules({ roleId, resourceType, scopeBy, entries })
     },
     onSuccess: () => {
       setDirty(false)
@@ -174,13 +208,20 @@ export function PermissionMatrix({
     },
   })
 
-  const setCell = (itemId: string, action: string, next: CellState) => {
-    setDraft((cur) => new Map(cur).set(key(itemId, action), next))
+  /**
+   * Advance one cell. The next state is computed INSIDE the updater, off the current
+   * draft — not off the one captured when this render ran. Two clicks landing in the
+   * same frame both read the pre-click value otherwise, so a quick Inherit → Allow →
+   * Deny double-click silently stops at Allow.
+   */
+
+  const cycleCell = (itemId: string, action: string) => {
+    setDraft((cur) => {
+      const k = key(itemId, action)
+      return new Map(cur).set(k, CYCLE[cur.get(k) ?? "inherit"])
+    })
     setDirty(true)
   }
-
-  const cycleCell = (itemId: string, action: string) =>
-    setCell(itemId, action, CYCLE[draft.get(key(itemId, action)) ?? "inherit"])
 
   /**
    * Set a whole column. Cycles off the column's CURRENT shared state so the header
@@ -188,10 +229,12 @@ export function PermissionMatrix({
    * rather than jumping past the state you probably wanted.
    */
   const cycleColumn = (action: string) => {
-    const states = items.map((it) => draft.get(key(it.id, action)) ?? "inherit")
-    const uniform = states.every((s) => s === states[0]) ? states[0] : undefined
-    const next = uniform === undefined ? "allow" : CYCLE[uniform]
     setDraft((cur) => {
+      // Same reason as `cycleCell`: read the column's state from `cur`, not from the
+      // render closure, so repeated header clicks keep advancing.
+      const states = items.map((it) => cur.get(key(it.id, action)) ?? "inherit")
+      const uniform = states.every((s) => s === states[0]) ? states[0] : undefined
+      const next = uniform === undefined ? "allow" : CYCLE[uniform]
       const m = new Map(cur)
       for (const it of items) m.set(key(it.id, action), next)
       return m
@@ -201,9 +244,11 @@ export function PermissionMatrix({
 
   // Rules the grid deliberately cannot represent — surfaced so a row reading Inherit
   // is never quietly overridden by something invisible.
-  const blanket = rules.filter((r) => r.resourceType === resourceType && !r.resourceId)
+  const blanket = rules.filter(
+    (r) => r.resourceType === resourceType && !r.resourceId && !r.conceptId,
+  )
   const conditional = rules.filter(
-    (r) => r.resourceType === resourceType && r.resourceId && r.condition,
+    (r) => r.resourceType === resourceType && targetOf(r, scopeBy) && r.condition,
   )
 
   if (loading) return <Spinner />
@@ -219,10 +264,11 @@ export function PermissionMatrix({
       {blanket.length > 0 ? (
         <p className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm">
           This role also has {blanket.length} rule{blanket.length > 1 ? "s" : ""} covering{" "}
-          <b>all</b> {itemsLabel.toLowerCase()}s, which the grid can't show. They apply on top of
-          everything below.
+          <b>all</b> {resourceNoun ?? `${itemsLabel.toLowerCase()}s`}, which the grid can't show.
+          They apply on top of everything below.
         </p>
       ) : null}
+      {note ? <p className="text-sm text-muted-foreground">{note}</p> : null}
       {conditional.length > 0 ? (
         <p className="text-sm text-muted-foreground">
           {conditional.length} conditional rule{conditional.length > 1 ? "s" : ""} are managed in
@@ -288,6 +334,7 @@ export function PermissionMatrix({
                   rules,
                   resourceType,
                   actions.map((a) => a.id),
+                  scopeBy,
                 ),
               )
             }}
