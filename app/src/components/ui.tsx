@@ -131,10 +131,14 @@ export function Toolbar({
 export function ToggleChip({
   pressed,
   onPressedChange,
+  disabled,
   children,
 }: {
   pressed: boolean
   onPressedChange: (v: boolean) => void
+  /** Renders and behaves as unavailable — the chip keeps its pressed state, so it
+   *  still reads as "on, but not yours to change right now". */
+  disabled?: boolean
   children: ReactNode
 }) {
   return (
@@ -143,6 +147,7 @@ export function ToggleChip({
       variant="outline"
       size="sm"
       aria-pressed={pressed}
+      disabled={disabled}
       onClick={() => onPressedChange(!pressed)}
       className={pressed ? "bg-accent text-accent-foreground" : "text-muted-foreground"}
     >

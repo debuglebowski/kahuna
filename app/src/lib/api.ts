@@ -1309,10 +1309,24 @@ export const api = {
   rolesOf: (userId: string) => call((c) => c.rolesOf({ userId })),
   /** The rules inside a role — `configure` only. */
   listRules: (roleId: string) => call((c) => c.listRules({ roleId })),
-  createRole: (name: string, description?: string, startFrom?: string) =>
-    call((c) => c.createRole({ name, description, startFrom })),
-  updateRole: (id: string, patch: { name?: string; description?: string | null }) =>
-    call((c) => c.updateRole({ id, ...patch })),
+  roleHolders: (roleId: string) => call((c) => c.roleHolders({ roleId })),
+  reassignRoleHolders: (fromRoleId: string, toRoleId: string) =>
+    call((c) => c.reassignRoleHolders({ fromRoleId, toRoleId })),
+  createRole: (
+    name: string,
+    description?: string,
+    startFrom?: string,
+    kind?: "user" | "automation",
+  ) => call((c) => c.createRole({ name, description, startFrom, kind })),
+  updateRole: (
+    id: string,
+    patch: {
+      name?: string
+      description?: string | null
+      autoAssign?: boolean
+      active?: boolean
+    },
+  ) => call((c) => c.updateRole({ id, ...patch })),
   deleteRole: (id: string) => call((c) => c.deleteRole({ id })),
   assignRole: (roleId: string, userId: string) => call((c) => c.assignRole({ roleId, userId })),
   unassignRole: (roleId: string, userId: string) => call((c) => c.unassignRole({ roleId, userId })),

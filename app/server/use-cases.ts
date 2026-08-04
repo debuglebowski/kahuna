@@ -2055,6 +2055,21 @@ export const rolesOfUser = (userId: string): UC<unknown> =>
 export const listRules = (roleId: string): UC<unknown> =>
   Effect.flatMap(AccessRoleService, (r) => r.rulesOf(roleId))
 
+/** Who holds a role — what the turn-off dialog counts before it takes the rules away. */
+export const roleHolders = (roleId: string): UC<unknown> =>
+  Effect.flatMap(AccessRoleService, (r) =>
+    r.actorsOf(roleId).pipe(Effect.map((actors) => ({ actors }))),
+  )
+
+/** Move every holder of one role onto another, before turning the first one off. */
+export const reassignRoleHolders = (input: {
+  readonly fromRoleId: string
+  readonly toRoleId: string
+}): UC<unknown> =>
+  Effect.flatMap(AccessRoleService, (r) =>
+    r.reassignHolders(input.fromRoleId, input.toRoleId).pipe(Effect.map((moved) => ({ moved }))),
+  )
+
 export const createRole = (input: {
   readonly name: string
   readonly description?: string

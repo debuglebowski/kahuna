@@ -951,6 +951,10 @@ const HandlersLive = ServerRpcs.toLayer({
   listRoles: () => as<ReadonlyArray<AccessRole>>(uc.listRoles()),
   rolesOf: ({ userId }) => as<ReadonlyArray<AccessRole>>(uc.rolesOfUser(userId)),
   listRules: ({ roleId }) => admin<ReadonlyArray<AccessRule>>(uc.listRules(roleId)),
+  roleHolders: ({ roleId }) =>
+    admin<{ readonly actors: ReadonlyArray<string> }>(uc.roleHolders(roleId)),
+  reassignRoleHolders: ({ fromRoleId, toRoleId }) =>
+    admin<{ readonly moved: number }>(uc.reassignRoleHolders({ fromRoleId, toRoleId })),
   createRole: ({ name, description, kind, startFrom }) =>
     admin<AccessRole>(uc.createRole({ name, description, kind, startFrom })),
   updateRole: ({ id, name, description, autoAssign, active }) =>

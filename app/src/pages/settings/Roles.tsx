@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Lock, Plus, Trash2, X } from "lucide-react"
+import { Plus, Power, Trash2, X } from "lucide-react"
 import { useState } from "react"
 import {
   Select,
@@ -39,9 +39,16 @@ import { Feedback } from "./parts"
  * Role management — the editor for the access model's reusable half.
  *
  * A role is a named bag of rules; a per-person share is the same thing attached to
- * one actor (that lives in the Share dialog, not here). Presets are ordinary rows and
- * fully editable; only their DELETION is refused, because the seed pins them by key
- * and would silently re-create one.
+ * one actor (that lives in the Share dialog, not here). An actor may hold any number
+ * of roles — a policy is the union of its allows — so nothing here is a tier.
+ *
+ * ── THREE SECTIONS, NOT A BADGE ──────────────────────────────────────────────
+ *
+ * Managed / Custom / Automations. The split carries what a per-row badge used to
+ * mumble: a managed role is seeded so it cannot be deleted (the seed would put it
+ * back — turning it off is the reversible equivalent), and an automation role can
+ * never be held by a person. That second one is enforced by the engine, so showing
+ * bot roles among people roles was inviting an action that would be refused.
  *
  * `configure`-gated as a whole: the rules inside a role are the sensitive part. Role
  * NAMES are readable by any member and render as pills on /members.
@@ -727,22 +734,171 @@ function RuleEditor({ role, onClose }: { role: AccessRole; onClose: () => void }
   )
 }
 
+/**
+ * ── TURNING A ROLE OFF ───────────────────────────────────────────────────────
+ *
+ * Deactivating takes every rule the role carries away from everyone holding it, and
+ * under a fail-closed model that reads as data disappearing rather than as a
+ * permission changing. So the dialog does two things a plain confirm cannot: it says
+ * how many people (or automations) are about to be affected, and it offers to move
+ * them somewhere first.
+ *
+ * The move is OPTIONAL. "Off, and they get nothing" is a legitimate thing to want,
+ * and forcing a replacement would make the dialog un-dismissable for an org that has
+ * no other role yet. But it is never the silent default.
+ */
+function DeactivateDialog({
+  role,
+  roles,
+  onClose,
+}: {
+  role: AccessRole
+  roles: ReadonlyArray<AccessRole>
+  onClose: () => void
+}) {
+  const qc = useQueryClient()
+  const [replacement, setReplacement] = useState("")
+  const holders = useQuery({
+    queryKey: ["roleHolders", role.id],
+    queryFn: () => api.roleHolders(role.id),
+  })
+  const count = holders.data?.actors.length ?? 0
+
+  const run = useMutation({
+    mutationFn: async () => {
+      // Move BEFORE turning off, so there is no window in which the holders have
+      // neither role.
+      if (replacement) await api.reassignRoleHolders(role.id, replacement)
+      await api.updateRole(role.id, { active: false })
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["roles"] })
+      onClose()
+    },
+  })
+
+  // Same category only — the engine refuses a cross-kind move, so offering one here
+  // would be an error the reader could not have predicted.
+  const options = roles.filter((r) => r.id !== role.id && r.kind === role.kind && r.active)
+  const noun = role.kind === "automation" ? "automation" : "member"
+
+  return (
+    <Modal onClose={onClose} title={`Turn off ${role.name}?`}>
+      <div className="space-y-3">
+        <p className="text-sm text-muted-foreground">
+          Its rules stop applying immediately. Assignments are kept, so turning it back on restores
+          exactly what was there.
+        </p>
+        {holders.isPending ? (
+          <Spinner />
+        ) : count === 0 ? (
+          <p className="text-sm text-muted-foreground">Nobody holds this role.</p>
+        ) : (
+          <>
+            <p className="text-sm">
+              <span className="font-medium">
+                {count} {noun}
+                {count === 1 ? "" : "s"}
+              </span>{" "}
+              {count === 1 ? "holds" : "hold"} this role and will lose its access.
+            </p>
+            <Field
+              label="Give them another role first"
+              hint="Optional. They keep this one too, so turning it back on changes nothing."
+            >
+              <Select
+                value={replacement || NONE}
+                onValueChange={(v) => setReplacement(v === NONE ? "" : v)}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NONE}>Nothing — they lose this access</SelectItem>
+                  {options.map((r) => (
+                    <SelectItem key={r.id} value={r.id}>
+                      {r.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Field>
+          </>
+        )}
+        <Feedback error={run.error ? roleMsg(run.error) : undefined} />
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button onClick={() => run.mutate()} disabled={run.isPending}>
+            {run.isPending ? "Turning off…" : "Turn off"}
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
+/**
+ * Radix REFUSES an empty `SelectItem` value — it reserves "" for "cleared, show the
+ * placeholder" — and throws hard enough to take the whole route down. So "no choice"
+ * rides a sentinel, the same workaround the rule form already uses for its All option.
+ *
+ * This is not hypothetical: the Start from picker shipped with `value=""` and crashed
+ * the New role dialog on open, every time.
+ */
+const NONE = "__none"
+
+/** The three sections the list is cut into, in the order they matter. */
+const SECTIONS: ReadonlyArray<{
+  readonly id: string
+  readonly label: string
+  readonly hint: string
+  readonly kind: "user" | "automation"
+  readonly managed: boolean
+}> = [
+  {
+    id: "managed",
+    label: "Managed roles",
+    hint: "Seeded with the org. Editable and switchable, but not deletable — the seed would put one back.",
+    kind: "user",
+    managed: true,
+  },
+  {
+    id: "custom",
+    label: "Custom roles",
+    hint: "Yours. Delete them freely.",
+    kind: "user",
+    managed: false,
+  },
+  {
+    id: "automation",
+    label: "Automation roles",
+    hint: "For automations, never people. A new automation starts on whichever of these is auto-assigned.",
+    kind: "automation",
+    managed: false,
+  },
+]
+
 export function Roles() {
   const qc = useQueryClient()
   const roles = useQuery({ queryKey: ["roles"], queryFn: () => api.listRoles() })
   const [filter, setFilter] = useState("")
-  const [creating, setCreating] = useState(false)
+  /** null = closed; otherwise the category the New role dialog is creating into. */
+  const [creating, setCreating] = useState<"user" | "automation" | null>(null)
   const [name, setName] = useState("")
   /** "" = start from nothing. See the note on the picker. */
   const [startFrom, setStartFrom] = useState("")
   const [editing, setEditing] = useState<AccessRole | null>(null)
   const [deleting, setDeleting] = useState<AccessRole | null>(null)
+  const [turningOff, setTurningOff] = useState<AccessRole | null>(null)
 
   const create = useMutation({
-    mutationFn: () => api.createRole(name.trim(), undefined, startFrom || undefined),
+    mutationFn: () =>
+      api.createRole(name.trim(), undefined, startFrom || undefined, creating ?? "user"),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["roles"] })
-      setCreating(false)
+      setCreating(null)
       setName("")
       setStartFrom("")
     },
@@ -754,81 +910,176 @@ export function Roles() {
       setDeleting(null)
     },
   })
+  const patch = useMutation({
+    mutationFn: (input: { id: string; autoAssign?: boolean; active?: boolean }) =>
+      api.updateRole(input.id, { autoAssign: input.autoAssign, active: input.active }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["roles"] }),
+  })
 
   if (roles.isPending) return <Spinner />
   if (roles.error) return <Feedback error={roleMsg(roles.error)} />
 
+  const all = roles.data ?? []
   const q = filter.trim().toLowerCase()
-  const shown = (roles.data ?? []).filter((r) => !q || r.name.toLowerCase().includes(q))
+  const shown = all.filter((r) => !q || r.name.toLowerCase().includes(q))
+
+  /** Would turning this one off leave its category with nowhere to land? A warning,
+   *  never a refusal — an org may deliberately want new actors to start with nothing. */
+  const isLastLandingZone = (r: AccessRole) =>
+    r.autoAssign &&
+    r.active &&
+    all.filter((o) => o.kind === r.kind && o.autoAssign && o.active).length === 1
 
   return (
     <div className="space-y-4">
       {/* Functional toolbar: filter left, create right, no description row — the
           settings convention for every tab that can create something. */}
       <Toolbar filter={filter} onFilter={setFilter} placeholder="Filter roles…">
-        <Button size="sm" onClick={() => setCreating(true)}>
+        <Button size="sm" onClick={() => setCreating("user")}>
           <Plus size={15} />
           New role
         </Button>
       </Toolbar>
 
-      <Card>
-        <div className="divide-y">
-          {shown.length === 0 ? (
-            <p className="px-4 py-6 text-sm text-muted-foreground">
-              No roles match. A role is a reusable set of rules; assign them to members on the
-              Members page.
-            </p>
-          ) : null}
-          {shown.map((r) => (
-            <div key={r.id} className="flex items-center gap-3 px-4 py-3">
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="font-medium">{r.name}</span>
-                  {r.managed ? (
-                    <Badge tone="gray">
-                      <Lock size={11} /> managed
-                    </Badge>
-                  ) : null}
-                </div>
-                {r.description ? (
-                  <p className="truncate text-sm text-muted-foreground">{r.description}</p>
-                ) : null}
-              </div>
-              <div className="ml-auto flex items-center gap-2">
-                <Button variant="secondary" size="sm" onClick={() => setEditing(r)}>
-                  Rules
-                </Button>
-                {/* A managed role's rules stay editable — only deletion is refused,
-                    because the seed pins by key and would re-create one. */}
-                {r.managed ? null : (
-                  <IconButton
-                    aria-label={`Delete ${r.name}`}
-                    title="Delete role"
-                    variant="danger"
-                    onClick={() => setDeleting(r)}
-                  >
-                    <Trash2 size={14} />
-                  </IconButton>
-                )}
-              </div>
+      {SECTIONS.map((section) => {
+        const rows = shown.filter(
+          (r) =>
+            r.kind === section.kind &&
+            (section.kind === "automation" || r.managed === section.managed),
+        )
+        // An empty Custom section still renders its header — "you have none yet" is
+        // information. An empty section under an active filter is just noise.
+        if (rows.length === 0 && q) return null
+        return (
+          <div key={section.id} className="space-y-2">
+            <div>
+              <h3 className="font-medium text-sm">{section.label}</h3>
+              <p className="text-xs text-muted-foreground">{section.hint}</p>
             </div>
-          ))}
-        </div>
-      </Card>
+            <Card>
+              <div className="divide-y">
+                {rows.length === 0 ? (
+                  <p className="px-4 py-5 text-sm text-muted-foreground">
+                    {section.id === "automation"
+                      ? "No automation roles yet."
+                      : "No roles here yet."}
+                  </p>
+                ) : null}
+                {rows.map((r) => (
+                  <div
+                    key={r.id}
+                    className={`flex items-center gap-3 px-4 py-3 ${r.active ? "" : "opacity-55"}`}
+                  >
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">{r.name}</span>
+                        {r.active ? null : <Badge tone="gray">off</Badge>}
+                        {r.autoAssign ? (
+                          <Badge tone="blue">
+                            {r.kind === "automation" ? "new automations" : "new members"}
+                          </Badge>
+                        ) : null}
+                      </div>
+                      {r.description ? (
+                        <p className="truncate text-sm text-muted-foreground">{r.description}</p>
+                      ) : null}
+                    </div>
+                    <div className="ml-auto flex items-center gap-2">
+                      {/* A full-access role can't be "not allowed" anything, so
+                          auto-assigning it is a real choice and stays available; the
+                          rules button is what's meaningless there, not this. */}
+                      <ToggleChip
+                        pressed={r.autoAssign}
+                        disabled={!r.active || patch.isPending}
+                        onPressedChange={() =>
+                          patch.mutate({ id: r.id, autoAssign: !r.autoAssign })
+                        }
+                      >
+                        Auto-assign
+                      </ToggleChip>
+                      <Button variant="secondary" size="sm" onClick={() => setEditing(r)}>
+                        Rules
+                      </Button>
+                      {r.active ? (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => setTurningOff(r)}
+                          title={
+                            isLastLandingZone(r)
+                              ? `The only role new ${r.kind === "automation" ? "automations" : "members"} land on`
+                              : undefined
+                          }
+                        >
+                          <Power size={14} />
+                          Turn off
+                        </Button>
+                      ) : (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          disabled={patch.isPending}
+                          onClick={() => patch.mutate({ id: r.id, active: true })}
+                        >
+                          <Power size={14} />
+                          Turn on
+                        </Button>
+                      )}
+                      {/* A managed role's rules stay editable — only deletion is
+                          refused, because the seed pins by key and would re-create
+                          one. Turning it off is the reversible equivalent. */}
+                      {r.managed ? null : (
+                        <IconButton
+                          aria-label={`Delete ${r.name}`}
+                          title="Delete role"
+                          variant="danger"
+                          onClick={() => setDeleting(r)}
+                        >
+                          <Trash2 size={14} />
+                        </IconButton>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          </div>
+        )
+      })}
+      <Feedback error={patch.error ? roleMsg(patch.error) : undefined} />
 
       {creating ? (
-        <Modal onClose={() => setCreating(false)} title="New role">
+        <Modal
+          onClose={() => setCreating(null)}
+          title={creating === "automation" ? "New automation role" : "New role"}
+        >
           <div className="space-y-3">
             <Input
               autoFocus
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. Sales"
+              placeholder={creating === "automation" ? "e.g. Tickets only" : "e.g. Sales"}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && name.trim()) create.mutate()
               }}
             />
+            {/* CATEGORY. Fixed at creation — flipping it later would strand every
+                holder on the wrong side of the kind guard, so it is asked here or
+                not at all. */}
+            <Field label="For" hint="An automation role can only ever be held by an automation.">
+              <Select
+                value={creating}
+                onValueChange={(v) => setCreating(v as "user" | "automation")}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="user">People</SelectItem>
+                  <SelectItem value="automation">Automations</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
             {/* START FROM. A role with nothing sees nothing — safe, but unusable
                 until someone walks every concept and every action. This is the
                 shortcut, and it must say SNAPSHOT: later changes to Member do not
@@ -837,15 +1088,20 @@ export function Roles() {
               label="Start from"
               hint="A copy of that role's access, taken now. Later changes to it won't follow."
             >
-              <Select value={startFrom} onValueChange={setStartFrom}>
+              <Select
+                value={startFrom || NONE}
+                onValueChange={(v) => setStartFrom(v === NONE ? "" : v)}
+              >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">Nothing — no access until you grant it</SelectItem>
-                  {(roles.data ?? [])
+                  <SelectItem value={NONE}>From scratch — no access until you grant it</SelectItem>
+                  {all
                     // Copying a full-access role would mint a second one from a
                     // dropdown; `full_access` is a property of the role, not a name.
+                    // Cross-category copies are offered: the rules are the same shape,
+                    // and "like Member, but for automations" is a reasonable start.
                     .filter((r) => !r.fullAccess)
                     .map((r) => (
                       <SelectItem key={r.id} value={r.id}>
@@ -857,7 +1113,7 @@ export function Roles() {
             </Field>
             <Feedback error={create.error ? roleMsg(create.error) : undefined} />
             <div className="flex justify-end gap-2">
-              <Button variant="secondary" onClick={() => setCreating(false)}>
+              <Button variant="secondary" onClick={() => setCreating(null)}>
                 Cancel
               </Button>
               <Button onClick={() => create.mutate()} disabled={!name.trim() || create.isPending}>
@@ -869,6 +1125,10 @@ export function Roles() {
       ) : null}
 
       {editing ? <RuleEditor role={editing} onClose={() => setEditing(null)} /> : null}
+
+      {turningOff ? (
+        <DeactivateDialog role={turningOff} roles={all} onClose={() => setTurningOff(null)} />
+      ) : null}
 
       {deleting ? (
         <ConfirmDialog

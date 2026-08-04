@@ -2509,6 +2509,19 @@ export class KingsmakerRpcs extends RpcGroup.make(
     success: Schema.Array(AccessRole),
     error: RpcError,
   }),
+  /** Who holds a role. Actor ids — user ids, or `system:automation:<id>` for a bot. */
+  Rpc.make("roleHolders", {
+    payload: { roleId: Schema.String },
+    success: Schema.Struct({ actors: Schema.Array(Schema.String) }),
+    error: RpcError,
+  }),
+  /** Move every holder of one role onto another — what the turn-off dialog offers so
+   *  taking a role away is not silently taking access away. Same category only. */
+  Rpc.make("reassignRoleHolders", {
+    payload: { fromRoleId: Schema.String, toRoleId: Schema.String },
+    success: Schema.Struct({ moved: Schema.Number }),
+    error: RpcError,
+  }),
   /** The rules a role carries. `configure` — this is the sensitive half. */
   Rpc.make("listRules", {
     payload: { roleId: Schema.String },

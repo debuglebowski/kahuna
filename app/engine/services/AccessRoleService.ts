@@ -377,6 +377,47 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
           return rows.map((r) => r.actor_id)
         }).pipe(Effect.orDie)
 
+      /**
+       * Give every holder of one role another role.
+       *
+       * What "turn this role off" needs to not be destructive: the holders are about
+       * to lose its rules, and walking them one at a time from the client is N
+       * round-trips with no atomicity — a half-moved set is a permissions bug.
+       *
+       * Both roles must be the same KIND, for the same reason `assign` checks it:
+       * otherwise "replace this automation role with a people role" would hand a
+       * blanket `*` to every automation, or land a bot role on a person.
+       *
+       * Additive and idempotent — someone who already holds the target keeps one row.
+       */
+      const reassignHolders = (fromId: string, toId: string) =>
+        Effect.gen(function* () {
+          const { orgId, actor } = yield* OrgContext
+          const rows = yield* sql<{ readonly id: string; readonly kind: string }>`
+            SELECT id, kind FROM access_roles
+            WHERE org_id = ${orgId} AND id IN (${fromId}, ${toId})`.pipe(Effect.orDie)
+          const from = rows.find((r) => r.id === fromId)
+          const to = rows.find((r) => r.id === toId)
+          if (!from || !to) return 0
+          if (from.kind !== to.kind) {
+            return yield* Effect.fail(
+              new RoleKindMismatch({
+                roleKind: to.kind,
+                message: "Those two roles are in different categories.",
+              }),
+            )
+          }
+          const moved = yield* sql<{ readonly actor_id: string }>`
+            INSERT INTO access_role_actors (org_id, role_id, actor_id, created_by)
+            SELECT ${orgId}, ${toId}, a.actor_id, ${actor}
+              FROM access_role_actors a
+             WHERE a.org_id = ${orgId} AND a.role_id = ${fromId}
+            ON CONFLICT (role_id, actor_id) DO NOTHING
+            RETURNING actor_id`.pipe(Effect.orDie)
+          yield* policies.bump(orgId).pipe(Effect.orDie)
+          return moved.length
+        })
+
       // ── role CRUD ────────────────────────────────────────────────────────────
 
       /**
@@ -858,6 +899,7 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
         unassign,
         rolesOf,
         actorsOf,
+        reassignHolders,
         create,
         update,
         remove,
