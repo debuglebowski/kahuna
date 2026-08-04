@@ -153,7 +153,17 @@ jobs:
           DB="postgresql://kingsmaker:ci@ci-pg:5432/kingsmaker"
 
           echo "::group::migrate"
-          docker run --rm --network ci-net -e DATABASE_URL="$DB" kingsmaker:ci migrate
+          # BETTER_AUTH_SECRET, on a step that only migrates: the entrypoint's
+          # `migrate` also bootstraps the initial admin, and importing that
+          # constructs auth, which refuses to boot without a secret in
+          # production. Same value as the serve container below — they must
+          # agree, since the integration token key derives from it.
+          # No INITIAL_ADMIN_*: bootstrap warns and exits 0 without them, which
+          # is the path a self-hoster who provisions by hand actually takes.
+          docker run --rm --network ci-net \
+            -e DATABASE_URL="$DB" \
+            -e BETTER_AUTH_SECRET=ci-secret-not-for-real-use-000000 \
+            kingsmaker:ci migrate
           echo "::endgroup::"
 
           # Assert against the DATABASE, not the migrate exit code: the bug this
