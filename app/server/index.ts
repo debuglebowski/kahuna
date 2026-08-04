@@ -54,7 +54,13 @@ const server = Bun.serve({
 
     if (url.pathname === "/api/health") {
       // Probe the live runtime's pool — reflects real DB health, no per-request churn.
-      const ok = await AppRuntime.runPromise(healthCheck).catch(() => false)
+      // Log the cause: building the runtime also builds the BlobStore layer, and a
+      // driver that rejects its config (azure does) throws HERE. Swallowing that
+      // left an operator with an unhealthy container and no reason for it.
+      const ok = await AppRuntime.runPromise(healthCheck).catch((e) => {
+        console.error("health check failed:", e instanceof Error ? e.message : e)
+        return false
+      })
       return secure(Response.json({ ok }, { status: ok ? 200 : 503 }))
     }
 

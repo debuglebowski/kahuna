@@ -22,7 +22,17 @@ export const LocalFsBlobStore = (dir: string) =>
       }),
     del: (key) =>
       Effect.tryPromise({
-        try: () => unlink(path.join(dir, key)),
+        // Swallow ENOENT: "already gone" is the postcondition, not a failure.
+        // s3 and azure are both idempotent here, and `del` runs twice in normal
+        // operation (a purge racing an owner cascade). Without this, every
+        // caller's `Effect.ignore` is load-bearing rather than defensive.
+        try: async () => {
+          try {
+            await unlink(path.join(dir, key))
+          } catch (e) {
+            if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e
+          }
+        },
         catch: (e) => new BlobError({ message: `del ${key}: ${String(e)}` }),
       }),
   })

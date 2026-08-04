@@ -11,19 +11,33 @@ import {
   type PolicySet,
   unrestrictedPolicy,
 } from "#engine"
+import { AzureBlobStore } from "./blob-azure"
 import { S3BlobStore } from "./blob-s3"
 import type { Role } from "./policy"
 
-const BlobLive =
-  process.env.BLOB_DRIVER === "s3"
-    ? S3BlobStore({
+const BlobLive = (() => {
+  switch (process.env.BLOB_DRIVER) {
+    case "s3":
+      return S3BlobStore({
         accessKeyId: process.env.S3_ACCESS_KEY_ID ?? "",
         secretAccessKey: process.env.S3_SECRET_ACCESS_KEY ?? "",
         bucket: process.env.S3_BUCKET ?? "",
         region: process.env.S3_REGION,
         endpoint: process.env.S3_ENDPOINT,
       })
-    : LocalFsBlobStore(process.env.BLOB_LOCAL_DIR ?? "./.blobstore")
+    // Azure speaks no S3, so it is its own driver rather than an S3_ENDPOINT.
+    case "azure":
+      return AzureBlobStore({
+        container: process.env.AZURE_STORAGE_CONTAINER ?? "",
+        connectionString: process.env.AZURE_STORAGE_CONNECTION_STRING,
+        account: process.env.AZURE_STORAGE_ACCOUNT,
+        accountKey: process.env.AZURE_STORAGE_KEY,
+        endpoint: process.env.AZURE_STORAGE_ENDPOINT,
+      })
+    default:
+      return LocalFsBlobStore(process.env.BLOB_LOCAL_DIR ?? "./.blobstore")
+  }
+})()
 
 /**
  * Engine services + Postgres pool + BlobStore, built once (no OrgContext).

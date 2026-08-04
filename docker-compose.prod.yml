@@ -52,7 +52,7 @@ services:
       - "127.0.0.1:3100:3100"
     volumes:
       # Uploaded files live ONLY here — pg_dump does not capture them. Back this
-      # up alongside the database, or switch to BLOB_DRIVER=s3.
+      # up alongside the database, or switch to BLOB_DRIVER=s3 / =azure.
       - kingsmaker_blobs:/data
     # The server installs its own graceful-shutdown sequence with a 10s internal
     # deadline; give Docker more than that before SIGKILL.
