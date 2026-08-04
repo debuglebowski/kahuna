@@ -151,10 +151,10 @@ const visibilityFor = async (
     Effect.flatMap(
       PgClient.PgClient,
       (sql) =>
-        sql<{ readonly id: string; readonly visibility: string | null }>`
-        SELECT id, visibility FROM concepts WHERE org_id = ${orgId}`,
+        sql<{ readonly id: string }>`
+        SELECT id FROM concepts WHERE org_id = ${orgId}`,
     ),
-  ).catch(() => [] as ReadonlyArray<{ id: string; visibility: string | null }>)
+  ).catch(() => [] as ReadonlyArray<{ id: string }>)
   const scope = { orgId, actor, role: (role ?? "member") as ScopeRole, policy }
   const readable = new Set(
     concepts.filter((c) => scopeCanReadConcept(scope, c.id)).map((c) => c.id),

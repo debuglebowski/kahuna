@@ -35,14 +35,7 @@ import { EventStore } from "./EventStore"
 import { FieldService } from "./FieldService"
 import { LabelService } from "./LabelService"
 import { OrgContext } from "./OrgContext"
-import {
-  type InstanceRow,
-  type ItemRow,
-  type RelationRow,
-  toInstance,
-  toItem,
-  toVisibility,
-} from "./rows"
+import { type InstanceRow, type ItemRow, type RelationRow, toInstance, toItem } from "./rows"
 
 /** Built-in `config.format` validators for text / number scalars. */
 const TEXT_FORMATS: Record<string, (v: string) => boolean> = {
@@ -791,14 +784,13 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
     const assertConceptVisible = (conceptId: string, instanceId: string) =>
       Effect.gen(function* () {
         const scope = yield* OrgContext
-        // NO early return for privileged roles any more: a DENY rule must be able to
-        // close a concept even for an admin, and only `scopeCanReadConcept` knows
-        // that. The column lookup stays cheap and indexed (primary key).
-        const rows = yield* sql<{ readonly visibility: string | null }>`
-          SELECT visibility FROM concepts WHERE id = ${conceptId} LIMIT 1`
-        // Unknown/absent reads as restricted — the SAME coercion `toConcept` uses,
-        // shared so the two can never disagree.
-        const _visibility = toVisibility(rows[0]?.visibility ?? null)
+        // NO early return for privileged roles: a DENY rule must be able to close a
+        // concept even for an admin, and only `scopeCanReadConcept` knows that.
+        //
+        // No column read either — the decision is entirely in the caller's resolved
+        // rules, which the request already carries. This used to SELECT
+        // `concepts.visibility` on every by-id record read; that row is gone from the
+        // hot path.
         if (!scopeCanReadConcept(scope, conceptId))
           return yield* Effect.fail(new InstanceNotFound({ instanceId }))
       })
@@ -833,16 +825,18 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
         if (rules.length === 0) return
         // Only reached when a record rule exists. `created_by` lives on the lineage;
         // `state` comes from the head version when the caller didn't supply it.
+        // No join to `concepts` any more: the record decision reads the caller's
+        // rules, and only `created_by` + the published state are needed for a
+        // condition to evaluate against.
         const rows = yield* sql<{
           readonly created_by: string | null
           readonly state: Record<string, unknown> | null
-          readonly visibility: string | null
         }>`
-          SELECT i.created_by, c.visibility,
+          SELECT i.created_by,
                  (SELECT state FROM instances
                   WHERE item_id = i.id AND version_status = 'published' AND archived_at IS NULL
                   ORDER BY version_seq DESC LIMIT 1) AS state
-          FROM items i JOIN concepts c ON c.id = i.concept_id
+          FROM items i
           WHERE i.id = ${itemId} LIMIT 1`
         const record = {
           state: knownState ?? rows[0]?.state ?? {},

@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query"
-import { Check, Slash, X } from "lucide-react"
+import { Check, Slash } from "lucide-react"
 import { useEffect, useState } from "react"
 import {
   Table,
@@ -41,25 +41,28 @@ import { Feedback } from "./parts"
  * and writes another.
  */
 
-export type CellState = "allow" | "inherit" | "deny"
+export type CellState = "allow" | "no"
 
 /**
- * The three states, in the order they appear in every cell: negative, neutral,
- * positive. Fixed order matters more than it looks — the eye reads a column of
- * segmented controls by POSITION, so a row whose highlight sits on the left is
- * scannable as "denied" without reading the icon.
+ * TWO states, not three, and that is the point of the whole change.
+ *
+ * Access used to be two layers — a `visibility` column plus rules over it — so a cell
+ * needed an "Inherit" state meaning "no rule here, something else decides". There is
+ * no something else now: every (resource, role) pair carries its own value, so a cell
+ * is Yes or No.
+ *
+ * "No" is stored as the ABSENCE of an allow, never as a deny row. A deny is absolute
+ * and beats per-record shares, so storing "no" as a deny would silently kill sharing.
+ * Denies still exist for deliberate hard blocks and are shown read-only (see
+ * `blockedBy`), but they are not what an unticked cell means.
  */
 const STATES: ReadonlyArray<{
   readonly id: CellState
   readonly label: string
-  /** The tooltip. Deliberately a few words: it is read on hover, over and over, by
-   *  someone who already knows what Allow means. The full explanation lives once, in
-   *  the legend under the table. */
   readonly tip: string
 }> = [
-  { id: "deny", label: "Deny", tip: "Deny — always wins" },
-  { id: "inherit", label: "Inherit", tip: "Inherit — no rule" },
-  { id: "allow", label: "Allow", tip: "Allow" },
+  { id: "no", label: "No", tip: "No access" },
+  { id: "allow", label: "Yes", tip: "Allowed" },
 ]
 
 /** A rule as the grid consumes it. */
@@ -71,6 +74,13 @@ export interface MatrixRule {
   readonly resourceId: string | null
   readonly conceptId: string | null
   readonly condition: unknown
+}
+
+/** One row of `access_defaults` as the grid consumes it. */
+export interface MatrixDefault {
+  readonly roleId: string
+  readonly resourceType: string
+  readonly actions: ReadonlyArray<string>
 }
 
 export interface MatrixItem {
@@ -103,8 +113,8 @@ const key = (itemId: string, action: string) => `${itemId}:${action}`
 const targetOf = (r: MatrixRule, scopeBy: ScopeBy): string | null =>
   scopeBy === "concept" ? (r.resourceId ? null : r.conceptId) : r.resourceId
 
-/** The area's DEFAULT rule: untargeted, so it covers every resource of the type.
- *  Scope-independent — "all records" is the same rule whichever grid is showing. */
+/** An untargeted rule. These no longer exist for templated types — `addRule` refuses
+ *  them — but older data and blanket DENIES still can be, and they cover every row. */
 const isDefaultRule = (r: MatrixRule): boolean => !r.resourceId && !r.conceptId && !r.condition
 
 /**
@@ -115,23 +125,55 @@ const isDefaultRule = (r: MatrixRule): boolean => !r.resourceId && !r.conceptId 
  */
 const stateFrom = (
   rules: ReadonlyArray<MatrixRule>,
+  defaults: ReadonlyArray<MatrixDefault>,
   resourceType: AccessResourceType,
   actions: ReadonlyArray<AccessActionName>,
   scopeBy: ScopeBy,
 ): Map<string, CellState> => {
   const out = new Map<string, CellState>()
+  // The template row first: it comes from `access_defaults`, a different table, and
+  // is deliberately NOT a rule — see the header.
+  for (const a of defaults) {
+    if (a.resourceType !== resourceType) continue
+    for (const action of actions) {
+      if (!a.actions.includes(action) && !a.actions.includes("*")) continue
+      out.set(key(DEFAULT_ROW, action), "allow")
+    }
+  }
   for (const r of rules) {
     if (r.resourceType !== resourceType || r.condition) continue
-    // `*` covers every action, including ones this grid does not show — it reads as
-    // Allow across the row, and the server refuses to rewrite it on save.
+    // ALLOWS ONLY. A deny is not "no" — it is an absolute block that also beats
+    // per-record shares, so it is surfaced separately and read-only (`blocked`)
+    // rather than folded into a cell someone could toggle off by accident.
+    if (r.effect !== "allow") continue
     const target = isDefaultRule(r) ? DEFAULT_ROW : targetOf(r, scopeBy)
     if (!target) continue
     for (const a of actions) {
       if (!r.actions.includes(a) && !r.actions.includes("*")) continue
-      const k = key(target, a)
-      // A deny already recorded is never downgraded by a later allow.
-      if (out.get(k) === "deny") continue
-      out.set(k, r.effect)
+      out.set(key(target, a), "allow")
+    }
+  }
+  return out
+}
+
+/** Cells a DENY rule covers, shown read-only: the grid must not paint a cell as
+ *  granting access when a deny will refuse it anyway. */
+const blockedCells = (
+  rules: ReadonlyArray<MatrixRule>,
+  resourceType: AccessResourceType,
+  actions: ReadonlyArray<AccessActionName>,
+  scopeBy: ScopeBy,
+  items: ReadonlyArray<MatrixItem>,
+): Set<string> => {
+  const out = new Set<string>()
+  for (const r of rules) {
+    if (r.resourceType !== resourceType || r.effect !== "deny") continue
+    const target = isDefaultRule(r) ? null : targetOf(r, scopeBy)
+    for (const a of actions) {
+      if (!r.actions.includes(a) && !r.actions.includes("*")) continue
+      // An untargeted deny covers EVERY row, so it marks all of them.
+      if (target) out.add(key(target, a))
+      else for (const it of items) out.add(key(it.id, a))
     }
   }
   return out
@@ -140,7 +182,7 @@ const stateFrom = (
 /** The icon for each state. `Slash` is the neutral one: a dash read as "off", which
  *  is exactly the confusion between "no rule" and "denied" this control exists to
  *  prevent. */
-const ICON: Record<CellState, typeof Check> = { allow: Check, inherit: Slash, deny: X }
+const ICON: Record<CellState, typeof Check> = { allow: Check, no: Slash }
 
 /**
  * How the SELECTED segment is painted.
@@ -152,8 +194,9 @@ const ICON: Record<CellState, typeof Check> = { allow: Check, inherit: Slash, de
  */
 const SELECTED: Record<CellState, string> = {
   allow: "bg-success/15 text-success",
-  inherit: "text-foreground",
-  deny: "bg-destructive/15 text-destructive",
+  // No fill: "no" is the resting state of most cells, and giving it the same weight
+  // as an allow would fill the grid with highlights and bury what actually grants.
+  no: "text-foreground",
 }
 
 /**
@@ -213,6 +256,7 @@ export function PermissionMatrix({
   itemsLabel,
   actions,
   rules,
+  defaults,
   loading,
   scopeBy = "resource",
   note,
@@ -225,6 +269,8 @@ export function PermissionMatrix({
   itemsLabel: string
   actions: ReadonlyArray<{ id: AccessActionName; label: string }>
   rules: ReadonlyArray<MatrixRule>
+  /** This role's creation templates, filtered to nothing else. */
+  defaults: ReadonlyArray<MatrixDefault>
   loading?: boolean
   /** "concept" for the Records grid, whose rows are containers. Default "resource". */
   scopeBy?: ScopeBy
@@ -246,12 +292,13 @@ export function PermissionMatrix({
     setDraft(
       stateFrom(
         rules,
+        defaults,
         resourceType,
         actions.map((a) => a.id),
         scopeBy,
       ),
     )
-  }, [rules, resourceType, actions, dirty, scopeBy])
+  }, [rules, defaults, resourceType, actions, dirty, scopeBy])
 
   const save = useMutation({
     mutationFn: () => {
@@ -259,31 +306,25 @@ export function PermissionMatrix({
         .map((it) => ({
           resourceId: it.id,
           allow: actions.filter((a) => draft.get(key(it.id, a.id)) === "allow").map((a) => a.id),
-          deny: actions.filter((a) => draft.get(key(it.id, a.id)) === "deny").map((a) => a.id),
+          // Never a deny: "no" is the ABSENCE of an allow. Writing a deny would also
+          // beat per-record shares, quietly breaking sharing.
+          deny: [] as ReadonlyArray<AccessActionName>,
         }))
-        // An all-inherit row needs no rule at all; sending it would write nothing but
-        // makes the payload harder to read in the log.
-        .filter((e) => e.allow.length > 0 || e.deny.length > 0)
-      const blanket = {
-        allow: actions
-          .filter((a) => draft.get(key(DEFAULT_ROW, a.id)) === "allow")
-          .map((a) => a.id),
-        deny: actions.filter((a) => draft.get(key(DEFAULT_ROW, a.id)) === "deny").map((a) => a.id),
-      }
-      return api.setScopedRules({
-        roleId,
-        resourceType,
-        scopeBy,
-        entries,
-        blanket,
-        // Bounds what the blanket write may overwrite: an action this grid never
-        // showed stays on the rule instead of being dropped by omission.
-        managedActions: actions.map((a) => a.id),
-      })
+        // An all-"no" row needs no rule at all.
+        .filter((e) => e.allow.length > 0)
+      // The DEFAULT row is not a rule — it is the creation template, written to its
+      // own table precisely so nothing consults it at request time.
+      const defaultActions = actions
+        .filter((a) => draft.get(key(DEFAULT_ROW, a.id)) === "allow")
+        .map((a) => a.id)
+      return api
+        .setScopedRules({ roleId, resourceType, scopeBy, entries })
+        .then(() => api.setAccessDefault({ roleId, resourceType, actions: defaultActions }))
     },
     onSuccess: () => {
       setDirty(false)
       void qc.invalidateQueries({ queryKey: ["rules", roleId] })
+      void qc.invalidateQueries({ queryKey: ["accessDefaults"] })
     },
   })
 
@@ -293,27 +334,31 @@ export function PermissionMatrix({
   }
 
   // The one rule shape the grid still cannot represent — a cell has nowhere to put a
-  // condition — surfaced so a row reading Inherit is never quietly overridden by
-  // something invisible.
+  // condition — surfaced so a cell reading "No" is never quietly widened by something
+  // invisible.
   const conditional = rules.filter((r) => r.resourceType === resourceType && r.condition)
-  /** A wildcard default means the row reads Allow everywhere and the server will
-   *  refuse to narrow it here; say so rather than letting Save look broken. */
-  const wildcardDefault = rules.some(
-    (r) => r.resourceType === resourceType && isDefaultRule(r) && r.actions.includes("*"),
+  /** Cells a deny covers: shown, not editable. */
+  const blocked = blockedCells(
+    rules,
+    resourceType,
+    actions.map((a) => a.id),
+    scopeBy,
+    items,
   )
 
-  /** "All records", "All dashboards" — what the default row covers. */
-  const allLabel = `All ${resourceNoun ?? `${itemsLabel.toLowerCase()}s`}`
+  /** What a NEW resource of this type starts as, for the template row. */
+  const allLabel = `new ${resourceNoun ?? `${itemsLabel.toLowerCase()}s`}`
 
   if (loading) return <Spinner />
 
   return (
     <div className="space-y-4">
       {note ? <p className="text-sm text-muted-foreground">{note}</p> : null}
-      {wildcardDefault ? (
+      {blocked.size > 0 ? (
         <p className="text-sm text-muted-foreground">
-          This role's default grants <b>every</b> action on {allLabel}, including ones this grid
-          doesn't list. Saving here won't narrow it — clear that rule in <b>Other</b> first.
+          A <b>deny</b> rule covers {blocked.size} cell{blocked.size > 1 ? "s" : ""} below. A deny
+          always wins, so those stay blocked whatever this grid says — remove it in <b>Other</b> to
+          change that.
         </p>
       ) : null}
       {conditional.length > 0 ? (
@@ -347,21 +392,23 @@ export function PermissionMatrix({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {/* The DEFAULT row. It owns this area's untargeted rule — the one that used
-                to be an unreadable warning banner. Pinned first and given a heavier
-                border so it reads as "what everything starts from", not as another
-                item, because a row that silently outranks the 14 below it is exactly
-                the thing someone must not skim past. */}
+            {/* THE TEMPLATE ROW. It is NOT a rule and governs nothing that exists — it
+                says what a resource created LATER starts with, and is copied into real
+                rules at that moment. Pinned first and tinted because it is the one row
+                whose effect is in the future, which is easy to misread as "and also
+                everything below". */}
             <TableRow className="border-b-2 border-border bg-muted/40 hover:bg-muted/40">
               <TableCell className="font-semibold text-foreground">
                 Default value
-                <span className="ml-2 text-xs font-normal text-muted-foreground">{allLabel}</span>
+                <span className="ml-2 text-xs font-normal text-muted-foreground">
+                  applied to {allLabel}
+                </span>
               </TableCell>
               {actions.map((a) => (
                 <TableCell key={a.id} className="text-center">
                   <div className="flex justify-center">
                     <StateGroup
-                      state={draft.get(key(DEFAULT_ROW, a.id)) ?? "inherit"}
+                      state={draft.get(key(DEFAULT_ROW, a.id)) ?? "no"}
                       onSelect={(next) => setCell(DEFAULT_ROW, a.id, next)}
                       describe={(st) => `${st.label} ${a.label.toLowerCase()} by default`}
                     />
@@ -377,8 +424,8 @@ export function PermissionMatrix({
                   colSpan={actions.length + 1}
                   className="py-6 text-center text-sm text-muted-foreground"
                 >
-                  No {resourceNoun ?? `${itemsLabel.toLowerCase()}s`} yet — the default above still
-                  applies to any that are created.
+                  No {resourceNoun ?? `${itemsLabel.toLowerCase()}s`} yet — the default above is
+                  what any created later will start with.
                 </TableCell>
               </TableRow>
             ) : null}
@@ -388,11 +435,22 @@ export function PermissionMatrix({
                 {actions.map((a) => (
                   <TableCell key={a.id} className="text-center">
                     <div className="flex justify-center">
-                      <StateGroup
-                        state={draft.get(key(it.id, a.id)) ?? "inherit"}
-                        onSelect={(next) => setCell(it.id, a.id, next)}
-                        describe={(st) => `${st.label} ${a.label.toLowerCase()} on ${it.name}`}
-                      />
+                      {blocked.has(key(it.id, a.id)) ? (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="inline-flex h-6 items-center rounded-md bg-destructive/15 px-2 text-[11px] font-medium text-destructive">
+                              Blocked
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent>Denied by a rule — deny always wins</TooltipContent>
+                        </Tooltip>
+                      ) : (
+                        <StateGroup
+                          state={draft.get(key(it.id, a.id)) ?? "no"}
+                          onSelect={(next) => setCell(it.id, a.id, next)}
+                          describe={(st) => `${st.label} ${a.label.toLowerCase()} on ${it.name}`}
+                        />
+                      )}
                     </div>
                   </TableCell>
                 ))}
@@ -415,6 +473,7 @@ export function PermissionMatrix({
               setDraft(
                 stateFrom(
                   rules,
+                  defaults,
                   resourceType,
                   actions.map((a) => a.id),
                   scopeBy,
@@ -427,7 +486,8 @@ export function PermissionMatrix({
           </Button>
         ) : null}
         <span className="text-xs text-muted-foreground">
-          Deny beats every allow. Inherit (/) means no rule — the resource's own default decides.
+          A cell is Yes or No — there is no third state. The top row is the template for resources
+          created later, not a rule over the ones below it.
         </span>
         <Feedback error={save.error ? (save.error as Error).message : undefined} />
       </div>

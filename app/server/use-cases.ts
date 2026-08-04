@@ -3,6 +3,7 @@ import { Effect } from "effect"
 import {
   type AccessAction,
   type AccessCondition,
+  AccessDefaultsService,
   type AccessResourceType,
   AccessRoleService,
   type AnnotationField,
@@ -2147,15 +2148,23 @@ export const updateRule = (input: {
     return { id: input.ruleId }
   })
 
+/** THE CREATION TEMPLATE for every role — what a new resource of each type grants. */
+export const listAccessDefaults: UC<unknown> = Effect.flatMap(AccessDefaultsService, (d) =>
+  d.list(),
+)
+
+/** Set one role's template for one type. Empty `actions` clears it. */
+export const setAccessDefault = (input: {
+  readonly roleId: string
+  readonly resourceType: AccessResourceType
+  readonly actions: ReadonlyArray<AccessAction>
+}): UC<{ readonly ok: boolean }> =>
+  Effect.flatMap(AccessDefaultsService, (d) => d.set(input)).pipe(Effect.as({ ok: true }))
+
 export const setScopedRules = (input: {
   readonly roleId: string
   readonly resourceType: AccessResourceType
   readonly scopeBy?: "resource" | "concept"
-  readonly blanket?: {
-    readonly allow: ReadonlyArray<AccessAction>
-    readonly deny: ReadonlyArray<AccessAction>
-  }
-  readonly managedActions?: ReadonlyArray<AccessAction>
   readonly entries: ReadonlyArray<{
     readonly resourceId: string
     readonly allow: ReadonlyArray<AccessAction>

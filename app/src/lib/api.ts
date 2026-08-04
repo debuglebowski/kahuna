@@ -1315,12 +1315,16 @@ export const api = {
     conceptId?: string | null
     condition?: AccessCondition | null
   }) => call((c) => c.updateRule(input)),
+  listAccessDefaults: () => call((c) => c.listAccessDefaults()),
+  setAccessDefault: (input: {
+    roleId: string
+    resourceType: AccessResourceType
+    actions: ReadonlyArray<AccessActionName>
+  }) => call((c) => c.setAccessDefault(input)),
   setScopedRules: (input: {
     roleId: string
     resourceType: AccessResourceType
     scopeBy?: "resource" | "concept"
-    blanket?: { allow: ReadonlyArray<AccessActionName>; deny: ReadonlyArray<AccessActionName> }
-    managedActions?: ReadonlyArray<AccessActionName>
     entries: ReadonlyArray<{
       resourceId: string
       allow: ReadonlyArray<AccessActionName>

@@ -333,56 +333,67 @@ describe("policy loading", () => {
   )
 
   /**
-   * THE DEFAULT-ROW GUARD.
+   * ── THE BLANKET GUARD ──────────────────────────────────────────────────────
    *
-   * Each area's grid owns its DEFAULT — the untargeted rule for that resource type —
-   * but a grid only shows the actions the engine honours for it, which is fewer than
-   * the seven a rule can hold. Rebuilding the rule from the visible cells alone would
-   * drop the rest, so the Member preset would quietly lose `create`/`edit` the first
-   * time anyone touched the Concepts grid.
+   * Successor to THE BLANKET-VIEW GUARD, which asserted the Member preset grants no
+   * blanket `view`. That test protected a property worth keeping — read access is
+   * never granted wholesale by accident — but its subject is gone: read access IS
+   * rules now, so a blanket allow no longer "outranks the visibility column". What it
+   * does instead is grant every present AND FUTURE resource of its type, invisibly,
+   * in a way no grid cell can show. So it is refused at the write, not caught by a
+   * test on one preset.
    */
-  it.effect("the default row preserves actions its grid never showed", () =>
+  it.effect("an untargeted allow is refused on a type with per-resource values", () =>
     Effect.gen(function* () {
       const roles = yield* AccessRoleService
-      const role = yield* roles.create({ name: "Default" })
-      // A blanket rule holding actions inside AND outside the grid's columns.
-      yield* roles.addRule({
+      const role = yield* roles.create({ name: "Sales" })
+
+      for (const resourceType of [
+        "concept",
+        "record",
+        "dashboard",
+        "view",
+        "automation",
+      ] as const) {
+        const err = yield* roles
+          .addRule({ roleId: role.id, effect: "allow", actions: ["view"], resourceType })
+          .pipe(Effect.flip)
+        expect(err._tag, resourceType).toBe("BlanketRuleRefused")
+      }
+
+      // Naming ONE resource is fine — that is the whole point.
+      const ok = yield* roles.addRule({
         roleId: role.id,
         effect: "allow",
-        actions: ["create", "edit", "share"],
+        actions: ["view"],
         resourceType: "concept",
+        resourceId: randomUUID(),
       })
+      expect(ok).toBeTruthy()
+    }).pipe(Effect.provide(testLayer(newOrgId()))),
+  )
 
-      // The grid shows view/share/configure and sets only `view`.
-      yield* roles.setScopedRules({
+  it.effect("a blanket DENY is still allowed — a hard block is legible", () =>
+    Effect.gen(function* () {
+      const roles = yield* AccessRoleService
+      const role = yield* roles.create({ name: "Contractor" })
+      const id = yield* roles.addRule({
         roleId: role.id,
+        effect: "deny",
+        actions: ["view"],
         resourceType: "concept",
-        entries: [],
-        blanket: { allow: ["view"], deny: [] },
-        managedActions: ["view", "share", "configure"],
       })
-
-      const after = (yield* roles.rulesOf(role.id)).filter(
-        (r) => r.resourceType === "concept" && !r.resourceId && !r.conceptId,
-      )
-      const allowed = new Set(after.flatMap((r) => r.actions))
-      // Chosen in the grid…
-      expect(allowed.has("view")).toBe(true)
-      // …never shown, so carried over untouched…
-      expect(allowed.has("create")).toBe(true)
-      expect(allowed.has("edit")).toBe(true)
-      // …and shown but left at Inherit, so genuinely cleared.
-      expect(allowed.has("share")).toBe(false)
+      expect(id).toBeTruthy()
     }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
 
   /**
-   * THE WILDCARD GUARD. Owner and Admin hold `*`. A grid renders that as Allow across
-   * the row, so an innocent Save would rewrite the wildcard into whatever handful of
-   * actions that grid happens to list — silently stripping every other power the role
-   * has over that resource. The wildcard is therefore never rewritten.
+   * THE WILDCARD EXEMPTION. Owner/Admin hold `*`, which means "every action, present
+   * and future". They are `full_access` and are therefore the one kind of role a
+   * blanket allow is correct for — and materialization skips them, so the wildcard is
+   * never expanded into a frozen list of today's actions.
    */
-  it.effect("a wildcard default survives a save from a grid that can't express it", () =>
+  it.effect("a full-access role keeps its wildcard and may still hold a blanket rule", () =>
     Effect.gen(function* () {
       const roles = yield* AccessRoleService
       yield* roles.ensureBuiltins
@@ -390,18 +401,17 @@ describe("policy loading", () => {
       const before = (yield* roles.rulesOf(admin!.id)).filter((r) => r.resourceType === "concept")
       expect(before.some((r) => r.actions.includes("*"))).toBe(true)
 
-      yield* roles.setScopedRules({
+      // Exempt from the guard: a blanket allow is exactly what full access IS.
+      const id = yield* roles.addRule({
         roleId: admin!.id,
+        effect: "allow",
+        actions: ["view"],
         resourceType: "concept",
-        entries: [],
-        blanket: { allow: ["view"], deny: [] },
-        managedActions: ["view", "share", "configure"],
       })
+      expect(id).toBeTruthy()
 
       const after = (yield* roles.rulesOf(admin!.id)).filter((r) => r.resourceType === "concept")
-      // Still `*`, and NOT joined by a redundant explicit row for what it already grants.
       expect(after.some((r) => r.actions.includes("*"))).toBe(true)
-      expect(after.length).toBe(before.length)
     }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
 

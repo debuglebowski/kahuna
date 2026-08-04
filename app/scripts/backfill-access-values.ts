@@ -279,17 +279,68 @@ async function main() {
             )
             continue
           }
+          // THE TEMPLATE IS COMPUTED, NOT COPIED.
+          //
+          // The blanket rule's action list is the wrong answer: presets withhold a
+          // blanket `view` on purpose (it used to outrank the `visibility` column),
+          // so copying it verbatim produces a template under which every resource
+          // created afterwards is invisible — silently, and to members only.
+          //
+          // What a NEW resource grants is what the OLD default granted it: a fresh
+          // concept was `visibility='visible'`, a fresh dashboard was org-shared. So
+          // compute that, and union in whatever ungridded actions the blanket carried
+          // (`create`/`edit`) so nothing is lost.
+          const fresh = ACTIONS_BY_TYPE[r.resource_type]!.filter((a) =>
+            r.resource_type === "concept" || r.resource_type === "record"
+              ? a === "view" || (a !== "configure" && a !== "delete") || isAdminRole(mRole)
+              : a !== "delete" || isAdminRole(mRole),
+          )
+          const templateActions = [...new Set<string>([...r.actions, ...fresh])]
           if (!DRY) {
             await client.query(
               `INSERT INTO access_defaults
                  (org_id, role_id, resource_type, effect, actions, created_by)
                VALUES ($1, $2, $3, 'allow', $4, 'backfill')
-               ON CONFLICT (role_id, resource_type, effect) DO NOTHING`,
-              [orgId, role.id, r.resource_type, [...r.actions]],
+               ON CONFLICT (role_id, resource_type, effect)
+               DO UPDATE SET actions = (
+                 SELECT array_agg(DISTINCT a) FROM unnest(
+                   access_defaults.actions || EXCLUDED.actions) AS a),
+                 updated_at = now()`,
+              [orgId, role.id, r.resource_type, templateActions],
             )
             await client.query(`DELETE FROM access_rules WHERE id = $1`, [r.id])
           }
           counts.templates++
+        }
+      }
+
+      // ── TEMPLATE REPAIR ─────────────────────────────────────────────────────
+      // Idempotent, and separate from the block above because that one only fires
+      // while a blanket rule still exists to convert. A template missing `view` is
+      // the single worst state this migration can leave behind — every resource
+      // created afterwards is invisible to that role, with nothing on screen saying
+      // so — and a re-run must be able to fix it without the original blanket row.
+      for (const role of roles.rows) {
+        if (role.full_access) continue
+        const mRole = membershipRoleFor(role.key)
+        for (const [type, actions] of Object.entries(ACTIONS_BY_TYPE)) {
+          const fresh = actions.filter((a) =>
+            a === "configure" || a === "delete" ? isAdminRole(mRole) : true,
+          )
+          if (fresh.length === 0) continue
+          if (!DRY) {
+            await client.query(
+              `INSERT INTO access_defaults
+                 (org_id, role_id, resource_type, effect, actions, created_by)
+               VALUES ($1, $2, $3, 'allow', $4, 'backfill')
+               ON CONFLICT (role_id, resource_type, effect)
+               DO UPDATE SET actions = (
+                 SELECT array_agg(DISTINCT a) FROM unnest(
+                   access_defaults.actions || EXCLUDED.actions) AS a),
+                 updated_at = now()`,
+              [orgId, role.id, type, fresh],
+            )
+          }
         }
       }
 

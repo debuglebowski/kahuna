@@ -168,4 +168,54 @@ describe("access defaults — the creation template", () => {
       expect(rows[0]!.n).toBe(0)
     }).pipe(Effect.provide(testLayer(org, ACTOR)))
   })
+
+  /**
+   * ── THE INVISIBLE-BY-DEFAULT GUARD ─────────────────────────────────────────
+   *
+   * A seeded template MUST grant `view`, or every concept created from then on is
+   * unreadable by that role — forever, with nothing on screen to explain it.
+   *
+   * This is not hypothetical. The presets deliberately withhold a BLANKET `view`
+   * (back when read access came from the `visibility` column, a blanket view rule
+   * would outrank it — that is what THE BLANKET-VIEW GUARD pinned). Deriving the
+   * template from those rules therefore produced a template with no `view` at all:
+   * every EXISTING concept read Yes and every FUTURE one would have read No. The
+   * permissions grid is what caught it, because the two rows disagreed on screen.
+   */
+  it.effect("the seeded template grants view, so new resources are not born invisible", () => {
+    const org = newOrgId()
+    return Effect.gen(function* () {
+      const roles = yield* AccessRoleService
+      const defaults = yield* AccessDefaultsService
+      yield* roles.ensureBuiltins
+      const member = yield* roles.getByKey("member")
+
+      const mine = (yield* defaults.list()).filter((d) => d.roleId === member!.id)
+      for (const resourceType of ["concept", "record"] as const) {
+        const t = mine.find((d) => d.resourceType === resourceType)
+        expect(t, `no ${resourceType} template`).toBeDefined()
+        expect(t!.actions, `${resourceType} template must grant view`).toContain("view")
+      }
+    }).pipe(Effect.provide(testLayer(org, ACTOR)))
+  })
+
+  it.effect("so a concept created after seeding IS readable by that role", () => {
+    const org = newOrgId()
+    return Effect.gen(function* () {
+      const roles = yield* AccessRoleService
+      const concepts = yield* ConceptService
+      const sql = yield* PgClient.PgClient
+      yield* roles.ensureBuiltins
+      const member = yield* roles.getByKey("member")
+
+      const concept = yield* concepts.create({ name: `Deal ${randomUUID().slice(0, 8)}` })
+
+      const rows = yield* sql<{ readonly actions: ReadonlyArray<string> }>`
+        SELECT actions FROM access_rules
+        WHERE org_id = ${org} AND role_id = ${member!.id}
+          AND resource_type = 'concept' AND resource_id = ${concept.id}`
+      expect(rows.length).toBe(1)
+      expect(rows[0]!.actions).toContain("view")
+    }).pipe(Effect.provide(testLayer(org, ACTOR)))
+  })
 })

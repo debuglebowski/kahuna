@@ -17,7 +17,7 @@ import {
 import { EventStore } from "./EventStore"
 import { FieldService } from "./FieldService"
 import { OrgContext } from "./OrgContext"
-import { type RelationRow, toRelation, toVisibility } from "./rows"
+import { type RelationRow, toRelation } from "./rows"
 
 export interface CreateRelationInput {
   /** The relation field def (kind=relation) this edge realises. */
@@ -102,9 +102,6 @@ export class RelationService extends Effect.Service<RelationService>()("engine/R
     const assertTargetReadable = (conceptId: string, targetId: string) =>
       Effect.gen(function* () {
         const scope = yield* OrgContext
-        const rows = yield* sql<{ readonly visibility: string | null }>`
-          SELECT visibility FROM concepts WHERE id = ${conceptId} LIMIT 1`
-        const _visibility = toVisibility(rows[0]?.visibility ?? null)
         if (!scopeCanReadConcept(scope, conceptId))
           return yield* Effect.fail(new InstanceNotFound({ instanceId: targetId }))
       })

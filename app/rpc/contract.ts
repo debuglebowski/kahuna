@@ -2555,17 +2555,6 @@ export class KingsmakerRpcs extends RpcGroup.make(
       resourceType: AccessResourceType,
       /** "concept" scopes by CONTAINER — the Records grid, whose rows are concepts. */
       scopeBy: Schema.optional(Schema.Literal("resource", "concept")),
-      /** The area's default: the untargeted rule covering every resource of the type.
-       *  Absent leaves it alone; present replaces it, bounded by `managedActions`. */
-      blanket: Schema.optional(
-        Schema.Struct({
-          allow: Schema.Array(AccessActionName),
-          deny: Schema.Array(AccessActionName),
-        }),
-      ),
-      /** The actions the caller's grid shows — anything outside it is preserved on
-       *  the blanket rule rather than dropped. */
-      managedActions: Schema.optional(Schema.Array(AccessActionName)),
       entries: Schema.Array(
         Schema.Struct({
           resourceId: Schema.String,
@@ -2580,6 +2569,30 @@ export class KingsmakerRpcs extends RpcGroup.make(
   Rpc.make("removeRule", {
     payload: { ruleId: Schema.String },
     success: Schema.Struct({ id: Schema.String }),
+    error: RpcError,
+  }),
+  /** THE CREATION TEMPLATE: what a NEWLY created resource of each type grants each
+   *  role. Not a rule — nothing consults it at request time; it is copied into real
+   *  rules when a concept/dashboard/view/automation is created. */
+  Rpc.make("listAccessDefaults", {
+    success: Schema.Array(
+      Schema.Struct({
+        roleId: Schema.String,
+        resourceType: AccessResourceTypeOut,
+        actions: Schema.Array(Schema.String),
+      }),
+    ),
+    error: RpcError,
+  }),
+  /** Set one role's template for one type. Empty `actions` clears it — a new
+   *  resource then grants that role nothing. */
+  Rpc.make("setAccessDefault", {
+    payload: {
+      roleId: Schema.String,
+      resourceType: AccessResourceType,
+      actions: Schema.Array(AccessActionName),
+    },
+    success: Schema.Struct({ ok: Schema.Boolean }),
     error: RpcError,
   }),
   /** "What can this member see and do, and what grants it?" Anyone may ask about

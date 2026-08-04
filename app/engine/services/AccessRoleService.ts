@@ -2,6 +2,7 @@ import { PgClient } from "@effect/sql-pg"
 import { Effect } from "effect"
 import type { AccessAction, AccessCondition, AccessResourceType } from "../domain/access"
 import { ACTION_ALL } from "../domain/access"
+import { BlanketRuleRefused } from "../errors"
 import { TEMPLATED_TYPES } from "./AccessDefaultsService"
 import { EventStore } from "./EventStore"
 import { OrgContext } from "./OrgContext"
@@ -199,14 +200,22 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
           // THE CREATION TEMPLATE for this preset: what a newly created concept,
           // dashboard, view or automation grants it. Full-access roles get none —
           // their blanket `*` already covers everything, materialized or not.
+          //
+          // `view` IS ADDED HERE and is not in the preset's rules. That is not an
+          // oversight being papered over — the presets deliberately withhold a blanket
+          // `view` (it used to outrank the `visibility` column, which is what THE
+          // BLANKET-VIEW GUARD pinned). With the column gone, read access IS the rule,
+          // so a template without `view` means every concept created from then on is
+          // invisible to members, forever, with nothing on screen to explain it.
           if (!fullAccess) {
             for (const rule of spec.rules) {
               if (rule.effect !== "allow" || !TEMPLATED_TYPES.includes(rule.resourceType)) continue
+              const actions = [...new Set<string>([...rule.actions, "view"])]
               yield* sql`
                 INSERT INTO access_defaults
                   (org_id, role_id, resource_type, effect, actions, created_by)
                 VALUES (${orgId}, ${roleId}, ${rule.resourceType}, 'allow',
-                        ${[...rule.actions]}, ${actor})
+                        ${actions}, ${actor})
                 ON CONFLICT (role_id, resource_type, effect) DO NOTHING`
             }
           }
@@ -386,6 +395,51 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
         }).pipe(Effect.orDie)
 
       /** Add a rule to a role. */
+      /**
+       * ── THE BLANKET GUARD ────────────────────────────────────────────────────
+       *
+       * Refuse an untargeted ALLOW on a type that carries per-resource values.
+       *
+       * This replaces THE BLANKET-VIEW GUARD, which used to be a test asserting the
+       * Member preset grants no blanket `view`. That test protected a real property —
+       * read access is never granted wholesale by accident — and the property still
+       * matters, but its old subject is gone: read access IS rules now, so a blanket
+       * allow is no longer "outranking the visibility column", it is silently
+       * granting every present AND FUTURE resource of that type, invisibly, in a way
+       * no grid cell can show.
+       *
+       * The template (`access_defaults`) is how "new ones start allowed" is said, and
+       * it is applied at creation where it can be seen. Full-access roles are exempt:
+       * a blanket `*` is exactly what they are.
+       *
+       * Deny is unaffected — a blanket deny is a legitimate, and legible, hard block.
+       */
+      const assertNotBlanketAllow = (input: {
+        readonly roleId: string
+        readonly effect: "allow" | "deny"
+        readonly resourceType: AccessResourceType
+        readonly resourceId?: string | null
+        readonly conceptId?: string | null
+      }) =>
+        Effect.gen(function* () {
+          if (input.effect !== "allow") return
+          if (input.resourceId || input.conceptId) return
+          if (!TEMPLATED_TYPES.includes(input.resourceType)) return
+          const { orgId } = yield* OrgContext
+          const rows = yield* sql<{ readonly full_access: boolean }>`
+            SELECT full_access FROM access_roles
+            WHERE org_id = ${orgId} AND id = ${input.roleId} LIMIT 1`
+          if (rows[0]?.full_access) return
+          return yield* Effect.fail(
+            new BlanketRuleRefused({
+              resourceType: input.resourceType,
+              message:
+                `A rule covering every ${input.resourceType} at once can't be shown in the ` +
+                `grid. Set the default for new ones instead, or name a specific one.`,
+            }),
+          )
+        })
+
       const addRule = (input: {
         readonly roleId: string
         readonly effect: "allow" | "deny"
@@ -396,6 +450,7 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
         readonly condition?: AccessCondition | null
       }) =>
         Effect.gen(function* () {
+          yield* assertNotBlanketAllow(input)
           const { orgId, actor } = yield* OrgContext
           const rows = yield* sql<{ readonly id: string }>`
             INSERT INTO access_rules
@@ -422,7 +477,7 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
           })
           yield* policies.bump(orgId)
           return { id }
-        }).pipe(Effect.orDie)
+        })
 
       /**
        * Replace a rule in place.
@@ -535,23 +590,6 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
           readonly allow: ReadonlyArray<AccessAction>
           readonly deny: ReadonlyArray<AccessAction>
         }>
-        /**
-         * The area's DEFAULT: the untargeted rule covering every resource of this
-         * type. Present only when the caller is editing it, absent leaves it alone.
-         */
-        readonly blanket?: {
-          readonly allow: ReadonlyArray<AccessAction>
-          readonly deny: ReadonlyArray<AccessAction>
-        }
-        /**
-         * The actions the caller's grid can actually SEE, which bounds what it may
-         * overwrite on the blanket rule.
-         *
-         * Without it a grid showing five columns would rewrite a blanket rule holding
-         * seven actions down to its own five, silently dropping the other two. So the
-         * blanket is rebuilt as (what the grid chose) ∪ (what it never showed).
-         */
-        readonly managedActions?: ReadonlyArray<AccessAction>
       }) =>
         sql
           .withTransaction(
@@ -588,49 +626,6 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
                             ${byConcept ? null : e.resourceId},
                             ${byConcept ? e.resourceId : null},
                             ${actor})`
-                }
-              }
-              if (input.blanket) {
-                const managed = new Set<string>(input.managedActions ?? [])
-                const existing = yield* sql<{
-                  readonly id: string
-                  readonly effect: "allow" | "deny"
-                  readonly actions: ReadonlyArray<string>
-                }>`
-                  SELECT id, effect, actions FROM access_rules
-                  WHERE org_id = ${orgId} AND role_id = ${input.roleId}
-                    AND resource_type = ${input.resourceType}
-                    AND resource_id IS NULL AND concept_id IS NULL AND condition IS NULL`
-                // A rule holding `*` is left EXACTLY as it is. Rewriting a wildcard
-                // into an explicit list is how a role like Admin would quietly lose
-                // every action the editing grid happens not to show.
-                const wildcard = existing.filter((r) => r.actions.includes(ACTION_ALL))
-                const replaceable = existing.filter((r) => !r.actions.includes(ACTION_ALL))
-                if (replaceable.length > 0) {
-                  yield* sql`DELETE FROM access_rules WHERE ${sql.in(
-                    "id",
-                    replaceable.map((r) => r.id),
-                  )}`
-                }
-                for (const [effect, chosen] of [
-                  ["allow", input.blanket.allow],
-                  ["deny", input.blanket.deny],
-                ] as const) {
-                  // Actions the grid never showed, carried over untouched.
-                  const kept = replaceable
-                    .filter((r) => r.effect === effect)
-                    .flatMap((r) => r.actions)
-                    .filter((a) => !managed.has(a))
-                  // …and anything a surviving wildcard of the same effect already
-                  // grants, which would otherwise be inserted as a redundant row.
-                  const covered = wildcard.some((r) => r.effect === effect)
-                  const next = [...new Set([...(covered ? [] : chosen), ...kept])]
-                  if (next.length === 0) continue
-                  yield* sql`
-                    INSERT INTO access_rules
-                      (org_id, role_id, effect, actions, resource_type, created_by)
-                    VALUES (${orgId}, ${input.roleId}, ${effect}, ${next},
-                            ${input.resourceType}, ${actor})`
                 }
               }
               yield* events.append({

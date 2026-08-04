@@ -355,6 +355,11 @@ function RuleEditor({ role, onClose }: { role: AccessRole; onClose: () => void }
   // Not gated on the selected type: the table needs names for rules that are already
   // there, whatever the form happens to be set to.
   const concepts = useQuery({ queryKey: ["concepts"], queryFn: () => api.listConcepts() })
+  // The creation templates for every role; filtered to this one before use.
+  const defaults = useQuery({
+    queryKey: ["accessDefaults"],
+    queryFn: () => api.listAccessDefaults(),
+  })
   // The other grids' rows. All four load with the modal rather than on tab change: they
   // are small, already-cached lists, and a spinner between rail clicks makes an
   // overview screen feel like navigation.
@@ -480,9 +485,10 @@ function RuleEditor({ role, onClose }: { role: AccessRole; onClose: () => void }
               itemsLabel={current.itemsLabel}
               actions={ACTIONS.filter((a) => current.actions.includes(a.id))}
               rules={rules.data ?? []}
+              defaults={(defaults.data ?? []).filter((d) => d.roleId === role.id)}
               note={current.note}
               resourceNoun={current.resourceNoun}
-              loading={rules.isPending || itemsFor(current).busy}
+              loading={rules.isPending || defaults.isPending || itemsFor(current).busy}
             />
           ) : (
             <>
