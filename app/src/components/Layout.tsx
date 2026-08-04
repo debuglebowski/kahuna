@@ -86,7 +86,8 @@ export function usePageChrome({ fullWidth = false, fillHeight = false }: PageChr
 
 /** The settings nav as resolved sections, so {@link ViewNav} renders it like
  *  any other view. Admin-only entries are hidden for non-admin members (the
- *  route guard in SettingsLayout backs this up). */
+ *  route guard in SettingsLayout backs this up), and a group left with nothing
+ *  a member may see is dropped rather than rendered as a bare heading. */
 function useSettingsSections(pathname: string): ResolvedSection[] {
   const { admin } = useIsAdmin()
   return useMemo(
@@ -105,7 +106,7 @@ function useSettingsSections(pathname: string): ResolvedSection[] {
             to: `/settings/${t.to}`,
             active: pathname.startsWith(`/settings/${t.to}`),
           })),
-      })),
+      })).filter((s) => s.entries.length > 0),
     [admin, pathname],
   )
 }

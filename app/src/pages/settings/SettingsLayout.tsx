@@ -46,6 +46,7 @@ export const SETTINGS_NAV: ReadonlyArray<SettingsGroup> = [
     title: "Account",
     items: [{ to: "profile", label: "Profile", admin: false, icon: <UserRound size={16} /> }],
   },
+  // Who gets into the org, what they may do, and what it is wired to.
   {
     title: "Organization",
     items: [
@@ -53,7 +54,24 @@ export const SETTINGS_NAV: ReadonlyArray<SettingsGroup> = [
       // `admin` is the coarse route gate; the page itself narrows writes to the
       // OWNER, because this decides who can get into the org at all.
       { to: "authentication", label: "Authentication", admin: true, icon: <KeyRound size={16} /> },
+      // Members renders at TWO urls from one implementation: here, and at its own
+      // top-level GLOBAL_NAV slot. Both are real routes (see App.tsx) — not links
+      // out — so entering through settings keeps the settings sidebar. `dual`
+      // marks them for the route guard below. Automations is the other one.
+      { to: "members", label: "Members", admin: false, icon: <Users size={16} />, dual: true },
+      // The rules inside a role are the sensitive half of the access model, so this
+      // tab is admin-only — unlike Members, where role NAMES are org vocabulary.
+      { to: "roles", label: "Roles", admin: true, icon: <ShieldCheck size={16} /> },
+      { to: "integrations", label: "Integrations", admin: false, icon: <Plug size={16} /> },
+    ],
+  },
+  // What the org's data, views and behaviour look like.
+  {
+    title: "Workspace",
+    items: [
       { to: "concepts", label: "Concepts", admin: false, icon: <Shapes size={16} /> },
+      { to: "labels", label: "Labels", admin: false, icon: <Tags size={16} /> },
+      { to: "tasks", label: "Tasks", admin: false, icon: <ListTodo size={16} /> },
       {
         to: "dashboards",
         label: "Dashboards",
@@ -62,16 +80,6 @@ export const SETTINGS_NAV: ReadonlyArray<SettingsGroup> = [
         fillHeight: true,
       },
       { to: "sidebar", label: "Sidebar", admin: false, icon: <PanelLeft size={16} /> },
-      { to: "tasks", label: "Tasks", admin: false, icon: <ListTodo size={16} /> },
-      { to: "labels", label: "Labels", admin: false, icon: <Tags size={16} /> },
-      // Members + Automations each render at TWO urls from one implementation:
-      // here, and at their own top-level GLOBAL_NAV slot. Both are real routes
-      // (see App.tsx) — not links out — so entering through settings keeps the
-      // settings sidebar. `dual` marks them for the route guard below.
-      { to: "members", label: "Members", admin: false, icon: <Users size={16} />, dual: true },
-      // The rules inside a role are the sensitive half of the access model, so this
-      // tab is admin-only — unlike Members, where role NAMES are org vocabulary.
-      { to: "roles", label: "Roles", admin: true, icon: <ShieldCheck size={16} /> },
       {
         to: "automations",
         label: "Automations",
@@ -79,7 +87,6 @@ export const SETTINGS_NAV: ReadonlyArray<SettingsGroup> = [
         icon: <Workflow size={16} />,
         dual: true,
       },
-      { to: "integrations", label: "Integrations", admin: false, icon: <Plug size={16} /> },
     ],
   },
 ]
