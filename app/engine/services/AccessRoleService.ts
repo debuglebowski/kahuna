@@ -267,7 +267,7 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
         Effect.gen(function* () {
           const { orgId } = yield* OrgContext
           const rows = yield* sql<AccessRoleRow>`
-            SELECT r.id, r.key, r.name, r.description, r.builtin, r.position
+            SELECT r.id, r.key, r.name, r.description, r.builtin, r.full_access, r.position
             FROM access_roles r
             JOIN access_role_actors a ON a.role_id = r.id AND a.org_id = r.org_id
             WHERE r.org_id = ${orgId} AND a.actor_id = ${actorId}
