@@ -58,49 +58,93 @@ describe("url-guard shape checks", () => {
     expect(isBlockedAddress("8.8.8.8")).toBe(false)
   })
 
-  const withHatch = (fn: () => void): void => {
-    const old = process.env.AUTOMATION_WEBHOOK_ALLOW_PRIVATE
-    process.env.AUTOMATION_WEBHOOK_ALLOW_PRIVATE = "1"
+  const withAllowed = (hosts: string, fn: () => void): void => {
+    const old = process.env.AUTOMATION_WEBHOOK_ALLOW_HOSTS
+    process.env.AUTOMATION_WEBHOOK_ALLOW_HOSTS = hosts
     try {
       fn()
     } finally {
-      if (old === undefined) delete process.env.AUTOMATION_WEBHOOK_ALLOW_PRIVATE
-      else process.env.AUTOMATION_WEBHOOK_ALLOW_PRIVATE = old
+      if (old === undefined) delete process.env.AUTOMATION_WEBHOOK_ALLOW_HOSTS
+      else process.env.AUTOMATION_WEBHOOK_ALLOW_HOSTS = old
     }
   }
 
-  it("honours the explicit self-host escape hatch", () => {
-    withHatch(() => {
+  it("permits a host the operator allowlisted", () => {
+    // Only forms the SHAPE check is decisive about: literal IPs and `.local`.
+    // A bare `http://n8n:5678` passes this check listed or not — nothing textual
+    // says where `n8n` points, so it is DNS that decides. See the resolve suite.
+    expect(() => assertPublicUrlShape("http://n8n:5678/hook")).not.toThrow()
+
+    withAllowed("10.0.0.5,[fd00::1],nas.local", () => {
       expect(() => assertPublicUrlShape("http://10.0.0.5/hook")).not.toThrow()
-      expect(() => assertPublicUrlShape("http://127.0.0.1:5678/hook")).not.toThrow()
       expect(() => assertPublicUrlShape("http://[fd00::1]/hook")).not.toThrow()
+      expect(() => assertPublicUrlShape("http://nas.local/hook")).not.toThrow()
     })
   })
 
-  it("still refuses the metadata service under the escape hatch", () => {
-    // The hatch is for the operator's own network. This address is not that: it
-    // vends IAM credentials for the whole cloud account, and an org admin who can
-    // write an automation must not reach it by flipping one deploy variable.
-    withHatch(() => {
+  it("permits ONLY the listed host, not the rest of its network", () => {
+    // The whole point of the allowlist over the old blanket flag: needing one
+    // internal target must not open every other service on the same network.
+    withAllowed("10.0.0.5", () => {
+      expect(() => assertPublicUrlShape("http://10.0.0.6/hook")).toThrow(UnsafeUrlError)
+      expect(() => assertPublicUrlShape("http://192.168.1.1/hook")).toThrow(UnsafeUrlError)
+      expect(() => assertPublicUrlShape("http://[fd00::1]/hook")).toThrow(UnsafeUrlError)
+    })
+  })
+
+  it("refuses metadata and loopback even when they are allowlisted", () => {
+    // Listing these is either a mistake or an attempt to launder a pivot through
+    // a deploy variable. Metadata vends IAM credentials for the whole cloud
+    // account; loopback is the container's own internal-only surface.
+    withAllowed("169.254.169.254,127.0.0.1,localhost,[::1],0.0.0.0,[fd00:ec2::254]", () => {
       for (const url of [
         "http://169.254.169.254/latest/meta-data/iam/security-credentials/",
         "http://[::ffff:169.254.169.254]/", // normalized to ::ffff:a9fe:a9fe
         "http://169.254.0.1/", // rest of link-local goes with it
         "http://[fd00:ec2::254]/", // IPv6-only EC2
+        "http://127.0.0.1:5678/hook",
+        "http://localhost:3100/hook",
+        "http://[::1]/",
+        "http://0.0.0.0/",
       ]) {
         expect(() => assertPublicUrlShape(url)).toThrow(UnsafeUrlError)
       }
     })
   })
 
-  it("does not enable the hatch for anything but an exact 1", () => {
-    const old = process.env.AUTOMATION_WEBHOOK_ALLOW_PRIVATE
-    for (const value of ["true", "yes", "0", ""]) {
-      process.env.AUTOMATION_WEBHOOK_ALLOW_PRIVATE = value
-      expect(() => assertPublicUrlShape("http://10.0.0.5/hook")).toThrow(UnsafeUrlError)
+  it("tolerates a scheme, port or path on an allowlist entry", () => {
+    // A mis-typed entry fails closed and silently, so the forgiving parse is
+    // what keeps the operator from debugging a guard that looks simply broken.
+    // Asserted on `.local` and a literal IP because those are the forms the
+    // shape check actually gates — a bare hostname would pass either way.
+    for (const entry of [
+      "http://nas.local:8080/hook",
+      "nas.local:8080",
+      " NAS.LOCAL ",
+      "nas.local/",
+    ]) {
+      withAllowed(entry, () => {
+        expect(() => assertPublicUrlShape("http://nas.local/hook")).not.toThrow()
+      })
     }
-    if (old === undefined) delete process.env.AUTOMATION_WEBHOOK_ALLOW_PRIVATE
-    else process.env.AUTOMATION_WEBHOOK_ALLOW_PRIVATE = old
+    for (const entry of ["http://10.0.0.5:8080/", "10.0.0.5:8080", " 10.0.0.5 "]) {
+      withAllowed(entry, () => {
+        expect(() => assertPublicUrlShape("http://10.0.0.5/hook")).not.toThrow()
+      })
+    }
+    // The trailing `:1` of a bare IPv6 entry is not a port.
+    withAllowed("fd00::1", () => {
+      expect(() => assertPublicUrlShape("http://[fd00::1]/hook")).not.toThrow()
+    })
+  })
+
+  it("treats an empty or unset allowlist as allowing nothing", () => {
+    for (const value of ["", " ", ",", ",,"]) {
+      withAllowed(value, () => {
+        expect(() => assertPublicUrlShape("http://10.0.0.5/hook")).toThrow(UnsafeUrlError)
+      })
+    }
+    expect(() => assertPublicUrlShape("http://10.0.0.5/hook")).toThrow(UnsafeUrlError)
   })
 })
 
@@ -111,28 +155,26 @@ describe("url-guard DNS resolution", () => {
     await expect(resolvePublicUrl("http://localtest.me/hook")).rejects.toThrow(UnsafeUrlError)
   })
 
-  it("still resolves under the escape hatch, allowing private but not metadata", async () => {
-    // The hatch must not become "skip DNS": a hostname pointing at the metadata
-    // service is the exact attack this layer exists for, and it works against a
-    // deployment that allows its own private network too. Checked at the address
-    // level because no stable public hostname resolves to 169.254.169.254.
+  it("still resolves an allowlisted hostname, and refuses where it lands", async () => {
+    // Allowlisting a NAME must not become "skip DNS": the listed host is exactly
+    // the one worth repointing, and loopback stays refused however it is reached.
+    // Address-level assertions too, because no stable public hostname resolves to
+    // 169.254.169.254 for the metadata half of this.
     expect(isMetadataAddress("169.254.169.254")).toBe(true)
     expect(isMetadataAddress("::ffff:a9fe:a9fe")).toBe(true)
     expect(isMetadataAddress("fd00:ec2::254")).toBe(true)
     expect(isMetadataAddress("10.0.0.5")).toBe(false)
     expect(isMetadataAddress("8.8.8.8")).toBe(false)
 
-    const old = process.env.AUTOMATION_WEBHOOK_ALLOW_PRIVATE
-    process.env.AUTOMATION_WEBHOOK_ALLOW_PRIVATE = "1"
+    const old = process.env.AUTOMATION_WEBHOOK_ALLOW_HOSTS
+    process.env.AUTOMATION_WEBHOOK_ALLOW_HOSTS = "localtest.me"
     try {
-      // Resolves to loopback — refused above, permitted here. Not asserted as
-      // 127.0.0.1: `verbatim: true` keeps the resolver's own order, and this host
-      // answers ::1 first on a v6-capable machine.
-      const { address } = await resolvePublicUrl("http://localtest.me/hook")
-      expect(isBlockedAddress(address)).toBe(true)
+      // A public name whose A record is 127.0.0.1. Listed by the operator and
+      // still refused — the old blanket flag permitted exactly this.
+      await expect(resolvePublicUrl("http://localtest.me/hook")).rejects.toThrow(UnsafeUrlError)
     } finally {
-      if (old === undefined) delete process.env.AUTOMATION_WEBHOOK_ALLOW_PRIVATE
-      else process.env.AUTOMATION_WEBHOOK_ALLOW_PRIVATE = old
+      if (old === undefined) delete process.env.AUTOMATION_WEBHOOK_ALLOW_HOSTS
+      else process.env.AUTOMATION_WEBHOOK_ALLOW_HOSTS = old
     }
   })
 
