@@ -158,6 +158,19 @@ const uploadRoute = async (req: Request, owner: UploadOwner): Promise<Response> 
  * Everything else goes through the typed RPC endpoint (`/api/rpc`). Returns null
  * when nothing matches.
  */
+/**
+ * Does this path belong to BetterAuth's own handler (basePath `/api/auth`)?
+ *
+ * The boundary is load-bearing. A bare `startsWith("/api/auth")` also swallows
+ * `/api/auth-config/*` — our OWN routes — and hands them to BetterAuth, which
+ * 404s an unknown path with an empty body. That made the entire Settings →
+ * Authentication page dead in the browser while every test stayed green,
+ * because the tests call the handlers directly and never cross this dispatch.
+ * Any future `/api/auth<something>` route needs the same care.
+ */
+export const isBetterAuthPath = (pathname: string): boolean =>
+  pathname === "/api/auth" || pathname.startsWith("/api/auth/")
+
 export const handleApi = async (req: Request): Promise<Response | null> => {
   const url = new URL(req.url)
   const p = url.pathname

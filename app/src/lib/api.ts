@@ -792,7 +792,15 @@ export const api = {
   // ── Org authentication config (SSO + sign-in methods) ───────────────────────
   getAuthConfig: async (): Promise<AuthConfig> => {
     const res = await fetch("/api/auth-config/sso")
-    if (!res.ok) throw new Error("Failed to load authentication settings")
+    if (!res.ok) {
+      // Say WHICH failure. A bare message here hid a routing bug that 404'd this
+      // endpoint (see server/router.ts `isBetterAuthPath`) behind a message that
+      // read like a permissions or database problem.
+      const body = (await res.json().catch(() => null)) as { error?: string } | null
+      throw new Error(
+        `Failed to load authentication settings (${body?.error ?? `HTTP ${res.status}`})`,
+      )
+    }
     return (await res.json()) as AuthConfig
   },
   saveSsoProvider: async (input: SsoProviderInput): Promise<void> => {

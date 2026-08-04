@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto"
 import { describe, expect, it } from "vitest"
 import { auth } from "./auth"
 import { createUserDirect } from "./provision"
-import { handleApi } from "./router"
+import { handleApi, isBetterAuthPath } from "./router"
 import { runEngineOrThrow, systemScope } from "./runtime"
 import { deactivateMember, listDeactivatedMembers } from "./use-cases"
 
@@ -192,5 +192,33 @@ describe("DELETE /api/org/members/:userId (purge a deactivated member)", () => {
     expect(
       (markers as ReadonlyArray<{ userId: string }>).find((m) => m.userId === userId),
     ).toBeUndefined()
+  })
+})
+
+/**
+ * The dispatch in index.ts, not the handlers. Every other test in the suite
+ * calls a handler directly, so a path that never REACHES `handleApi` stays
+ * invisible to them — which is exactly how `/api/auth-config/*` shipped dead
+ * (BetterAuth's `startsWith("/api/auth")` ate it and 404'd).
+ */
+describe("path ownership: BetterAuth vs the app router", () => {
+  it("claims only BetterAuth's own basePath, on a boundary", () => {
+    expect(isBetterAuthPath("/api/auth")).toBe(true)
+    expect(isBetterAuthPath("/api/auth/sign-in/email")).toBe(true)
+    expect(isBetterAuthPath("/api/auth/sso/callback/org-1")).toBe(true)
+
+    // Ours. A bare prefix match would hand all three to BetterAuth.
+    expect(isBetterAuthPath("/api/auth-config/sso")).toBe(false)
+    expect(isBetterAuthPath("/api/auth-config/methods")).toBe(false)
+    expect(isBetterAuthPath("/api/authz")).toBe(false)
+  })
+
+  it("routes /api/auth-config/sso to the app router", async () => {
+    const owner = await signUpAndOrg()
+    const path = "/api/auth-config/sso"
+    expect(isBetterAuthPath(path)).toBe(false)
+    const res = await handleApi(new Request(`http://localhost${path}`, { headers: owner.headers }))
+    expect(res?.status).toBe(200)
+    expect((await res?.json()) as { canEdit?: boolean }).toMatchObject({ canEdit: true })
   })
 })

@@ -6,7 +6,7 @@ import { startAutomationRunner, startAutomationScheduleTick } from "./automation
 import { startDecayTick } from "./decay-tick"
 import { startGoogleWatchRenewal } from "./google"
 import { withApiSecurityHeaders, withAppSecurityHeaders } from "./headers"
-import { handleApi } from "./router"
+import { handleApi, isBetterAuthPath } from "./router"
 import { rpcHandler } from "./rpc"
 import { AppRuntime } from "./runtime"
 import { installGracefulShutdown } from "./shutdown"
@@ -43,8 +43,10 @@ const server = Bun.serve({
     // its own and is returned untouched (see `attachmentSecurityHeaders`).
     const secure = withAppSecurityHeaders
 
-    // BetterAuth's own endpoints.
-    if (url.pathname.startsWith("/api/auth")) return secure(await auth.handler(req))
+    // BetterAuth's own endpoints. Prefix-matched on a path boundary, NOT a bare
+    // `startsWith("/api/auth")` — that also captures `/api/auth-config/*` (see
+    // `isBetterAuthPath`).
+    if (isBetterAuthPath(url.pathname)) return secure(await auth.handler(req))
 
     // Typed RPC endpoint (the application API).
     if (url.pathname === "/api/rpc") return secure(await rpcHandler(req))
