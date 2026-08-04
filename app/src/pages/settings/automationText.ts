@@ -149,6 +149,8 @@ export const TEMPLATE_TOKENS: ReadonlyArray<{ token: string; means: string }> = 
   { token: "{{trigger.from}}", means: "the previous value" },
   { token: "{{trigger.to}}", means: "the new value" },
   { token: "{{now}}", means: "the current time" },
+  // `renderTemplate` has always handled this one; it was simply never advertised.
+  { token: "{{actor}}", means: "who (or what) triggered the run" },
 ]
 
 /** A blank action of the given kind, valid enough to save. */
