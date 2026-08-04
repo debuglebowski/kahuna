@@ -114,41 +114,43 @@ describe("membership role ↔ access role stay in step", () => {
    * RULES: the irreducible-floor check counted zero `configure` holders and stopped
    * protecting the org. `verify-roles.ts` caught it; this keeps it caught.
    */
-  it("a member who joins holds the matching preset, and a role change re-points it", async () => {
+  it("a member who joins lands on the auto-assigned roles, and the mirror follows", async () => {
     const email = `sync-${randomUUID().slice(0, 8)}@example.test`
     const u = await createUserDirect({ email, password: "password12345", name: "Sync" })
     const orgId = randomUUID()
 
-    const presetsFor = async (userId: string): Promise<ReadonlyArray<string>> => {
+    const keysFor = async (userId: string): Promise<ReadonlyArray<string>> => {
       const r = await pool.query<{ key: string | null }>(
         `SELECT ro.key FROM access_role_actors a
          JOIN access_roles ro ON ro.id = a.role_id
-         WHERE a.org_id = $1 AND a.actor_id = $2`,
+         WHERE a.org_id = $1 AND a.actor_id = $2 ORDER BY ro.key`,
         [orgId, userId],
       )
       return r.rows.map((x) => x.key).filter((k): k is string => k !== null)
     }
 
     await syncMembershipRole(orgId, u.userId, "member")
-    expect(await presetsFor(u.userId)).toEqual(["member"])
+    expect(await keysFor(u.userId)).toEqual(["member"])
 
-    // A promotion must MOVE the preset, not add a second one — holding both `member`
-    // and `admin` would union their rules and quietly widen access.
+    // A promotion ADDS the mirrored role. `member` stays because it is auto-assigned
+    // — everybody holds it, and a policy is the union of its allows, so an admin
+    // holding both is exactly the admin role's rules.
     await syncMembershipRole(orgId, u.userId, "admin")
-    expect(await presetsFor(u.userId)).toEqual(["admin"])
+    expect(await keysFor(u.userId)).toEqual(["admin", "member"])
 
-    // And a demotion must actually remove the admin rules.
+    // A demotion must actually remove the admin rules.
     await syncMembershipRole(orgId, u.userId, "member")
-    expect(await presetsFor(u.userId)).toEqual(["member"])
+    expect(await keysFor(u.userId)).toEqual(["member"])
 
-    // An unrecognised role fails CLOSED to the narrowest preset.
+    // An unrecognised membership role mirrors nothing — fail closed.
     await syncMembershipRole(orgId, u.userId, "wat")
-    expect(await presetsFor(u.userId)).toEqual(["member"])
+    expect(await keysFor(u.userId)).toEqual(["member"])
   })
 
   it("a CUSTOM role assignment survives a membership role change", async () => {
-    // The sync mirrors only the three membership presets. Clobbering a custom role
-    // would silently undo an admin's deliberate grant on every promotion.
+    // The sync only ever adds auto-assigned roles and moves the mirrored ones.
+    // Clobbering a custom role would silently undo a deliberate grant on every
+    // promotion.
     const email = `sync2-${randomUUID().slice(0, 8)}@example.test`
     const u = await createUserDirect({ email, password: "password12345", name: "Sync2" })
     const orgId = randomUUID()
@@ -171,6 +173,33 @@ describe("membership role ↔ access role stay in step", () => {
        WHERE a.org_id = $1 AND a.actor_id = $2 ORDER BY ro.name`,
       [orgId, u.userId],
     )
-    expect(held.rows.map((r) => r.name)).toEqual(["Admin", "Sales"])
+    expect(held.rows.map((r) => r.name)).toEqual(["Admin", "Member", "Sales"])
+  })
+
+  /**
+   * THE AUTO-ASSIGN GUARD. Where a new member lands is a FLAG now, not a key, so
+   * moving it must actually move them. If this fails, something still hardcodes
+   * `member` and an org can no longer choose its own landing zone.
+   */
+  it("a new member lands wherever the auto-assign flag points", async () => {
+    const email = `sync3-${randomUUID().slice(0, 8)}@example.test`
+    const u = await createUserDirect({ email, password: "password12345", name: "Sync3" })
+    const orgId = randomUUID()
+    // Seed the managed roles for this org before moving the flag.
+    await syncMembershipRole(orgId, randomUUID(), "member")
+
+    await pool.query(`UPDATE access_roles SET auto_assign = false WHERE org_id = $1`, [orgId])
+    const custom = await pool.query<{ id: string }>(
+      `INSERT INTO access_roles (org_id, key, name, managed, auto_assign, position)
+       VALUES ($1, NULL, 'Contributor', false, true, 9) RETURNING id`,
+      [orgId],
+    )
+
+    await syncMembershipRole(orgId, u.userId, "member")
+    const held = await pool.query<{ role_id: string }>(
+      `SELECT role_id FROM access_role_actors WHERE org_id = $1 AND actor_id = $2`,
+      [orgId, u.userId],
+    )
+    expect(held.rows.map((r) => r.role_id)).toEqual([custom.rows[0]!.id])
   })
 })

@@ -1908,15 +1908,18 @@ export const createAutomation = (input: {
     const automations = yield* AutomationService
     const roles = yield* AccessRoleService
     const created = yield* automations.create(input)
-    // An automation is a governed ACTOR (see `actorScope`), so a fresh one starts with
-    // the full-access preset — matching what every automation had before this model,
-    // and what the backfill gave the existing ones. Narrowing it is then an opt-in.
+    // An automation is a governed ACTOR (see `actorScope`), so a fresh one has to be
+    // GIVEN access — without a role it resolves an empty policy and every run fails.
     //
-    // Without this a new automation would resolve an EMPTY policy and every run would
-    // fail — the phase would be a breaking change dressed as a refactor.
+    // Which roles is the org's decision, not a hardcoded key: every `automation`-kind
+    // role flagged auto-assign. Out of the box that is the managed "Full access" one,
+    // matching what automations had before this model; an org that wants new
+    // automations to start narrow moves the flag to a role of its own.
     yield* roles.ensureBuiltins
-    const preset = yield* roles.getByKey("automation_full")
-    if (preset) yield* roles.assign(preset.id, `${AUTOMATION_ACTOR_PREFIX}${created.id}`)
+    const actorId = `${AUTOMATION_ACTOR_PREFIX}${created.id}`
+    for (const role of yield* roles.autoAssignFor("automation")) {
+      yield* roles.assign(role.id, actorId)
+    }
     return created
   })
 
@@ -1941,11 +1944,14 @@ export const deleteAutomation = (id: string): UC<{ readonly id: string }> =>
     const automations = yield* AutomationService
     const roles = yield* AccessRoleService
     yield* automations.remove(id)
-    // Drop the automation's role assignment too. The actor can never authenticate, so
-    // a leftover row grants nothing — but they accumulate forever, and a stale
-    // assignment showing up in a "who holds this role?" list would be a lie.
-    const preset = yield* roles.getByKey("automation_full")
-    if (preset) yield* roles.unassign(preset.id, `${AUTOMATION_ACTOR_PREFIX}${id}`)
+    // Drop EVERY role the actor holds, not just the auto-assigned one — an automation
+    // that was narrowed to a custom role would otherwise leave that assignment behind.
+    // The actor can never authenticate so a leftover row grants nothing, but they
+    // accumulate forever and would show up in "who holds this role?" as a lie.
+    const actorId = `${AUTOMATION_ACTOR_PREFIX}${id}`
+    for (const role of yield* roles.rolesOf(actorId)) {
+      yield* roles.unassign(role.id, actorId)
+    }
     return { id }
   })
 
