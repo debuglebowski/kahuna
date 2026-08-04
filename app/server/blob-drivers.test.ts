@@ -8,6 +8,14 @@
  *   - azure — when Azurite is reachable. The SDK is pure JS, so Node is fine:
  *       docker run --rm -p 11000:10000 mcr.microsoft.com/azure-storage/azurite \
  *         azurite-blob --blobHost 0.0.0.0 --blobPort 10000 --skipApiVersionCheck
+ *     SHARED KEY ONLY. The driver also accepts a managed identity
+ *     (DefaultAzureCredential, the Container Apps deploy path), and nothing here
+ *     covers it, for two independent reasons: Azurite implements no Entra, so
+ *     there is no token to acquire; and the SDK refuses bearer tokens on non-TLS
+ *     URLs outright, so a http:// emulator could not be used even if it did. That
+ *     path is exercised ONLY by pointing scripts/verify-blob-drivers.ts at a real
+ *     https account with no key. Treat a green run here as saying nothing at all
+ *     about whether identity auth works.
  *   - s3    — NEVER. `S3BlobStore` builds a `Bun.S3Client`, and there is no
  *       `Bun` global here. It is covered by `scripts/verify-blob-drivers.ts`,
  *       which runs the same cases under Bun. Do not "fix" this by adding an s3

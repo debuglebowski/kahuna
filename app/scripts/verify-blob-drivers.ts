@@ -16,6 +16,13 @@
  *   azure  Azurite on :11000, or a real account via AZURE_STORAGE_*
  *            docker run --rm -p 11000:10000 mcr.microsoft.com/azure-storage/azurite \
  *              azurite-blob --blobHost 0.0.0.0 --blobPort 10000 --skipApiVersionCheck
+ *          This is the ONLY runner that can reach the managed-identity path, and
+ *          only against a real HTTPS account: set AZURE_STORAGE_ACCOUNT with NO
+ *          AZURE_STORAGE_KEY, from somewhere holding an identity (`az login`, or
+ *          on the Container App itself). No emulator run proves that path, for
+ *          two reasons — Azurite has no Entra, and the SDK refuses bearer tokens
+ *          on non-TLS URLs, so a http:// endpoint is rejected before any token
+ *          is requested.
  *   s3     set S3_TEST_ENDPOINT + S3_TEST_ACCESS_KEY_ID + S3_TEST_SECRET_ACCESS_KEY
  *          + S3_TEST_BUCKET (MinIO, R2, or real S3)
  *            docker run --rm -p 11001:9000 -e MINIO_ROOT_USER=minioadmin \
@@ -25,11 +32,10 @@ import { randomUUID } from "node:crypto"
 import { mkdtemp } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
-import { BlobServiceClient, StorageSharedKeyCredential } from "@azure/storage-blob"
 import type { Layer } from "effect"
 import { type BlobStore, LocalFsBlobStore } from "#engine"
 import { BLOB_CONFORMANCE_CASES } from "../engine/blob/conformance"
-import { AzureBlobStore } from "../server/blob-azure"
+import { AzureBlobStore, azureServiceClient } from "../server/blob-azure"
 import { S3BlobStore } from "../server/blob-s3"
 
 const AZURITE_ACCOUNT = "devstoreaccount1"
@@ -61,10 +67,14 @@ await runDriver(
 
 // --- azure -----------------------------------------------------------------
 const azureAccount = process.env.AZURE_STORAGE_ACCOUNT ?? AZURITE_ACCOUNT
-const azureKey = process.env.AZURE_STORAGE_KEY ?? AZURITE_KEY
+const isAzurite = azureAccount === AZURITE_ACCOUNT
+// Default the key for AZURITE ONLY. Falling back to the emulator key for a real
+// account would fail confusingly, and worse, would mask the managed-identity
+// path — which the driver selects precisely by the ABSENCE of a key.
+const azureKey = process.env.AZURE_STORAGE_KEY ?? (isAzurite ? AZURITE_KEY : undefined)
 const azureEndpoint =
   process.env.AZURE_STORAGE_ENDPOINT ??
-  (azureAccount === AZURITE_ACCOUNT
+  (isAzurite
     ? `${process.env.AZURITE_URL ?? "http://127.0.0.1:11000"}/${AZURITE_ACCOUNT}`
     : undefined)
 const azureBase = azureEndpoint ?? `https://${azureAccount}.blob.core.windows.net`
@@ -75,19 +85,19 @@ const azureUp = await fetch(azureBase, { signal: AbortSignal.timeout(2000) })
 if (!azureUp) {
   skipped.push(`azure (nothing answering at ${azureBase})`)
 } else {
-  const container = process.env.AZURE_STORAGE_CONTAINER ?? `verify-${randomUUID()}`
-  // The driver never creates containers; do what a real operator would do first.
-  await new BlobServiceClient(azureBase, new StorageSharedKeyCredential(azureAccount, azureKey))
-    .getContainerClient(container)
-    .createIfNotExists()
+  const azureCfg = {
+    container: process.env.AZURE_STORAGE_CONTAINER ?? `verify-${randomUUID()}`,
+    account: azureAccount,
+    accountKey: azureKey,
+    endpoint: azureEndpoint,
+  }
+  // The driver never creates containers; do what a real operator would do first
+  // — through the driver's OWN credential ladder, so this cannot authenticate
+  // one way while the cases under test authenticate another.
+  await azureServiceClient(azureCfg).getContainerClient(azureCfg.container).createIfNotExists()
   await runDriver(
-    `azure (${azureBase})`,
-    AzureBlobStore({
-      container,
-      account: azureAccount,
-      accountKey: azureKey,
-      endpoint: azureEndpoint,
-    }),
+    `azure (${azureBase}, ${azureKey ? "shared key" : "managed identity"})`,
+    AzureBlobStore(azureCfg),
   )
 }
 
