@@ -52,19 +52,14 @@ export type CellState = "allow" | "inherit" | "deny"
 const STATES: ReadonlyArray<{
   readonly id: CellState
   readonly label: string
-  readonly hint: string
+  /** The tooltip. Deliberately a few words: it is read on hover, over and over, by
+   *  someone who already knows what Allow means. The full explanation lives once, in
+   *  the legend under the table. */
+  readonly tip: string
 }> = [
-  {
-    id: "deny",
-    label: "Deny",
-    hint: "Refuse it. A deny beats every allow, here or anywhere else.",
-  },
-  {
-    id: "inherit",
-    label: "Inherit",
-    hint: "No rule. Whatever this resource allows by default decides.",
-  },
-  { id: "allow", label: "Allow", hint: "Grant it, on top of the default." },
+  { id: "deny", label: "Deny", tip: "Deny — always wins" },
+  { id: "inherit", label: "Inherit", tip: "Inherit — no rule" },
+  { id: "allow", label: "Allow", tip: "Allow" },
 ]
 
 /** A rule as the grid consumes it. */
@@ -173,19 +168,14 @@ function StateGroup({
   state,
   onSelect,
   describe,
-  size = "default",
 }: {
-  /** null = no single value (a column whose rows disagree): nothing is highlighted. */
-  state: CellState | null
+  state: CellState
   onSelect: (next: CellState) => void
-  /** The segment's accessible name, e.g. "Allow view on Policy". The state's own
-   *  explanation is appended for the tooltip only — repeating it in the name makes a
-   *  screen reader say the same sentence twice, since Radix also describes by it. */
+  /** The segment's accessible name, e.g. "Allow view on Policy". Longer than the
+   *  tooltip on purpose: a screen reader has no column header or row label to hand,
+   *  so the name is the only place the target can be stated. */
   describe: (s: (typeof STATES)[number]) => string
-  size?: "default" | "sm"
 }) {
-  const box = size === "sm" ? "size-5" : "size-6"
-  const icon = size === "sm" ? 12 : 14
   return (
     <fieldset className="inline-flex overflow-hidden rounded-md border border-border/70 bg-background">
       {STATES.map((s) => {
@@ -199,18 +189,16 @@ function StateGroup({
                 aria-pressed={on}
                 aria-label={describe(s)}
                 onClick={() => onSelect(s.id)}
-                className={`flex ${box} items-center justify-center border-border/70 transition not-last:border-r ${
+                className={`flex size-6 items-center justify-center border-border/70 transition not-last:border-r ${
                   on
                     ? SELECTED[s.id]
                     : "text-muted-foreground/40 hover:bg-accent hover:text-foreground"
                 }`}
               >
-                <Icon size={icon} />
+                <Icon size={14} />
               </button>
             </TooltipTrigger>
-            <TooltipContent>
-              {describe(s)} — {s.hint}
-            </TooltipContent>
+            <TooltipContent>{s.tip}</TooltipContent>
           </Tooltip>
         )
       })}
@@ -304,32 +292,6 @@ export function PermissionMatrix({
     setDirty(true)
   }
 
-  /**
-   * Set a whole column at once — the reason the header carries its own control.
-   *
-   * The DEFAULT row is deliberately excluded: "set Delete for every concept" must not
-   * also rewrite the rule covering concepts this grid never listed, which is a far
-   * broader change than the click looks like.
-   */
-  const setColumn = (action: string, next: CellState) => {
-    setDraft((cur) => {
-      const m = new Map(cur)
-      for (const it of items) m.set(key(it.id, action), next)
-      return m
-    })
-    setDirty(true)
-  }
-
-  /** The column's shared state, or null when its rows disagree — so a mixed column
-   *  highlights nothing rather than claiming a value it doesn't have. */
-  const columnState = (action: string): CellState | null => {
-    if (items.length === 0) return null
-    const first = draft.get(key(items[0]!.id, action)) ?? "inherit"
-    return items.every((it) => (draft.get(key(it.id, action)) ?? "inherit") === first)
-      ? first
-      : null
-  }
-
   // The one rule shape the grid still cannot represent — a cell has nowhere to put a
   // condition — surfaced so a row reading Inherit is never quietly overridden by
   // something invisible.
@@ -365,23 +327,21 @@ export function PermissionMatrix({
       <div className="overflow-x-auto">
         <Table>
           <TableHeader>
-            <TableRow>
-              <TableHead className="min-w-48">{itemsLabel}</TableHead>
+            {/* Three distinct looks in this table, and only three: the header is quiet
+                small-caps with no fill, the DEFAULT row below it is the only tinted
+                band, and item rows are plain. Tinting the header too would merge it
+                with the default row, implying the two are one thing — but only one of
+                them is editable. */}
+            <TableRow className="border-b hover:bg-transparent">
+              <TableHead className="min-w-48 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                {itemsLabel}
+              </TableHead>
               {actions.map((a) => (
-                <TableHead key={a.id} className="text-center">
-                  <div className="flex flex-col items-center gap-1 py-1">
-                    <span className="text-xs font-medium">{a.label}</span>
-                    {/* The bulk control. Smaller and unlabelled: it is the same three
-                        choices, applied to every row at once. */}
-                    <StateGroup
-                      size="sm"
-                      state={columnState(a.id)}
-                      onSelect={(next) => setColumn(a.id, next)}
-                      describe={(st) =>
-                        `${st.label} ${a.label.toLowerCase()} for every ${itemsLabel.toLowerCase()}`
-                      }
-                    />
-                  </div>
+                <TableHead
+                  key={a.id}
+                  className="text-center text-xs font-semibold uppercase tracking-wider text-muted-foreground"
+                >
+                  {a.label}
                 </TableHead>
               ))}
             </TableRow>
@@ -392,8 +352,8 @@ export function PermissionMatrix({
                 border so it reads as "what everything starts from", not as another
                 item, because a row that silently outranks the 14 below it is exactly
                 the thing someone must not skim past. */}
-            <TableRow className="border-b-2 hover:bg-transparent">
-              <TableCell className="font-medium text-foreground">
+            <TableRow className="border-b-2 border-border bg-muted/40 hover:bg-muted/40">
+              <TableCell className="font-semibold text-foreground">
                 Default value
                 <span className="ml-2 text-xs font-normal text-muted-foreground">{allLabel}</span>
               </TableCell>
