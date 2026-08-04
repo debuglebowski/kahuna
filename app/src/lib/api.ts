@@ -1319,6 +1319,8 @@ export const api = {
     roleId: string
     resourceType: AccessResourceType
     scopeBy?: "resource" | "concept"
+    blanket?: { allow: ReadonlyArray<AccessActionName>; deny: ReadonlyArray<AccessActionName> }
+    managedActions?: ReadonlyArray<AccessActionName>
     entries: ReadonlyArray<{
       resourceId: string
       allow: ReadonlyArray<AccessActionName>

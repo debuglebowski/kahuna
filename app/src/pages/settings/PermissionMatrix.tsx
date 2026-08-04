@@ -67,6 +67,15 @@ export interface MatrixItem {
 /** Which column a row's id lives in. See the header comment. */
 export type ScopeBy = "resource" | "concept"
 
+/**
+ * The default row's id in the draft map.
+ *
+ * A uuid can never collide with it, and keeping the default in the SAME map as the
+ * item rows is what lets one Save carry both — the alternative, a second piece of
+ * state, drifts out of sync with `dirty` the moment either is edited alone.
+ */
+export const DEFAULT_ROW = "__default__"
+
 /** Key for the local edit map. */
 const key = (itemId: string, action: string) => `${itemId}:${action}`
 
@@ -79,6 +88,10 @@ const key = (itemId: string, action: string) => `${itemId}:${action}`
  */
 const targetOf = (r: MatrixRule, scopeBy: ScopeBy): string | null =>
   scopeBy === "concept" ? (r.resourceId ? null : r.conceptId) : r.resourceId
+
+/** The area's DEFAULT rule: untargeted, so it covers every resource of the type.
+ *  Scope-independent — "all records" is the same rule whichever grid is showing. */
+const isDefaultRule = (r: MatrixRule): boolean => !r.resourceId && !r.conceptId && !r.condition
 
 /**
  * Fold the role's rules into cell states.
@@ -95,7 +108,9 @@ const stateFrom = (
   const out = new Map<string, CellState>()
   for (const r of rules) {
     if (r.resourceType !== resourceType || r.condition) continue
-    const target = targetOf(r, scopeBy)
+    // `*` covers every action, including ones this grid does not show — it reads as
+    // Allow across the row, and the server refuses to rewrite it on save.
+    const target = isDefaultRule(r) ? DEFAULT_ROW : targetOf(r, scopeBy)
     if (!target) continue
     for (const a of actions) {
       if (!r.actions.includes(a) && !r.actions.includes("*")) continue
@@ -200,7 +215,22 @@ export function PermissionMatrix({
         // An all-inherit row needs no rule at all; sending it would write nothing but
         // makes the payload harder to read in the log.
         .filter((e) => e.allow.length > 0 || e.deny.length > 0)
-      return api.setScopedRules({ roleId, resourceType, scopeBy, entries })
+      const blanket = {
+        allow: actions
+          .filter((a) => draft.get(key(DEFAULT_ROW, a.id)) === "allow")
+          .map((a) => a.id),
+        deny: actions.filter((a) => draft.get(key(DEFAULT_ROW, a.id)) === "deny").map((a) => a.id),
+      }
+      return api.setScopedRules({
+        roleId,
+        resourceType,
+        scopeBy,
+        entries,
+        blanket,
+        // Bounds what the blanket write may overwrite: an action this grid never
+        // showed stays on the rule instead of being dropped by omission.
+        managedActions: actions.map((a) => a.id),
+      })
     },
     onSuccess: () => {
       setDirty(false)
@@ -232,6 +262,8 @@ export function PermissionMatrix({
     setDraft((cur) => {
       // Same reason as `cycleCell`: read the column's state from `cur`, not from the
       // render closure, so repeated header clicks keep advancing.
+      // The default row is deliberately EXCLUDED: "set this column for every concept"
+      // should not also rewrite the rule that covers concepts the grid never listed.
       const states = items.map((it) => cur.get(key(it.id, action)) ?? "inherit")
       const uniform = states.every((s) => s === states[0]) ? states[0] : undefined
       const next = uniform === undefined ? "allow" : CYCLE[uniform]
@@ -242,37 +274,35 @@ export function PermissionMatrix({
     setDirty(true)
   }
 
-  // Rules the grid deliberately cannot represent — surfaced so a row reading Inherit
-  // is never quietly overridden by something invisible.
-  const blanket = rules.filter(
-    (r) => r.resourceType === resourceType && !r.resourceId && !r.conceptId,
-  )
-  const conditional = rules.filter(
-    (r) => r.resourceType === resourceType && targetOf(r, scopeBy) && r.condition,
+  // The one rule shape the grid still cannot represent — a cell has nowhere to put a
+  // condition — surfaced so a row reading Inherit is never quietly overridden by
+  // something invisible.
+  const conditional = rules.filter((r) => r.resourceType === resourceType && r.condition)
+  /** A wildcard default means the row reads Allow everywhere and the server will
+   *  refuse to narrow it here; say so rather than letting Save look broken. */
+  const wildcardDefault = rules.some(
+    (r) => r.resourceType === resourceType && isDefaultRule(r) && r.actions.includes("*"),
   )
 
+  /** "All records", "All dashboards" — what the default row covers. */
+  const allLabel = `All ${resourceNoun ?? `${itemsLabel.toLowerCase()}s`}`
+
   if (loading) return <Spinner />
-  if (items.length === 0)
-    return (
-      <div className="rounded-lg border border-dashed px-6 py-8 text-center text-sm text-muted-foreground">
-        Nothing to configure here yet.
-      </div>
-    )
 
   return (
     <div className="space-y-4">
-      {blanket.length > 0 ? (
-        <p className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm">
-          This role also has {blanket.length} rule{blanket.length > 1 ? "s" : ""} covering{" "}
-          <b>all</b> {resourceNoun ?? `${itemsLabel.toLowerCase()}s`}, which the grid can't show.
-          They apply on top of everything below.
+      {note ? <p className="text-sm text-muted-foreground">{note}</p> : null}
+      {wildcardDefault ? (
+        <p className="text-sm text-muted-foreground">
+          This role's default grants <b>every</b> action on {allLabel}, including ones this grid
+          doesn't list. Saving here won't narrow it — clear that rule in <b>Other</b> first.
         </p>
       ) : null}
-      {note ? <p className="text-sm text-muted-foreground">{note}</p> : null}
       {conditional.length > 0 ? (
         <p className="text-sm text-muted-foreground">
-          {conditional.length} conditional rule{conditional.length > 1 ? "s" : ""} are managed in
-          the rules list, not here.
+          {conditional.length} conditional rule{conditional.length > 1 ? "s" : ""} ({" "}
+          {'"records I created"'} and the like ) live in <b>Other</b> — a cell has nowhere to put a
+          condition.
         </p>
       ) : null}
 
@@ -296,6 +326,46 @@ export function PermissionMatrix({
             </TableRow>
           </TableHeader>
           <TableBody>
+            {/* The DEFAULT row. It owns this area's untargeted rule — the one that used
+                to be an unreadable warning banner. Pinned first and given a heavier
+                border so it reads as "what everything starts from", not as another
+                item, because a row that silently outranks the 14 below it is exactly
+                the thing someone must not skim past. */}
+            <TableRow className="border-b-2 hover:bg-transparent">
+              <TableCell className="font-medium text-foreground">
+                {allLabel}
+                <span className="ml-2 rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
+                  default
+                </span>
+              </TableCell>
+              {actions.map((a) => {
+                const state = draft.get(key(DEFAULT_ROW, a.id)) ?? "inherit"
+                return (
+                  <TableCell key={a.id} className="text-center">
+                    <div className="flex justify-center">
+                      <CellButton
+                        state={state}
+                        label={`${a.label} on ${allLabel}: ${state}`}
+                        onClick={() => cycleCell(DEFAULT_ROW, a.id)}
+                      />
+                    </div>
+                  </TableCell>
+                )
+              })}
+            </TableRow>
+            {/* No items is not an empty screen: the default above still governs every
+                resource of this type, including ones created later. */}
+            {items.length === 0 ? (
+              <TableRow className="hover:bg-transparent">
+                <TableCell
+                  colSpan={actions.length + 1}
+                  className="py-6 text-center text-sm text-muted-foreground"
+                >
+                  No {resourceNoun ?? `${itemsLabel.toLowerCase()}s`} yet — the default above still
+                  applies to any that are created.
+                </TableCell>
+              </TableRow>
+            ) : null}
             {items.map((it) => (
               <TableRow key={it.id} className="hover:bg-transparent">
                 <TableCell className="font-medium text-foreground">{it.name}</TableCell>

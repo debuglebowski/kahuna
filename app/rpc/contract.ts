@@ -2499,6 +2499,17 @@ export class KingsmakerRpcs extends RpcGroup.make(
       resourceType: AccessResourceType,
       /** "concept" scopes by CONTAINER — the Records grid, whose rows are concepts. */
       scopeBy: Schema.optional(Schema.Literal("resource", "concept")),
+      /** The area's default: the untargeted rule covering every resource of the type.
+       *  Absent leaves it alone; present replaces it, bounded by `managedActions`. */
+      blanket: Schema.optional(
+        Schema.Struct({
+          allow: Schema.Array(AccessActionName),
+          deny: Schema.Array(AccessActionName),
+        }),
+      ),
+      /** The actions the caller's grid shows — anything outside it is preserved on
+       *  the blanket rule rather than dropped. */
+      managedActions: Schema.optional(Schema.Array(AccessActionName)),
       entries: Schema.Array(
         Schema.Struct({
           resourceId: Schema.String,

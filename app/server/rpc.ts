@@ -967,8 +967,10 @@ const HandlersLive = ServerRpcs.toLayer({
     admin<{ readonly id: string }>(
       uc.updateRule({ ruleId, effect, actions, resourceType, resourceId, conceptId, condition }),
     ),
-  setScopedRules: ({ roleId, resourceType, scopeBy, entries }) =>
-    admin<{ readonly ok: boolean }>(uc.setScopedRules({ roleId, resourceType, scopeBy, entries })),
+  setScopedRules: ({ roleId, resourceType, scopeBy, entries, blanket, managedActions }) =>
+    admin<{ readonly ok: boolean }>(
+      uc.setScopedRules({ roleId, resourceType, scopeBy, entries, blanket, managedActions }),
+    ),
   removeRule: ({ ruleId }) => admin<{ readonly id: string }>(uc.removeRule(ruleId)),
   /**
    * Asking about YOURSELF is always allowed — that is the point of the self-serve

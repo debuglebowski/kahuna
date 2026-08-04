@@ -332,6 +332,79 @@ describe("policy loading", () => {
     }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
 
+  /**
+   * THE DEFAULT-ROW GUARD.
+   *
+   * Each area's grid owns its DEFAULT — the untargeted rule for that resource type —
+   * but a grid only shows the actions the engine honours for it, which is fewer than
+   * the seven a rule can hold. Rebuilding the rule from the visible cells alone would
+   * drop the rest, so the Member preset would quietly lose `create`/`edit` the first
+   * time anyone touched the Concepts grid.
+   */
+  it.effect("the default row preserves actions its grid never showed", () =>
+    Effect.gen(function* () {
+      const roles = yield* AccessRoleService
+      const role = yield* roles.create({ name: "Default" })
+      // A blanket rule holding actions inside AND outside the grid's columns.
+      yield* roles.addRule({
+        roleId: role.id,
+        effect: "allow",
+        actions: ["create", "edit", "share"],
+        resourceType: "concept",
+      })
+
+      // The grid shows view/share/configure and sets only `view`.
+      yield* roles.setScopedRules({
+        roleId: role.id,
+        resourceType: "concept",
+        entries: [],
+        blanket: { allow: ["view"], deny: [] },
+        managedActions: ["view", "share", "configure"],
+      })
+
+      const after = (yield* roles.rulesOf(role.id)).filter(
+        (r) => r.resourceType === "concept" && !r.resourceId && !r.conceptId,
+      )
+      const allowed = new Set(after.flatMap((r) => r.actions))
+      // Chosen in the grid…
+      expect(allowed.has("view")).toBe(true)
+      // …never shown, so carried over untouched…
+      expect(allowed.has("create")).toBe(true)
+      expect(allowed.has("edit")).toBe(true)
+      // …and shown but left at Inherit, so genuinely cleared.
+      expect(allowed.has("share")).toBe(false)
+    }).pipe(Effect.provide(testLayer(newOrgId()))),
+  )
+
+  /**
+   * THE WILDCARD GUARD. Owner and Admin hold `*`. A grid renders that as Allow across
+   * the row, so an innocent Save would rewrite the wildcard into whatever handful of
+   * actions that grid happens to list — silently stripping every other power the role
+   * has over that resource. The wildcard is therefore never rewritten.
+   */
+  it.effect("a wildcard default survives a save from a grid that can't express it", () =>
+    Effect.gen(function* () {
+      const roles = yield* AccessRoleService
+      yield* roles.ensureBuiltins
+      const admin = yield* roles.getByKey("admin")
+      const before = (yield* roles.rulesOf(admin!.id)).filter((r) => r.resourceType === "concept")
+      expect(before.some((r) => r.actions.includes("*"))).toBe(true)
+
+      yield* roles.setScopedRules({
+        roleId: admin!.id,
+        resourceType: "concept",
+        entries: [],
+        blanket: { allow: ["view"], deny: [] },
+        managedActions: ["view", "share", "configure"],
+      })
+
+      const after = (yield* roles.rulesOf(admin!.id)).filter((r) => r.resourceType === "concept")
+      // Still `*`, and NOT joined by a redundant explicit row for what it already grants.
+      expect(after.some((r) => r.actions.includes("*"))).toBe(true)
+      expect(after.length).toBe(before.length)
+    }).pipe(Effect.provide(testLayer(newOrgId()))),
+  )
+
   it.effect("ensureBuiltins is idempotent — a second run seeds nothing", () =>
     Effect.gen(function* () {
       const roles = yield* AccessRoleService

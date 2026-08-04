@@ -115,9 +115,11 @@ const RESOURCE_GROUPS: ReadonlyArray<{
  * `view`, so the Records grid has the one column. `share` is decided per resource by
  * the share RPC, so it appears wherever there is a resource to name.
  *
- * `all` is the escape hatch for everything a grid cannot express: conditions,
- * blanket rules, and the resource types with no item list (fields, tasks, notes,
- * buckets, members, the org itself).
+ * "Other" holds only what NO grid owns: the resource types with no item list
+ * (fields, tasks, notes, buckets, members, the org itself) and conditional rules,
+ * which have nowhere to live in a cell. Everything a grid can express — including
+ * each area's DEFAULT, which is that area's untargeted rule — is edited in the area
+ * itself, so there is exactly one place to change any given rule.
  */
 interface Area {
   readonly id: string
@@ -176,8 +178,18 @@ const AREAS: ReadonlyArray<Area> = [
   },
 ]
 
-/** The rail entry for the full rule list. */
-const ALL_AREA = "all" as const
+/** The rail entry for everything no grid covers. */
+const OTHER_AREA = "all" as const
+
+/** Resource types an area grid owns. A non-conditional rule of one of these types is
+ *  edited there and is therefore hidden from Other — listing it in both places would
+ *  give the same rule two editors that disagree about what a blank cell means. */
+const GRIDDED = new Set<string>(AREAS.map((a) => a.resourceType))
+
+/** Is this rule owned by an area grid? Conditions never are: a cell has nowhere to
+ *  put one, so a conditional rule stays in Other whatever its type. */
+const inGrid = (r: { resourceType: string; condition: unknown }): boolean =>
+  GRIDDED.has(r.resourceType) && !r.condition
 
 const RESOURCE_LABEL = new Map<string, string>(
   RESOURCE_GROUPS.flatMap((g) => g.items).map((r) => [r.id, r.label] as const),
@@ -291,7 +303,9 @@ function RuleEditor({ role, onClose }: { role: AccessRole; onClose: () => void }
   const qc = useQueryClient()
   const rules = useQuery({ queryKey: ["rules", role.id], queryFn: () => api.listRules(role.id) })
   const [effect, setEffect] = useState<"allow" | "deny">("allow")
-  const [resourceType, setResourceType] = useState<AccessResourceType>("concept")
+  // `field`, not `concept`: concepts have their own grid now, so the form's resting
+  // state has to be a type this page still owns.
+  const [resourceType, setResourceType] = useState<AccessResourceType>("field")
   const [actions, setActions] = useState<ReadonlyArray<AccessActionName>>(["view"])
   // "" = every one of that type. Only concept-shaped rules can name a target here;
   // a record is picked from the record's own Share dialog, not from a role.
@@ -308,7 +322,7 @@ function RuleEditor({ role, onClose }: { role: AccessRole; onClose: () => void }
 
   const resetDraft = () => {
     setEffect("allow")
-    setResourceType("concept")
+    setResourceType("field")
     setTargetId("")
     setActions(["view"])
     setEditingId(null)
@@ -413,6 +427,14 @@ function RuleEditor({ role, onClose }: { role: AccessRole; onClose: () => void }
     setActions((cur) => (cur.includes(a) ? cur.filter((x) => x !== a) : [...cur, a]))
 
   const current = AREAS.find((a) => a.id === area) ?? null
+  /** What "Other" shows: everything no area grid owns. */
+  const otherRules = (rules.data ?? []).filter((r) => !inGrid(r))
+  /** The picker's options: types with no grid, plus whatever the rule being edited
+   *  already is (a conditional record rule, say) so opening it doesn't blank the field. */
+  const pickerGroups = RESOURCE_GROUPS.map((g) => ({
+    label: g.label,
+    items: g.items.filter((r) => !GRIDDED.has(r.id) || r.id === resourceType),
+  })).filter((g) => g.items.length > 0)
   const conceptName = (id: string) => (concepts.data ?? []).find((c) => c.id === id)?.name
   const scopeLabel = (r: {
     resourceId: string | null
@@ -429,7 +451,7 @@ function RuleEditor({ role, onClose }: { role: AccessRole; onClose: () => void }
         <nav className="w-40 shrink-0 space-y-0.5 border-r pr-3">
           {[
             ...AREAS.map((a) => ({ id: a.id, label: a.label })),
-            { id: ALL_AREA, label: "All rules" },
+            { id: OTHER_AREA, label: "Other" },
           ].map((a) => (
             <button
               key={a.id}
@@ -465,14 +487,15 @@ function RuleEditor({ role, onClose }: { role: AccessRole; onClose: () => void }
           ) : (
             <>
               <p className="max-w-2xl text-sm text-muted-foreground">
-                Rules grant access <span className="text-foreground">on top of</span> what each item
-                already allows by default. A <span className="text-foreground">Deny</span> always
-                wins, whatever else grants access.
+                Everything that has no grid of its own: fields, tasks, notes, members, the org — and
+                any conditional rule, wherever it points. A{" "}
+                <span className="text-foreground">Deny</span> always wins, whatever else grants
+                access.
               </p>
 
               {rules.isPending ? (
                 <Spinner />
-              ) : rules.data && rules.data.length > 0 ? (
+              ) : otherRules.length > 0 ? (
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -484,7 +507,7 @@ function RuleEditor({ role, onClose }: { role: AccessRole; onClose: () => void }
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {groupRules(rules.data).flatMap((group) => [
+                    {groupRules(otherRules).flatMap((group) => [
                       // A group header row rather than nested tables: one set of column
                       // widths keeps Effect/Can/On/Scope aligned all the way down.
                       <TableRow key={`h-${group.label}`} className="hover:bg-transparent">
@@ -592,8 +615,11 @@ function RuleEditor({ role, onClose }: { role: AccessRole; onClose: () => void }
                         </SelectTrigger>
                         <SelectContent>
                           {/* Grouped, because eleven flat engine words are a lookup table, not
-                      a menu someone can scan. */}
-                          {RESOURCE_GROUPS.map((g) => (
+                      a menu someone can scan. Types owned by a grid are omitted: a rule
+                      created here would be saved and then immediately disappear from this
+                      list, having become the grid's. The one exception is the type of the
+                      rule being edited, so an existing conditional rule keeps its value. */}
+                          {pickerGroups.map((g) => (
                             <SelectGroup key={g.label}>
                               <SelectLabel>{g.label}</SelectLabel>
                               {g.items.map((r) => (

@@ -2151,6 +2151,11 @@ export const setScopedRules = (input: {
   readonly roleId: string
   readonly resourceType: AccessResourceType
   readonly scopeBy?: "resource" | "concept"
+  readonly blanket?: {
+    readonly allow: ReadonlyArray<AccessAction>
+    readonly deny: ReadonlyArray<AccessAction>
+  }
+  readonly managedActions?: ReadonlyArray<AccessAction>
   readonly entries: ReadonlyArray<{
     readonly resourceId: string
     readonly allow: ReadonlyArray<AccessAction>

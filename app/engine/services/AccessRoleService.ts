@@ -513,6 +513,23 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
           readonly allow: ReadonlyArray<AccessAction>
           readonly deny: ReadonlyArray<AccessAction>
         }>
+        /**
+         * The area's DEFAULT: the untargeted rule covering every resource of this
+         * type. Present only when the caller is editing it, absent leaves it alone.
+         */
+        readonly blanket?: {
+          readonly allow: ReadonlyArray<AccessAction>
+          readonly deny: ReadonlyArray<AccessAction>
+        }
+        /**
+         * The actions the caller's grid can actually SEE, which bounds what it may
+         * overwrite on the blanket rule.
+         *
+         * Without it a grid showing five columns would rewrite a blanket rule holding
+         * seven actions down to its own five, silently dropping the other two. So the
+         * blanket is rebuilt as (what the grid chose) ∪ (what it never showed).
+         */
+        readonly managedActions?: ReadonlyArray<AccessAction>
       }) =>
         sql
           .withTransaction(
@@ -549,6 +566,49 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
                             ${byConcept ? null : e.resourceId},
                             ${byConcept ? e.resourceId : null},
                             ${actor})`
+                }
+              }
+              if (input.blanket) {
+                const managed = new Set<string>(input.managedActions ?? [])
+                const existing = yield* sql<{
+                  readonly id: string
+                  readonly effect: "allow" | "deny"
+                  readonly actions: ReadonlyArray<string>
+                }>`
+                  SELECT id, effect, actions FROM access_rules
+                  WHERE org_id = ${orgId} AND role_id = ${input.roleId}
+                    AND resource_type = ${input.resourceType}
+                    AND resource_id IS NULL AND concept_id IS NULL AND condition IS NULL`
+                // A rule holding `*` is left EXACTLY as it is. Rewriting a wildcard
+                // into an explicit list is how a role like Admin would quietly lose
+                // every action the editing grid happens not to show.
+                const wildcard = existing.filter((r) => r.actions.includes(ACTION_ALL))
+                const replaceable = existing.filter((r) => !r.actions.includes(ACTION_ALL))
+                if (replaceable.length > 0) {
+                  yield* sql`DELETE FROM access_rules WHERE ${sql.in(
+                    "id",
+                    replaceable.map((r) => r.id),
+                  )}`
+                }
+                for (const [effect, chosen] of [
+                  ["allow", input.blanket.allow],
+                  ["deny", input.blanket.deny],
+                ] as const) {
+                  // Actions the grid never showed, carried over untouched.
+                  const kept = replaceable
+                    .filter((r) => r.effect === effect)
+                    .flatMap((r) => r.actions)
+                    .filter((a) => !managed.has(a))
+                  // …and anything a surviving wildcard of the same effect already
+                  // grants, which would otherwise be inserted as a redundant row.
+                  const covered = wildcard.some((r) => r.effect === effect)
+                  const next = [...new Set([...(covered ? [] : chosen), ...kept])]
+                  if (next.length === 0) continue
+                  yield* sql`
+                    INSERT INTO access_rules
+                      (org_id, role_id, effect, actions, resource_type, created_by)
+                    VALUES (${orgId}, ${input.roleId}, ${effect}, ${next},
+                            ${input.resourceType}, ${actor})`
                 }
               }
               yield* events.append({
