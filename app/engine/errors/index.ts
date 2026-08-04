@@ -264,10 +264,16 @@ export class AutomationNotFound extends Schema.TaggedError<AutomationNotFound>()
 
 /** A trigger or action document that no vocabulary entry accepts (an unknown
  *  kind, a schedule with no cadence, a `setField` with no field). Raised at the
- *  service boundary so a bad rule can never be persisted. */
+ *  service boundary so a bad rule can never be persisted.
+ *
+ *  The field is `message`, not `reason`, so the prose survives the trip to the
+ *  client: `toRpcError` passes a real `.message` through verbatim but replaces a
+ *  fieldless error's JSON-dump message with a humanized tag. Named `reason` this
+ *  used to reach the editor as "Internal error" — every one of these strings was
+ *  written for a user and none of them arrived. */
 export class AutomationInvalid extends Schema.TaggedError<AutomationInvalid>()(
   "AutomationInvalid",
-  { reason: Schema.String },
+  { message: Schema.String },
 ) {}
 
 /** A connector-managed concept (Linear ticket, Gmail email, …) owns its own
