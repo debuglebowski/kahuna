@@ -60,14 +60,23 @@ const MIN_PASSWORD_LENGTH = 8
 const DEFAULT_ORG_NAME = "Kingsmaker"
 
 /**
- * Read the bootstrap config from the environment. Null when either half is
- * missing — bootstrap is opt-in, and a half-set pair is treated as unset rather
- * than guessed at.
+ * Read the bootstrap config from the environment. Null when NEITHER half is set —
+ * bootstrap is opt-in, and an untouched deployment is not an error.
+ *
+ * A HALF-set pair throws instead of degrading to null. The two states are
+ * indistinguishable to the operator otherwise: a typo'd `INITIAL_ADMIN_PASWORD`
+ * reads as "bootstrap not wanted", and the deploy goes green with no account and
+ * no way in. Nobody sets exactly one of these on purpose.
  */
 export const readInitialAdminEnv = (): InitialAdminConfig | null => {
   const email = process.env.INITIAL_ADMIN_EMAIL?.trim()
   const password = process.env.INITIAL_ADMIN_PASSWORD
-  if (!email || !password) return null
+  if (!email && !password) return null
+  if (!email || !password) {
+    const set = email ? "INITIAL_ADMIN_EMAIL" : "INITIAL_ADMIN_PASSWORD"
+    const missing = email ? "INITIAL_ADMIN_PASSWORD" : "INITIAL_ADMIN_EMAIL"
+    throw new Error(`${set} is set but ${missing} is not — set both, or neither`)
+  }
   return {
     email,
     password,

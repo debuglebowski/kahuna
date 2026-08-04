@@ -13,20 +13,25 @@ import { isIP } from "node:net"
  * Two layers, because either alone is bypassable:
  *
  *  1. `assertPublicUrlShape` — synchronous, no I/O. Scheme, embedded
- *     credentials, and literal private/loopback/link-local IPs. Cheap enough to
- *     run at the WRITE boundary so a bad rule can't be saved at all.
+ *     credentials, and literal private/loopback/link-local IPs.
  *
- *  2. `resolvePublicUrl` — resolves DNS and checks the resulting addresses, then
- *     hands back the pinned IP. Required because (1) cannot see where a hostname
- *     points: `metadata.evil.com` → A 169.254.169.254 passes every textual test.
- *     Run at FETCH time, since the URL is template-interpolated per run and the
- *     DNS answer can change between save and send.
+ *  2. `resolvePublicUrl` — resolves DNS and checks the resulting addresses.
+ *     Required because (1) cannot see where a hostname points:
+ *     `metadata.evil.com` → A 169.254.169.254 passes every textual test.
+ *
+ * Both run at FETCH time, (1) via (2): the URL is template-interpolated per run,
+ * so there is no useful save-time string to check here. The save boundary has its
+ * own textual screen — `AutomationService.webhookUrlProblem` in the engine, which
+ * cannot import this file — and that one is UX, not the security boundary. This
+ * is the security boundary.
  *
  * A TOCTOU window remains between resolve and connect (classic DNS rebinding).
- * Closing it fully needs a custom agent that dials the pinned IP; `fetchGuarded`
- * narrows it instead by sending `Host:` for the original hostname while
- * connecting to the address we vetted, and by refusing redirects — a permitted
- * host 302'ing to the metadata IP is otherwise the easiest bypass of all.
+ * `resolvePublicUrl` hands back a vetted address for a caller that wants to pin
+ * it, but `fetchGuardedJson` does NOT — it re-dials the hostname, so the window
+ * is real. Closing it needs a custom dispatcher that connects to the pinned IP
+ * while sending `Host:` for the original name. What IS live is `redirect:
+ * "manual"`: a permitted host 302'ing to the metadata IP is the easiest bypass of
+ * all, and that one is closed.
  */
 
 /** Private, loopback, link-local and other non-routable ranges. */
@@ -46,6 +51,25 @@ const isBlockedIPv4 = (ip: string): boolean => {
   return false
 }
 
+/**
+ * Decode an IPv4-mapped IPv6 address to its dotted form, or null.
+ *
+ * TWO spellings must be handled: the dotted form (`::ffff:169.254.169.254`) and
+ * the HEX form the WHATWG URL parser normalizes it to (`::ffff:a9fe:a9fe`).
+ * Checking only the dotted one let `http://[::ffff:169.254.169.254]/` through to
+ * the metadata service — `new URL()` had already rewritten it by the time we
+ * looked.
+ */
+const mappedIPv4 = (ip: string): string | null => {
+  const dotted = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(ip)
+  if (dotted) return dotted[1]!
+  const hex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(ip)
+  if (!hex) return null
+  const hi = Number.parseInt(hex[1]!, 16)
+  const lo = Number.parseInt(hex[2]!, 16)
+  return [hi >> 8, hi & 0xff, lo >> 8, lo & 0xff].join(".")
+}
+
 const isBlockedIPv6 = (raw: string): boolean => {
   const ip = raw.toLowerCase().replace(/^\[|\]$/g, "")
   if (ip === "::" || ip === "::1") return true // unspecified / loopback
@@ -53,24 +77,37 @@ const isBlockedIPv6 = (raw: string): boolean => {
     return true // link-local fe80::/10
   if (ip.startsWith("fc") || ip.startsWith("fd")) return true // unique-local fc00::/7
   if (ip.startsWith("ff")) return true // multicast
-  // IPv4-mapped — defer to the v4 rules. TWO spellings must be handled: the
-  // dotted form (`::ffff:169.254.169.254`) and the HEX form the WHATWG URL
-  // parser normalizes it to (`::ffff:a9fe:a9fe`). Checking only the dotted one
-  // let `http://[::ffff:169.254.169.254]/` through to the metadata service —
-  // `new URL()` had already rewritten it by the time we looked.
-  const mappedDotted = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(ip)
-  if (mappedDotted) return isBlockedIPv4(mappedDotted[1]!)
-  const mappedHex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(ip)
-  if (mappedHex) {
-    const hi = Number.parseInt(mappedHex[1]!, 16)
-    const lo = Number.parseInt(mappedHex[2]!, 16)
-    const v4 = [hi >> 8, hi & 0xff, lo >> 8, lo & 0xff].join(".")
-    return isBlockedIPv4(v4)
-  }
+  const mapped = mappedIPv4(ip) // IPv4-mapped — defer to the v4 rules
+  if (mapped) return isBlockedIPv4(mapped)
   // NAT64 / 6to4 wrappers can also encode a v4 address; treat the well-known
   // prefixes as blocked rather than trying to decode every form.
   if (ip.startsWith("64:ff9b:") || ip.startsWith("2002:")) return true
   return false
+}
+
+/**
+ * The cloud instance metadata service: 169.254.169.254 on AWS, GCP, Azure and
+ * DigitalOcean, plus fd00:ec2::254 on IPv6-only EC2.
+ *
+ * Split out from `isBlockedIPv4`/`isBlockedIPv6` because this subset is refused
+ * EVEN WHEN the private-network escape hatch is on (see `privateAllowed`).
+ * Everything else that hatch re-opens is a machine on the operator's own network;
+ * this one hands out IAM credentials for the whole cloud account, and no real
+ * webhook target lives there. The rest of 169.254.0.0/16 goes with it — nothing
+ * routable is in that range either, so keeping it costs no legitimate target.
+ *
+ * Narrow on purpose: 6to4/NAT64 spellings of the same address are not decoded
+ * here. They are blocked wholesale when the hatch is off, and cannot reach the
+ * metadata service without a relay when it is on.
+ */
+export const isMetadataAddress = (raw: string): boolean => {
+  const ip = raw.toLowerCase().replace(/^\[|\]$/g, "")
+  const v4 = isIP(ip) === 4 ? ip : mappedIPv4(ip)
+  if (v4) {
+    const [a, b] = v4.split(".").map(Number)
+    return a === 169 && b === 254
+  }
+  return ip === "fd00:ec2::254"
 }
 
 /** Is this literal IP address one we refuse to fetch? */
@@ -83,8 +120,18 @@ export const isBlockedAddress = (ip: string): boolean => {
 
 /**
  * Escape hatch for self-hosters whose webhook target really is on the internal
- * network. Off by default; enabling it re-opens the metadata-service path, so the
- * name is deliberately explicit rather than a friendly `ALLOW_INTERNAL`.
+ * network. Off by default, and an exact `"1"` — `true`/`yes` do NOT enable it,
+ * which is the right direction to fail for a flag that widens what we will fetch.
+ *
+ * It re-opens loopback, RFC1918 and unique-local, but NOT the metadata service:
+ * see `isMetadataAddress`. The name stays explicit rather than a friendly
+ * `ALLOW_INTERNAL` because it is still a real widening.
+ *
+ * NOTE: the engine's save-time screen (`AutomationService.webhookUrlProblem`)
+ * cannot read this — it is sync and env-free — so a rule targeting a LITERAL
+ * private IP is refused in the editor whether or not this is set. Hostnames are
+ * unaffected, which is the shape a compose-network target normally has
+ * (`http://n8n:5678`). Documented in `.env.production.example`.
  */
 const privateAllowed = (): boolean => process.env.AUTOMATION_WEBHOOK_ALLOW_PRIVATE === "1"
 
@@ -114,13 +161,17 @@ export const assertPublicUrlShape = (raw: string): URL => {
   if (url.username || url.password) {
     throw new UnsafeUrlError("credentials in the URL are not allowed")
   }
-  if (privateAllowed()) return url
   const host = url.hostname
   // A literal IP is checkable now; a hostname is deferred to `resolvePublicUrl`.
-  if (isIP(host) !== 0 || /^\[.*\]$/.test(host)) {
-    if (isBlockedAddress(host.replace(/^\[|\]$/g, ""))) {
-      throw new UnsafeUrlError("that address is not publicly routable")
-    }
+  const literal = isIP(host) !== 0 || /^\[.*\]$/.test(host)
+  const bare = host.replace(/^\[|\]$/g, "")
+  // Before the escape hatch, not after: this one is refused either way.
+  if (literal && isMetadataAddress(bare)) {
+    throw new UnsafeUrlError("that address is the cloud metadata service")
+  }
+  if (privateAllowed()) return url
+  if (literal && isBlockedAddress(bare)) {
+    throw new UnsafeUrlError("that address is not publicly routable")
   }
   // `localhost` and friends resolve to loopback but are not IP literals.
   if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local")) {
@@ -139,9 +190,14 @@ export const assertPublicUrlShape = (raw: string): URL => {
 export const resolvePublicUrl = async (raw: string): Promise<{ url: URL; address: string }> => {
   const url = assertPublicUrlShape(raw)
   const host = url.hostname.replace(/^\[|\]$/g, "")
+  // A literal address was fully vetted by the shape check above.
   if (isIP(host) !== 0) return { url, address: host }
-  if (privateAllowed()) return { url, address: host }
 
+  // The escape hatch does NOT skip resolution. `metadata.evil.com` → A
+  // 169.254.169.254 is the whole reason this layer exists, and it works just as
+  // well against a deployment that allows its own private network. The cost is
+  // that an unresolvable host now fails here rather than at `fetch` — same
+  // outcome, earlier and with a clearer message.
   let addresses: Array<{ address: string }>
   try {
     addresses = await lookup(host, { all: true, verbatim: true })
@@ -149,8 +205,12 @@ export const resolvePublicUrl = async (raw: string): Promise<{ url: URL; address
     throw new UnsafeUrlError("that hostname could not be resolved")
   }
   if (addresses.length === 0) throw new UnsafeUrlError("that hostname could not be resolved")
+  const allowPrivate = privateAllowed()
   for (const { address } of addresses) {
-    if (isBlockedAddress(address)) {
+    if (isMetadataAddress(address)) {
+      throw new UnsafeUrlError("that hostname resolves to the cloud metadata service")
+    }
+    if (!allowPrivate && isBlockedAddress(address)) {
       throw new UnsafeUrlError("that hostname resolves to a non-public address")
     }
   }
@@ -163,6 +223,10 @@ export const resolvePublicUrl = async (raw: string): Promise<{ url: URL; address
  * `redirect: "manual"` is load-bearing, not tidiness: without it a permitted host
  * can 302 to the metadata service and `fetch` follows it after our checks are
  * done. A redirect is reported as a failed delivery rather than chased.
+ *
+ * The vetted address from `resolvePublicUrl` is deliberately unused: `fetch` has
+ * no connect-time hook, so dialing it would mean a custom dispatcher. The
+ * rebinding window that leaves open is documented at the top of this file.
  */
 export const fetchGuardedJson = async (
   raw: string,

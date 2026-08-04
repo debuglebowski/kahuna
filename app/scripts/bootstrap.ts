@@ -1,6 +1,6 @@
 import "../server/env"
 
-import { bootstrapInitialAdmin } from "../server/bootstrap"
+import { bootstrapInitialAdmin, isEmptyDeployment } from "../server/bootstrap"
 
 /**
  * CLI: `bun scripts/bootstrap.ts` — create the initial admin + seeded org from
@@ -30,9 +30,22 @@ if (result.status === "created") {
   console.log("               promote it to owner, then delete this admin")
 } else if (result.reason === "already-provisioned") {
   console.log("bootstrap: skipped — this deployment already has accounts")
+} else if (await isEmptyDeployment()) {
+  // The one combination that leaves a deployment unusable. Sign-up is closed, so
+  // "no INITIAL_ADMIN_* and no accounts" means the deploy just went green with
+  // nobody able to reach the app — which the neutral "skipped" line below reads
+  // exactly like. Say so instead of leaving it to be discovered at the sign-in
+  // screen.
+  //
+  // Still exit 0: the entrypoint runs this under `set -e`, and an operator who
+  // provisions by hand with scripts/create-admin.ts is in this state on purpose.
+  // Failing here would abort their deploy over a supported path.
+  console.warn("bootstrap: WARNING — this deployment has no accounts and no way to sign in.")
+  console.warn("           Self-serve sign-up is closed, so nobody can reach the app yet.")
+  console.warn("           Set INITIAL_ADMIN_EMAIL + INITIAL_ADMIN_PASSWORD and re-run,")
+  console.warn("           or provision by hand with scripts/create-admin.ts.")
 } else {
   console.log("bootstrap: skipped — INITIAL_ADMIN_EMAIL / INITIAL_ADMIN_PASSWORD not set.")
-  console.log("           Set both and re-run, or provision by hand with scripts/create-admin.ts.")
 }
 
 process.exit(0)

@@ -19,17 +19,20 @@ describe("initial admin bootstrap", () => {
   })
 
   describe("env parsing", () => {
-    it("is opt-in: null when unset, and when only one half is set", () => {
+    it("is opt-in: null when neither half is set", () => {
       expect(readInitialAdminEnv()).toBeNull()
+    })
 
-      // A half-set pair is treated as unset rather than guessed at — otherwise a
-      // typo'd password key would silently mint an account with no password.
+    it("throws when only one half is set", () => {
+      // Not null: a half-set pair is a typo, not a decision. Degrading to
+      // "bootstrap not wanted" hides a mistyped key behind the same silence as an
+      // untouched deployment, and the deploy then goes green with no way in.
       process.env.INITIAL_ADMIN_EMAIL = "admin@test.dev"
-      expect(readInitialAdminEnv()).toBeNull()
+      expect(() => readInitialAdminEnv()).toThrow(/INITIAL_ADMIN_PASSWORD is not/)
 
       delete process.env.INITIAL_ADMIN_EMAIL
       process.env.INITIAL_ADMIN_PASSWORD = "password12345"
-      expect(readInitialAdminEnv()).toBeNull()
+      expect(() => readInitialAdminEnv()).toThrow(/INITIAL_ADMIN_EMAIL is not/)
     })
 
     it("defaults the org name and trims the email", () => {

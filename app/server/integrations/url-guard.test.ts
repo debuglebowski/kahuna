@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 import {
   assertPublicUrlShape,
   isBlockedAddress,
+  isMetadataAddress,
   resolvePublicUrl,
   UnsafeUrlError,
 } from "./url-guard"
@@ -57,15 +58,49 @@ describe("url-guard shape checks", () => {
     expect(isBlockedAddress("8.8.8.8")).toBe(false)
   })
 
-  it("honours the explicit self-host escape hatch", () => {
+  const withHatch = (fn: () => void): void => {
     const old = process.env.AUTOMATION_WEBHOOK_ALLOW_PRIVATE
     process.env.AUTOMATION_WEBHOOK_ALLOW_PRIVATE = "1"
     try {
-      expect(() => assertPublicUrlShape("http://10.0.0.5/hook")).not.toThrow()
+      fn()
     } finally {
       if (old === undefined) delete process.env.AUTOMATION_WEBHOOK_ALLOW_PRIVATE
       else process.env.AUTOMATION_WEBHOOK_ALLOW_PRIVATE = old
     }
+  }
+
+  it("honours the explicit self-host escape hatch", () => {
+    withHatch(() => {
+      expect(() => assertPublicUrlShape("http://10.0.0.5/hook")).not.toThrow()
+      expect(() => assertPublicUrlShape("http://127.0.0.1:5678/hook")).not.toThrow()
+      expect(() => assertPublicUrlShape("http://[fd00::1]/hook")).not.toThrow()
+    })
+  })
+
+  it("still refuses the metadata service under the escape hatch", () => {
+    // The hatch is for the operator's own network. This address is not that: it
+    // vends IAM credentials for the whole cloud account, and an org admin who can
+    // write an automation must not reach it by flipping one deploy variable.
+    withHatch(() => {
+      for (const url of [
+        "http://169.254.169.254/latest/meta-data/iam/security-credentials/",
+        "http://[::ffff:169.254.169.254]/", // normalized to ::ffff:a9fe:a9fe
+        "http://169.254.0.1/", // rest of link-local goes with it
+        "http://[fd00:ec2::254]/", // IPv6-only EC2
+      ]) {
+        expect(() => assertPublicUrlShape(url)).toThrow(UnsafeUrlError)
+      }
+    })
+  })
+
+  it("does not enable the hatch for anything but an exact 1", () => {
+    const old = process.env.AUTOMATION_WEBHOOK_ALLOW_PRIVATE
+    for (const value of ["true", "yes", "0", ""]) {
+      process.env.AUTOMATION_WEBHOOK_ALLOW_PRIVATE = value
+      expect(() => assertPublicUrlShape("http://10.0.0.5/hook")).toThrow(UnsafeUrlError)
+    }
+    if (old === undefined) delete process.env.AUTOMATION_WEBHOOK_ALLOW_PRIVATE
+    else process.env.AUTOMATION_WEBHOOK_ALLOW_PRIVATE = old
   })
 })
 
@@ -74,6 +109,31 @@ describe("url-guard DNS resolution", () => {
     // The case a textual check CANNOT catch, and the reason the send-time guard
     // resolves rather than trusting the string.
     await expect(resolvePublicUrl("http://localtest.me/hook")).rejects.toThrow(UnsafeUrlError)
+  })
+
+  it("still resolves under the escape hatch, allowing private but not metadata", async () => {
+    // The hatch must not become "skip DNS": a hostname pointing at the metadata
+    // service is the exact attack this layer exists for, and it works against a
+    // deployment that allows its own private network too. Checked at the address
+    // level because no stable public hostname resolves to 169.254.169.254.
+    expect(isMetadataAddress("169.254.169.254")).toBe(true)
+    expect(isMetadataAddress("::ffff:a9fe:a9fe")).toBe(true)
+    expect(isMetadataAddress("fd00:ec2::254")).toBe(true)
+    expect(isMetadataAddress("10.0.0.5")).toBe(false)
+    expect(isMetadataAddress("8.8.8.8")).toBe(false)
+
+    const old = process.env.AUTOMATION_WEBHOOK_ALLOW_PRIVATE
+    process.env.AUTOMATION_WEBHOOK_ALLOW_PRIVATE = "1"
+    try {
+      // Resolves to loopback — refused above, permitted here. Not asserted as
+      // 127.0.0.1: `verbatim: true` keeps the resolver's own order, and this host
+      // answers ::1 first on a v6-capable machine.
+      const { address } = await resolvePublicUrl("http://localtest.me/hook")
+      expect(isBlockedAddress(address)).toBe(true)
+    } finally {
+      if (old === undefined) delete process.env.AUTOMATION_WEBHOOK_ALLOW_PRIVATE
+      else process.env.AUTOMATION_WEBHOOK_ALLOW_PRIVATE = old
+    }
   })
 
   it("allows a genuinely public hostname and pins its address", async () => {
