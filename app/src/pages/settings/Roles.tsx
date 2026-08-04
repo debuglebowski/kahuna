@@ -120,6 +120,31 @@ const RESOURCE_RANK = new Map<string, number>(
 )
 
 /**
+ * What a rule's Scope column reads.
+ *
+ * `conceptName` resolves the id a targeted rule carries — showing `a1b2c3d4…` told the
+ * reader a rule was narrowed but not to what, which is the one thing they need.
+ */
+const scopeLabelFor = (
+  rule: {
+    readonly resourceId: string | null
+    readonly conceptId: string | null
+    readonly condition: unknown
+  },
+  conceptName: (id: string) => string | undefined,
+): string => {
+  const target = rule.resourceId ?? rule.conceptId
+  if (target) {
+    const named = conceptName(target)
+    // A record rule scoped by concept covers the records IN it, not the concept.
+    const suffix = rule.conceptId && !rule.resourceId ? " (records)" : ""
+    return named ? `${named}${suffix}` : `${target.slice(0, 8)}…`
+  }
+  if (rule.condition) return "Matching records"
+  return "All"
+}
+
+/**
  * Bucket a role's rules by resource group, dropping empty groups.
  *
  * A flat list of eleven rows made the reader scan for the row they wanted; a role's
@@ -192,12 +217,31 @@ function RuleEditor({ role, onClose }: { role: AccessRole; onClose: () => void }
   const [effect, setEffect] = useState<"allow" | "deny">("allow")
   const [resourceType, setResourceType] = useState<AccessResourceType>("concept")
   const [actions, setActions] = useState<ReadonlyArray<AccessActionName>>(["view"])
+  // "" = every one of that type. Only concept-shaped rules can name a target here;
+  // a record is picked from the record's own Share dialog, not from a role.
+  const [targetId, setTargetId] = useState("")
+
+  // Named targets for the picker AND for resolving ids in the table's Scope column.
+  // Not gated on the selected type: the table needs names for rules that are already
+  // there, whatever the form happens to be set to.
+  const concepts = useQuery({ queryKey: ["concepts"], queryFn: () => api.listConcepts() })
 
   const add = useMutation({
-    mutationFn: () => api.addRule({ roleId: role.id, effect, actions, resourceType }),
+    mutationFn: () =>
+      api.addRule({
+        roleId: role.id,
+        effect,
+        actions,
+        resourceType,
+        // A `concept` rule names the concept itself; a `record` rule scoped to a
+        // concept uses `conceptId` — "records IN Deals", not "the Deals concept".
+        ...(targetId && resourceType === "concept" ? { resourceId: targetId } : {}),
+        ...(targetId && resourceType === "record" ? { conceptId: targetId } : {}),
+      }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["rules", role.id] })
       setActions(["view"])
+      setTargetId("")
     },
   })
   const remove = useMutation({
@@ -207,6 +251,13 @@ function RuleEditor({ role, onClose }: { role: AccessRole; onClose: () => void }
 
   const toggle = (a: AccessActionName) =>
     setActions((cur) => (cur.includes(a) ? cur.filter((x) => x !== a) : [...cur, a]))
+
+  const conceptName = (id: string) => (concepts.data ?? []).find((c) => c.id === id)?.name
+  const scopeLabel = (r: {
+    resourceId: string | null
+    conceptId: string | null
+    condition: unknown
+  }) => scopeLabelFor(r, conceptName)
 
   return (
     <Modal onClose={onClose} title={`Rules — ${role.name}`} size="wide">
@@ -255,15 +306,10 @@ function RuleEditor({ role, onClose }: { role: AccessRole; onClose: () => void }
                     </TableCell>
                     <TableCell>{RESOURCE_LABEL.get(r.resourceType) ?? r.resourceType}</TableCell>
                     <TableCell className="text-muted-foreground">
-                      {/* "Scope" answers "which ones?" — the old column showed a raw
-                        `(any)` or a truncated uuid, neither of which reads as an answer. */}
-                      {r.resourceId ? (
-                        <span className="font-mono text-xs">{r.resourceId.slice(0, 8)}…</span>
-                      ) : r.condition ? (
-                        "Matching records"
-                      ) : (
-                        "All"
-                      )}
+                      {/* "Scope" answers "which ones?" — a raw `(any)` or a truncated
+                          uuid told the reader a rule was narrowed, but not to what,
+                          which is the one thing they need. */}
+                      {scopeLabel(r)}
                     </TableCell>
                     <TableCell>
                       <IconButton
@@ -310,7 +356,12 @@ function RuleEditor({ role, onClose }: { role: AccessRole; onClose: () => void }
             <Field label="Applies to">
               <Select
                 value={resourceType}
-                onValueChange={(v) => setResourceType(v as AccessResourceType)}
+                onValueChange={(v) => {
+                  setResourceType(v as AccessResourceType)
+                  // Drop the target: a concept id is meaningless against `dashboard`,
+                  // and carrying it over would silently scope the new rule.
+                  setTargetId("")
+                }}
               >
                 <SelectTrigger>
                   <SelectValue />
@@ -332,6 +383,35 @@ function RuleEditor({ role, onClose }: { role: AccessRole; onClose: () => void }
               </Select>
             </Field>
           </div>
+          {resourceType === "concept" || resourceType === "record" ? (
+            <Field
+              label={resourceType === "record" ? "In which concept?" : "Which concept?"}
+              hint={
+                resourceType === "record"
+                  ? "Leave as All to cover records everywhere."
+                  : "Leave as All to cover every concept."
+              }
+            >
+              <Select
+                value={targetId || "__all"}
+                onValueChange={(v) => setTargetId(v === "__all" ? "" : v)}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {/* Radix forbids an empty SelectItem value, so "all" rides a
+                      sentinel mapped back to "" — the project's standard workaround. */}
+                  <SelectItem value="__all">All</SelectItem>
+                  {(concepts.data ?? []).map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Field>
+          ) : null}
           <Field label="Can" hint="Pick one or more.">
             <div className="flex flex-wrap gap-1.5">
               {ACTIONS.map((a) => (
