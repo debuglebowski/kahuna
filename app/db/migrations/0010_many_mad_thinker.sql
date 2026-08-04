@@ -1,0 +1,1 @@
+ALTER TABLE "access_roles" DROP COLUMN "builtin";

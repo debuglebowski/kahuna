@@ -2052,6 +2052,7 @@ export const listRules = (roleId: string): UC<unknown> =>
 export const createRole = (input: {
   readonly name: string
   readonly description?: string
+  readonly kind?: "user" | "automation"
   readonly startFrom?: string
 }): UC<unknown> => Effect.flatMap(AccessRoleService, (r) => r.create(input))
 
@@ -2059,6 +2060,8 @@ export const updateRole = (input: {
   readonly id: string
   readonly name?: string
   readonly description?: string | null
+  readonly autoAssign?: boolean
+  readonly active?: boolean
 }): UC<unknown> =>
   Effect.gen(function* () {
     const roles = yield* AccessRoleService
@@ -2085,7 +2088,7 @@ export const deleteRole = (id: string): UC<unknown> =>
     if (outcome === "builtin")
       return yield* Effect.fail(
         new FieldValidationError({
-          message: "a preset role can't be deleted — edit its rules instead",
+          message: "a managed role can't be deleted — turn it off instead",
           field: "id",
         }),
       )

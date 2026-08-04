@@ -151,6 +151,17 @@ export class PolicyService extends Effect.Service<PolicyService>()("engine/Polic
      *
      * One query rather than two, because the union is what the decision procedure
      * consumes — and a role rule and a share are the same shape by design.
+     *
+     * ── WHAT MAKES DEACTIVATION REAL ─────────────────────────────────────────
+     *
+     * `access_roles.active` is filtered HERE, not in the UI and not on assignment.
+     * An inactive role's rules never enter any policy, so it grants nothing to
+     * anybody — while its assignments stay on the table, which is what lets
+     * reactivating restore exactly what was there. Every other treatment (hiding the
+     * row, refusing new assignments) would leave existing holders still holding it.
+     *
+     * A direct share (`actor_id`) has no role and is unaffected: someone who was
+     * given one record keeps it when the role that let them see the concept goes off.
      */
     const loadRules = (orgId: string, actorId: string) =>
       sql<AccessRuleRow>`
@@ -161,8 +172,9 @@ export class PolicyService extends Effect.Service<PolicyService>()("engine/Polic
           AND (
             r.actor_id = ${actorId}
             OR r.role_id IN (
-              SELECT role_id FROM access_role_actors
-              WHERE org_id = ${orgId} AND actor_id = ${actorId}
+              SELECT a.role_id FROM access_role_actors a
+              JOIN access_roles ro ON ro.id = a.role_id AND ro.org_id = a.org_id
+              WHERE a.org_id = ${orgId} AND a.actor_id = ${actorId} AND ro.active = true
             )
           )`.pipe(Effect.map((rows) => rows.map(toRule)))
 

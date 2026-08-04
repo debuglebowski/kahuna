@@ -1508,13 +1508,26 @@ export const AccessCondition = Schema.Union(
 )
 export type AccessCondition = Schema.Schema.Type<typeof AccessCondition>
 
-/** A role: a named, reusable bag of rules. `key` non-null = a seeded preset. */
+/** Which category a role lives in, and therefore who may hold it. */
+export const AccessRoleKind = Schema.Literal("user", "automation")
+export type AccessRoleKind = Schema.Schema.Type<typeof AccessRoleKind>
+
+/** A role: a named, reusable bag of rules. `key` non-null = a seeded managed one. */
 export const AccessRole = Schema.Struct({
   id: Schema.String,
   key: Schema.NullOr(Schema.String),
   name: Schema.String,
   description: Schema.NullOr(Schema.String),
-  builtin: Schema.Boolean,
+  /** Seeded by us, so delete is refused — `active: false` is how one is turned off.
+   *  Its rules, name and switches all stay editable. */
+  managed: Schema.Boolean,
+  /** People vs automations. Fixed at creation; assignment refuses a mismatch. */
+  kind: AccessRoleKind,
+  /** New actors of this kind receive it. Any number of roles may carry it. */
+  autoAssign: Schema.Boolean,
+  /** False ⇒ grants nothing to anyone and is not handed out; assignments are kept,
+   *  so reactivating restores exactly what was there. */
+  active: Schema.Boolean,
   /** Holds a blanket `*` and is exempt from per-resource values. The grid renders
    *  these roles read-only, and create forms leave them out — a full-access role
    *  cannot be "not allowed" to see something. */
@@ -2506,6 +2519,8 @@ export class KingsmakerRpcs extends RpcGroup.make(
     payload: {
       name: Schema.String,
       description: Schema.optional(Schema.String),
+      /** Which category. Fixed at creation — see `AccessRoleService.create`. */
+      kind: Schema.optional(AccessRoleKind),
       /** Copy this role's rules and templates as a starting point. A SNAPSHOT — later
        *  changes to the source do not propagate. */
       startFrom: Schema.optional(Schema.String),
@@ -2513,16 +2528,22 @@ export class KingsmakerRpcs extends RpcGroup.make(
     success: AccessRole,
     error: RpcError,
   }),
+  /** Rename, re-describe, or flip either switch. `kind` is absent on purpose. */
   Rpc.make("updateRole", {
     payload: {
       id: Schema.String,
       name: Schema.optional(Schema.String),
       description: Schema.optional(Schema.NullOr(Schema.String)),
+      /** New actors of this kind receive it. */
+      autoAssign: Schema.optional(Schema.Boolean),
+      /** False turns the role off entirely, reversibly — see `AccessRole.active`. */
+      active: Schema.optional(Schema.Boolean),
     },
     success: AccessRole,
     error: RpcError,
   }),
-  /** Delete a custom role. A preset is refused (the seed would re-create it). */
+  /** Delete a custom role. A managed one is refused (the seed would re-create it);
+   *  turn it off with `updateRole({active: false})` instead. */
   Rpc.make("deleteRole", {
     payload: { id: Schema.String },
     success: Schema.Struct({ id: Schema.String }),

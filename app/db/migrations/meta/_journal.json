@@ -64,6 +64,20 @@
       "when": 1785846340930,
       "tag": "0008_nifty_queen_noir",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1785882134854,
+      "tag": "0009_fat_colonel_america",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1785882152325,
+      "tag": "0010_many_mad_thinker",
+      "breakpoints": true
     }
   ]
 }

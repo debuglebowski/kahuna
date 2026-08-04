@@ -116,6 +116,17 @@ export class BlanketRuleRefused extends Schema.TaggedError<BlanketRuleRefused>()
   },
 ) {}
 
+/**
+ * A role was offered to the wrong sort of actor — an automation role to a person, or
+ * a people role to an automation. Typed rather than a die because the Roles UI can
+ * surface it, and because a mis-assigned automation role is a privilege escalation
+ * (the managed one holds a blanket `*`), not a programming slip.
+ */
+export class RoleKindMismatch extends Schema.TaggedError<RoleKindMismatch>()("RoleKindMismatch", {
+  roleKind: Schema.String,
+  message: Schema.String,
+}) {}
+
 export class AttachmentNotFound extends Schema.TaggedError<AttachmentNotFound>()(
   "AttachmentNotFound",
   { attachmentId: Schema.String },

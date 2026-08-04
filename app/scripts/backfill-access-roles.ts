@@ -70,12 +70,17 @@ const PRESETS = [
   },
   {
     key: "automation_full",
-    name: "Automation (full access)",
+    name: "Full access",
     description: "What automations and syncs had before access control: everything.",
     position: 3,
     actions: ["*"],
   },
 ] as const
+
+/** Category and landing zone, kept out of PRESETS so the action lists above stay
+ *  literally comparable with `BUILTIN_ROLES` (see `access-backfill.test.ts`). */
+const KIND: Record<string, "user" | "automation"> = { automation_full: "automation" }
+const AUTO_ASSIGN = new Set(["member", "automation_full"])
 
 const AUTOMATION_ACTOR_PREFIX = "system:automation:"
 
@@ -107,9 +112,18 @@ const main = async () => {
         continue
       }
       const inserted = await pool.query<{ id: string }>(
-        `INSERT INTO access_roles (org_id, key, name, description, builtin, position)
-         VALUES ($1, $2, $3, $4, true, $5) RETURNING id`,
-        [org_id, preset.key, preset.name, preset.description, preset.position],
+        `INSERT INTO access_roles
+           (org_id, key, name, description, managed, kind, auto_assign, position)
+         VALUES ($1, $2, $3, $4, true, $5, $6, $7) RETURNING id`,
+        [
+          org_id,
+          preset.key,
+          preset.name,
+          preset.description,
+          KIND[preset.key] ?? "user",
+          AUTO_ASSIGN.has(preset.key),
+          preset.position,
+        ],
       )
       const roleId = inserted.rows[0]!.id
       roleIdByKey.set(preset.key, roleId)

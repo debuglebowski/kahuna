@@ -155,7 +155,7 @@ describe("membership role ↔ access role stay in step", () => {
     await syncMembershipRole(orgId, u.userId, "member")
 
     const custom = await pool.query<{ id: string }>(
-      `INSERT INTO access_roles (org_id, key, name, builtin, position)
+      `INSERT INTO access_roles (org_id, key, name, managed, position)
        VALUES ($1, NULL, 'Sales', false, 9) RETURNING id`,
       [orgId],
     )

@@ -2,19 +2,30 @@ import { PgClient } from "@effect/sql-pg"
 import { Effect } from "effect"
 import type { AccessAction, AccessCondition, AccessResourceType } from "../domain/access"
 import { ACTION_ALL } from "../domain/access"
-import { BlanketRuleRefused } from "../errors"
+import { isAutomationActor } from "../domain/types"
+import { BlanketRuleRefused, RoleKindMismatch } from "../errors"
 import { TEMPLATED_TYPES } from "./AccessDefaultsService"
 import { EventStore } from "./EventStore"
 import { OrgContext } from "./OrgContext"
 import { PolicyService } from "./PolicyService"
 
-/** A role as the app sees it. `key` is non-null only for the seeded presets. */
+/** Which category a role belongs to, and therefore who may hold it. */
+export type AccessRoleKind = "user" | "automation"
+
+/** A role as the app sees it. `key` is non-null only for the seeded managed ones. */
 export interface AccessRole {
   readonly id: string
   readonly key: string | null
   readonly name: string
   readonly description: string | null
-  readonly builtin: boolean
+  /** Seeded, so deletion is refused. Everything else about it stays editable. */
+  readonly managed: boolean
+  /** People or automations. Assignment refuses a mismatch. */
+  readonly kind: AccessRoleKind
+  /** New actors of this kind receive it. Any number of roles may carry this. */
+  readonly autoAssign: boolean
+  /** False ⇒ grants nothing and is not auto-assigned; assignments are kept. */
+  readonly active: boolean
   /** Holds a blanket `*`; exempt from per-resource values. See `access_roles`. */
   readonly fullAccess: boolean
   readonly position: number
@@ -25,22 +36,34 @@ interface AccessRoleRow {
   readonly key: string | null
   readonly name: string
   readonly description: string | null
-  readonly builtin: boolean
+  readonly managed: boolean
+  readonly kind: string
+  readonly auto_assign: boolean
+  readonly active: boolean
   readonly full_access: boolean
   readonly position: number
 }
+
+/** Every SELECT reads the same shape — one place to change when a column lands. */
+const ROLE_COLUMNS =
+  "id, key, name, description, managed, kind, auto_assign, active, full_access, position"
 
 const toRole = (r: AccessRoleRow): AccessRole => ({
   id: r.id,
   key: r.key,
   name: r.name,
   description: r.description,
-  builtin: r.builtin,
+  managed: r.managed,
+  // Fail toward the narrower category: an unrecognised value must not let an
+  // automation role land on a person.
+  kind: r.kind === "automation" ? "automation" : "user",
+  autoAssign: r.auto_assign,
+  active: r.active,
   fullAccess: r.full_access,
   position: r.position,
 })
 
-/** A rule to seed with a preset role. */
+/** A rule to seed with a managed role. */
 interface RuleSpec {
   readonly effect: "allow" | "deny"
   readonly actions: ReadonlyArray<AccessAction | typeof ACTION_ALL>
@@ -52,11 +75,14 @@ interface RoleSpec {
   readonly name: string
   readonly description: string
   readonly position: number
+  readonly kind: AccessRoleKind
+  /** Seeded with auto-assign on: new actors of this kind land here. */
+  readonly autoAssign: boolean
   readonly rules: ReadonlyArray<RuleSpec>
 }
 
 /**
- * ── THE PRESETS ──────────────────────────────────────────────────────────────
+ * ── THE MANAGED ROLES ────────────────────────────────────────────────────────
  *
  * These reproduce today's behaviour EXACTLY, which is the whole point of seeding
  * them before anything consults them: `server/policy.ts:can()` currently says a
@@ -86,7 +112,9 @@ interface RoleSpec {
  * `access.test.ts` pins this ("the member preset must not grant blanket view").
  * Do not "complete" the member preset by adding `view` to it.
  *
- * They are ordinary rows and fully editable. `builtin` only means "seeded".
+ * They are ordinary rows and fully editable. `managed` only means "seeded", which
+ * buys them exactly one thing: deletion is refused, because the seed would put them
+ * back. `active = false` is how one is turned off for good.
  */
 const ALL_RESOURCES: ReadonlyArray<AccessResourceType> = [
   "org",
@@ -113,6 +141,8 @@ export const BUILTIN_ROLES: ReadonlyArray<RoleSpec> = [
     name: "Owner",
     description: "Full access, including org configuration.",
     position: 0,
+    kind: "user",
+    autoAssign: false,
     rules: everything([ACTION_ALL]),
   },
   {
@@ -120,6 +150,8 @@ export const BUILTIN_ROLES: ReadonlyArray<RoleSpec> = [
     name: "Admin",
     description: "Full access, including org configuration.",
     position: 1,
+    kind: "user",
+    autoAssign: false,
     rules: everything([ACTION_ALL]),
   },
   {
@@ -129,16 +161,23 @@ export const BUILTIN_ROLES: ReadonlyArray<RoleSpec> = [
     // comment above — granting it here would override concept/field visibility.
     description: "Creates and edits; cannot configure or delete. Reads what is visible.",
     position: 2,
+    kind: "user",
+    // WHERE A NEW MEMBER LANDS. Not a hardcoded key anywhere — the flag is what the
+    // join path reads, so an org can move it to a role of its own making.
+    autoAssign: true,
     rules: everything(["create", "edit", "archive", "share"]),
   },
   {
-    // Existing automations migrate onto this, so nothing changes behaviour the day
-    // access control ships. Scoping an automation down is then an opt-in per
-    // automation — see the access-control artifact.
+    // The `automation` category exists so a bot role never sits among people roles
+    // and can never be handed to a person (`assign` refuses the mismatch). Every new
+    // automation starts here; narrowing one means pointing it at another automation
+    // role instead of hand-writing rules.
     key: "automation_full",
-    name: "Automation (full access)",
+    name: "Full access",
     description: "What automations and syncs had before access control: everything.",
     position: 3,
+    kind: "automation",
+    autoAssign: true,
     rules: everything([ACTION_ALL]),
   },
 ]
@@ -161,19 +200,40 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
         Effect.gen(function* () {
           const { orgId } = yield* OrgContext
           const rows = yield* sql<AccessRoleRow>`
-            SELECT id, key, name, description, builtin, full_access, position FROM access_roles
+            SELECT ${sql.unsafe(ROLE_COLUMNS)} FROM access_roles
             WHERE org_id = ${orgId} ORDER BY position ASC, name ASC`
           return rows.map(toRole)
         }).pipe(Effect.orDie)
 
-      /** A preset by its stable key, or null. The migration/backfill pins by this. */
+      /** A managed role by its stable key, or null. The seed pins by this. */
       const getByKey = (key: string): Effect.Effect<AccessRole | null, never, OrgContext> =>
         Effect.gen(function* () {
           const { orgId } = yield* OrgContext
           const rows = yield* sql<AccessRoleRow>`
-            SELECT id, key, name, description, builtin, full_access, position FROM access_roles
+            SELECT ${sql.unsafe(ROLE_COLUMNS)} FROM access_roles
             WHERE org_id = ${orgId} AND key = ${key} LIMIT 1`
           return rows[0] ? toRole(rows[0]) : null
+        }).pipe(Effect.orDie)
+
+      /**
+       * The roles a new actor of this kind should receive.
+       *
+       * Inactive ones are excluded: an off role must not be handed out, or
+       * reactivating it would silently widen access for everyone who joined while it
+       * was off. Returning an empty list is legitimate — the caller warns, it does
+       * not invent a fallback.
+       */
+      const autoAssignFor = (
+        kind: AccessRoleKind,
+      ): Effect.Effect<ReadonlyArray<AccessRole>, never, OrgContext> =>
+        Effect.gen(function* () {
+          const { orgId } = yield* OrgContext
+          const rows = yield* sql<AccessRoleRow>`
+            SELECT ${sql.unsafe(ROLE_COLUMNS)} FROM access_roles
+            WHERE org_id = ${orgId} AND kind = ${kind}
+              AND auto_assign = true AND active = true
+            ORDER BY position ASC`
+          return rows.map(toRole)
         }).pipe(Effect.orDie)
 
       /**
@@ -196,9 +256,10 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
           const fullAccess = spec.rules.some((r) => r.actions.includes(ACTION_ALL))
           const inserted = yield* sql<{ readonly id: string }>`
             INSERT INTO access_roles
-              (org_id, key, name, description, builtin, full_access, position)
+              (org_id, key, name, description, managed, kind, auto_assign, full_access,
+               position)
             VALUES (${orgId}, ${spec.key}, ${spec.name}, ${spec.description}, true,
-                    ${fullAccess}, ${spec.position})
+                    ${spec.kind}, ${spec.autoAssign}, ${fullAccess}, ${spec.position})
             RETURNING id`
           const roleId = inserted[0]!.id
           // THE CREATION TEMPLATE for this preset: what a newly created concept,
@@ -240,16 +301,46 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
         return seeded
       }).pipe(Effect.orDie)
 
-      /** Give an actor a role. Idempotent (the pk is (role, actor)). */
+      /**
+       * Give an actor a role. Idempotent (the pk is (role, actor)).
+       *
+       * ── THE KIND GUARD ───────────────────────────────────────────────────────
+       *
+       * An `automation` role may only land on an automation actor, and a `user` role
+       * never may. Without this the category is decoration: a "Slack sync — Tickets
+       * only" role could be handed to a person, and the Full access automation role —
+       * which holds a blanket `*` — could be handed to anyone, from a dropdown, as a
+       * privilege escalation with no rule written anywhere.
+       *
+       * An actor may hold ANY NUMBER of roles; this refuses the wrong category, not a
+       * second role.
+       */
       const assign = (roleId: string, actorId: string) =>
         Effect.gen(function* () {
           const { orgId, actor } = yield* OrgContext
+          const rows = yield* sql<{ readonly kind: string; readonly name: string }>`
+            SELECT kind, name FROM access_roles
+            WHERE org_id = ${orgId} AND id = ${roleId} LIMIT 1`.pipe(Effect.orDie)
+          const role = rows[0]
+          if (role) {
+            const wantsAutomation = role.kind === "automation"
+            if (wantsAutomation !== isAutomationActor(actorId)) {
+              return yield* Effect.fail(
+                new RoleKindMismatch({
+                  roleKind: wantsAutomation ? "automation" : "user",
+                  message: wantsAutomation
+                    ? `"${role.name}" is an automation role and can only be given to an automation.`
+                    : `"${role.name}" is a people role and can't be given to an automation.`,
+                }),
+              )
+            }
+          }
           yield* sql`
             INSERT INTO access_role_actors (org_id, role_id, actor_id, created_by)
             VALUES (${orgId}, ${roleId}, ${actorId}, ${actor})
-            ON CONFLICT (role_id, actor_id) DO NOTHING`
-          yield* policies.bump(orgId)
-        }).pipe(Effect.orDie)
+            ON CONFLICT (role_id, actor_id) DO NOTHING`.pipe(Effect.orDie)
+          yield* policies.bump(orgId).pipe(Effect.orDie)
+        })
 
       const unassign = (roleId: string, actorId: string) =>
         Effect.gen(function* () {
@@ -267,7 +358,8 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
         Effect.gen(function* () {
           const { orgId } = yield* OrgContext
           const rows = yield* sql<AccessRoleRow>`
-            SELECT r.id, r.key, r.name, r.description, r.builtin, r.full_access, r.position
+            SELECT r.id, r.key, r.name, r.description, r.managed, r.kind, r.auto_assign,
+                   r.active, r.full_access, r.position
             FROM access_roles r
             JOIN access_role_actors a ON a.role_id = r.id AND a.org_id = r.org_id
             WHERE r.org_id = ${orgId} AND a.actor_id = ${actorId}
@@ -288,11 +380,10 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
       // ── role CRUD ────────────────────────────────────────────────────────────
 
       /**
-       * Create a custom role. `key` stays null — only the seeded presets are pinned by
-       * key, so a user-created role can be renamed freely.
-       */
-      /**
        * Create a role, optionally STARTING FROM another one.
+       *
+       * `key` stays null — only the seeded managed roles are pinned by key, so a
+       * user-created role can be renamed and deleted freely.
        *
        * A brand-new role holds nothing, and with access fail-closed that means its
        * holders see nothing at all — which is safe but useless, and walking a grid of
@@ -302,10 +393,15 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
        * It is a SNAPSHOT, not a link: later changes to Member do not propagate to a
        * role started from it. The UI has to say so, or that is a guaranteed bug
        * report.
+       *
+       * `kind` is fixed at creation and never changes: flipping a people role to an
+       * automation role would strand every person already holding it on the wrong side
+       * of THE KIND GUARD.
        */
       const create = (input: {
         readonly name: string
         readonly description?: string | null
+        readonly kind?: AccessRoleKind
         /** Copy this role's per-resource rules and creation templates. */
         readonly startFrom?: string | null
       }) =>
@@ -315,9 +411,10 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
             SELECT MAX(position) AS max FROM access_roles WHERE org_id = ${orgId}`
           const position = Number(max[0]?.max ?? -1) + 1
           const rows = yield* sql<AccessRoleRow>`
-            INSERT INTO access_roles (org_id, key, name, description, builtin, position)
-            VALUES (${orgId}, NULL, ${input.name.trim()}, ${input.description ?? null}, false, ${position})
-            RETURNING id, key, name, description, builtin, full_access, position`
+            INSERT INTO access_roles (org_id, key, name, description, managed, kind, position)
+            VALUES (${orgId}, NULL, ${input.name.trim()}, ${input.description ?? null}, false,
+                    ${input.kind ?? "user"}, ${position})
+            RETURNING ${sql.unsafe(ROLE_COLUMNS)}`
           const role = toRole(rows[0]!)
           if (input.startFrom) {
             // Rules first, then templates: the new role sees what the source sees
@@ -353,12 +450,19 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
           return role
         }).pipe(Effect.orDie)
 
-      /** Rename / re-describe a role. Presets are renameable too — they are ordinary
-       *  rows, and `key` (not the name) is what code pins by. */
+      /**
+       * Rename / re-describe a role, and set its two switches.
+       *
+       * Managed roles are editable here too — they are ordinary rows, and `key` (not
+       * the name) is what the seed pins by. `kind` is deliberately absent: see
+       * `create`.
+       */
       const update = (input: {
         readonly id: string
         readonly name?: string
         readonly description?: string | null
+        readonly autoAssign?: boolean
+        readonly active?: boolean
       }) =>
         Effect.gen(function* () {
           const { orgId } = yield* OrgContext
@@ -366,9 +470,11 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
             UPDATE access_roles
             SET name = COALESCE(${input.name?.trim() ?? null}, name),
                 description = ${input.description === undefined ? sql`description` : input.description},
+                auto_assign = COALESCE(${input.autoAssign ?? null}, auto_assign),
+                active = COALESCE(${input.active ?? null}, active),
                 updated_at = now()
             WHERE org_id = ${orgId} AND id = ${input.id}
-            RETURNING id, key, name, description, builtin, full_access, position`
+            RETURNING ${sql.unsafe(ROLE_COLUMNS)}`
           const row = rows[0]
           if (!row) return null
           yield* events.append({
@@ -377,6 +483,9 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
             eventType: "AccessRoleRenamed",
             payload: { _tag: "AccessRoleRenamed", name: row.name } as never,
           })
+          // `active` and `auto_assign` both change what a resolved policy contains, so
+          // the generation has to move or the change lands only after the cache ages
+          // out — which it never does, since it is keyed on the version.
           yield* policies.bump(orgId)
           return toRole(row)
         }).pipe(Effect.orDie)
@@ -385,15 +494,16 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
        * Delete a role. Its rules and assignments go with it (ON DELETE CASCADE), so
        * every holder loses that access immediately; the history stays on the log.
        *
-       * A PRESET is refused: the seed and the backfill pin by `key`, so removing one
-       * would make `ensureBuiltins` silently re-create it on the next provision and
-       * quietly restore access someone deliberately removed.
+       * A MANAGED role is refused: the seed pins by `key`, so removing one would make
+       * `ensureBuiltins` silently re-create it on the next provision and quietly
+       * restore access someone deliberately removed. Turning one off is
+       * `update({active: false})`, which is reversible and keeps its assignments.
        */
       const remove = (id: string) =>
         Effect.gen(function* () {
           const { orgId } = yield* OrgContext
           const rows = yield* sql<AccessRoleRow>`
-            SELECT id, key, name, description, builtin, full_access, position FROM access_roles
+            SELECT ${sql.unsafe(ROLE_COLUMNS)} FROM access_roles
             WHERE org_id = ${orgId} AND id = ${id} LIMIT 1`
           const row = rows[0]
           if (!row) return "not-found" as const
@@ -725,8 +835,11 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
           const rows = yield* sql<{ readonly actor_id: string }>`
             SELECT DISTINCT a.actor_id
             FROM access_role_actors a
+            JOIN access_roles ro ON ro.id = a.role_id AND ro.org_id = a.org_id
             JOIN access_rules r ON r.role_id = a.role_id AND r.org_id = a.org_id
             WHERE a.org_id = ${orgId}
+              -- An inactive role grants nothing, so its holders are not holders.
+              AND ro.active = true
               AND r.effect = 'allow'
               AND (r.resource_type = 'org' OR r.resource_id IS NULL)
               AND ('configure' = ANY(r.actions) OR '*' = ANY(r.actions))
@@ -739,6 +852,7 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
       return {
         list,
         getByKey,
+        autoAssignFor,
         ensureBuiltins,
         assign,
         unassign,

@@ -893,34 +893,55 @@ export const automationRuns = pgTable(
  */
 
 /**
- * A named, reusable bag of rules. `Owner`/`Admin`/`Member` ship as presets and are
- * ordinary rows — editable, not hardcoded tiers — plus one non-person preset
- * (`Automation (full access)`) that existing automations migrate onto.
+ * A named, reusable bag of rules. `Admin`/`Member` ship managed and are ordinary rows
+ * — editable, not hardcoded tiers — plus one managed role in the `automation`
+ * category that every automation starts with.
+ *
+ * An actor may hold ANY NUMBER of roles; there is no tier and no ordering between
+ * them. `position` is display order on the Roles page, nothing more.
  */
 export const accessRoles = pgTable(
   "access_roles",
   {
     id: uuid("id").primaryKey().defaultRandom(),
     orgId: text("org_id").notNull(),
-    // Stable system key (`owner`, `admin`, `member`, `automation_full`), mirroring
-    // `concepts.slug`: the seed and the migrations pin by key, so `name` is freely
-    // renameable. Null for a user-created role, which nothing pins by.
+    // Stable system key (`admin`, `member`, `automation_full`), mirroring
+    // `concepts.slug`. Its ONE job is seed idempotency — `ensureBuiltins` uses it to
+    // add a newly-shipped managed role without touching the others. It is not an
+    // authorization concept: `name` is freely renameable, deletion is refused by
+    // `managed`, and where new actors land is `auto_assign`.
     key: text("key"),
     name: text("name").notNull(),
     description: text("description"),
-    // A preset. Its RULES stay editable (that is the point — presets are ordinary
-    // roles); the flag only drives "this one was seeded, don't offer to delete it".
-    builtin: boolean("builtin").notNull().default(false),
+    // Seeded by us, so DELETE is refused — the seed would re-create it on the next
+    // provision and quietly restore access someone removed on purpose. Its rules,
+    // name and every flag below stay editable, and `active` is the reversible way to
+    // turn one off for good.
+    managed: boolean("managed").notNull().default(false),
+    // WHICH CATEGORY, and who may hold it. A `user` role belongs to people; an
+    // `automation` role belongs to automation actors (`system:automation:*`). The
+    // engine refuses a mismatch on assign, so the split is real and not cosmetic:
+    // an automation's access can be reshaped without any of it landing on a person.
+    kind: text("kind").notNull().default("user"),
+    // New actors OF THIS KIND receive this role. Settable on any number of roles —
+    // a new member gets every auto-assign `user` role, a new automation every
+    // auto-assign `automation` role. This replaces the hardcoded membership-role →
+    // preset mapping that used to live in `server/membership.ts`.
+    autoAssign: boolean("auto_assign").notNull().default(false),
+    // OFF, reversibly. An inactive role's rules are excluded from every resolved
+    // policy (`PolicyService.loadRules`) and it is not auto-assigned — but its
+    // ASSIGNMENTS are kept, so reactivating restores exactly what was there. This is
+    // what a managed role has instead of delete.
+    active: boolean("active").notNull().default(true),
     // EXEMPT FROM PER-RESOURCE VALUES. A full-access role holds one blanket
     // `allow ['*']` per resource type and is never materialized into per-resource
     // rules, because `*` means "every action, present and future" — expanding it
     // freezes the role at today's action list, so an action added in a later release
-    // silently isn't granted to the owner. It also keeps `configureHolders`' floor
-    // guard working unchanged.
+    // silently isn't granted to anyone holding it.
     //
-    // A real column rather than `key IN ('owner','admin','automation_full')`: the
-    // exemption is a property of the role, not of its name, and an org may want a
-    // custom role to have it.
+    // A real column rather than `key IN ('admin','automation_full')`: the exemption is
+    // a property of the role, not of its name, and an org may want a custom role to
+    // have it.
     fullAccess: boolean("full_access").notNull().default(false),
     position: integer("position").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

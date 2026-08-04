@@ -291,8 +291,8 @@ function roleMsg(e: unknown): string {
     return "This is the only rule granting org configuration — add another before removing it."
   if (raw.includes("only member who can configure"))
     return "This is the only member who can configure the org — assign someone else first."
-  if (raw.includes("preset role can't be deleted"))
-    return "Preset roles can't be deleted. Edit their rules instead."
+  if (raw.includes("managed role can't be deleted"))
+    return "Managed roles can't be deleted — turn this one off instead."
   if (raw.includes("role not found")) return "That role no longer exists."
   // Anything else: pass the server's own text through when it looks like prose (the
   // engine's messages are written for humans), else a neutral fallback.
@@ -785,9 +785,9 @@ export function Roles() {
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
                   <span className="font-medium">{r.name}</span>
-                  {r.builtin ? (
+                  {r.managed ? (
                     <Badge tone="gray">
-                      <Lock size={11} /> preset
+                      <Lock size={11} /> managed
                     </Badge>
                   ) : null}
                 </div>
@@ -799,9 +799,9 @@ export function Roles() {
                 <Button variant="secondary" size="sm" onClick={() => setEditing(r)}>
                   Rules
                 </Button>
-                {/* A preset's rules stay editable — only deletion is refused, because
-                    the seed pins presets by key and would re-create one. */}
-                {r.builtin ? null : (
+                {/* A managed role's rules stay editable — only deletion is refused,
+                    because the seed pins by key and would re-create one. */}
+                {r.managed ? null : (
                   <IconButton
                     aria-label={`Delete ${r.name}`}
                     title="Delete role"
