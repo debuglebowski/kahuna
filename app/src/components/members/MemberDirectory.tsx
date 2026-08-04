@@ -43,7 +43,7 @@ import {
 import { useSectionBase } from "@/lib/sectionBase"
 import { initialsOf } from "@/lib/utils"
 import { Feedback } from "@/pages/settings/parts"
-import { isAdminRole } from "@/pages/settings/SettingsLayout"
+import { useIsAdmin } from "@/pages/settings/SettingsLayout"
 
 export type MemberField = "role" | "email" | "joined"
 export type MemberSort = "name" | "role" | "joined"
@@ -93,6 +93,7 @@ export function MemberDirectory({
   // to whichever is mounted, so a click can't throw the user out of settings.
   const base = useSectionBase("members")
   const { members, deactivatedSet, isPending, error } = useMembers()
+  const { admin } = useIsAdmin()
   const [filter, setFilter] = useState("")
   const [showDeactivated, setShowDeactivated] = useState(false)
   // Pending admin action; ConfirmDialog stays mounted while the mutation runs.
@@ -179,7 +180,6 @@ export function MemberDirectory({
   if (isPending) return <Spinner />
   if (error) return <p className="text-sm text-destructive">{(error as Error).message}</p>
 
-  const admin = isAdminRole(members.find((m) => m.userId === session?.user.id)?.role)
   const ownerCount = members.filter((m) => m.role === "owner").length
   const q = filter.trim().toLowerCase()
   const matching = members.filter((m) => {

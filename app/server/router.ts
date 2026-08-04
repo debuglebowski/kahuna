@@ -46,7 +46,7 @@ import {
   updateLinearIssueForRequest,
 } from "./linear"
 import { syncMembershipRole } from "./membership"
-import { isAdminRole } from "./policy"
+import { canConfigure } from "./policy"
 import {
   connectPosthog,
   disconnectPosthog,
@@ -314,7 +314,8 @@ export const handleApi = async (req: Request): Promise<Response | null> => {
     const org = await resolveOrg(req)
     if (!org.ok) return Response.json({ error: org.code }, { status: org.status })
     const role = await roleOf(org.actor, org.orgId)
-    if (!role || !isAdminRole(role)) return Response.json({ error: "FORBIDDEN" }, { status: 403 })
+    if (!(await canConfigure(org.orgId, org.actor, role)))
+      return Response.json({ error: "FORBIDDEN" }, { status: 403 })
 
     const body = (await req.json().catch(() => null)) as {
       email?: string
@@ -407,7 +408,8 @@ export const handleApi = async (req: Request): Promise<Response | null> => {
     const org = await resolveOrg(req)
     if (!org.ok) return Response.json({ error: org.code }, { status: org.status })
     const role = await roleOf(org.actor, org.orgId)
-    if (!role || !isAdminRole(role)) return Response.json({ error: "FORBIDDEN" }, { status: 403 })
+    if (!(await canConfigure(org.orgId, org.actor, role)))
+      return Response.json({ error: "FORBIDDEN" }, { status: 403 })
 
     const userId = seg[3]
     const targetRole = await roleOf(userId, org.orgId)

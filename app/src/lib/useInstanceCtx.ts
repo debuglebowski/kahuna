@@ -1,7 +1,7 @@
 import { useLiveQuery } from "@tanstack/react-db"
 import { useQuery } from "@tanstack/react-query"
 import type { InstanceCtx } from "../components/instance/types"
-import { isAdminRole, useFullOrg } from "../pages/settings/SettingsLayout"
+import { useFullOrg, useIsAdmin } from "../pages/settings/SettingsLayout"
 import { api } from "./api"
 import { useSession } from "./auth-client"
 import { instanceDetail, KEY, useRegisterCollection } from "./collections"
@@ -23,6 +23,7 @@ export function useInstanceCtx(id: string): { ctx: InstanceCtx | null; loading: 
   )
   const { data: session } = useSession()
   const org = useFullOrg()
+  const { admin } = useIsAdmin()
   const allConcepts = useQuery({ queryKey: ["concepts"], queryFn: () => api.listConcepts() })
 
   const detail = detailQ.data?.[0]
@@ -31,7 +32,6 @@ export function useInstanceCtx(id: string): { ctx: InstanceCtx | null; loading: 
   const { instance, concept, fields, inboundRelationFields, related, staticLabels, labels } = detail
   const relationFields = fields.filter((f) => f.kind === "relation")
   const editable = canEditVersion(concept, instance)
-  const myRole = org.data?.members?.find((m) => m.userId === session?.user.id)?.role
   const ctx: InstanceCtx = {
     instance,
     concept,
@@ -42,7 +42,7 @@ export function useInstanceCtx(id: string): { ctx: InstanceCtx | null; loading: 
     relationFields,
     inboundRelationFields,
     editable,
-    admin: isAdminRole(myRole),
+    admin,
     myUserId: session?.user.id,
     members: org.data?.members ?? [],
     concepts: allConcepts.data ?? [],

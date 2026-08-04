@@ -29,12 +29,26 @@ describe("org scope roles", () => {
     expect(systemScope("org", "runner").role).toBe("system")
   })
 
-  it("systemScope is UNRESTRICTED and sessionScope never is", () => {
-    // The access-model half of the same question. `systemScope` carries an explicit
-    // unrestricted policy (migrations/seeds/the decay tick are exempt); a session
-    // scope's policy is resolved from the caller's rules and can never be exempt.
+  it("ONLY an owner session is unrestricted", () => {
+    // This used to read "sessionScope is never unrestricted", and the change is
+    // deliberate: owner is a membership flag with an unconditional bypass, because a
+    // role is an editable bag of rules and an org must not be able to lock itself
+    // out by editing one. Everyone else is exactly their resolved rules.
     expect(systemScope("org", "runner").policy?.unrestricted).toBe(true)
-    expect(sessionScope("org", "user", "owner").policy).toBeUndefined()
+    expect(sessionScope("org", "user", "owner").policy?.unrestricted).toBe(true)
+    expect(sessionScope("org", "user", "admin").policy).toBeUndefined()
+    expect(sessionScope("org", "user", "member").policy).toBeUndefined()
+  })
+
+  /**
+   * An owner bypasses RULES. They do not become the engine, and they do not become
+   * every other user: `role` stays `"owner"`, so the `role === "system"` branches
+   * (which let the engine read anything) are not reachable, and ownership of a
+   * personal dashboard still wins — see `DashboardService.maySee`, which requires
+   * `owner_id IS NULL` before it ever consults a policy.
+   */
+  it("the owner bypass does not smuggle in engine privilege", () => {
+    expect(sessionScope("org", "user", "owner").role).not.toBe("system")
   })
 
   it("an actorScope is GOVERNED, not exempt — that is the whole point", async () => {

@@ -41,12 +41,42 @@ const seedRestricted = () =>
   })
 
 describe("concept read visibility", () => {
-  it("the predicate is explicit about who may read restricted material", () => {
-    expect(canReadRestricted("member")).toBe(false)
-    expect(canReadRestricted("admin")).toBe(true)
-    expect(canReadRestricted("owner")).toBe(true)
-    // The engine itself (syncs, automations, seeds) is never filtered.
-    expect(canReadRestricted("system")).toBe(true)
+  it("who may read restricted material is decided by RULES, not by a tier", () => {
+    const scope = (policy: PolicySet | undefined, role: "member" | "system" = "member") => ({
+      orgId: "o",
+      actor: "u",
+      role,
+      policy,
+    })
+    const orgConfigure: PolicySet = {
+      ...emptyPolicy("u"),
+      rules: [
+        {
+          id: "r",
+          roleId: "role",
+          actorId: null,
+          effect: "allow",
+          actions: ["configure"],
+          resourceType: "org",
+          resourceId: null,
+          conceptId: null,
+          condition: null,
+        } as AccessRule,
+      ],
+    }
+    // Holding nothing — or holding the ordinary member grant, which covers the
+    // templated types but never `org` — reads no restricted material.
+    expect(canReadRestricted(scope(emptyPolicy("u")))).toBe(false)
+    expect(canReadRestricted(scope(ordinaryMember("u")))).toBe(false)
+    // What "admin" used to mean, said in the model that decides it now.
+    expect(canReadRestricted(scope(orgConfigure))).toBe(true)
+    // The owner bypass and the engine itself.
+    expect(canReadRestricted(scope(unrestrictedPolicy("u")))).toBe(true)
+    expect(canReadRestricted(scope(undefined, "system"))).toBe(true)
+    // No policy at all grants nothing — the same fail-closed polarity as everywhere.
+    expect(canReadRestricted(scope(undefined))).toBe(false)
+
+    // `canReadConcept` is the OLD tier answer, kept only for the migration proof.
     expect(canReadConcept("visible", "member")).toBe(true)
     expect(canReadConcept("admin", "member")).toBe(false)
     expect(canReadConcept("admin", "owner")).toBe(true)
@@ -255,11 +285,11 @@ describe("field read visibility", () => {
       { id: "a", visibility: "visible" as const },
       { id: "b", visibility: "admin" as const },
     ]
-    const hidden = hiddenFieldIds(defs, "member")
+    const hidden = hiddenFieldIds(defs, false)
     expect([...hidden]).toEqual(["b"])
     expect(projectState({ a: 1, b: 2 }, hidden)).toEqual({ a: 1 })
     // A privileged caller gets the SAME object back — no needless copying.
-    const none = hiddenFieldIds(defs, "admin")
+    const none = hiddenFieldIds(defs, true)
     const state = { a: 1, b: 2 }
     expect(projectState(state, none)).toBe(state)
   })

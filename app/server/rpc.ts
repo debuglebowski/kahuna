@@ -47,7 +47,7 @@ import {
 } from "../rpc/contract"
 import { auth } from "./auth"
 import { pool } from "./db"
-import { isAdminRole } from "./policy"
+import { canConfigure } from "./policy"
 import { EngineBase, ERROR_MAP, resolvePolicy, sessionScope } from "./runtime"
 import { isDeactivated, roleOf } from "./session"
 import * as uc from "./use-cases"
@@ -202,9 +202,23 @@ const requireAction = (
         new RpcError({ code: "FORBIDDEN", message: "Admin only", status: 403 }),
       )
     }
-    // The DEFAULT: exactly what `can(role, "admin")` answered before — `configure` is
-    // owner/admin-only; every other action was open to any member.
-    const fallback = action === "configure" || action === "delete" ? isAdminRole(scope.role) : true
+    // ── THE LAST ROLE-DERIVED FALLBACK, NOW CLOSED ──────────────────────────
+    //
+    // `configure` and `delete` used to fall back to `isAdminRole(membership role)`.
+    // They now fall back to NOTHING: an admin passes because they hold the Admin
+    // role, whose rules grant `*`, and an owner passes because their session is
+    // unrestricted. Deciding it from the tier would ignore an org that granted
+    // org-configuration to a role of its own making — which is the whole point of
+    // Admin becoming an ordinary role.
+    //
+    // This is a fail-closed flip, so it depends on every actor actually HOLDING a
+    // role: `scripts/backfill-auto-roles.ts` is what guarantees that, and the
+    // failure mode if it did not run is silent (buttons quietly stop working for
+    // people who should have them).
+    //
+    // The other actions stay open — they were open to any member before, and the
+    // per-resource rules are what narrow them.
+    const fallback = action !== "configure" && action !== "delete"
     const allowed = scope.policy
       ? decide(scope.policy, action, resource, fallback, { unconditionalOnly: true })
       : fallback
@@ -234,8 +248,8 @@ const admin = <A>(eff: Effect.Effect<unknown, unknown, OrgContext | EngineServic
  * directions: an allow WIDENS (this role may configure Deals and nothing else), a
  * deny NARROWS (admins, but not this concept).
  *
- * The fallback is unchanged — `isAdminRole` for `configure`/`delete`, open
- * otherwise — so an org with no rules behaves exactly as before.
+ * The fallback is whatever `requireAction` computes — closed for `configure`/
+ * `delete`, open otherwise. See the long note there.
  */
 const adminOn = <A>(
   action: AccessAction,
@@ -420,7 +434,7 @@ async function assertCanMutateAnnotation(orgId: string, actor: string, id: strin
   if (!row) return
   if (row.created_by === actor || row.assignee === actor) return
   const role = await roleOf(actor, orgId)
-  if (role && isAdminRole(role)) return
+  if (await canConfigure(orgId, actor, role)) return
   throw new RpcError({
     code: "FORBIDDEN",
     message: "Only the author, assignee, or an admin may modify this",
@@ -440,7 +454,7 @@ async function assertCanMutateAttachment(orgId: string, actor: string, id: strin
   if (!row) return
   if (row.created_by === actor) return
   const role = await roleOf(actor, orgId)
-  if (role && isAdminRole(role)) return
+  if (await canConfigure(orgId, actor, role)) return
   throw new RpcError({
     code: "FORBIDDEN",
     message: "Only the uploader or an admin may modify this file",
@@ -458,7 +472,7 @@ async function assertCanPurgeBucket(orgId: string, actor: string, bucketId: stri
   )
   if (r.rows.every((row) => row.created_by === actor)) return
   const role = await roleOf(actor, orgId)
-  if (role && isAdminRole(role)) return
+  if (await canConfigure(orgId, actor, role)) return
   throw new RpcError({
     code: "FORBIDDEN",
     message: "This widget holds files uploaded by someone else — only an admin may delete them",
@@ -951,6 +965,22 @@ const HandlersLive = ServerRpcs.toLayer({
   listRoles: () => as<ReadonlyArray<AccessRole>>(uc.listRoles()),
   rolesOf: ({ userId }) => as<ReadonlyArray<AccessRole>>(uc.rolesOfUser(userId)),
   listRules: ({ roleId }) => admin<ReadonlyArray<AccessRule>>(uc.listRules(roleId)),
+  // Not `admin`-gated, deliberately: this is how a client finds out whether it is an
+  // admin, so gating it on being one makes it useless. It reveals only the caller's
+  // own answer.
+  myAccess: () =>
+    Effect.gen(function* () {
+      const scope = yield* OrgContext
+      return {
+        isOwner: scope.role === "owner",
+        canConfigure:
+          scope.role === "owner" ||
+          (scope.policy !== undefined &&
+            decide(scope.policy, "configure", { type: "org" }, false, {
+              unconditionalOnly: true,
+            })),
+      }
+    }),
   roleHolders: ({ roleId }) =>
     admin<{ readonly actors: ReadonlyArray<string> }>(uc.roleHolders(roleId)),
   reassignRoleHolders: ({ fromRoleId, toRoleId }) =>

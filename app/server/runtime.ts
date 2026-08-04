@@ -142,9 +142,23 @@ type Runnable<A, E> = Effect.Effect<A, E, OrgContext | EngineServices | PgClient
  * does not include `"system"` — so a user request cannot be given engine-level
  * privilege even by mistake. Session-resolved callers must use this.
  *
- * `policy` is the caller's resolved access rules (see `resolvePolicy`). Optional
- * during the migration onto the access model: absent means "no rules", so every
- * decision falls through to the resource defaults — today's behaviour exactly.
+ * `policy` is the caller's resolved access rules (see `resolvePolicy`).
+ *
+ * ── THE OWNER BYPASS ─────────────────────────────────────────────────────────
+ *
+ * An OWNER resolves `unrestricted`, ignoring the rules entirely.
+ *
+ * Owner is not a role in the access model, and deliberately: a role is an editable
+ * bag of rules, so whoever edits the owner's rules can lock the org out of itself.
+ * That hazard is exactly why the irreducible-floor guard had to exist. Making the
+ * bypass unconditional deletes the hazard rather than guarding it — an owner cannot
+ * be denied by any rule, so there is nothing left to protect.
+ *
+ * It is NOT the same as `systemScope`, which also carries `role: "system"` and with
+ * it the engine's own exemptions. An owner is a person: `DashboardService.maySee`
+ * still requires `owner_id IS NULL` before consulting rules, so an owner cannot read
+ * someone else's PERSONAL dashboard. Ownership is per-actor and beats everything,
+ * including this.
  */
 export const sessionScope = (
   orgId: string,
@@ -155,7 +169,7 @@ export const sessionScope = (
   orgId,
   actor,
   role,
-  policy,
+  policy: role === "owner" ? unrestrictedPolicy(actor) : policy,
 })
 
 /**

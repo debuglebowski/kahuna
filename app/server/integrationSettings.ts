@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm"
 import { orgIntegrationSettings } from "#db"
 import { db } from "./db"
-import { isAdminRole } from "./policy"
+import { canConfigure } from "./policy"
 import { resolveAdmin, resolveOrg } from "./session"
 
 /**
@@ -223,7 +223,7 @@ export const integrationSettingsStatus = async (req: Request): Promise<Response>
     effective: await readIntegrationSettings(org.orgId),
     overrides: await readIntegrationOverrides(org.orgId),
     defaults: deploymentDefaults(),
-    canEdit: isAdminRole(org.role),
+    canEdit: await canConfigure(org.orgId, org.actor, org.role),
   })
 }
 

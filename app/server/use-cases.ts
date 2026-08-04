@@ -199,7 +199,7 @@ const fieldMaskFor = (conceptId: string): UC<ReadonlySet<string>> =>
     // No early return for privileged roles: a DENY rule must be able to hide a field
     // from an admin, and only `scopeHiddenFieldIds` knows that. It still short-
     // circuits internally when the caller is privileged and holds no field rules.
-    if (canReadRestricted(scope.role) && !hasFieldRules(scope)) return new Set<string>()
+    if (canReadRestricted(scope) && !hasFieldRules(scope)) return new Set<string>()
     const fields = yield* FieldService
     // includeArchived: an archived field's values linger in `state`, so a hidden
     // one must stay masked after it is archived.
@@ -2002,7 +2002,7 @@ export const share = (input: {
     const held = (action: AccessAction) =>
       scope.policy === undefined ||
       scope.policy.unrestricted ||
-      decide(scope.policy, action, resource, canReadRestricted(scope.role), {
+      decide(scope.policy, action, resource, canReadRestricted(scope), {
         unconditionalOnly: true,
       })
     const overreach = input.actions.filter((a) => !held(a))

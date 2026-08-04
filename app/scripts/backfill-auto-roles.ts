@@ -95,7 +95,22 @@ const main = async () => {
       [org_id],
     )
     if (Number(total.rows[0]?.n ?? 0) === 0) {
-      if (hasMembers || hasAutomations) unprovisioned++
+      if (hasMembers || hasAutomations) {
+        unprovisioned++
+        // Only ADMIN memberships actually break here: owners hold the bypass, and
+        // members get their roles when `ensureBuiltins` seeds the org on first use.
+        // An admin in a role-less org loses org configuration the moment the
+        // `configure` fallback closes, so it is named rather than counted.
+        const admins = await pool.query<{ user_id: string }>(
+          `SELECT user_id FROM bauth_member WHERE organization_id = $1 AND role = 'admin'`,
+          [org_id],
+        )
+        for (const a of admins.rows)
+          console.warn(
+            `  ${org_id}: admin ${a.user_id} is in an org with NO roles — run ` +
+              `scripts/backfill-access-roles.ts to seed it, then re-run this`,
+          )
+      }
       continue
     }
 
@@ -106,6 +121,41 @@ const main = async () => {
     if (forBots.length === 0 && hasAutomations) {
       orgsWithNoLandingZone++
       console.warn(`  ${org_id}: no auto-assign automation role — its automations cannot run`)
+    }
+
+    // ── THE MEMBERSHIP MIRROR ────────────────────────────────────────────────
+    //
+    // `owner`/`admin` membership points at the managed role of the same name
+    // (`membership.ts`), but that only runs on join and on a role change — a
+    // membership set before the sync existed was never mirrored. Harmless while
+    // `configure` fell back to the membership tier; the moment that fallback closes,
+    // an unmirrored ADMIN silently loses org configuration.
+    //
+    // An unmirrored OWNER is fine — the owner bypass does not need a role — which is
+    // exactly why this is easy to miss by looking at one's own screen.
+    const mirrored = await pool.query<{ user_id: string; role: string; role_id: string }>(
+      `SELECT m.user_id, m.role, ro.id AS role_id
+         FROM bauth_member m
+         JOIN access_roles ro ON ro.org_id = m.organization_id AND ro.key = m.role
+        WHERE m.organization_id = $1 AND m.role IN ('owner', 'admin')`,
+      [org_id],
+    )
+    for (const row of mirrored.rows) {
+      if (DRY) {
+        const held = await pool.query(
+          `SELECT 1 FROM access_role_actors WHERE org_id = $1 AND role_id = $2 AND actor_id = $3`,
+          [org_id, row.role_id, row.user_id],
+        )
+        if (held.rowCount === 0) peopleAssigned++
+        continue
+      }
+      const res = await pool.query(
+        `INSERT INTO access_role_actors (org_id, role_id, actor_id, created_by)
+         VALUES ($1, $2, $3, 'system:backfill-auto-roles')
+         ON CONFLICT (role_id, actor_id) DO NOTHING`,
+        [org_id, row.role_id, row.user_id],
+      )
+      peopleAssigned += res.rowCount ?? 0
     }
 
     // People. `bauth_member` is the authority on who is a member; deactivated ones

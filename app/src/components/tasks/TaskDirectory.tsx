@@ -67,7 +67,7 @@ import {
   type TaskGroup,
   type TaskGroupBy,
 } from "@/lib/taskGroups"
-import { isAdminRole } from "@/pages/settings/SettingsLayout"
+import { useIsAdmin } from "@/pages/settings/SettingsLayout"
 
 /** An assignee scope: "__all" | "__me" | "__none" | a member's userId. */
 export type AssigneeScope = string
@@ -116,7 +116,7 @@ export function TaskDirectory({
   const { data: session } = useSession()
   const me = session?.user
   const { members, deactivatedSet } = useMembers()
-  const admin = isAdminRole(members.find((m) => m.userId === me?.id)?.role)
+  const { admin } = useIsAdmin()
 
   useRegisterCollection(KEY.tasksGlobal, tasksGlobalCollection)
   useRegisterCollection(KEY.taskStatuses, taskStatusesCollection)

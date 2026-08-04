@@ -32,7 +32,7 @@ import { migrate, referencedConceptIds } from "../lib/dashboards"
 import { canEditVersion, isAmending } from "../lib/editability"
 import { instanceLabel } from "../lib/instanceLabel"
 import { resolveRecordDashboard } from "../lib/recordDashboards"
-import { isAdminRole, useFullOrg } from "./settings/SettingsLayout"
+import { useFullOrg, useIsAdmin } from "./settings/SettingsLayout"
 
 /** Single-instance detail at `/instances/:id` — reads the id from the route and
  *  renders {@link InstanceViewBody}. */
@@ -81,8 +81,7 @@ export function InstanceViewBody({
   const navigate = useNavigate()
   const { data: session } = useSession()
   const org = useFullOrg()
-  const myRole = org.data?.members?.find((m) => m.userId === session?.user.id)?.role
-  const admin = isAdminRole(myRole)
+  const { admin } = useIsAdmin()
   const [dialog, setDialog] = useState<"archive" | "delete" | null>(null)
   const [sharing, setSharing] = useState(false)
 

@@ -16,7 +16,8 @@ import {
 import type { ReactNode } from "react"
 import { Navigate, Outlet, useLocation } from "react-router-dom"
 import { Spinner } from "../../components/ui"
-import { authClient, useSession } from "../../lib/auth-client"
+import { api } from "../../lib/api"
+import { authClient } from "../../lib/auth-client"
 
 interface SettingsItem {
   readonly to: string
@@ -105,17 +106,24 @@ export function useFullOrg() {
   })
 }
 
-export function isAdminRole(role: string | null | undefined) {
-  return role === "owner" || role === "admin"
-}
-
-/** My admin-ness in the active org — shared by the settings guard and the
- *  settings sidebar nav (which hides admin-only entries). */
+/**
+ * My admin-ness in the active org — the settings guard, the settings sidebar nav,
+ * and the two directories that hide admin-only affordances.
+ *
+ * ── WHY THIS IS A SERVER ANSWER NOW ──────────────────────────────────────────
+ *
+ * It used to be `role === "owner" || role === "admin"`, computed here from the
+ * membership list. Admin is an ordinary access role: an org can grant org
+ * configuration to a role of its own making, and membership will not carry `admin`
+ * at all after the collapse — so the client cannot work it out. It also must not
+ * try: the rules that decide it are `configure`-gated, which is the very question
+ * being asked.
+ *
+ * The server answers about the CALLER only, so this leaks nothing.
+ */
 export function useIsAdmin() {
-  const { data: session } = useSession()
-  const org = useFullOrg()
-  const myRole = org.data?.members?.find((m) => m.userId === session?.user.id)?.role
-  return { admin: isAdminRole(myRole), isPending: org.isPending }
+  const q = useQuery({ queryKey: ["myAccess"], queryFn: () => api.myAccess() })
+  return { admin: q.data?.canConfigure ?? false, isPending: q.isPending }
 }
 
 export function SettingsLayout() {

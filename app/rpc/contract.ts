@@ -2509,6 +2509,18 @@ export class KingsmakerRpcs extends RpcGroup.make(
     success: Schema.Array(AccessRole),
     error: RpcError,
   }),
+  /**
+   * What the CALLER may do at org level — the client's replacement for reading
+   * membership roles and deciding for itself.
+   *
+   * It has to come from the server now: "is this person an admin?" is whether they
+   * hold `configure` through some role, and the client cannot see rules (they are
+   * `configure`-gated, which is the very thing being asked about).
+   */
+  Rpc.make("myAccess", {
+    success: Schema.Struct({ isOwner: Schema.Boolean, canConfigure: Schema.Boolean }),
+    error: RpcError,
+  }),
   /** Who holds a role. Actor ids — user ids, or `system:automation:<id>` for a bot. */
   Rpc.make("roleHolders", {
     payload: { roleId: Schema.String },

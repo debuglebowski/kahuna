@@ -4,7 +4,7 @@ import { member } from "#db"
 import type { EngineServices, OrgContext } from "#engine"
 import { auth } from "./auth"
 import { db, pool } from "./db"
-import { isAdminRole, type Role } from "./policy"
+import { canConfigure, type Role } from "./policy"
 import { resolvePolicy, runEngine, sessionScope, type UseCaseResult } from "./runtime"
 
 /** Resolve a user's role within an org from the BetterAuth `member` table. */
@@ -49,8 +49,10 @@ export type OrgResolution =
 export const resolveAdmin = async (request: Request): Promise<OrgResolution> => {
   const org = await resolveOrg(request)
   if (!org.ok) return org
-  // The role already came back on the resolution — no second lookup.
-  if (!isAdminRole(org.role)) return { ok: false, status: 403, code: "FORBIDDEN" }
+  // Decided from the RULES, not the membership tier — Admin is an ordinary role now,
+  // so an org may hand org-configuration to a role of its own making.
+  if (!(await canConfigure(org.orgId, org.actor, org.role)))
+    return { ok: false, status: 403, code: "FORBIDDEN" }
   return org
 }
 

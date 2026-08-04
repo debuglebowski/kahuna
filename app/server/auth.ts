@@ -244,6 +244,28 @@ export const auth = betterAuth({
             console.error(`Failed to seed org ${organization.id}:`, error)
           }
         },
+        // ── EVERY WAY A MEMBERSHIP CAN APPEAR ────────────────────────────────
+        //
+        // Membership and ACCESS are two tables, and BetterAuth's own endpoints are
+        // mounted under `/api/auth/*` — so `organization/add-member` and
+        // `organization/update-member-role` are reachable WITHOUT passing through
+        // our routes in router.ts, and therefore without `syncMembershipRole`. A
+        // member who arrives that way holds no access role at all, which under a
+        // fail-closed model is an empty app rather than a visible error.
+        //
+        // Hooking here rather than guarding each route is the point: the hook fires
+        // whatever the entry path, including ones added later.
+        //
+        // Never throws (see `syncMembershipRole`) — a failure must not abort a join.
+        afterAddMember: async ({ member, user, organization }) => {
+          await syncMembershipRole(organization.id, user.id, member.role)
+        },
+        afterUpdateMemberRole: async ({ member, user, organization }) => {
+          await syncMembershipRole(organization.id, user.id, member.role)
+        },
+        afterAcceptInvitation: async ({ member, user, organization }) => {
+          await syncMembershipRole(organization.id, user.id, member.role)
+        },
         // Purge the org's engine data BEFORE it is deleted. Throwing here aborts
         // the deletion (BetterAuth awaits this and only deletes on success), so
         // we never end up with an absent org but orphaned engine rows.

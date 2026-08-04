@@ -177,6 +177,33 @@ describe("membership role ↔ access role stay in step", () => {
   })
 
   /**
+   * THE ENTRY-PATH GUARD.
+   *
+   * BetterAuth's own endpoints are mounted under `/api/auth/*`, so a member can be
+   * added or promoted WITHOUT passing through router.ts and therefore without the
+   * sync. That member would hold no access role — an empty app, not a visible error.
+   * The organization hooks are what close it, and this asserts they are wired: the
+   * helper below calls `auth.api.addMember` DIRECTLY, exactly as the bypass would.
+   *
+   * If this fails, check `organizationHooks` in auth.ts.
+   */
+  it("a member added straight through BetterAuth still gets their roles", async () => {
+    const { orgId } = await orgWithOwner()
+    const joiner = await signUp()
+    await auth.api.addMember({
+      body: { userId: joiner.userId, role: "admin", organizationId: orgId },
+    })
+
+    const held = await pool.query<{ key: string | null }>(
+      `SELECT ro.key FROM access_role_actors a
+       JOIN access_roles ro ON ro.id = a.role_id
+       WHERE a.org_id = $1 AND a.actor_id = $2 ORDER BY ro.key`,
+      [orgId, joiner.userId],
+    )
+    expect(held.rows.map((r) => r.key)).toEqual(["admin", "member"])
+  })
+
+  /**
    * THE AUTO-ASSIGN GUARD. Where a new member lands is a FLAG now, not a key, so
    * moving it must actually move them. If this fails, something still hardcodes
    * `member` and an org can no longer choose its own landing zone.

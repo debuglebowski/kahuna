@@ -22,9 +22,31 @@ import type { ConceptVisibility } from "./types"
  * above "member".
  */
 
-/** May this role read admin-only material? `"system"` is the engine itself. */
-export const canReadRestricted = (role: ScopeRole): boolean =>
-  role === "owner" || role === "admin" || role === "system"
+/**
+ * May this CALLER read admin-only material (`fields.visibility = 'admin'`)?
+ *
+ * ── WHY THIS TAKES A SCOPE AND NOT A ROLE ────────────────────────────────────
+ *
+ * It used to be `role === "owner" || "admin" || "system"`, read off the BetterAuth
+ * membership tier. Admin is an ordinary access role now — an org can grant org
+ * configuration to a role of its own making, and membership no longer carries
+ * `admin` at all — so a tier check would have quietly hidden restricted fields from
+ * every administrator who wasn't an owner.
+ *
+ * So the question is asked of the RULES: does this caller hold `configure` on the
+ * org? That is the same thing "admin" meant, expressed in the model that now decides
+ * it. `unrestricted` covers the engine itself and the owner bypass; `"system"` is
+ * kept as a belt-and-braces check for a scope built without a policy.
+ *
+ * `unconditionalOnly`: a conditional grant of `configure` is not a claim on every
+ * restricted field in the org.
+ */
+export const canReadRestricted = (scope: OrgScope): boolean => {
+  if (scope.role === "system") return true
+  if (!scope.policy) return false
+  if (scope.policy.unrestricted) return true
+  return decide(scope.policy, "configure", { type: "org" }, false, { unconditionalOnly: true })
+}
 
 /**
  * The OLD default answer for a concept: may this role read one with this visibility?
@@ -36,7 +58,12 @@ export const canReadRestricted = (role: ScopeRole): boolean =>
  * the `visibility` column does.
  */
 export const canReadConcept = (visibility: ConceptVisibility, role: ScopeRole): boolean =>
-  visibility === "visible" || (visibility !== "none" && canReadRestricted(role))
+  // The old ROLE predicate, inlined. It is not `canReadRestricted` any more: that one
+  // moved onto the rules, and this function's only job is to reproduce what the
+  // membership tier answered BEFORE it did. Sharing an implementation would mean the
+  // proof drifts with the thing it is proving.
+  visibility === "visible" ||
+  (visibility !== "none" && (role === "owner" || role === "admin" || role === "system"))
 
 /**
  * ── THE CONCEPT READ DECISION ────────────────────────────────────────────────
@@ -119,13 +146,14 @@ export const scopeCanReadConcept = (scope: OrgScope, conceptId: string): boolean
  * of filtered reads greppable and auditable.
  */
 
-/** Ids of the fields this role may not read, by DEFAULT (no rules consulted).
- *  Empty for a privileged caller. */
+/** Ids of the fields this caller may not read, by DEFAULT (no FIELD rules consulted).
+ *  Empty for a privileged caller — `privileged` is `canReadRestricted(scope)`, passed
+ *  in rather than recomputed so the two can never disagree. */
 export const hiddenFieldIds = (
   defs: ReadonlyArray<{ readonly id: string; readonly visibility: ConceptVisibility }>,
-  role: ScopeRole,
+  privileged: boolean,
 ): ReadonlySet<string> =>
-  canReadRestricted(role)
+  privileged
     ? new Set<string>()
     : new Set(defs.filter((d) => d.visibility !== "visible").map((d) => d.id))
 
@@ -146,7 +174,7 @@ export const scopeHiddenFieldIds = (
     readonly visibility: ConceptVisibility
   }>,
 ): ReadonlySet<string> => {
-  const byDefault = hiddenFieldIds(defs, scope.role)
+  const byDefault = hiddenFieldIds(defs, canReadRestricted(scope))
   if (!scope.policy) return byDefault
   const hidden = new Set<string>()
   for (const def of defs) {

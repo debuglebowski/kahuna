@@ -1309,6 +1309,9 @@ export const api = {
   rolesOf: (userId: string) => call((c) => c.rolesOf({ userId })),
   /** The rules inside a role — `configure` only. */
   listRules: (roleId: string) => call((c) => c.listRules({ roleId })),
+  /** What I may do org-wide. The client can't work this out itself any more — see
+   *  the note on the RPC. */
+  myAccess: () => call((c) => c.myAccess()),
   roleHolders: (roleId: string) => call((c) => c.roleHolders({ roleId })),
   reassignRoleHolders: (fromRoleId: string, toRoleId: string) =>
     call((c) => c.reassignRoleHolders({ fromRoleId, toRoleId })),
