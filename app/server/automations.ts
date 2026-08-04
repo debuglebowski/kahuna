@@ -24,9 +24,19 @@ import {
   RATE_CAP_PER_MIN,
 } from "#engine"
 import { matchInstance } from "../src/lib/conditions"
+import { publicConnectorError } from "./integrations/errors"
 import { fetchGuardedJson, UnsafeUrlError } from "./integrations/url-guard"
+import {
+  closeLinearIssue,
+  commentOnLinearIssue,
+  createLinearIssue,
+  linearConnectionForOrg,
+  linearIssueIdForInstance,
+  linearUserIdForEmail,
+  updateLinearIssue,
+} from "./linear"
 import { AppRuntime, actorScope, systemScope } from "./runtime"
-import { postMessageForOrg } from "./slack"
+import { addReactionForOrg, dmUserForOrg, postForOrg } from "./slack"
 import { tap } from "./stream"
 
 /**
@@ -81,6 +91,16 @@ export interface TemplateCtx {
   readonly to?: unknown
   /** Field id → display value, for `{{field:<id>}}`. */
   readonly fields?: Record<string, unknown>
+  /**
+   * The last Slack message THIS run posted, for `{{slack.ts}}`/`{{slack.channel}}`.
+   *
+   * This is the only part of the context that changes as the run proceeds: it is
+   * what lets "post a message, then reply in its thread / react to it" work with
+   * no configuration. Empty until a Slack post succeeds, and an unresolved token
+   * renders "" like every other — a reply with no preceding post degrades to a
+   * top-level message rather than failing.
+   */
+  readonly slack?: { readonly ts?: string; readonly channel?: string }
 }
 
 const TOKEN_RE = /\{\{\s*([a-zA-Z0-9_.:-]+)\s*\}\}/g
@@ -112,6 +132,10 @@ export const renderTemplate = (input: string, ctx: TemplateCtx): string =>
         return ctx.from == null ? "" : String(ctx.from)
       case "trigger.to":
         return ctx.to == null ? "" : String(ctx.to)
+      case "slack.ts":
+        return ctx.slack?.ts ?? ""
+      case "slack.channel":
+        return ctx.slack?.channel ?? ""
       default:
         return ""
     }
@@ -239,6 +263,94 @@ export const noteForFailure = (e: unknown, subject: ActOn | null): string => {
   return String(tag ?? e)
 }
 
+/**
+ * What one action hands back: the outcome that gets RECORDED, plus an optional
+ * `chain` that does not.
+ *
+ * The split is deliberate. `AutomationActionOutcome` is persisted verbatim into
+ * `automation_runs.detail` and rendered in the History tab, so it is an audit
+ * record — a Slack message timestamp is transient plumbing for the next action in
+ * the same run, not something worth storing forever. The loop strips `chain`
+ * before pushing, which keeps the stored shape (and the RPC contract) unchanged.
+ */
+interface ActionRun extends AutomationActionOutcome {
+  readonly chain?: { readonly ts?: string; readonly channel?: string }
+}
+
+/** One outcome shape every connector call converges on, so the cases below read
+ *  the same whether they talked to Slack or Linear. */
+interface CallResult {
+  readonly ok: boolean
+  readonly note: string
+  readonly ts?: string
+  readonly channel?: string
+}
+
+/**
+ * Run a connector call, collapsing the error channel to `never` right here.
+ *
+ * Same shape as the `webhook` case rather than `notifySlack`'s: a rich
+ * `{ok, note}` crosses the boundary instead of a bare boolean, so a failure can
+ * say WHICH failure it was. The connector modules already map their own error
+ * slugs, so anything reaching the `catchAll` is genuinely unexpected.
+ */
+const slackCall = (run: () => Promise<CallResult>) =>
+  Effect.tryPromise({ try: run, catch: (e) => e }).pipe(
+    Effect.catchAll(() => Effect.succeed({ ok: false, note: "Slack call failed" } as CallResult)),
+  )
+
+const chainOf = (r: CallResult) => (r.ts ? { ts: r.ts, channel: r.channel } : undefined)
+
+/**
+ * Resolve the Linear connection + the issue behind the triggering record.
+ *
+ * Every record-scoped Linear action starts here, and each `null` is a DIFFERENT
+ * user-facing story: no connection, no record, or a record that simply isn't a
+ * mirrored Linear ticket. Collapsing them would make the run log useless.
+ */
+const linearTarget = (orgId: string, subject: ActOn | null) =>
+  Effect.tryPromise({
+    try: async (): Promise<
+      | {
+          ok: true
+          conn: NonNullable<Awaited<ReturnType<typeof linearConnectionForOrg>>>
+          issueId: string
+        }
+      | { ok: false; note: string }
+    > => {
+      if (!subject) return { ok: false, note: "no record" }
+      const conn = await linearConnectionForOrg(orgId)
+      if (!conn) return { ok: false, note: "Linear not connected" }
+      const issueId = await linearIssueIdForInstance(conn, {
+        conceptId: subject.conceptId,
+        state: subject.instance.state as Record<string, unknown>,
+      })
+      if (!issueId) return { ok: false, note: "not a Linear ticket" }
+      return { ok: true, conn, issueId }
+    },
+    catch: (e) => e,
+  }).pipe(
+    Effect.catchAll(() => Effect.succeed({ ok: false as const, note: "Linear lookup failed" })),
+  )
+
+/** Map a thrown Linear error to a short note. A GraphQL error carries no HTTP
+ *  status, so `publicConnectorError` would call every one of them "could not
+ *  reach the provider" — which is never what actually happened. */
+const linearNote = (e: unknown): string => {
+  if ((e as { code?: string })?.code === "NO_COMPLETED_STATE") {
+    return "that team has no completed state"
+  }
+  const raw = e instanceof Error ? e.message : String(e)
+  const gql = /Linear GraphQL error: (.+)/.exec(raw)?.[1]
+  if (gql) return gql.length > 80 ? `${gql.slice(0, 77)}…` : gql
+  return publicConnectorError(e)
+}
+
+const linearCall = (run: () => Promise<CallResult>) =>
+  Effect.tryPromise({ try: run, catch: (e) => e }).pipe(
+    Effect.catchAll((e) => Effect.succeed({ ok: false, note: linearNote(e) } as CallResult)),
+  )
+
 const runAction = (
   action: AutomationAction,
   ctx: {
@@ -248,7 +360,7 @@ const runAction = (
     readonly template: TemplateCtx
   },
 ): Effect.Effect<
-  AutomationActionOutcome,
+  ActionRun,
   never,
   OrgContext | InstanceService | AnnotationService | PgClient.PgClient
 > =>
@@ -327,16 +439,12 @@ const runAction = (
         const text = renderTemplate(action.text, ctx.template)
         const channel = renderTemplate(action.channel, ctx.template)
         // Slack lives outside Effect (plain async), and a missing connection is a
-        // recorded outcome rather than a run failure.
-        const ok = yield* Effect.tryPromise({
-          try: () => postMessageForOrg(ctx.orgId, channel, text),
-          catch: (e) => e,
-        }).pipe(Effect.catchAll(() => Effect.succeed(false)))
-        return {
-          kind: action.kind,
-          ok,
-          note: ok ? `posted to ${channel}` : "no Slack connection or post failed",
-        }
+        // recorded outcome rather than a run failure. Goes through `postForOrg`
+        // (not the older `postMessageForOrg`) for two reasons: it distinguishes
+        // "not connected" from "post failed", and it returns the message ts that
+        // a later thread-reply or reaction in this run chains off.
+        const res = yield* slackCall(() => postForOrg(ctx.orgId, { channel, text }))
+        return { kind: action.kind, ok: res.ok, note: res.note, chain: chainOf(res) }
       }
       case "webhook": {
         const url = renderTemplate(action.url, ctx.template)
@@ -373,6 +481,158 @@ const runAction = (
           ),
         )
         return { kind: action.kind, ok: outcome.ok, note: outcome.note }
+      }
+
+      // ── Slack ────────────────────────────────────────────────────────────
+      case "slack.postThreadReply": {
+        const threadTs = renderTemplate(action.threadTs, ctx.template)
+        // Blank channel falls back to the chained one, so the common rule
+        // ("reply to what I just posted") needs no channel configured at all.
+        const channel =
+          renderTemplate(action.channel, ctx.template) || (ctx.template.slack?.channel ?? "")
+        if (!threadTs) {
+          return { kind: action.kind, ok: false, note: "no message to reply to" }
+        }
+        if (!channel) return { kind: action.kind, ok: false, note: "no channel" }
+        const res = yield* slackCall(() =>
+          postForOrg(ctx.orgId, {
+            channel,
+            text: renderTemplate(action.text, ctx.template),
+            threadTs,
+          }),
+        )
+        // Deliberately does NOT re-chain: the thread parent stays the anchor, so
+        // two replies in a row both attach to the original post rather than
+        // nesting off each other.
+        return { kind: action.kind, ok: res.ok, note: res.note }
+      }
+      case "slack.postBlocks": {
+        const channel = renderTemplate(action.channel, ctx.template)
+        // Interpolate INSIDE the parsed JSON, not over the raw string: rendering
+        // first would let a value containing a quote break the document.
+        const parsed = ((): unknown[] | null => {
+          try {
+            const v = JSON.parse(action.blocks)
+            return Array.isArray(v) ? v : null
+          } catch {
+            return null
+          }
+        })()
+        if (!parsed) return { kind: action.kind, ok: false, note: "blocks are not valid JSON" }
+        const blocks = renderDeep(parsed, ctx.template) as unknown[]
+        const res = yield* slackCall(() =>
+          postForOrg(ctx.orgId, {
+            channel,
+            text: renderTemplate(action.text, ctx.template),
+            blocks,
+          }),
+        )
+        return { kind: action.kind, ok: res.ok, note: res.note, chain: chainOf(res) }
+      }
+      case "slack.dmUser": {
+        const res = yield* slackCall(() =>
+          dmUserForOrg(ctx.orgId, {
+            slackUserId: renderTemplate(action.slackUserId, ctx.template),
+            text: renderTemplate(action.text, ctx.template),
+          }),
+        )
+        return { kind: action.kind, ok: res.ok, note: res.note, chain: chainOf(res) }
+      }
+      case "slack.addReaction": {
+        const ts = renderTemplate(action.ts, ctx.template)
+        const channel =
+          renderTemplate(action.channel, ctx.template) || (ctx.template.slack?.channel ?? "")
+        if (!ts) return { kind: action.kind, ok: false, note: "no message to react to" }
+        if (!channel) return { kind: action.kind, ok: false, note: "no channel" }
+        const res = yield* slackCall(() =>
+          addReactionForOrg(ctx.orgId, {
+            channel,
+            ts,
+            name: renderTemplate(action.name, ctx.template),
+          }),
+        )
+        return { kind: action.kind, ok: res.ok, note: res.note }
+      }
+
+      // ── Linear ───────────────────────────────────────────────────────────
+      case "linear.updateIssue": {
+        const target = yield* linearTarget(ctx.orgId, subject)
+        if (!target.ok) return { kind: action.kind, ok: false, note: target.note }
+        const input = renderDeep(action.input ?? {}, ctx.template) as Record<string, unknown>
+        if (Object.keys(input).length === 0) {
+          return { kind: action.kind, ok: false, note: "nothing to update" }
+        }
+        const res = yield* linearCall(async () => {
+          const issue = await updateLinearIssue(target.conn, target.issueId, input)
+          // `issueUpdate` reports success separately from the node; a null issue
+          // means Linear declined the change rather than erroring.
+          return issue
+            ? { ok: true, note: `updated ${issue.identifier ?? target.issueId}` }
+            : { ok: false, note: "Linear declined the update" }
+        })
+        return { kind: action.kind, ok: res.ok, note: res.note }
+      }
+      case "linear.closeIssue": {
+        const target = yield* linearTarget(ctx.orgId, subject)
+        if (!target.ok) return { kind: action.kind, ok: false, note: target.note }
+        const res = yield* linearCall(async () => {
+          const issue = await closeLinearIssue(target.conn, target.issueId)
+          return issue
+            ? { ok: true, note: `closed ${issue.identifier ?? target.issueId}` }
+            : { ok: false, note: "Linear declined the close" }
+        })
+        return { kind: action.kind, ok: res.ok, note: res.note }
+      }
+      case "linear.comment": {
+        const target = yield* linearTarget(ctx.orgId, subject)
+        if (!target.ok) return { kind: action.kind, ok: false, note: target.note }
+        const body = renderTemplate(action.body, ctx.template)
+        if (!body.trim()) return { kind: action.kind, ok: false, note: "empty comment" }
+        const res = yield* linearCall(async () => {
+          const comment = await commentOnLinearIssue(target.conn, target.issueId, body)
+          return comment
+            ? { ok: true, note: "commented" }
+            : { ok: false, note: "Linear declined the comment" }
+        })
+        return { kind: action.kind, ok: res.ok, note: res.note }
+      }
+      case "linear.assign": {
+        const target = yield* linearTarget(ctx.orgId, subject)
+        if (!target.ok) return { kind: action.kind, ok: false, note: target.note }
+        const email = renderTemplate(action.email, ctx.template).trim()
+        if (!email) return { kind: action.kind, ok: false, note: "no email to assign to" }
+        const res = yield* linearCall(async () => {
+          // Resolved per run, not from a mapping table — but KM and Linear
+          // addresses genuinely differ for some people, so a miss is expected
+          // and must name the address that failed.
+          const assigneeId = await linearUserIdForEmail(target.conn, email)
+          if (!assigneeId) return { ok: false, note: `no Linear user for ${email}` }
+          const issue = await updateLinearIssue(target.conn, target.issueId, { assigneeId })
+          return issue
+            ? { ok: true, note: `assigned to ${email}` }
+            : { ok: false, note: "Linear declined the assignment" }
+        })
+        return { kind: action.kind, ok: res.ok, note: res.note }
+      }
+      case "linear.createIssue": {
+        // The one Linear action needing no subject — it creates rather than edits.
+        const res = yield* linearCall(async () => {
+          const conn = await linearConnectionForOrg(ctx.orgId)
+          if (!conn) return { ok: false, note: "Linear not connected" }
+          const title = renderTemplate(action.title, ctx.template)
+          if (!title.trim()) return { ok: false, note: "empty title" }
+          const issue = await createLinearIssue(conn, {
+            teamId: action.teamId,
+            title,
+            ...(action.description
+              ? { description: renderTemplate(action.description, ctx.template) }
+              : {}),
+          })
+          return issue
+            ? { ok: true, note: `created ${issue.identifier ?? "issue"}` }
+            : { ok: false, note: "Linear declined the create" }
+        })
+        return { kind: action.kind, ok: res.ok, note: res.note }
       }
       default:
         // A kind this build doesn't know (a row written by a newer client).
@@ -489,13 +749,21 @@ const executeRun = (input: {
     // step failed — a later action may well depend on an earlier one.
     const outcomes: AutomationActionOutcome[] = []
     let failedAt: number | null = null
+    // The one piece of context that accumulates DURING the run: the last Slack
+    // message posted, so a later action can thread off it or react to it. Carried
+    // beside the template rather than inside it because `TemplateCtx` is readonly
+    // and shared — each iteration gets a fresh view instead of a mutated object.
+    let slackChain: { ts?: string; channel?: string } | undefined
     for (const [i, action] of automation.actions.entries()) {
-      const outcome = yield* runAction(action, {
+      const { chain, ...outcome } = yield* runAction(action, {
         orgId: automation.orgId,
         automationId: automation.id,
         subject,
-        template,
+        template: slackChain ? { ...template, slack: slackChain } : template,
       })
+      // Only a SUCCESSFUL post updates the chain: reacting to the message that
+      // just failed to send is worse than rendering an empty token.
+      if (outcome.ok && chain?.ts) slackChain = { ts: chain.ts, channel: chain.channel }
       outcomes.push(outcome)
       if (!outcome.ok) {
         failedAt = i

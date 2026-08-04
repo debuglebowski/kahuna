@@ -3,6 +3,7 @@ import { describe, expect, it } from "@effect/vitest"
 import { Effect } from "effect"
 import type { AccessAction } from "../domain/access"
 import { emptyPolicy } from "../domain/access"
+import type { AutomationAction } from "../domain/types"
 import { AutomationService } from "../services/AutomationService"
 import { ConceptService } from "../services/ConceptService"
 import { EventStore } from "../services/EventStore"
@@ -76,6 +77,94 @@ describe("AutomationService — CRUD + validation", () => {
         .create({ ...baseInput, trigger: { kind: "record.band.changed" } })
         .pipe(Effect.flip)
       expect(noField._tag).toBe("AutomationInvalid")
+    }).pipe(Effect.provide(testLayer(newOrgId()))),
+  )
+
+  it.effect("rejects malformed integration actions at the write boundary", () =>
+    Effect.gen(function* () {
+      const automations = yield* AutomationService
+      const reject = (actions: ReadonlyArray<AutomationAction>) =>
+        automations.create({ ...baseInput, actions }).pipe(Effect.flip)
+
+      // A reply with nothing to reply to would post at top level forever.
+      const noParent = yield* reject([
+        { kind: "slack.postThreadReply", channel: "#wins", threadTs: "", text: "hi" },
+      ])
+      expect(noParent._tag).toBe("AutomationInvalid")
+
+      // Blocks that aren't JSON would fail on every run, with the reason buried
+      // in a truncated run note — so they never persist.
+      const badJson = yield* reject([
+        { kind: "slack.postBlocks", channel: "#wins", blocks: "{not json", text: "fallback" },
+      ])
+      expect(badJson._tag).toBe("AutomationInvalid")
+
+      const notArray = yield* reject([
+        { kind: "slack.postBlocks", channel: "#wins", blocks: '{"type":"header"}', text: "f" },
+      ])
+      expect(notArray._tag).toBe("AutomationInvalid")
+
+      // Interactive blocks render a button that cannot do anything, because
+      // `handleInteractivity` only writes an audit row.
+      const interactive = yield* reject([
+        {
+          kind: "slack.postBlocks",
+          channel: "#wins",
+          blocks: '[{"type":"actions","elements":[]}]',
+          text: "f",
+        },
+      ])
+      expect(interactive._tag).toBe("AutomationInvalid")
+
+      // Omitting fallback text blanks the Slack push notification.
+      const noFallback = yield* reject([
+        { kind: "slack.postBlocks", channel: "#wins", blocks: '[{"type":"divider"}]', text: "" },
+      ])
+      expect(noFallback._tag).toBe("AutomationInvalid")
+
+      const noEmoji = yield* reject([
+        { kind: "slack.addReaction", channel: "#wins", ts: "{{slack.ts}}", name: "" },
+      ])
+      expect(noEmoji._tag).toBe("AutomationInvalid")
+
+      const noEmail = yield* reject([{ kind: "linear.assign", email: "  " }])
+      expect(noEmail._tag).toBe("AutomationInvalid")
+
+      // Linear has no workspace-default team, so a create without one can't run.
+      const noTeam = yield* reject([{ kind: "linear.createIssue", teamId: "", title: "x" }])
+      expect(noTeam._tag).toBe("AutomationInvalid")
+    }).pipe(Effect.provide(testLayer(newOrgId()))),
+  )
+
+  it.effect("accepts the integration actions that are well-formed", () =>
+    Effect.gen(function* () {
+      const automations = yield* AutomationService
+      // `closeIssue`/`updateIssue` resolve their target from the triggering
+      // record, so they carry no config of their own and must still save.
+      const a = yield* automations.create({
+        ...baseInput,
+        actions: [
+          { kind: "notifySlack", channel: "#wins", text: "{{record.title}}" },
+          { kind: "slack.postThreadReply", channel: "", threadTs: "{{slack.ts}}", text: "more" },
+          {
+            kind: "slack.postBlocks",
+            channel: "#wins",
+            blocks: '[{"type":"divider"}]',
+            text: "fallback",
+          },
+          {
+            kind: "slack.addReaction",
+            channel: "{{slack.channel}}",
+            ts: "{{slack.ts}}",
+            name: ":tada:",
+          },
+          { kind: "linear.closeIssue" },
+          { kind: "linear.comment", body: "done" },
+          { kind: "linear.assign", email: "a@b.com" },
+        ],
+      })
+      expect(a.actions).toHaveLength(7)
+      expect(a.actions.map((x) => x.kind)).toContain("slack.postBlocks")
     }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
 

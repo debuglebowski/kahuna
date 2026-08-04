@@ -1296,6 +1296,53 @@ const WebhookAction = Schema.Struct({
   body: Schema.optional(Schema.Record({ key: Schema.String, value: Schema.Unknown })),
 })
 
+// ── Slack ────────────────────────────────────────────────────────────────────
+const SlackThreadReplyAction = Schema.Struct({
+  kind: Schema.Literal("slack.postThreadReply"),
+  channel: Schema.String,
+  threadTs: Schema.String,
+  text: Schema.String,
+})
+const SlackBlocksAction = Schema.Struct({
+  kind: Schema.Literal("slack.postBlocks"),
+  channel: Schema.String,
+  /** Raw Block Kit JSON; validated at the write boundary, not by the schema. */
+  blocks: Schema.String,
+  text: Schema.String,
+})
+const SlackDmAction = Schema.Struct({
+  kind: Schema.Literal("slack.dmUser"),
+  slackUserId: Schema.String,
+  text: Schema.String,
+})
+const SlackReactionAction = Schema.Struct({
+  kind: Schema.Literal("slack.addReaction"),
+  channel: Schema.String,
+  ts: Schema.String,
+  name: Schema.String,
+})
+
+// ── Linear ───────────────────────────────────────────────────────────────────
+const LinearUpdateIssueAction = Schema.Struct({
+  kind: Schema.Literal("linear.updateIssue"),
+  input: Schema.Record({ key: Schema.String, value: Schema.Unknown }),
+})
+const LinearCloseIssueAction = Schema.Struct({ kind: Schema.Literal("linear.closeIssue") })
+const LinearCommentAction = Schema.Struct({
+  kind: Schema.Literal("linear.comment"),
+  body: Schema.String,
+})
+const LinearAssignAction = Schema.Struct({
+  kind: Schema.Literal("linear.assign"),
+  email: Schema.String,
+})
+const LinearCreateIssueAction = Schema.Struct({
+  kind: Schema.Literal("linear.createIssue"),
+  teamId: Schema.String,
+  title: Schema.String,
+  description: Schema.optional(Schema.String),
+})
+
 export const AutomationAction = Schema.Union(
   SetFieldAction,
   AddLabelAction,
@@ -1305,6 +1352,15 @@ export const AutomationAction = Schema.Union(
   ArchiveRecordAction,
   NotifySlackAction,
   WebhookAction,
+  SlackThreadReplyAction,
+  SlackBlocksAction,
+  SlackDmAction,
+  SlackReactionAction,
+  LinearUpdateIssueAction,
+  LinearCloseIssueAction,
+  LinearCommentAction,
+  LinearAssignAction,
+  LinearCreateIssueAction,
 )
 export type AutomationAction = typeof AutomationAction.Type
 

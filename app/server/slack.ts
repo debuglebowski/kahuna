@@ -12,7 +12,7 @@ import { db } from "./db"
 import { readIntegrationSettings } from "./integrationSettings"
 import { type AuditEntry, writeAuditLog } from "./integrations/audit"
 import { decryptToken, encryptToken } from "./integrations/crypto"
-import { connectorFailure, publicConnectorError } from "./integrations/errors"
+import { connectorFailure, logConnectorError, publicConnectorError } from "./integrations/errors"
 import { sleepBeforeRetry } from "./integrations/http"
 import { redirect, safeReturnTo } from "./integrations/oauth"
 import { connectionForOrgIn } from "./integrations/rows"
@@ -41,7 +41,13 @@ const SLACK_API = "https://slack.com/api"
 
 const json = (body: unknown, status = 200) => Response.json(body, { status })
 
-/** Default bot scopes; overridable via `SLACK_SCOPES` (space/comma separated). */
+/** Default bot scopes; overridable via `SLACK_SCOPES` (space/comma separated).
+ *
+ *  Adding a scope here does NOT re-grant it on workspaces that already installed
+ *  the app — Slack only issues what was asked for at authorization time, so an
+ *  existing install keeps its old grant until someone re-authorizes. That is why
+ *  `slackHasScope` exists and why the editor warns per action instead of assuming
+ *  this list reflects reality. */
 const DEFAULT_SCOPES = [
   "chat:write",
   "channels:read",
@@ -50,6 +56,8 @@ const DEFAULT_SCOPES = [
   "app_mentions:read",
   "channels:history",
   "team:read",
+  // For `slack.addReaction`. Absent on every install made before this shipped.
+  "reactions:write",
 ]
 
 /**
@@ -120,6 +128,165 @@ export async function postMessageForOrg(
   const result = await postMessage(conn, channel, { text })
   return result.ok !== false
 }
+
+/**
+ * The org's Slack connection, only when usable (connected + has a bot token).
+ *
+ * `postMessageForOrg` above predates this and skips the status check, so a
+ * disconnected org reaches `tokenFor` and THROWS rather than reading as "not
+ * connected" — harmless only because the automation runner happens to swallow it.
+ * New callers use this instead.
+ */
+export const slackConnectionForOrg = async (orgId: string) => {
+  const row = await connectionForOrg(orgId)
+  return row?.status === "connected" ? row : null
+}
+
+/**
+ * Whether a connection was actually GRANTED a scope.
+ *
+ * Google's equivalent is private and splits on whitespace only; Slack stores
+ * scopes comma-separated, so reusing it would have matched nothing. `splitScopes`
+ * handles both spellings.
+ */
+export const slackHasScope = (conn: typeof slackConnection.$inferSelect, scope: string): boolean =>
+  new Set(splitScopes(conn.scopes)).has(scope)
+
+/** What a Slack action reports back to the automation runner. `ts`/`channel` feed
+ *  the `{{slack.*}}` chain tokens; `note` is user-visible in run history. */
+export interface SlackActionResult {
+  readonly ok: boolean
+  readonly note: string
+  readonly ts?: string
+  readonly channel?: string
+}
+
+/**
+ * Turn a thrown Slack error into a short, honest note.
+ *
+ * `publicConnectorError` maps by HTTP status class, but a Slack `ok:false` body
+ * throws with no status at all — so `missing_scope` and `channel_not_found` both
+ * came out as "Could not reach the provider.", which is neither true nor
+ * actionable. Match the API's error slug first and only fall back to the generic
+ * mapper. Notes render `truncate`d to one line, so they stay terse.
+ */
+const slackNote = (error: unknown): string => {
+  const raw = error instanceof Error ? error.message : String(error)
+  const slug = /Slack API error: (\w+)/.exec(raw)?.[1]
+  switch (slug) {
+    case undefined:
+      break
+    case "missing_scope":
+    case "not_allowed_token_type":
+      return "Slack denied the scope — reconnect Slack"
+    case "channel_not_found":
+      return "no such channel"
+    case "not_in_channel":
+      return "bot is not in that channel"
+    case "is_archived":
+      return "channel is archived"
+    case "message_not_found":
+      return "no such message"
+    case "already_reacted":
+      return "already reacted"
+    case "invalid_name":
+      return "no such emoji"
+    case "user_not_found":
+      return "no such Slack user"
+    case "ratelimited":
+      return "Slack is rate limiting us"
+    default:
+      return `Slack rejected the request (${slug})`
+  }
+  return publicConnectorError(error)
+}
+
+/** Run a Slack call for an org, mapping both "not connected" and every thrown
+ *  error onto a recorded outcome. Every Slack automation action goes through
+ *  this, so the not-connected note is written exactly once. */
+const slackActionForOrg = async (
+  orgId: string,
+  run: (conn: typeof slackConnection.$inferSelect) => Promise<SlackActionResult>,
+): Promise<SlackActionResult> => {
+  const conn = await slackConnectionForOrg(orgId)
+  if (!conn) return { ok: false, note: "Slack not connected" }
+  try {
+    return await run(conn)
+  } catch (error) {
+    logConnectorError("slack", "automation", error)
+    return { ok: false, note: slackNote(error) }
+  }
+}
+
+/** Post a message (optionally into a thread, optionally as Block Kit). */
+export const postForOrg = (
+  orgId: string,
+  input: {
+    channel: string
+    text?: string
+    blocks?: unknown[]
+    threadTs?: string
+  },
+): Promise<SlackActionResult> =>
+  slackActionForOrg(orgId, async (conn) => {
+    const res = await postMessage(conn, input.channel, {
+      text: input.text,
+      blocks: input.blocks,
+      threadTs: input.threadTs,
+    })
+    return {
+      ok: res.ok !== false,
+      note: input.threadTs ? `replied in ${input.channel}` : `posted to ${input.channel}`,
+      ts: res.ts,
+      channel: res.channel ?? input.channel,
+    }
+  })
+
+/** Open (or reuse) a DM with a Slack user and post into it. */
+export const dmUserForOrg = (
+  orgId: string,
+  input: { slackUserId: string; text?: string; blocks?: unknown[] },
+): Promise<SlackActionResult> =>
+  slackActionForOrg(orgId, async (conn) => {
+    const opened = await slackApiRequest<{ ok: boolean; channel?: { id?: string } }>(
+      tokenFor(conn),
+      "conversations.open",
+      { users: input.slackUserId },
+    )
+    const channel = opened.channel?.id
+    if (!channel) return { ok: false, note: "could not open a DM" }
+    const res = await postMessage(conn, channel, { text: input.text, blocks: input.blocks })
+    return {
+      ok: res.ok !== false,
+      note: `DMed ${input.slackUserId}`,
+      ts: res.ts,
+      channel,
+    }
+  })
+
+/**
+ * Add an emoji reaction to a message.
+ *
+ * Pre-flights the scope rather than letting Slack answer `missing_scope`: the
+ * grant is missing on every workspace installed before `reactions:write` was
+ * added, and "reconnect Slack" is a fix the reader can act on.
+ */
+export const addReactionForOrg = (
+  orgId: string,
+  input: { channel: string; ts: string; name: string },
+): Promise<SlackActionResult> =>
+  slackActionForOrg(orgId, async (conn) => {
+    if (!slackHasScope(conn, "reactions:write")) {
+      return { ok: false, note: "Slack missing reactions:write — reconnect Slack" }
+    }
+    const emoji = input.name.replace(/^:|:$/g, "")
+    await slackApiRequest(tokenFor(conn), "reactions.add", {
+      channel: input.channel,
+      timestamp: input.ts,
+      name: emoji,
+    })
+    return { ok: true, note: `reacted :${emoji}:`, ts: input.ts, channel: input.channel }
+  })
 
 const connectionForTeam = async (teamId: string) => {
   const [row] = await db

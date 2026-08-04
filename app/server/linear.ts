@@ -88,6 +88,21 @@ const audit = (input: AuditEntry) => writeAuditLog(linearAuditLog, input)
 
 const connectionForOrg = (orgId: string) => connectionForOrgIn(linearConnection, orgId)
 
+/**
+ * The org's Linear connection, only when usable (connected + has a key).
+ *
+ * Exists for callers outside a request — the automation runner has an org id but
+ * no `Request` to authenticate. Mirrors `posthogConnectionForOrg`, INCLUDING the
+ * status filter: `connectionForOrgIn` has no status predicate, so without this a
+ * disconnected row would reach `tokenFor` and throw instead of reading as "not
+ * connected". Returning null (never throwing) is what lets an action record a
+ * missing integration as an outcome rather than failing the whole run.
+ */
+export const linearConnectionForOrg = async (orgId: string) => {
+  const row = await connectionForOrg(orgId)
+  return row?.status === "connected" ? row : null
+}
+
 const tokenFor = (conn: typeof linearConnection.$inferSelect): string => {
   const token = decryptToken(conn.token)
   if (!token) throw new Error("Linear connection has no API key")
@@ -134,6 +149,57 @@ const ISSUE_CLOSE_QUERY = `query IssueClose($id: String!) {
       }
     }
   }
+}`
+
+// The node selection every write-back must return, so its result can feed
+// straight into `upsertIssue` without a second round trip.
+const ISSUE_NODE_FIELDS = `id identifier title url priority updatedAt
+  state { name type }
+  assignee { id name }
+  team { id key }`
+
+const ISSUE_CREATE_MUTATION = `mutation IssueCreate($input: IssueCreateInput!) {
+  issueCreate(input: $input) {
+    success
+    issue { ${ISSUE_NODE_FIELDS} }
+  }
+}`
+
+// Comments have no mirror table and no place in TICKET_CONCEPT, so the created
+// comment is deliberately not re-mirrored — only its id comes back.
+const COMMENT_CREATE_MUTATION = `mutation CommentCreate($input: CommentCreateInput!) {
+  commentCreate(input: $input) {
+    success
+    comment { id url }
+  }
+}`
+
+/**
+ * Resolve a Linear user id from an email.
+ *
+ * Assigning by email is what lets `linear.assign` work with no KM-member →
+ * Linear-user mapping table: both sides already know the address
+ * (`bauth_user.email` is notNull + unique). `includeDisabled` is left at its
+ * default false ON PURPOSE — assigning to a deactivated account should miss and
+ * be recorded, not silently succeed.
+ */
+const USER_BY_EMAIL_QUERY = `query UserByEmail($email: String!) {
+  users(filter: { email: { eq: $email } }, first: 1) {
+    nodes { id name email }
+  }
+}`
+
+// Fallback for the above: if `UserFilter.email`'s comparator shape ever differs
+// from what we assume, one unfiltered page + an in-memory match still resolves.
+const USERS_PAGE_QUERY = `query Users($after: String) {
+  users(first: 250, after: $after) {
+    pageInfo { hasNextPage endCursor }
+    nodes { id name email }
+  }
+}`
+
+const TEAMS_QUERY = `query Teams {
+  teams(first: 250) { nodes { id key name } }
 }`
 
 type LinearIssueNode = {
@@ -644,6 +710,117 @@ export async function closeLinearIssue(
     throw err
   }
   return updateLinearIssue(conn, issueId, { stateId })
+}
+
+/**
+ * Add a comment to an issue. The cheapest write-back: `issueId` + `body`, no id
+ * resolution. Deliberately NOT re-mirrored — comments have no local table and no
+ * place in `TICKET_CONCEPT`, so the only trace is the audit row.
+ */
+export async function commentOnLinearIssue(
+  conn: typeof linearConnection.$inferSelect,
+  issueId: string,
+  body: string,
+): Promise<{ id: string; url?: string | null } | null> {
+  const data = await linearGraphQL<{
+    commentCreate?: { success?: boolean; comment?: { id: string; url?: string | null } | null }
+  }>(tokenFor(conn), COMMENT_CREATE_MUTATION, { input: { issueId, body } })
+  return data.commentCreate?.comment ?? null
+}
+
+/** Create an issue. `teamId` is mandatory in Linear's schema — there is no
+ *  workspace default — so the caller must resolve one (see `listLinearTeams`). */
+export async function createLinearIssue(
+  conn: typeof linearConnection.$inferSelect,
+  input: { teamId: string; title: string; description?: string },
+): Promise<LinearIssueNode | null> {
+  const data = await linearGraphQL<{
+    issueCreate?: { success?: boolean; issue?: LinearIssueNode | null }
+  }>(tokenFor(conn), ISSUE_CREATE_MUTATION, { input })
+  const issue = data.issueCreate?.issue ?? null
+  if (issue) await upsertIssue(conn, issue)
+  return issue
+}
+
+/** The workspace's teams, for a `createIssue` team picker. Not cached in a table:
+ *  teams are few and change rarely, and a cache would be one more thing to sync. */
+export async function listLinearTeams(
+  conn: typeof linearConnection.$inferSelect,
+): Promise<Array<{ id: string; key: string; name: string }>> {
+  const data = await linearGraphQL<{
+    teams?: { nodes?: Array<{ id: string; key: string; name: string }> }
+  }>(tokenFor(conn), TEAMS_QUERY)
+  return data.teams?.nodes ?? []
+}
+
+type LinearUserNode = { id: string; name?: string | null; email?: string | null }
+
+/**
+ * Linear user id for an email, or null when nobody matches.
+ *
+ * Tries the server-side filter first, then falls back to paging the member list
+ * and matching in memory. The fallback is not paranoia: `UserFilter`'s comparator
+ * shape is the one part of this we could not confirm from the published schema,
+ * and a wrong guess would otherwise turn every assign into a silent miss.
+ * Comparison is case-insensitive — addresses are, and KM does not normalize.
+ */
+export async function linearUserIdForEmail(
+  conn: typeof linearConnection.$inferSelect,
+  email: string,
+): Promise<string | null> {
+  const token = tokenFor(conn)
+  const wanted = email.trim().toLowerCase()
+  if (!wanted) return null
+  try {
+    const data = await linearGraphQL<{ users?: { nodes?: LinearUserNode[] } }>(
+      token,
+      USER_BY_EMAIL_QUERY,
+      { email: email.trim() },
+    )
+    const hit = data.users?.nodes?.[0]
+    if (hit?.id) return hit.id
+  } catch {
+    // Fall through to the page-and-match path below.
+  }
+  let after: string | null = null
+  for (let page = 0; page < 8; page += 1) {
+    const data: {
+      users?: { pageInfo?: { hasNextPage?: boolean; endCursor?: string }; nodes?: LinearUserNode[] }
+    } = await linearGraphQL(token, USERS_PAGE_QUERY, { after })
+    const hit = data.users?.nodes?.find((u) => u.email?.trim().toLowerCase() === wanted)
+    if (hit?.id) return hit.id
+    if (!data.users?.pageInfo?.hasNextPage) break
+    after = data.users.pageInfo.endCursor ?? null
+    if (!after) break
+  }
+  return null
+}
+
+/**
+ * Linear's global issue uuid for a KM record, or null when the record isn't a
+ * mirrored ticket.
+ *
+ * TWO HOPS, because the mirror and the API disagree about identity: the Ticket
+ * concept keys instances on the human `identifier` ("ENG-123"), while every
+ * GraphQL mutation wants the uuid. `linear_issue` is the only place both live
+ * side by side, and `linear_issue_org_identifier_idx` covers the lookup.
+ */
+export async function linearIssueIdForInstance(
+  conn: typeof linearConnection.$inferSelect,
+  instance: { readonly conceptId: string; readonly state: Record<string, unknown> },
+): Promise<string | null> {
+  // Guard first: an automation can be pointed at any concept, and a non-ticket
+  // record must read as "not applicable", not as a failed lookup.
+  if (!conn.conceptId || instance.conceptId !== conn.conceptId) return null
+  const identifierFieldId = conn.fieldMap.identifier
+  if (!identifierFieldId) return null
+  const identifier = instance.state[identifierFieldId]
+  if (typeof identifier !== "string" || !identifier) return null
+  const { rows } = await pool.query<{ linear_id: string }>(
+    `SELECT linear_id FROM linear_issue WHERE org_id = $1 AND identifier = $2 LIMIT 1`,
+    [conn.orgId, identifier],
+  )
+  return rows[0]?.linear_id ?? null
 }
 
 export async function updateLinearIssueForRequest(req: Request, issueId: string) {

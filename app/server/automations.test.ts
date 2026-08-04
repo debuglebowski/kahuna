@@ -129,6 +129,19 @@ describe("renderTemplate — substitution, not evaluation", () => {
     expect(renderTemplate("[{{field:f-empty}}]", ctx)).toBe("[]")
   })
 
+  it("resolves the Slack chain tokens from an earlier action in the same run", () => {
+    const chained = { ...ctx, slack: { ts: "1712345678.000100", channel: "C04AB" } }
+    expect(renderTemplate("{{slack.ts}}", chained)).toBe("1712345678.000100")
+    expect(renderTemplate("{{slack.channel}}", chained)).toBe("C04AB")
+  })
+
+  it("renders the Slack chain empty when no post preceded it", () => {
+    // A thread reply with nothing to thread off must degrade to a top-level
+    // message, not fail the run.
+    expect(renderTemplate("[{{slack.ts}}]", ctx)).toBe("[]")
+    expect(renderTemplate("[{{slack.channel}}]", ctx)).toBe("[]")
+  })
+
   it("tolerates whitespace, leaves non-tokens alone, and has no expression syntax", () => {
     expect(renderTemplate("{{ record.title }}", ctx)).toBe("Acme Renewal")
     expect(renderTemplate("plain text", ctx)).toBe("plain text")

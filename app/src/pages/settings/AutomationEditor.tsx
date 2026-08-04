@@ -1,8 +1,16 @@
 import { useLiveQuery } from "@tanstack/react-db"
 import { useMutation, useQuery } from "@tanstack/react-query"
-import { ChevronDown, FlaskConical, History, Plus, SlidersHorizontal, X } from "lucide-react"
+import {
+  ChevronDown,
+  FlaskConical,
+  History,
+  Plus,
+  SlidersHorizontal,
+  TriangleAlert,
+  X,
+} from "lucide-react"
 import { useMemo, useState } from "react"
-import { useNavigate } from "react-router-dom"
+import { Link, useNavigate } from "react-router-dom"
 import {
   Select,
   SelectContent,
@@ -16,6 +24,7 @@ import { usePageChrome } from "../../components/Layout"
 import {
   Badge,
   Button,
+  Callout,
   Card,
   CardHeader,
   ConfirmDialog,
@@ -50,6 +59,7 @@ import {
   TEMPLATE_TOKENS,
   TRIGGER_OPTIONS,
 } from "./automationText"
+import { type Readiness, readinessFor, readinessForActions } from "./connectorReadiness"
 import { DangerZone, Feedback } from "./parts"
 
 const NONE = "__none"
@@ -114,6 +124,14 @@ export function AutomationEditor({ id, admin }: { id: string; admin: boolean }) 
       set(v)
       setDirty(true)
     }
+
+  // Same query keys the Integrations page uses, so this shares its cache and 30s
+  // staleTime rather than issuing a second request. The granted-scope array was
+  // already on the wire; nothing read it until now.
+  const slackStatus = useQuery({ queryKey: ["slackStatus"], queryFn: api.getSlackStatus })
+  const linearStatus = useQuery({ queryKey: ["linearStatus"], queryFn: api.getLinearStatus })
+  const connectorStatus = { slack: slackStatus.data, linear: linearStatus.data }
+  const connectorIssues = readinessForActions(actions, connectorStatus)
 
   const save = useMutation({
     mutationFn: () =>
@@ -296,6 +314,30 @@ export function AutomationEditor({ id, admin }: { id: string; admin: boolean }) 
               action={<span className="text-xs text-muted-foreground">run in order</span>}
             />
             <div className="divide-y divide-border">
+              {/* Aggregated up here as well as per action, because an action row
+                  collapses — a rule must not look fine just because the broken
+                  step is folded shut. */}
+              {connectorIssues.length > 0 && (
+                <div className="space-y-2 px-4 py-3">
+                  {connectorIssues.map((r) => (
+                    <Callout
+                      key={`${r.connector}:${r.level}`}
+                      tone={r.level === "unconfigured" ? "blue" : "amber"}
+                      icon={<TriangleAlert size={15} />}
+                      title={r.title}
+                      action={
+                        r.linkToSettings ? (
+                          <Button variant="ghost" size="sm" asChild>
+                            <Link to="/settings/integrations">Open integrations</Link>
+                          </Button>
+                        ) : undefined
+                      }
+                    >
+                      {r.detail}
+                    </Callout>
+                  ))}
+                </div>
+              )}
               {actions.length === 0 && (
                 <p className="px-4 py-3 text-sm text-muted-foreground">
                   No actions yet — an automation needs at least one to save.
@@ -308,6 +350,7 @@ export function AutomationEditor({ id, admin }: { id: string; admin: boolean }) 
                   action={action}
                   conceptId={conceptId}
                   disabled={readOnly}
+                  readiness={readinessFor(action.kind, connectorStatus)}
                   onChange={(next) => edit(setActions)(actions.map((a, j) => (j === i ? next : a)))}
                   onRemove={() => edit(setActions)(actions.filter((_, j) => j !== i))}
                 />
@@ -732,12 +775,15 @@ function ActionEditor({
   onChange,
   onRemove,
   disabled,
+  readiness,
 }: {
   action: AutomationAction
   conceptId: string
   onChange: (a: AutomationAction) => void
   onRemove: () => void
   disabled?: boolean
+  /** Null when this action's connector is ready, or needs none. */
+  readiness?: Readiness | null
 }) {
   const [open, setOpen] = useState(true)
   const fields = useFields(conceptId)
@@ -774,6 +820,24 @@ function ActionEditor({
 
       {open && (
         <div className="mt-3 space-y-3 pl-6">
+          {/* A sibling in the stack, not a `Field` hint — that renders as a
+              hover-only tooltip, and this has to be seen without interaction. */}
+          {readiness && (
+            <Callout
+              tone={readiness.level === "unconfigured" ? "blue" : "amber"}
+              icon={<TriangleAlert size={15} />}
+              title={readiness.title}
+              action={
+                readiness.linkToSettings ? (
+                  <Button variant="ghost" size="sm" asChild>
+                    <Link to="/settings/integrations">Open integrations</Link>
+                  </Button>
+                ) : undefined
+              }
+            >
+              {readiness.detail}
+            </Callout>
+          )}
           {action.kind === "setField" && (
             <div className="grid gap-3 sm:grid-cols-2">
               <Field label="Field">
@@ -927,6 +991,225 @@ function ActionEditor({
                 POSTs JSON with the automation id, the record id and its concept. This is the one
                 action that sends org data outside Kingsmaker.
               </p>
+            </div>
+          )}
+
+          {action.kind === "slack.postThreadReply" && (
+            <div className="space-y-3">
+              <Field label="Reply to" hint="Leave as {{slack.ts}} to reply to this run's own post.">
+                <Input
+                  value={action.threadTs}
+                  onChange={(e) => onChange({ ...action, threadTs: e.target.value })}
+                  placeholder="{{slack.ts}}"
+                  disabled={disabled}
+                />
+              </Field>
+              <Field label="Channel" hint="Blank uses the channel of that post.">
+                <Input
+                  value={action.channel}
+                  onChange={(e) => onChange({ ...action, channel: e.target.value })}
+                  placeholder="{{slack.channel}}"
+                  disabled={disabled}
+                />
+              </Field>
+              <Field label="Message" hint="Supports {{tokens}}.">
+                <Input
+                  value={action.text}
+                  onChange={(e) => onChange({ ...action, text: e.target.value })}
+                  disabled={disabled}
+                />
+              </Field>
+              <p className="text-xs text-muted-foreground">
+                Put a “Post to Slack” action above this one and the defaults thread the reply onto
+                it — no ids to copy.
+              </p>
+              <TokenHint />
+            </div>
+          )}
+
+          {action.kind === "slack.postBlocks" && (
+            <div className="space-y-3">
+              <Field label="Channel">
+                <Input
+                  value={action.channel}
+                  onChange={(e) => onChange({ ...action, channel: e.target.value })}
+                  placeholder="#wins"
+                  disabled={disabled}
+                />
+              </Field>
+              <Field
+                label="Notification text"
+                hint="Shown in notifications and previews, which can't render blocks."
+              >
+                <Input
+                  value={action.text}
+                  onChange={(e) => onChange({ ...action, text: e.target.value })}
+                  placeholder="{{record.title}} closed won"
+                  disabled={disabled}
+                />
+              </Field>
+              <Field label="Blocks" hint="A Block Kit JSON array. Tokens inside are interpolated.">
+                <textarea
+                  value={action.blocks}
+                  onChange={(e) => onChange({ ...action, blocks: e.target.value })}
+                  placeholder={
+                    '[{"type":"header","text":{"type":"plain_text","text":"{{record.title}}"}}]'
+                  }
+                  disabled={disabled}
+                  rows={6}
+                  spellCheck={false}
+                  className="w-full rounded-md border bg-transparent px-3 py-2 font-mono text-xs shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-50"
+                />
+              </Field>
+              <p className="text-xs text-muted-foreground">
+                Build a layout in Slack's Block Kit Builder and paste the <code>blocks</code> array
+                here. Interactive (button) blocks are rejected — clicking one would do nothing.
+              </p>
+              <TokenHint />
+            </div>
+          )}
+
+          {action.kind === "slack.dmUser" && (
+            <div className="space-y-3">
+              <Field label="Slack user id" hint="Their Slack member id, e.g. U01ABCDEF.">
+                <Input
+                  value={action.slackUserId}
+                  onChange={(e) => onChange({ ...action, slackUserId: e.target.value })}
+                  placeholder="U01ABCDEF"
+                  disabled={disabled}
+                />
+              </Field>
+              <Field label="Message" hint="Supports {{tokens}}.">
+                <Input
+                  value={action.text}
+                  onChange={(e) => onChange({ ...action, text: e.target.value })}
+                  disabled={disabled}
+                />
+              </Field>
+              <p className="text-xs text-muted-foreground">
+                Kingsmaker members aren't linked to Slack accounts, so this takes a Slack id — find
+                it under “Copy member ID” in their Slack profile.
+              </p>
+              <TokenHint />
+            </div>
+          )}
+
+          {action.kind === "slack.addReaction" && (
+            <div className="space-y-3">
+              <Field label="React to" hint="Leave as {{slack.ts}} to react to this run's own post.">
+                <Input
+                  value={action.ts}
+                  onChange={(e) => onChange({ ...action, ts: e.target.value })}
+                  placeholder="{{slack.ts}}"
+                  disabled={disabled}
+                />
+              </Field>
+              <Field label="Channel" hint="Blank uses the channel of that post.">
+                <Input
+                  value={action.channel}
+                  onChange={(e) => onChange({ ...action, channel: e.target.value })}
+                  placeholder="{{slack.channel}}"
+                  disabled={disabled}
+                />
+              </Field>
+              <Field label="Emoji">
+                <Input
+                  value={action.name}
+                  onChange={(e) => onChange({ ...action, name: e.target.value })}
+                  placeholder="tada"
+                  disabled={disabled}
+                />
+              </Field>
+            </div>
+          )}
+
+          {(action.kind === "linear.closeIssue" ||
+            action.kind === "linear.updateIssue" ||
+            action.kind === "linear.comment" ||
+            action.kind === "linear.assign") && (
+            <div className="space-y-3">
+              {action.kind === "linear.updateIssue" && (
+                <Field
+                  label="Changes"
+                  hint="Linear IssueUpdateInput as JSON, e.g. {&quot;priority&quot;: 1}."
+                >
+                  <textarea
+                    value={JSON.stringify(action.input ?? {}, null, 2)}
+                    onChange={(e) => {
+                      try {
+                        const parsed = JSON.parse(e.target.value || "{}")
+                        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+                          onChange({ ...action, input: parsed as Record<string, unknown> })
+                        }
+                      } catch {
+                        // Keep the last valid document while the user is mid-type;
+                        // the save-time check is what actually rejects garbage.
+                      }
+                    }}
+                    disabled={disabled}
+                    rows={4}
+                    spellCheck={false}
+                    className="w-full rounded-md border bg-transparent px-3 py-2 font-mono text-xs shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-50"
+                  />
+                </Field>
+              )}
+              {action.kind === "linear.comment" && (
+                <Field label="Comment" hint="Supports {{tokens}}.">
+                  <Input
+                    value={action.body}
+                    onChange={(e) => onChange({ ...action, body: e.target.value })}
+                    placeholder="Moved to {{trigger.to}} in Kingsmaker"
+                    disabled={disabled}
+                  />
+                </Field>
+              )}
+              {action.kind === "linear.assign" && (
+                <Field label="Assignee email" hint="Matched against Linear members at run time.">
+                  <Input
+                    value={action.email}
+                    onChange={(e) => onChange({ ...action, email: e.target.value })}
+                    placeholder="person@company.com"
+                    disabled={disabled}
+                  />
+                </Field>
+              )}
+              <p className="text-xs text-muted-foreground">
+                Acts on the Linear issue the triggering record mirrors, so point the When block at
+                your Linear ticket concept. On any other record it's recorded as “not a Linear
+                ticket”.
+                {action.kind === "linear.assign" &&
+                  " If the person's Linear address differs from their Kingsmaker one, the run records the miss rather than assigning the wrong person."}
+              </p>
+              {action.kind !== "linear.closeIssue" && <TokenHint />}
+            </div>
+          )}
+
+          {action.kind === "linear.createIssue" && (
+            <div className="space-y-3">
+              <Field label="Team id" hint="Linear requires a team; there is no workspace default.">
+                <Input
+                  value={action.teamId}
+                  onChange={(e) => onChange({ ...action, teamId: e.target.value })}
+                  placeholder="team uuid"
+                  disabled={disabled}
+                />
+              </Field>
+              <Field label="Title" hint="Supports {{tokens}}.">
+                <Input
+                  value={action.title}
+                  onChange={(e) => onChange({ ...action, title: e.target.value })}
+                  placeholder="Follow up on {{record.title}}"
+                  disabled={disabled}
+                />
+              </Field>
+              <Field label="Description">
+                <Input
+                  value={action.description ?? ""}
+                  onChange={(e) => onChange({ ...action, description: e.target.value })}
+                  disabled={disabled}
+                />
+              </Field>
+              <TokenHint />
             </div>
           )}
         </div>

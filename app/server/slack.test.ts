@@ -7,13 +7,16 @@ import { db } from "./db"
 import { decryptToken, encryptToken } from "./integrations/crypto"
 import { createUserDirect } from "./provision"
 import {
+  addReactionForOrg,
   disconnectSlack,
   disconnectSlackUser,
+  dmUserForOrg,
   handleInteractivity,
   handleSlackCallback,
   handleSlackEvents,
   handleSlackUserConnect,
   handleSlashCommand,
+  postForOrg,
   postMessage,
   postSlackMessageAsMeForRequest,
   setSlackFetchForTest,
@@ -273,6 +276,120 @@ describe("Slack integration", () => {
     await expect(slackApiRequest("tok", "chat.postMessage", { channel: "C-x" })).rejects.toThrow(
       /channel_not_found/,
     )
+  })
+
+  // The `*ForOrg` wrappers are the automation runner's ONLY door into Slack: it
+  // has an org id and no Request. They must never throw — a failure has to come
+  // back as a recorded outcome with a note a human can act on.
+  describe("automation entry points (org-resolved, never throw)", () => {
+    const connect = async (scopes: string) => {
+      const actor = await signUpAndOrg()
+      const [connection] = await db
+        .insert(slackConnection)
+        .values({
+          orgId: actor.orgId,
+          userId: actor.userId,
+          teamId: `T-${randomUUID().slice(0, 8)}`,
+          botUserId: "U-BOT",
+          botToken: encryptToken("xoxb-auto"),
+          scopes,
+          status: "connected",
+        })
+        .returning()
+      if (!connection) throw new Error("missing connection")
+      return actor
+    }
+
+    it("returns the message ts, which is what the {{slack.ts}} chain rides on", async () => {
+      const actor = await connect("chat:write")
+      setSlackFetchForTest(async () =>
+        okJson({ ok: true, ts: "1700000000.000200", channel: "C-9" }),
+      )
+      const res = await postForOrg(actor.orgId, { channel: "#wins", text: "hi" })
+      expect(res.ok).toBe(true)
+      expect(res.ts).toBe("1700000000.000200")
+      expect(res.channel).toBe("C-9")
+    })
+
+    it("reports a missing connection distinctly from a failed post", async () => {
+      // The old `postMessageForOrg` collapsed both into `false`, so run history
+      // could only say "no Slack connection or post failed".
+      const orphan = await signUpAndOrg()
+      const missing = await postForOrg(orphan.orgId, { channel: "#x", text: "hi" })
+      expect(missing.ok).toBe(false)
+      expect(missing.note).toBe("Slack not connected")
+
+      const actor = await connect("chat:write")
+      setSlackFetchForTest(async () => okJson({ ok: false, error: "channel_not_found" }))
+      const failed = await postForOrg(actor.orgId, { channel: "#nope", text: "hi" })
+      expect(failed.ok).toBe(false)
+      expect(failed.note).toBe("no such channel")
+    })
+
+    it("names the scope instead of saying 'could not reach the provider'", async () => {
+      // A Slack ok:false carries no HTTP status, so the shared status-class mapper
+      // would call a scope problem a connectivity problem.
+      const actor = await connect("chat:write")
+      setSlackFetchForTest(async () => okJson({ ok: false, error: "missing_scope" }))
+      const res = await postForOrg(actor.orgId, { channel: "#wins", text: "hi" })
+      expect(res.note).toMatch(/scope/i)
+      expect(res.note).not.toMatch(/could not reach/i)
+    })
+
+    it("pre-flights reactions:write rather than letting Slack answer", async () => {
+      const actor = await connect("chat:write") // granted BEFORE reactions:write existed
+      let called = false
+      setSlackFetchForTest(async () => {
+        called = true
+        return okJson({ ok: true })
+      })
+      const res = await addReactionForOrg(actor.orgId, {
+        channel: "C-1",
+        ts: "1700000000.000100",
+        name: "tada",
+      })
+      expect(res.ok).toBe(false)
+      expect(res.note).toMatch(/reactions:write/)
+      // Not worth a round trip we know will be refused.
+      expect(called).toBe(false)
+    })
+
+    it("adds a reaction once the scope is granted, tolerating :colons:", async () => {
+      const actor = await connect("chat:write,reactions:write")
+      let seen: Record<string, unknown> = {}
+      setSlackFetchForTest(async (input, init) => {
+        expect(String(input)).toBe("https://slack.com/api/reactions.add")
+        seen = JSON.parse(String(init?.body ?? "{}"))
+        return okJson({ ok: true })
+      })
+      const res = await addReactionForOrg(actor.orgId, {
+        channel: "C-1",
+        ts: "1700000000.000100",
+        name: ":tada:",
+      })
+      expect(res.ok).toBe(true)
+      expect(seen.name).toBe("tada")
+      expect(seen.timestamp).toBe("1700000000.000100")
+    })
+
+    it("opens a DM before posting into it", async () => {
+      const actor = await connect("chat:write")
+      const urls: string[] = []
+      setSlackFetchForTest(async (input) => {
+        const url = String(input)
+        urls.push(url)
+        return url.endsWith("conversations.open")
+          ? okJson({ ok: true, channel: { id: "D-1" } })
+          : okJson({ ok: true, ts: "1700000000.000300", channel: "D-1" })
+      })
+      const res = await dmUserForOrg(actor.orgId, { slackUserId: "U-123", text: "hi" })
+      expect(res.ok).toBe(true)
+      expect(res.channel).toBe("D-1")
+      expect(urls).toEqual([
+        "https://slack.com/api/conversations.open",
+        "https://slack.com/api/chat.postMessage",
+      ])
+    })
   })
 
   it("callback exchanges the code and stores the bot token encrypted per workspace", async () => {

@@ -243,6 +243,47 @@ const TONES: Record<Tone, string | undefined> = {
   blue: "bg-info/15 text-info",
 }
 
+/**
+ * An inline notice the reader must not be able to miss.
+ *
+ * Distinct from {@link InfoHint}, which is a hover-only tooltip: a warning about
+ * something that will break at run time has to be visible without interaction.
+ * Tinted from the same status tokens as {@link Badge}, so it flips with the theme
+ * — the one hand-rolled strip in the app that hardcodes `amber-500` is the
+ * outlier, not the pattern.
+ */
+export function Callout({
+  tone = "amber",
+  icon,
+  title,
+  children,
+  action,
+}: {
+  tone?: Extract<Tone, "amber" | "red" | "blue">
+  icon?: ReactNode
+  title: ReactNode
+  children?: ReactNode
+  /** A fix, rendered inline — a warning you can act on beats one you can't. */
+  action?: ReactNode
+}) {
+  return (
+    <div className={`flex items-start gap-2.5 rounded-md border px-3 py-2 ${CALLOUT_TONES[tone]}`}>
+      {icon && <span className="mt-px shrink-0">{icon}</span>}
+      <div className="min-w-0 flex-1 space-y-0.5">
+        <p className="text-xs leading-snug font-medium text-foreground">{title}</p>
+        {children && <div className="text-xs leading-snug text-muted-foreground">{children}</div>}
+      </div>
+      {action && <div className="shrink-0">{action}</div>}
+    </div>
+  )
+}
+
+const CALLOUT_TONES: Record<"amber" | "red" | "blue", string> = {
+  amber: "border-warning/40 bg-warning/5 [&_svg]:text-warning",
+  red: "border-destructive/40 bg-destructive/5 [&_svg]:text-destructive",
+  blue: "border-info/40 bg-info/5 [&_svg]:text-info",
+}
+
 export const decayTone = (band?: string): Tone =>
   band === "fresh" ? "green" : band === "warm" ? "blue" : band === "cooling" ? "amber" : "red"
 
