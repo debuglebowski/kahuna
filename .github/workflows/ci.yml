@@ -36,6 +36,12 @@ jobs:
       # The suites create/drop their own test databases off this connection.
       DATABASE_URL: postgresql://kingsmaker:kingsmaker@localhost:5544/kingsmaker
       TEST_DATABASE_URL: postgresql://kingsmaker:kingsmaker@localhost:5544/kingsmaker_test
+      # integrationSettings.test.ts encrypts a token, and crypto.ts refuses to do
+      # that under the published `dev-secret-change-me` placeholder. A local
+      # checkout picks a key up from the root `.env`, which does not exist here —
+      # so without this the suite passes on a laptop and fails on CI. Throwaway
+      # 64-char hex; it encrypts nothing that outlives the job.
+      INTEGRATION_ENCRYPTION_KEY: c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1
     steps:
       - uses: actions/checkout@v4
 
