@@ -2370,6 +2370,20 @@ export class KingsmakerRpcs extends RpcGroup.make(
     success: Schema.Struct({ id: Schema.String }),
     error: RpcError,
   }),
+  /** Replace a rule in place — it keeps its id, so the audit trail stays one subject. */
+  Rpc.make("updateRule", {
+    payload: {
+      ruleId: Schema.String,
+      effect: Schema.Literal("allow", "deny"),
+      actions: Schema.Array(AccessActionName),
+      resourceType: AccessResourceType,
+      resourceId: Schema.optional(Schema.NullOr(Schema.String)),
+      conceptId: Schema.optional(Schema.NullOr(Schema.String)),
+      condition: Schema.optional(Schema.NullOr(AccessCondition)),
+    },
+    success: Schema.Struct({ id: Schema.String }),
+    error: RpcError,
+  }),
   Rpc.make("removeRule", {
     payload: { ruleId: Schema.String },
     success: Schema.Struct({ id: Schema.String }),

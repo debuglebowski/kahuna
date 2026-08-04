@@ -1756,6 +1756,43 @@ export const addRule = (input: {
   readonly condition?: AccessCondition | null
 }): UC<unknown> => Effect.flatMap(AccessRoleService, (r) => r.addRule(input))
 
+export const updateRule = (input: {
+  readonly ruleId: string
+  readonly effect: "allow" | "deny"
+  readonly actions: ReadonlyArray<AccessAction>
+  readonly resourceType: AccessResourceType
+  readonly resourceId?: string | null
+  readonly conceptId?: string | null
+  readonly condition?: AccessCondition | null
+}): UC<unknown> =>
+  Effect.gen(function* () {
+    const roles = yield* AccessRoleService
+    const before = yield* roles.getRule(input.ruleId)
+    if (!before)
+      return yield* Effect.fail(
+        new FieldValidationError({ message: "rule not found", field: "ruleId" }),
+      )
+    // THE FLOOR, on edits too. Stripping `configure` from the last rule that grants it
+    // bricks the org exactly as deleting that rule would — and an editor that only
+    // guarded deletion would leave the same door open one click to the left.
+    const grantsConfigure = (
+      actions: ReadonlyArray<string>,
+      resourceType: string,
+      resourceId: string | null,
+    ) =>
+      (actions.includes("configure") || actions.includes("*")) &&
+      (resourceType === "org" || resourceId === null)
+    const wasGranting =
+      before.effect === "allow" &&
+      grantsConfigure(before.actions, before.resourceType, before.resourceId)
+    const stillGranting =
+      input.effect === "allow" &&
+      grantsConfigure(input.actions, input.resourceType, input.resourceId ?? null)
+    if (wasGranting && !stillGranting) yield* assertFloorHolds(roles, { removingRuleId: input.ruleId })
+    yield* roles.updateRule(input)
+    return { id: input.ruleId }
+  })
+
 export const removeRule = (ruleId: string): UC<unknown> =>
   Effect.gen(function* () {
     const roles = yield* AccessRoleService

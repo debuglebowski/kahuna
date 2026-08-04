@@ -402,6 +402,82 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
           return { id }
         }).pipe(Effect.orDie)
 
+      /**
+       * Replace a rule in place.
+       *
+       * In place, NOT remove-then-add: the rule KEEPS ITS ID, so the audit trail stays
+       * one subject with a history rather than a delete and an unrelated create, and a
+       * concurrent reader never sees the moment where the rule doesn't exist.
+       *
+       * Every field is replaced, not merged — the editor always sends a complete rule,
+       * and a partial update would make "clear the target" indistinguishable from
+       * "leave the target alone".
+       */
+      const updateRule = (input: {
+        readonly ruleId: string
+        readonly effect: "allow" | "deny"
+        readonly actions: ReadonlyArray<AccessAction>
+        readonly resourceType: AccessResourceType
+        readonly resourceId?: string | null
+        readonly conceptId?: string | null
+        readonly condition?: AccessCondition | null
+      }) =>
+        Effect.gen(function* () {
+          const { orgId } = yield* OrgContext
+          const rows = yield* sql<{ readonly id: string; readonly role_id: string | null }>`
+            UPDATE access_rules
+            SET effect = ${input.effect},
+                actions = ${[...input.actions]},
+                resource_type = ${input.resourceType},
+                resource_id = ${input.resourceId ?? null},
+                concept_id = ${input.conceptId ?? null},
+                condition = ${input.condition ? JSON.stringify(input.condition) : null}::jsonb
+            WHERE org_id = ${orgId} AND id = ${input.ruleId}
+            RETURNING id, role_id`
+          if (!rows[0]) return false
+          yield* events.append({
+            subjectKind: "accessRule",
+            subjectId: input.ruleId,
+            eventType: "AccessRuleUpdated",
+            payload: {
+              _tag: "AccessRuleUpdated",
+              roleId: rows[0].role_id,
+              effect: input.effect,
+              actions: [...input.actions],
+              resourceType: input.resourceType,
+            } as never,
+          })
+          yield* policies.bump(orgId)
+          return true
+        }).pipe(Effect.orDie)
+
+      /** One rule by id — the update path needs its BEFORE state for the floor check. */
+      const getRule = (ruleId: string) =>
+        Effect.gen(function* () {
+          const { orgId } = yield* OrgContext
+          const rows = yield* sql<{
+            readonly id: string
+            readonly role_id: string | null
+            readonly effect: string
+            readonly actions: ReadonlyArray<string>
+            readonly resource_type: string
+            readonly resource_id: string | null
+          }>`
+            SELECT id, role_id, effect, actions, resource_type, resource_id
+            FROM access_rules WHERE org_id = ${orgId} AND id = ${ruleId} LIMIT 1`
+          const r = rows[0]
+          return r
+            ? {
+                id: r.id,
+                roleId: r.role_id,
+                effect: (r.effect === "allow" ? "allow" : "deny") as "allow" | "deny",
+                actions: r.actions,
+                resourceType: r.resource_type as AccessResourceType,
+                resourceId: r.resource_id,
+              }
+            : null
+        }).pipe(Effect.orDie)
+
       /** Remove one rule from a role. Idempotent. */
       const removeRule = (ruleId: string) =>
         Effect.gen(function* () {
@@ -463,6 +539,8 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
         remove,
         rulesOf: rulesOf,
         addRule,
+        updateRule,
+        getRule,
         removeRule,
         configureHolders,
       } as const

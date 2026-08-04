@@ -1292,6 +1292,15 @@ export const api = {
     conceptId?: string | null
     condition?: AccessCondition | null
   }) => call((c) => c.addRule(input)),
+  updateRule: (input: {
+    ruleId: string
+    effect: "allow" | "deny"
+    actions: ReadonlyArray<AccessActionName>
+    resourceType: AccessResourceType
+    resourceId?: string | null
+    conceptId?: string | null
+    condition?: AccessCondition | null
+  }) => call((c) => c.updateRule(input)),
   removeRule: (ruleId: string) => call((c) => c.removeRule({ ruleId })),
   /** Omit `userId` for yourself — always allowed, no `configure` needed. */
   effectiveAccess: (userId?: string) => call((c) => c.effectiveAccess({ userId })),

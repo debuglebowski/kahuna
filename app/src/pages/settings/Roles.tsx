@@ -175,7 +175,7 @@ const groupRules = <T extends { readonly resourceType: string }>(
       ),
     }))
 }
-const ACTION_LABEL = new Map(ACTIONS.map((a) => [a.id, a.label] as const))
+const ACTION_LABEL = new Map<string, string>(ACTIONS.map((a) => [a.id, a.label] as const))
 
 /**
  * How a rule's actions read in the table.
@@ -224,12 +224,39 @@ function RuleEditor({ role, onClose }: { role: AccessRole; onClose: () => void }
   // more often than they are written, and an always-open form made the screen look
   // like a data-entry page rather than a list of what this role grants.
   const [adding, setAdding] = useState(false)
+  /** null while adding; the rule's id while editing one. Drives the form's copy and
+   *  which mutation the submit runs. */
+  const [editingId, setEditingId] = useState<string | null>(null)
 
   const resetDraft = () => {
     setEffect("allow")
     setResourceType("concept")
     setTargetId("")
     setActions(["view"])
+    setEditingId(null)
+  }
+
+  /** Open the form on an existing rule, prefilled. `*` has no chip, so a wildcard rule
+   *  loads with every action selected — the closest faithful representation, and
+   *  saving it writes those actions explicitly rather than silently keeping `*`. */
+  const startEditing = (r: {
+    id: string
+    effect: "allow" | "deny"
+    actions: ReadonlyArray<string>
+    resourceType: string
+    resourceId: string | null
+    conceptId: string | null
+  }) => {
+    setEditingId(r.id)
+    setEffect(r.effect)
+    setResourceType(r.resourceType as AccessResourceType)
+    setTargetId(r.resourceId ?? r.conceptId ?? "")
+    setActions(
+      r.actions.includes("*")
+        ? ACTIONS.map((a) => a.id)
+        : (r.actions.filter((a) => ACTION_LABEL.has(a)) as ReadonlyArray<AccessActionName>),
+    )
+    setAdding(true)
   }
 
   // Named targets for the picker AND for resolving ids in the table's Scope column.
@@ -238,25 +265,26 @@ function RuleEditor({ role, onClose }: { role: AccessRole; onClose: () => void }
   const concepts = useQuery({ queryKey: ["concepts"], queryFn: () => api.listConcepts() })
 
   const add = useMutation({
-    mutationFn: () =>
-      api.addRule({
-        roleId: role.id,
-        effect,
-        actions,
-        resourceType,
+    mutationFn: () => {
+      const target = {
         // A `concept` rule names the concept itself; a `record` rule scoped to a
         // concept uses `conceptId` — "records IN Deals", not "the Deals concept".
-        ...(targetId && resourceType === "concept" ? { resourceId: targetId } : {}),
-        ...(targetId && resourceType === "record" ? { conceptId: targetId } : {}),
-      }),
+        resourceId: targetId && resourceType === "concept" ? targetId : null,
+        conceptId: targetId && resourceType === "record" ? targetId : null,
+      }
+      return editingId
+        ? api.updateRule({ ruleId: editingId, effect, actions, resourceType, ...target })
+        : api.addRule({ roleId: role.id, effect, actions, resourceType, ...target })
+    },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["rules", role.id] })
-      // Collapse on success: the new rule is now visible in the table above, which is
-      // the confirmation. Leaving the form open invites an accidental duplicate.
+      // Collapse on success: the saved rule is now visible in the table above, which
+      // is the confirmation. Leaving the form open invites an accidental duplicate.
       setAdding(false)
       resetDraft()
     },
   })
+
   const remove = useMutation({
     mutationFn: (ruleId: string) => api.removeRule(ruleId),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["rules", role.id] }),
@@ -308,7 +336,13 @@ function RuleEditor({ role, onClose }: { role: AccessRole; onClose: () => void }
                   </TableCell>
                 </TableRow>,
                 ...group.rules.map((r) => (
-                  <TableRow key={r.id}>
+                  <TableRow
+                    key={r.id}
+                    // The whole row opens the editor; the remove button stops the event
+                    // so a delete never reads as "edit this".
+                    className={`cursor-pointer ${editingId === r.id ? "bg-accent" : ""}`}
+                    onClick={() => startEditing(r)}
+                  >
                     <TableCell>
                       <Badge tone={r.effect === "deny" ? "red" : "green"}>
                         {r.effect === "deny" ? "Deny" : "Allow"}
@@ -331,7 +365,10 @@ function RuleEditor({ role, onClose }: { role: AccessRole; onClose: () => void }
                         }`}
                         title="Remove rule"
                         variant="danger"
-                        onClick={() => remove.mutate(r.id)}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          remove.mutate(r.id)
+                        }}
                         disabled={remove.isPending}
                       >
                         <X size={14} />
@@ -359,7 +396,9 @@ function RuleEditor({ role, onClose }: { role: AccessRole; onClose: () => void }
           </Button>
         ) : (
           <div className="space-y-4 rounded-lg border p-6">
-            <span className="block text-sm font-medium">Add a rule</span>
+            <span className="block text-sm font-medium">
+              {editingId ? "Edit rule" : "Add a rule"}
+            </span>
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="Effect">
                 <Select value={effect} onValueChange={(v) => setEffect(v as "allow" | "deny")}>
@@ -450,7 +489,13 @@ function RuleEditor({ role, onClose }: { role: AccessRole; onClose: () => void }
                 disabled={add.isPending || actions.length === 0}
                 size="sm"
               >
-                {add.isPending ? "Adding…" : "Add rule"}
+                {add.isPending
+                  ? editingId
+                    ? "Saving…"
+                    : "Adding…"
+                  : editingId
+                    ? "Save changes"
+                    : "Add rule"}
               </Button>
               <Button
                 variant="outline"
