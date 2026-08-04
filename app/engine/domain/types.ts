@@ -1348,6 +1348,60 @@ export type AutomationAction =
       /** Extra JSON merged over the default envelope; strings interpolated. */
       readonly body?: Record<string, unknown>
     }
+  // ── Slack ────────────────────────────────────────────────────────────────
+  // All four ride the org's BOT token, which is why they survived the cut: a
+  // per-user token would need an actor the runner does not have.
+  | {
+      readonly kind: "slack.postThreadReply"
+      /** Defaults to `{{slack.channel}}` when blank. */
+      readonly channel: string
+      /** The parent message. Usually `{{slack.ts}}` — the post earlier in this run. */
+      readonly threadTs: string
+      readonly text: string
+    }
+  | {
+      readonly kind: "slack.postBlocks"
+      readonly channel: string
+      /** Block Kit JSON as typed. Parsed and screened at SAVE time. */
+      readonly blocks: string
+      /** Notification/fallback text. Required — without it push previews are blank. */
+      readonly text: string
+    }
+  | {
+      readonly kind: "slack.dmUser"
+      /** A Slack user id (`U…`), not a KM member id — there is no mapping between them. */
+      readonly slackUserId: string
+      readonly text: string
+    }
+  | {
+      readonly kind: "slack.addReaction"
+      readonly channel: string
+      readonly ts: string
+      /** Emoji name, with or without the surrounding colons. */
+      readonly name: string
+    }
+  // ── Linear ───────────────────────────────────────────────────────────────
+  // The four record-scoped ones resolve the issue from the triggering record;
+  // `createIssue` is the only one that needs no subject.
+  | {
+      readonly kind: "linear.updateIssue"
+      /** Linear `IssueUpdateInput` keys (title, priority, stateId, …), interpolated. */
+      readonly input: Record<string, unknown>
+    }
+  | { readonly kind: "linear.closeIssue" }
+  | { readonly kind: "linear.comment"; readonly body: string }
+  | {
+      readonly kind: "linear.assign"
+      /** Resolved to a Linear user id at RUN time — no mapping table. */
+      readonly email: string
+    }
+  | {
+      readonly kind: "linear.createIssue"
+      /** Mandatory in Linear's schema; there is no workspace default. */
+      readonly teamId: string
+      readonly title: string
+      readonly description?: string
+    }
 
 export type AutomationActionKind = AutomationAction["kind"]
 
