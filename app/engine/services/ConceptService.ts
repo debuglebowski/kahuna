@@ -10,6 +10,7 @@ import {
   LabelNotFound,
   VersioningInUse,
 } from "../errors"
+import { AccessDefaultsService } from "./AccessDefaultsService"
 import { EventStore } from "./EventStore"
 import { LabelService } from "./LabelService"
 import { OrgContext } from "./OrgContext"
@@ -29,6 +30,7 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
     const sql = yield* PgClient.PgClient
     const events = yield* EventStore
     const labels = yield* LabelService
+    const defaults = yield* AccessDefaultsService
 
     const getByName = (name: string) =>
       Effect.gen(function* () {
@@ -171,6 +173,13 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
             VALUES (${orgId}, ${slug}, ${input.name}, ${input.pluralName?.trim() || null}, ${input.description ?? null}, ${input.icon ?? null}, ${input.color ?? null}, ${input.managedBy ?? null})
             RETURNING *`
           const concept = toConcept(rows[0]!)
+          // THE CREATION TEMPLATE, copied in the SAME transaction as the INSERT.
+          // A concept with no rules is invisible to every non-full-access role, so a
+          // crash between the two would leave a concept only admins can see — and the
+          // admin who created it would see nothing wrong. Two calls: the concept
+          // itself, and "records in this concept" (scoped by container, not by id).
+          yield* defaults.materialize({ resourceType: "concept", resourceId: concept.id })
+          yield* defaults.materialize({ resourceType: "record", conceptId: concept.id })
           yield* events.append({
             subjectKind: "concept",
             subjectId: concept.id,
@@ -492,6 +501,12 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
           yield* sql`DELETE FROM dashboards
             WHERE org_id = ${orgId} AND concept_id = ${id} AND kind = 'record'`
           yield* sql`DELETE FROM concepts WHERE org_id = ${orgId} AND id = ${id}`
+          // Access rules naming this concept, and the record rules scoped to it.
+          // `access_rules.resource_id` has no FK — it points at any of five tables —
+          // so nothing else removes these, and once every resource carries a row per
+          // role, orphans load into every resolved policy forever.
+          yield* defaults.forget({ resourceType: "concept", resourceId: id })
+          yield* defaults.forget({ resourceType: "record", conceptId: id })
           yield* events.append({
             subjectKind: "concept",
             subjectId: id,
@@ -519,5 +534,5 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
       purge,
     } as const
   }),
-  dependencies: [EventStore.Default, LabelService.Default],
+  dependencies: [AccessDefaultsService.Default, EventStore.Default, LabelService.Default],
 }) {}

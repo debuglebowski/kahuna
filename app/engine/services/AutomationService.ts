@@ -13,6 +13,7 @@ import type {
   SidebarCondition,
 } from "../domain/types"
 import { AutomationInvalid, AutomationNotFound } from "../errors"
+import { AccessDefaultsService } from "./AccessDefaultsService"
 import { EventStore } from "./EventStore"
 import { OrgContext, type OrgScope } from "./OrgContext"
 import { type AutomationRow, type AutomationRunRow, toAutomation, toAutomationRun } from "./rows"
@@ -39,7 +40,52 @@ const ACTION_KINDS = new Set([
   "archiveRecord",
   "notifySlack",
   "webhook",
+  "slack.postThreadReply",
+  "slack.postBlocks",
+  "slack.dmUser",
+  "slack.addReaction",
+  "linear.updateIssue",
+  "linear.closeIssue",
+  "linear.comment",
+  "linear.assign",
+  "linear.createIssue",
 ])
+
+/**
+ * Why a Block Kit payload is unacceptable, or null if it looks fine.
+ *
+ * Screened at SAVE time for the same reason `webhookUrlProblem` is: a malformed
+ * blob would otherwise persist cleanly and fail on every single run, with the
+ * reason buried in a truncated run note.
+ *
+ * `actions` blocks are refused outright. They render as buttons, and
+ * `handleInteractivity` is a stub that only writes an audit row — so the button
+ * would look live and do nothing, which is worse than not offering it.
+ */
+const blocksProblem = (raw: string): string | null => {
+  const text = raw.trim()
+  if (!text) return "add the Block Kit JSON, or use Post to Slack instead"
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    return "blocks must be valid JSON"
+  }
+  if (!Array.isArray(parsed)) return "blocks must be a JSON array"
+  if (parsed.length === 0) return "blocks is empty"
+  if (parsed.length > 50) return "Slack allows at most 50 blocks"
+  for (const block of parsed) {
+    if (!block || typeof block !== "object" || Array.isArray(block)) {
+      return "every block must be an object"
+    }
+    const kind = (block as { type?: unknown }).type
+    if (typeof kind !== "string" || !kind) return "every block needs a type"
+    if (kind === "actions") {
+      return "interactive blocks aren't supported yet — buttons would do nothing when clicked"
+    }
+  }
+  return null
+}
 
 /**
  * How many runs per minute one automation may make before it pauses ITSELF.
@@ -184,6 +230,64 @@ const validateActions = (actions: ReadonlyArray<AutomationAction>) =>
         const reason = webhookUrlProblem(a.url ?? "")
         if (reason) return yield* Effect.fail(new AutomationInvalid({ message: reason }))
       }
+      // Slack. A blank channel is allowed ONLY on a thread reply, where it falls
+      // back to the channel of the post earlier in the run.
+      if (a.kind === "slack.postThreadReply" && !a.threadTs.trim()) {
+        return yield* Effect.fail(
+          new AutomationInvalid({
+            message: "a thread reply needs a message to reply to — use {{slack.ts}}",
+          }),
+        )
+      }
+      if (a.kind === "slack.postBlocks") {
+        if (!a.channel.trim()) {
+          return yield* Effect.fail(
+            new AutomationInvalid({ message: "postBlocks needs a channel" }),
+          )
+        }
+        if (!a.text.trim()) {
+          return yield* Effect.fail(
+            new AutomationInvalid({
+              message: "add fallback text — Slack shows it in notifications and previews",
+            }),
+          )
+        }
+        const reason = blocksProblem(a.blocks ?? "")
+        if (reason) return yield* Effect.fail(new AutomationInvalid({ message: reason }))
+      }
+      if (a.kind === "slack.dmUser" && !a.slackUserId.trim()) {
+        return yield* Effect.fail(
+          new AutomationInvalid({ message: "a DM needs a Slack user id (U…)" }),
+        )
+      }
+      if (a.kind === "slack.addReaction") {
+        if (!a.ts.trim()) {
+          return yield* Effect.fail(
+            new AutomationInvalid({ message: "a reaction needs a message — use {{slack.ts}}" }),
+          )
+        }
+        if (!a.name.trim()) {
+          return yield* Effect.fail(new AutomationInvalid({ message: "a reaction needs an emoji" }))
+        }
+      }
+      // Linear. The record-scoped kinds need no config — they resolve the issue
+      // from the triggering record — so only these three can be malformed.
+      if (a.kind === "linear.comment" && !a.body.trim()) {
+        return yield* Effect.fail(new AutomationInvalid({ message: "a comment needs a body" }))
+      }
+      if (a.kind === "linear.assign" && !a.email.trim()) {
+        return yield* Effect.fail(new AutomationInvalid({ message: "assign needs an email" }))
+      }
+      if (a.kind === "linear.createIssue") {
+        if (!a.teamId.trim()) {
+          return yield* Effect.fail(
+            new AutomationInvalid({ message: "creating a Linear issue needs a team" }),
+          )
+        }
+        if (!a.title.trim()) {
+          return yield* Effect.fail(new AutomationInvalid({ message: "createIssue needs a title" }))
+        }
+      }
     }
   })
 
@@ -240,6 +344,7 @@ export class AutomationService extends Effect.Service<AutomationService>()(
     effect: Effect.gen(function* () {
       const sql = yield* PgClient.PgClient
       const events = yield* EventStore
+      const defaults = yield* AccessDefaultsService
 
       /**
        * The exception layer for ONE automation.
@@ -338,6 +443,11 @@ export class AutomationService extends Effect.Service<AutomationService>()(
                 ${nextRunAt}, ${actor})
               RETURNING *`
             const automation = toAutomation(rows[0]!)
+            // Per-role values, from the template, in the creating transaction.
+            yield* defaults.materialize({
+              resourceType: "automation",
+              resourceId: automation.id,
+            })
             yield* events.append({
               subjectKind: "automation",
               subjectId: automation.id,
@@ -505,6 +615,7 @@ export class AutomationService extends Effect.Service<AutomationService>()(
               payload: { _tag: "AutomationDeleted" },
             })
             yield* sql`DELETE FROM automations WHERE org_id = ${orgId} AND id = ${id}`
+            yield* defaults.forget({ resourceType: "automation", resourceId: id })
             return automation
           }),
         )
@@ -640,7 +751,7 @@ export class AutomationService extends Effect.Service<AutomationService>()(
         setNextRun,
       } as const
     }),
-    dependencies: [EventStore.Default],
+    dependencies: [AccessDefaultsService.Default, EventStore.Default],
   },
 ) {}
 

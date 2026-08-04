@@ -3,6 +3,7 @@ import { Effect } from "effect"
 import { decide } from "../domain/access"
 import type { SidebarViewBody } from "../domain/types"
 import { SidebarViewNotFound, SidebarViewProtected } from "../errors"
+import { AccessDefaultsService } from "./AccessDefaultsService"
 import { OrgContext, type OrgScope } from "./OrgContext"
 import { type SidebarViewRow, toSidebarView } from "./rows"
 
@@ -19,6 +20,7 @@ export class SidebarViewService extends Effect.Service<SidebarViewService>()(
   {
     effect: Effect.gen(function* () {
       const sql = yield* PgClient.PgClient
+      const defaults = yield* AccessDefaultsService
 
       /** Guarantee the org has at least one shared view by seeding the Default
        *  if none exists: an untitled section holding the global nav items, then
@@ -27,7 +29,7 @@ export class SidebarViewService extends Effect.Service<SidebarViewService>()(
        *  never double-seed; a no-op once the org has any shared view. */
       const ensureDefault = Effect.gen(function* () {
         const { orgId } = yield* OrgContext
-        yield* sql`
+        const rows = yield* sql<{ readonly id: string }>`
           INSERT INTO sidebar_views (org_id, owner_id, name, icon, position, body)
           SELECT ${orgId}, NULL, 'Default', 'lucide:LayoutGrid', 0,
             jsonb_build_object('sections', jsonb_build_array(
@@ -43,7 +45,12 @@ export class SidebarViewService extends Effect.Service<SidebarViewService>()(
                 ), '[]'::jsonb))))
           WHERE NOT EXISTS (
             SELECT 1 FROM sidebar_views WHERE org_id = ${orgId} AND owner_id IS NULL
-          )`
+          )
+          RETURNING id`
+        // Only the run that actually seeded may materialize — see the same note in
+        // DashboardService.ensureDefault.
+        const seeded = rows[0]
+        if (seeded) yield* defaults.materialize({ resourceType: "view", resourceId: seeded.id })
       })
 
       /**
@@ -127,7 +134,14 @@ export class SidebarViewService extends Effect.Service<SidebarViewService>()(
             VALUES (${orgId}, ${ownerId}, ${input.name}, ${input.icon ?? null}, ${position},
                     ${JSON.stringify(input.body)}::jsonb)
             RETURNING *`
-          return toSidebarView(rows[0]!)
+          const view = toSidebarView(rows[0]!)
+          // Only a SHARED view gets per-role values. A personal one is governed by
+          // `owner_id` — ownership is per-actor and orthogonal to roles, and writing
+          // deny-for-every-role here would make sharing it impossible later, since a
+          // deny beats the actor grant that a share writes.
+          if (ownerId === null)
+            yield* defaults.materialize({ resourceType: "view", resourceId: view.id })
+          return view
         })
 
       const update = (input: {
@@ -175,6 +189,9 @@ export class SidebarViewService extends Effect.Service<SidebarViewService>()(
               }
             }
             yield* sql`DELETE FROM sidebar_views WHERE org_id = ${orgId} AND id = ${id}`
+            // No FK on access_rules.resource_id (it points at any of five tables),
+            // so nothing else clears these.
+            yield* defaults.forget({ resourceType: "view", resourceId: id })
             return toSidebarView(row)
           }),
         )
@@ -197,6 +214,6 @@ export class SidebarViewService extends Effect.Service<SidebarViewService>()(
 
       return { list, create, update, remove, reorder } as const
     }),
-    dependencies: [],
+    dependencies: [AccessDefaultsService.Default],
   },
 ) {}

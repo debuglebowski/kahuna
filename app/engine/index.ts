@@ -65,6 +65,11 @@ export * from "./errors"
 export { EngineLive, type EngineServices } from "./layers"
 export { foldEvents, foldUntil } from "./projection/fold"
 export { applyEvent, type FoldState } from "./projection/reducer"
+export {
+  type AccessDefault,
+  AccessDefaultsService,
+  TEMPLATED_TYPES,
+} from "./services/AccessDefaultsService"
 export { type AccessRole, AccessRoleService, BUILTIN_ROLES } from "./services/AccessRoleService"
 export {
   type AddAnnotationFieldInput,

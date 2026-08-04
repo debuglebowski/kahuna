@@ -911,6 +911,17 @@ export const accessRoles = pgTable(
     // A preset. Its RULES stay editable (that is the point — presets are ordinary
     // roles); the flag only drives "this one was seeded, don't offer to delete it".
     builtin: boolean("builtin").notNull().default(false),
+    // EXEMPT FROM PER-RESOURCE VALUES. A full-access role holds one blanket
+    // `allow ['*']` per resource type and is never materialized into per-resource
+    // rules, because `*` means "every action, present and future" — expanding it
+    // freezes the role at today's action list, so an action added in a later release
+    // silently isn't granted to the owner. It also keeps `configureHolders`' floor
+    // guard working unchanged.
+    //
+    // A real column rather than `key IN ('owner','admin','automation_full')`: the
+    // exemption is a property of the role, not of its name, and an org may want a
+    // custom role to have it.
+    fullAccess: boolean("full_access").notNull().default(false),
     position: integer("position").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -993,6 +1004,53 @@ export const accessRules = pgTable(
     // The Share dialog: current grants on one resource.
     index("access_rules_resource_idx").on(t.orgId, t.resourceType, t.resourceId),
     check("access_rules_one_subject", sql`(${t.roleId} IS NULL) <> (${t.actorId} IS NULL)`),
+  ],
+)
+
+/**
+ * THE CREATION TEMPLATE: what a NEWLY created resource grants each role.
+ *
+ * Not a rule. Nothing in `decide()` ever reads this table — it is copied into real
+ * `access_rules` rows at the moment a concept, dashboard, view or automation is
+ * created, and from then on those rows are the only thing that governs access.
+ *
+ * WHY IT IS A SEPARATE TABLE. The obvious alternative is to keep using an untargeted
+ * `access_rules` row (`resource_id IS NULL`) as "the default for this type". That is
+ * what shipped first, and it is precisely the thing being removed: an untargeted rule
+ * is consulted at REQUEST time, so every cell in the permissions grid had to carry an
+ * "Inherit" state meaning "no rule here — something else decides". Moving the template
+ * out of the rules table is what lets a grid cell show one definite value.
+ *
+ * `actions` may contain `*`, same as a rule, so a template can say "everything".
+ *
+ * A role with no row here grants nothing on new resources — the same fail-closed
+ * polarity as `toVisibility` in engine/services/rows.ts.
+ */
+export const accessDefaults = pgTable(
+  "access_defaults",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: text("org_id").notNull(),
+    roleId: uuid("role_id")
+      .notNull()
+      .references(() => accessRoles.id, { onDelete: "cascade" }),
+    // 'concept' | 'record' | 'dashboard' | 'view' | 'automation'. Only the five types
+    // with a grid: the rest keep their existing defaults and are edited under "Other".
+    resourceType: text("resource_type").notNull(),
+    // 'allow' | 'deny'. Deny is storable but is NOT what an empty grid cell means —
+    // "not allowed" is the ABSENCE of an allow, because a deny also beats per-record
+    // shares and would silently kill sharing. See engine/domain/access.ts.
+    effect: text("effect").notNull().default("allow"),
+    actions: text("actions").array().notNull(),
+    createdBy: text("created_by"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // One row per (role, type, effect): the whole template loads in one indexed read
+    // when a resource is created.
+    uniqueIndex("access_defaults_role_type_effect_uq").on(t.roleId, t.resourceType, t.effect),
+    index("access_defaults_org_idx").on(t.orgId, t.resourceType),
   ],
 )
 

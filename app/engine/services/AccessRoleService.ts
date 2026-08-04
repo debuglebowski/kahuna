@@ -2,6 +2,7 @@ import { PgClient } from "@effect/sql-pg"
 import { Effect } from "effect"
 import type { AccessAction, AccessCondition, AccessResourceType } from "../domain/access"
 import { ACTION_ALL } from "../domain/access"
+import { TEMPLATED_TYPES } from "./AccessDefaultsService"
 import { EventStore } from "./EventStore"
 import { OrgContext } from "./OrgContext"
 import { PolicyService } from "./PolicyService"
@@ -178,16 +179,37 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
        * release adding a preset must be able to add just that one.
        */
       const ensureBuiltins = Effect.gen(function* () {
-        const { orgId } = yield* OrgContext
+        const { orgId, actor } = yield* OrgContext
         let seeded = 0
         for (const spec of BUILTIN_ROLES) {
           const existing = yield* getByKey(spec.key)
           if (existing) continue
+          // A preset holding `*` is FULL ACCESS: it keeps one blanket rule per type
+          // and is exempt from per-resource values, because `*` means "every action,
+          // present and future" and materializing it would freeze the role at
+          // today's action list. See `access_roles.full_access`.
+          const fullAccess = spec.rules.some((r) => r.actions.includes(ACTION_ALL))
           const inserted = yield* sql<{ readonly id: string }>`
-            INSERT INTO access_roles (org_id, key, name, description, builtin, position)
-            VALUES (${orgId}, ${spec.key}, ${spec.name}, ${spec.description}, true, ${spec.position})
+            INSERT INTO access_roles
+              (org_id, key, name, description, builtin, full_access, position)
+            VALUES (${orgId}, ${spec.key}, ${spec.name}, ${spec.description}, true,
+                    ${fullAccess}, ${spec.position})
             RETURNING id`
           const roleId = inserted[0]!.id
+          // THE CREATION TEMPLATE for this preset: what a newly created concept,
+          // dashboard, view or automation grants it. Full-access roles get none —
+          // their blanket `*` already covers everything, materialized or not.
+          if (!fullAccess) {
+            for (const rule of spec.rules) {
+              if (rule.effect !== "allow" || !TEMPLATED_TYPES.includes(rule.resourceType)) continue
+              yield* sql`
+                INSERT INTO access_defaults
+                  (org_id, role_id, resource_type, effect, actions, created_by)
+                VALUES (${orgId}, ${roleId}, ${rule.resourceType}, 'allow',
+                        ${[...rule.actions]}, ${actor})
+                ON CONFLICT (role_id, resource_type, effect) DO NOTHING`
+            }
+          }
           for (const rule of spec.rules) {
             // The array is passed RAW, not through `sql.json`: `actions` is a
             // `text[]` column, and the driver serializes a JS array as a Postgres

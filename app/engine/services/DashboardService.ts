@@ -8,6 +8,7 @@ import {
   DashboardNotFound,
   DashboardProtected,
 } from "../errors"
+import { AccessDefaultsService } from "./AccessDefaultsService"
 import { OrgContext, type OrgScope } from "./OrgContext"
 import { type DashboardRow, toDashboard } from "./rows"
 
@@ -31,6 +32,7 @@ export class DashboardService extends Effect.Service<DashboardService>()(
   {
     effect: Effect.gen(function* () {
       const sql = yield* PgClient.PgClient
+      const defaults = yield* AccessDefaultsService
 
       /** Guarantee the org has at least one shared dashboard by seeding the
        *  Default if none exists. Atomic (INSERT … WHERE NOT EXISTS), so
@@ -39,14 +41,23 @@ export class DashboardService extends Effect.Service<DashboardService>()(
         const { orgId } = yield* OrgContext
         // Only PAGE dashboards count as the org home — record dashboards
         // (concept_id set) are templates and must never satisfy the seed guard.
-        yield* sql`
+        const rows = yield* sql<{ readonly id: string }>`
           INSERT INTO dashboards (org_id, owner_id, name, icon, position, body)
           SELECT ${orgId}, NULL, 'Home', 'lucide:LayoutDashboard', 0,
                  ${JSON.stringify(DEFAULT_DASHBOARD_BODY)}::jsonb
           WHERE NOT EXISTS (
             SELECT 1 FROM dashboards
             WHERE org_id = ${orgId} AND owner_id IS NULL AND concept_id IS NULL
-          )`
+          )
+          RETURNING id`
+        // RETURNING + the zero-rows branch is the whole point: this INSERT is a
+        // no-op once a shared dashboard exists, and only the run that actually
+        // seeded may materialize. Skipping this hook would leave a brand-new org's
+        // home page invisible to every member — the most visible possible form of
+        // "created but never given rules".
+        const seeded = rows[0]
+        if (seeded)
+          yield* defaults.materialize({ resourceType: "dashboard", resourceId: seeded.id })
       })
 
       /**
@@ -194,7 +205,16 @@ export class DashboardService extends Effect.Service<DashboardService>()(
                       ${isRecord ? "record" : "page"}, ${conceptId},
                       ${JSON.stringify(input.body)}::jsonb)
               RETURNING *`
-            return toDashboard(rows[0]!)
+            const dashboard = toDashboard(rows[0]!)
+            // Shared dashboards only — a personal one is governed by `owner_id`.
+            // See the same note in SidebarViewService.create for why folding
+            // ownership into per-role values would break sharing.
+            if (ownerId === null)
+              yield* defaults.materialize({
+                resourceType: "dashboard",
+                resourceId: dashboard.id,
+              })
+            return dashboard
           }),
         )
 
@@ -261,7 +281,16 @@ export class DashboardService extends Effect.Service<DashboardService>()(
                   body = ${JSON.stringify(body)}::jsonb, updated_at = now()
               WHERE org_id = ${orgId} AND id = ${input.id}
               RETURNING *`
-            return toDashboard(rows[0]!)
+            const dashboard = toDashboard(rows[0]!)
+            // Shared dashboards only — a personal one is governed by `owner_id`.
+            // See the same note in SidebarViewService.create for why folding
+            // ownership into per-role values would break sharing.
+            if (ownerId === null)
+              yield* defaults.materialize({
+                resourceType: "dashboard",
+                resourceId: dashboard.id,
+              })
+            return dashboard
           }),
         )
 
@@ -282,6 +311,9 @@ export class DashboardService extends Effect.Service<DashboardService>()(
               }
             }
             yield* sql`DELETE FROM dashboards WHERE org_id = ${orgId} AND id = ${id}`
+            // No FK on access_rules.resource_id (it points at any of five tables),
+            // so nothing else clears these.
+            yield* defaults.forget({ resourceType: "dashboard", resourceId: id })
             return toDashboard(row)
           }),
         )
@@ -304,6 +336,6 @@ export class DashboardService extends Effect.Service<DashboardService>()(
 
       return { list, listAll, listRecordDashboards, create, update, remove, reorder } as const
     }),
-    dependencies: [],
+    dependencies: [AccessDefaultsService.Default],
   },
 ) {}
