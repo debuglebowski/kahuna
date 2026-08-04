@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest"
 import { session as sessionTable, ssoProvider } from "#db"
 import { auth } from "./auth"
 import {
+  type AuthMethods,
   domainMatches,
   emailDomain,
   passwordSignInAllowed,
@@ -13,7 +14,7 @@ import {
 import { db } from "./db"
 import { createUserDirect } from "./provision"
 import { resolveOrg } from "./session"
-import { authConfigStatus, updateAuthMethods } from "./sso"
+import { authConfigStatus, publicAuthMethods, updateAuthMethods } from "./sso"
 
 /**
  * The per-org sign-in gates, the owner-only config surface, and the two traps
@@ -231,6 +232,27 @@ describe("auth config surface", () => {
     const raw = await res.text()
     expect(raw).not.toContain("shh")
     expect(raw).toContain('"hasSecret":true')
+  })
+})
+
+describe("public sign-in methods", () => {
+  it("is readable with NO session, and leaks only booleans", async () => {
+    const res = await publicAuthMethods()
+    expect(res.status).toBe(200)
+    const raw = await res.text()
+    const body = JSON.parse(raw) as AuthMethods
+    expect(typeof body.passwordEnabled).toBe("boolean")
+    expect(typeof body.ssoEnabled).toBe("boolean")
+    // No issuer, client id, domain or secret — those stay admin-gated.
+    expect(Object.keys(body).sort()).toEqual(["passwordEnabled", "ssoEnabled"])
+  })
+
+  it("falls back to offering both when the org is ambiguous", async () => {
+    // The suite creates many orgs, so this exercises the 2+ branch: a visitor's
+    // org is unknowable, and hiding a method they can use would lock them out.
+    const body = (await (await publicAuthMethods()).json()) as AuthMethods
+    expect(body.passwordEnabled).toBe(true)
+    expect(body.ssoEnabled).toBe(true)
   })
 })
 

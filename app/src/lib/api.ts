@@ -790,6 +790,14 @@ export const api = {
     return (await res.json()) as VersionInfo
   },
   // ── Org authentication config (SSO + sign-in methods) ───────────────────────
+  /** Unauthenticated: what the sign-in page should render. Booleans only. */
+  getPublicAuthMethods: async (): Promise<AuthMethods> => {
+    const res = await fetch("/api/auth-config/public")
+    // Never block sign-in on this: a failure falls back to offering everything,
+    // which is what the page did before it asked at all.
+    if (!res.ok) return { passwordEnabled: true, ssoEnabled: true }
+    return (await res.json()) as AuthMethods
+  },
   getAuthConfig: async (): Promise<AuthConfig> => {
     const res = await fetch("/api/auth-config/sso")
     if (!res.ok) {

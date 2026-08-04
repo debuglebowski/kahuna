@@ -72,7 +72,13 @@ import {
   slackStatus,
   syncSlackForRequest,
 } from "./slack"
-import { authConfigStatus, deleteSsoProvider, saveSsoProvider, updateAuthMethods } from "./sso"
+import {
+  authConfigStatus,
+  deleteSsoProvider,
+  publicAuthMethods,
+  saveSsoProvider,
+  updateAuthMethods,
+} from "./sso"
 import { downloadAttachment, purgeMemberData, uploadAttachment } from "./use-cases"
 import { versionInfo } from "./version"
 
@@ -191,6 +197,9 @@ export const handleApi = async (req: Request): Promise<Response | null> => {
   // Mounted at /api/auth-config, NOT under /api/auth — that whole prefix is
   // handed to better-auth's own handler in index.ts before this router sees it.
   if (seg[1] === "auth-config") {
+    // Unauthenticated by design — the sign-in page needs it before a session
+    // exists. Booleans only; see publicAuthMethods.
+    if (seg[2] === "public" && !seg[3] && m === "GET") return publicAuthMethods()
     if (seg[2] === "sso" && !seg[3] && m === "GET") return authConfigStatus(req)
     if (seg[2] === "sso" && !seg[3] && m === "POST") return saveSsoProvider(req)
     if (seg[2] === "sso" && !seg[3] && m === "DELETE") return deleteSsoProvider(req)

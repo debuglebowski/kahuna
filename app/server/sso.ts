@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm"
-import { ssoProvider } from "#db"
+import { organization, ssoProvider } from "#db"
 import { auth } from "./auth"
 import { type AuthMethods, readAuthMethods, writeAuthMethods } from "./authMethods"
 import { db } from "./db"
@@ -80,6 +80,36 @@ const providerPayload = async (orgId: string): Promise<ProviderPayload | null> =
   }
 
   return { providerId: row.providerId, issuer: row.issuer, domain: row.domain, clientId, hasSecret }
+}
+
+/**
+ * GET /api/auth-config/public — which sign-in methods to render. NO SESSION:
+ * this is read by the sign-in page, before anyone is authenticated.
+ *
+ * Safe to expose because it is a property of the DEPLOYMENT, not of a person.
+ * `createOrgDirect` enforces one org per deployment (provision.ts), so "which
+ * org?" has a single answer that does not depend on who is asking — nothing here
+ * is keyed on an email address, so it cannot be used to probe whether an account
+ * exists. Booleans only: the issuer, client id and domains stay behind the
+ * admin-gated endpoint above.
+ *
+ * The permissive fallback (both methods) is deliberate for 0 orgs — a
+ * pre-bootstrap deployment — and for the 2+ case that only tests produce, where
+ * the visitor's org is genuinely unknowable. Rendering a method the org rejects
+ * costs a clear error; hiding one it accepts locks people out of the UI.
+ */
+export const publicAuthMethods = async (): Promise<Response> => {
+  const orgs = await db.select({ id: organization.id }).from(organization).limit(2)
+  if (orgs.length !== 1 || !orgs[0]) return json({ passwordEnabled: true, ssoEnabled: true })
+
+  const methods = await readAuthMethods(orgs[0].id)
+  // Guard the UI against a half-configured org: SSO on with the provider row
+  // since deleted would render an SSO button that cannot resolve a provider.
+  const provider = methods.ssoEnabled ? await providerPayload(orgs[0].id) : null
+  return json({
+    passwordEnabled: methods.passwordEnabled,
+    ssoEnabled: methods.ssoEnabled && Boolean(provider),
+  })
 }
 
 /** GET /api/auth-config/sso — the whole settings page in one call. Admin-readable. */
