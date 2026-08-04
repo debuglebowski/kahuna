@@ -981,6 +981,9 @@ export interface RecordNotesWidget extends WidgetBase {
 export interface RecordTasksWidget extends WidgetBase {
   readonly type: "record-tasks"
 }
+export interface RecordMentionsWidget extends WidgetBase {
+  readonly type: "record-mentions"
+}
 export interface RecordActivityWidget extends WidgetBase {
   readonly type: "record-activity"
 }
@@ -1011,6 +1014,7 @@ export type DashboardWidget =
   | RecordNotesWidget
   | RecordTasksWidget
   | RecordActivityWidget
+  | RecordMentionsWidget
 /** An invisible auto-layout container (Figma-style). `display` "flow" (default)
  *  lays children out along `direction`; "tabs" shows one child at a time behind a
  *  tab bar (each child is a tab/panel). Opaque to the engine — mirrors the

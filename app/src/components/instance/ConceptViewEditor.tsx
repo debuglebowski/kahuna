@@ -35,6 +35,7 @@ import { availableContents, TILE_CONTENTS } from "./registry"
  *  panels need an instance, so the settings editor previews them schematically). */
 const TILE_BLURB: Record<TileContentKey, string> = {
   details: "The instance's own fields.",
+  mentions: "Documents that @-mention this record.",
   document: "A rich-text document body.",
   connected: "Instances linked by relations.",
   graph: "A relationship graph around the instance.",

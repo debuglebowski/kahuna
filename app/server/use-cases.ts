@@ -46,6 +46,7 @@ import {
   MAX_MENTIONS_PER_DOC,
   ManagedConceptReadonly,
   MemberService,
+  MentionService,
   type Note,
   OrgContext,
   PolicyService,
@@ -1445,7 +1446,7 @@ export const resolveMentions = (
       Effect.gen(function* () {
         const all = yield* dashboardsSvc.listAll()
         const d = all.find((x) => x.id === targetId)
-        if (!d || d.kind !== "page") return unresolved("dashboard", targetId)
+        if (d?.kind !== "page") return unresolved("dashboard", targetId)
         return {
           kind: "dashboard",
           targetId,
@@ -1502,6 +1503,171 @@ export const resolveMentions = (
       MAX_MENTIONS_PER_DOC,
     )
     return yield* Effect.forEach(deduped, resolveOne)
+  })
+
+/**
+ * Everything that mentions one record, resolved for display.
+ *
+ * DROP, don't degrade. An unreadable source is omitted entirely rather than shown
+ * as "(unavailable)" — the opposite of `resolveMentions`, and the asymmetry is
+ * deliberate. An inline mention's label is already in prose the reader can see, so
+ * there is nothing left to protect; a backlink would be NEW information, and a
+ * placeholder row would confirm that a document they may not open references this
+ * record. This follows the same rule the relation resolver uses for unreadable
+ * targets. Do not reconcile the two.
+ */
+export const listBacklinks = (itemId: string): UC<unknown> =>
+  Effect.gen(function* () {
+    // Standing on a record you may not read must not reveal who points at it.
+    yield* assertSubjectReadable(itemId)
+    const mentionsSvc = yield* MentionService
+    const instances = yield* InstanceService
+    const fieldsSvc = yield* FieldService
+    const conceptsSvc = yield* ConceptService
+    const annotations = yield* AnnotationService
+
+    const rows = yield* mentionsSvc.listBacklinks(itemId)
+
+    const fieldCache = new Map<string, ReadonlyArray<{ id: string; kind: string; name: string }>>()
+    const titleCache = new Map<string, string | null>()
+    const maskCache = new Map<string, ReadonlySet<string>>()
+    const nameCache = new Map<string, string>()
+
+    const resolveRow = (row: (typeof rows)[number]) =>
+      Effect.gen(function* () {
+        if (row.source === "task") {
+          const task = yield* annotations.getTask(row.fromAnnotationId!)
+          // `getTask` is org-scoped only; a task hanging off a record the caller
+          // may not read must not surface through this list.
+          if (task.subjectId) yield* assertSubjectReadable(task.subjectId)
+          return {
+            source: "task" as const,
+            // Tasks open in a modal and have no addressable URL yet.
+            href: null,
+            label: task.title,
+            fieldName: null,
+            conceptName: null,
+          }
+        }
+
+        const conceptId = row.fromConceptId!
+        // The gate: resolving the source lineage carries the concept check.
+        yield* instances.getItem(row.fromItemId!)
+        const head = yield* instances.get(row.fromInstanceId!)
+
+        let fields = fieldCache.get(conceptId)
+        if (!fields) {
+          fields = yield* fieldsSvc.listFields(conceptId)
+          fieldCache.set(conceptId, fields)
+        }
+        let conceptName = nameCache.get(conceptId)
+        if (conceptName === undefined) {
+          const c = yield* conceptsSvc.getById(conceptId)
+          conceptName = c.name
+          nameCache.set(conceptId, c.name)
+          if (!titleCache.has(conceptId)) titleCache.set(conceptId, c.titleFieldId)
+        }
+        let hidden = maskCache.get(conceptId)
+        if (hidden === undefined) {
+          hidden = yield* fieldMaskFor(conceptId)
+          maskCache.set(conceptId, hidden)
+        }
+
+        const titleId = titleFieldIdOf(titleCache.get(conceptId) ?? null, fields)
+        const visibleTitleId = titleId && !hidden.has(titleId) ? titleId : null
+        // The field the mention sits in — named only when the reader may see it,
+        // since a hidden field's NAME is as much a leak as its value.
+        const field = row.fromFieldId ? fields.find((f) => f.id === row.fromFieldId) : undefined
+        const fieldName = field && !hidden.has(field.id) ? field.name : null
+
+        return {
+          source: "record" as const,
+          href: `/instances/${head.id}`,
+          label:
+            visibleTitleId && head.state[visibleTitleId]
+              ? String(head.state[visibleTitleId])
+              : "(untitled)",
+          fieldName,
+          conceptName,
+        }
+      }).pipe(Effect.catchAll(() => Effect.succeed(null)))
+
+    const resolved = yield* Effect.forEach(rows, resolveRow)
+    return resolved.filter((r) => r !== null)
+  })
+
+/**
+ * Records-only typeahead for the `@` menu, across every concept the caller may read.
+ *
+ * `searchInstances` is per-concept, and an `@` menu cannot fan that out — it would
+ * be one round-trip per concept per keystroke. So this walks head rows org-wide.
+ *
+ * THE COST, stated plainly: this is `searchInstances`' algorithm widened from one
+ * concept to all of them — head rows are fetched, then labels are matched in JS,
+ * because the title field id differs per concept and so the predicate would need a
+ * different column expression per concept. `SCAN_CAP` bounds the work per
+ * keystroke; on a very large org the right record can fall outside it. The fix
+ * when that day comes is to push the match into SQL as per-concept
+ * `OR (concept_id = X AND state->>'<fid>' ILIKE $q)` clauses — still index-free,
+ * but filtering in the database.
+ */
+const SCAN_CAP = 2000
+
+export const searchMentionableRecords = (query: string, limit = 20): UC<unknown> =>
+  Effect.gen(function* () {
+    const q = query.trim().toLowerCase()
+    // A bare `@` must not trigger the scan; the menu asks again once there's a term.
+    if (q === "") return []
+
+    const conceptsSvc = yield* ConceptService
+    const fieldsSvc = yield* FieldService
+    const queries = yield* QueryService
+    // `list()` FILTERS rather than failing, so this is already the caller's
+    // visible set — no separate permission pass to keep in step.
+    const concepts = yield* conceptsSvc.list({})
+
+    const out: Array<{
+      kind: string
+      targetId: string
+      href: string
+      label: string
+      subtitle: string
+      icon: string | null
+    }> = []
+    let scanned = 0
+
+    for (const concept of concepts) {
+      if (out.length >= limit || scanned >= SCAN_CAP) break
+      const defs = yield* fieldsSvc.listFields(concept.id)
+      const titleId = titleFieldIdOf(concept.titleFieldId, defs)
+      if (!titleId) continue
+      // A hidden TITLE field must not leak through the picker's display text —
+      // the concept is simply not searchable for this caller.
+      const hidden = yield* fieldMaskFor(concept.id)
+      if (hidden.has(titleId)) continue
+
+      // `findInstances` is the head-only read (one row per lineage, newest
+      // published) and carries the concept gate itself.
+      const rows = yield* queries.findInstances({
+        conceptId: concept.id,
+        limit: SCAN_CAP - scanned,
+      })
+      scanned += rows.length
+      for (const r of rows) {
+        if (out.length >= limit) break
+        const label = r.state[titleId]
+        if (typeof label !== "string" || !label.toLowerCase().includes(q)) continue
+        out.push({
+          kind: "record",
+          targetId: r.itemId,
+          href: `/instances/${r.id}`,
+          label,
+          subtitle: concept.name,
+          icon: concept.icon,
+        })
+      }
+    }
+    return out
   })
 
 export const createTask = (input: {

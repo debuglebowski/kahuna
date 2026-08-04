@@ -857,6 +857,10 @@ const RecordTasksWidget = Schema.Struct({
   ...widgetBase,
   type: Schema.Literal("record-tasks"),
 })
+const RecordMentionsWidget = Schema.Struct({
+  ...widgetBase,
+  type: Schema.Literal("record-mentions"),
+})
 const RecordActivityWidget = Schema.Struct({
   ...widgetBase,
   type: Schema.Literal("record-activity"),
@@ -889,6 +893,7 @@ export const DashboardWidget = Schema.Union(
   RecordNotesWidget,
   RecordTasksWidget,
   RecordActivityWidget,
+  RecordMentionsWidget,
 )
 export type DashboardWidget = typeof DashboardWidget.Type
 
@@ -1141,6 +1146,29 @@ export const MentionRef = Schema.Struct({
   icon: Schema.NullOr(Schema.String),
 })
 export type MentionRef = typeof MentionRef.Type
+
+/**
+ * One inbound mention of a record: a document that references it.
+ *
+ * Unreachable sources are DROPPED from the list, not degraded to a placeholder —
+ * the OPPOSITE of how an inline mention behaves, and deliberately so. An inline
+ * mention cannot be dropped: its label is already in prose the reader can see, so
+ * hiding it would achieve nothing. A backlink has no such prior exposure, and a
+ * "(unavailable) mentions this record" row would newly confirm that a document the
+ * reader may not open references this one. Same rule the relation resolver applies
+ * to unreadable targets. Do not "fix" the inconsistency — it is the point.
+ */
+export const BacklinkRef = Schema.Struct({
+  /** Which rich-text home the mention was written in. */
+  source: Schema.Literal("record", "task"),
+  /** Where to go. Null for a task, which has no deep link yet. */
+  href: Schema.NullOr(Schema.String),
+  label: Schema.String,
+  /** The richtext field's name ("Summary"); null for a task description. */
+  fieldName: Schema.NullOr(Schema.String),
+  conceptName: Schema.NullOr(Schema.String),
+})
+export type BacklinkRef = typeof BacklinkRef.Type
 
 // ── member deactivation ─────────────────────────────────────────────────────────
 // Deactivation is the member analogue of archive — a restorable marker that
@@ -1974,6 +2002,22 @@ export class KingsmakerRpcs extends RpcGroup.make(
   // href, which is how mention permissions are enforced. See `MentionRef`.
   Rpc.make("resolveMentions", {
     payload: { refs: Schema.Array(MentionTarget) },
+    success: Schema.Array(MentionRef),
+    error: RpcError,
+  }),
+  // Everything that mentions this record (an item lineage id). Sources the caller
+  // may not read are dropped — see `BacklinkRef`.
+  Rpc.make("listBacklinks", {
+    payload: { itemId: Schema.String },
+    success: Schema.Array(BacklinkRef),
+    error: RpcError,
+  }),
+  // Records-only typeahead for the `@` menu, ACROSS every concept the caller may
+  // read (`searchInstances` is per-concept, which an `@` menu can't fan out over).
+  // Deliberately narrow so it doesn't become a dumping ground: people, concepts,
+  // dashboards and pages are all already client-cached and composed there.
+  Rpc.make("searchMentionableRecords", {
+    payload: { query: Schema.String, limit: Schema.optional(Schema.Number) },
     success: Schema.Array(MentionRef),
     error: RpcError,
   }),

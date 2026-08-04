@@ -513,6 +513,7 @@ export const newWidget = (type: DashboardWidget["type"], recordMode = false): No
     case "record-versions":
     case "record-notes":
     case "record-tasks":
+    case "record-mentions":
     case "record-activity":
       return { ...base, type } as NormWidget
   }

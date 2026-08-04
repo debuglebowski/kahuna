@@ -23,6 +23,7 @@ export const TILE_CONTENT_KEYS = [
   "tasks",
   "files",
   "activity",
+  "mentions",
 ] as const
 export type TileContentKey = (typeof TILE_CONTENT_KEYS)[number]
 

@@ -2,6 +2,7 @@ import { PgClient } from "@effect/sql-pg"
 import { Effect, Either } from "effect"
 import { BlobStore } from "../blob/BlobStore"
 import { decideRecord, recordRulesForConcept } from "../domain/access"
+import { extractMentions, isUuid } from "../domain/mentions"
 import { isRichText, MAX_RICHTEXT_CHARS, richTextWalk } from "../domain/richtext"
 import {
   type ConceptRef,
@@ -275,6 +276,57 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
     const labels = yield* LabelService
     const blob = yield* BlobStore
 
+    /**
+     * Rebuild the `mentions` index for ONE instance version, from its richtext
+     * fields. Delete-then-insert rather than diff: the row count per document is
+     * tiny and a rebuild cannot drift from the doc the way a diff can.
+     *
+     * MUST be handed the FOLDED state, never a patch. An update carries only the
+     * fields being written, so re-indexing from a patch would delete every mention
+     * row for this instance and re-insert only the touched field's — silently
+     * dropping the other fields' backlinks.
+     */
+    const reindexInstanceMentions = (
+      orgId: string,
+      instanceId: string,
+      state: InstanceState,
+      defs: ReadonlyArray<Field>,
+    ) =>
+      Effect.gen(function* () {
+        yield* sql`DELETE FROM mentions WHERE org_id = ${orgId} AND from_instance_id = ${instanceId}`
+        const rows: Array<{ fieldId: string; kind: string; targetId: string }> = []
+        for (const def of defs) {
+          if (def.kind !== "richtext") continue
+          const value = state[def.id]
+          if (!isRichText(value)) continue
+          for (const m of extractMentions(value.doc))
+            rows.push({ fieldId: def.id, kind: m.kind, targetId: m.targetId })
+        }
+        if (rows.length === 0) return
+
+        // `target_item_id` carries an FK, so a mention of a since-purged record
+        // would fail the insert. Resolve which record targets actually exist and
+        // null the column for the rest: the row still records what was meant, it
+        // just stops producing a backlink — which is right, the target is gone.
+        const candidates = [
+          ...new Set(
+            rows.filter((r) => r.kind === "record" && isUuid(r.targetId)).map((r) => r.targetId),
+          ),
+        ]
+        const live = new Set<string>()
+        if (candidates.length > 0) {
+          const found = yield* sql<{ readonly id: string }>`
+            SELECT id FROM items WHERE org_id = ${orgId} AND ${sql.in("id", candidates)}`
+          for (const f of found) live.add(f.id)
+        }
+        for (const r of rows) {
+          const targetItemId = r.kind === "record" && live.has(r.targetId) ? r.targetId : null
+          yield* sql`
+            INSERT INTO mentions (org_id, from_instance_id, from_field_id, kind, target_id, target_item_id)
+            VALUES (${orgId}, ${instanceId}, ${r.fieldId}, ${r.kind}, ${r.targetId}, ${targetItemId})`
+        }
+      })
+
     /** Purge an emptied lineage: its files (rows now, blobs after commit — an
      *  orphan blob is harmless; a dangling row would not be) then the item row
      *  itself. Returns the blob refs for the post-commit sweep. */
@@ -283,6 +335,10 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
         const refs = yield* sql<{ readonly content_ref: string }>`
           SELECT content_ref FROM attachments WHERE org_id = ${orgId} AND item_id = ${itemId}`
         yield* sql`DELETE FROM attachments WHERE org_id = ${orgId} AND item_id = ${itemId}`
+        // INBOUND mentions of this lineage: the `target_item_id` FK would block the
+        // item delete below. (Outbound rows are keyed by instance id and are gone
+        // with the instance rows already.)
+        yield* sql`DELETE FROM mentions WHERE org_id = ${orgId} AND target_item_id = ${itemId}`
         yield* sql`DELETE FROM items WHERE org_id = ${orgId} AND id = ${itemId}`
         return refs.map((r) => r.content_ref)
       })
@@ -465,6 +521,7 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
             SET state = ${sql.json(folded.right.state)}, version = ${folded.right.version},
                 version_status = ${folded.right.versionStatus}, published_at = ${folded.right.publishedAt}
             WHERE id = ${created.id} AND org_id = ${orgId} RETURNING *`
+          yield* reindexInstanceMentions(orgId, created.id, folded.right.state, defs)
           return toInstance(updated[0]!)
         }),
       )
@@ -543,6 +600,10 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
           const updated = yield* sql<InstanceRow>`
             UPDATE instances SET state = ${sql.json(folded.right.state)}, version = ${folded.right.version}
             WHERE id = ${current.id} AND org_id = ${orgId} RETURNING *`
+          // The FOLDED state, not `validated`: an update patches a subset of the
+          // fields, and re-indexing from the patch would drop the other fields'
+          // mentions along with this instance's rows.
+          yield* reindexInstanceMentions(orgId, current.id, folded.right.state, defs)
           return toInstance(updated[0]!)
         }),
       )
@@ -689,6 +750,8 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
             }
             yield* assertRecordUnprotected(instance.conceptId, instance.id)
             const concept = yield* concepts.getById(instance.conceptId)
+            // Outbound mention rows hang off this version and hold an FK to it.
+            yield* sql`DELETE FROM mentions WHERE org_id = ${orgId} AND from_instance_id = ${instance.id}`
             yield* sql`DELETE FROM instances WHERE org_id = ${orgId} AND id = ${instance.id}`
             // Remove the lineage row when this was its last version — otherwise an
             // empty `items` row would linger and block the concept's purge via FK.
@@ -1089,6 +1152,15 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
             SET state = ${sql.json(folded.right.state)}, version = ${folded.right.version},
                 version_status = ${folded.right.versionStatus}, published_at = ${folded.right.publishedAt}
             WHERE id = ${draft.id} AND org_id = ${orgId} RETURNING *`
+          // The draft carries the head's state verbatim, so it carries its mentions
+          // too. Re-derived from that state rather than cloned from the head's rows:
+          // one code path with `create`/`update` means the index cannot drift.
+          yield* reindexInstanceMentions(
+            orgId,
+            draft.id,
+            folded.right.state,
+            yield* fields.listFields(source.conceptId),
+          )
           // Clone the head's outbound relations onto the draft (targets verbatim,
           // so general/pinned refs carry over), each as its own RelationCreated.
           const headRels = yield* sql<RelationRow>`
@@ -1147,6 +1219,7 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
             yield* assertRecordUnprotected(instance.conceptId, instance.id)
             const concept = yield* concepts.getById(instance.conceptId)
             yield* sql`DELETE FROM relations WHERE org_id = ${orgId} AND from_id = ${instance.id}`
+            yield* sql`DELETE FROM mentions WHERE org_id = ${orgId} AND from_instance_id = ${instance.id}`
             yield* sql`DELETE FROM instances WHERE org_id = ${orgId} AND id = ${instance.id}`
             const remaining = yield* sql<{ readonly count: number | string }>`
             SELECT COUNT(*)::int AS count FROM instances

@@ -1,5 +1,6 @@
 import {
   Activity,
+  AtSign,
   BarChart3,
   CalendarDays,
   ChartSpline,
@@ -764,6 +765,16 @@ export const WIDGET_CATALOG: ReadonlyArray<WidgetMeta> = [
     description: "Tasks on this record.",
     keywords: ["tasks", "todo", "checklist", "work", "assignments"],
     icon: ListChecks,
+    category: "This record",
+    kinds: ["record"],
+    Preview: RecordPanelPreview,
+  },
+  {
+    type: "record-mentions",
+    label: "Mentions",
+    description: "Documents that @-mention this record.",
+    keywords: ["mentions", "backlinks", "references", "linked", "inbound", "@"],
+    icon: AtSign,
     category: "This record",
     kinds: ["record"],
     Preview: RecordPanelPreview,

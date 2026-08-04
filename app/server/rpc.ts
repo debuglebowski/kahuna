@@ -20,6 +20,7 @@ import {
   type Automation,
   type AutomationDryRun,
   type AutomationRun,
+  type BacklinkRef,
   type Concept,
   type ConceptGraph,
   type Dashboard,
@@ -659,6 +660,9 @@ const HandlersLive = ServerRpcs.toLayer({
   // The engine resolves every kind it can gate itself; `person` is auth-tier and
   // is overlaid here (see `resolvePeopleMentions`). `page` stays null by design —
   // it is resolved client-side from the static nav table.
+  searchMentionableRecords: ({ query, limit }) =>
+    as<ReadonlyArray<MentionRef>>(uc.searchMentionableRecords(query, limit)),
+  listBacklinks: ({ itemId }) => as<ReadonlyArray<BacklinkRef>>(uc.listBacklinks(itemId)),
   resolveMentions: ({ refs }) =>
     Effect.gen(function* () {
       const { orgId } = yield* OrgContext

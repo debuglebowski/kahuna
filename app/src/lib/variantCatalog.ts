@@ -113,6 +113,7 @@ export const VARIANT_CATALOG: Record<WidgetType, readonly WidgetVariant[]> = {
   "record-notes": [{ id: "default", label: "Default" }],
   "record-tasks": [{ id: "default", label: "Default" }],
   "record-activity": [{ id: "default", label: "Default" }],
+  "record-mentions": [{ id: "default", label: "Default" }],
 }
 
 /** Variants for a widget type (empty array if somehow unknown). */

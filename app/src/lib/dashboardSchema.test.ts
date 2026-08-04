@@ -223,6 +223,7 @@ describe("DashboardWidget union completeness (hand-sync guard)", () => {
     "record-notes",
     "record-tasks",
     "record-activity",
+    "record-mentions",
   ] as const
 
   it("the contract union has exactly one member per known widget type", () => {

@@ -28,6 +28,9 @@ import { seedKingsmaker } from "./seed/seed"
  * dashboards accumulated before the assertion existed.
  */
 const ORG_SCOPED_TABLES: ReadonlyArray<string> = [
+  // the mention index, first: it references annotations, instances, fields AND
+  // items, so it has to go before any of them
+  "mentions",
   // annotation layer (references items/instances)
   "annotations",
   "annotation_fields",

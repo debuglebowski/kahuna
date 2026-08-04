@@ -173,6 +173,21 @@ export class AttachmentService extends Effect.Service<AttachmentService>()(
           return { attachment, data } as { attachment: Attachment; data: Uint8Array }
         })
 
+      /** Metadata for one attachment, without fetching the blob — for resolving an
+       *  `@` mention of a file to a label and a route. Applies `download`'s
+       *  private-bucket rule; the CONCEPT-level read gate is the caller's job (an
+       *  attachment carries no concept column, so it goes via its host lineage —
+       *  the `listFiles` pattern). */
+      const get = (attachmentId: Id) =>
+        Effect.gen(function* () {
+          const { actor } = yield* OrgContext
+          const row = yield* load(attachmentId)
+          if (row.bucket_id && !row.bucket_shared && row.created_by !== actor) {
+            return yield* Effect.fail(new AttachmentNotFound({ attachmentId }))
+          }
+          return toAttachment(row)
+        })
+
       /** The owner half of an event payload — `subjectId` (host item, so the
        *  per-item feed matches) or `bucketId`, never both. */
       const ownerPayload = (a: Attachment) =>
@@ -295,6 +310,7 @@ export class AttachmentService extends Effect.Service<AttachmentService>()(
       return {
         upload,
         list,
+        get,
         download,
         archive,
         restore,

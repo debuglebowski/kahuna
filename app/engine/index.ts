@@ -39,6 +39,13 @@ export {
   filterFragment,
 } from "./domain/accessSql"
 export {
+  extractMentions,
+  MAX_MENTIONS_PER_DOC,
+  MENTION_KINDS,
+  type MentionKind,
+  type MentionRef as MentionTargetRef,
+} from "./domain/mentions"
+export {
   deriveRichText,
   isRichText,
   MAX_RICHTEXT_CHARS,
@@ -94,6 +101,7 @@ export {
 export { InstanceService } from "./services/InstanceService"
 export { LabelService } from "./services/LabelService"
 export { MemberService } from "./services/MemberService"
+export { type Backlink, MentionService } from "./services/MentionService"
 // Services
 export { OrgContext, type OrgScope, type ScopeRole } from "./services/OrgContext"
 export { PolicyService } from "./services/PolicyService"

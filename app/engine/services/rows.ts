@@ -173,6 +173,7 @@ const KNOWN_WIDGETS = new Set([
   "record-notes",
   "record-tasks",
   "record-activity",
+  "record-mentions",
 ])
 
 /** Coerce a jsonb body into a well-formed dashboard body (defensive against

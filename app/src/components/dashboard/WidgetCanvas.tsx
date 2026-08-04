@@ -169,6 +169,7 @@ const RECORD_WIDGET_CONTENT = {
   "record-notes": "notes",
   "record-tasks": "tasks",
   "record-activity": "activity",
+  "record-mentions": "mentions",
 } as const
 
 /** Render one instance-detail panel for the current record. Empty state off a
@@ -324,6 +325,7 @@ function renderWidget(w: NormWidget, ctx: RenderCtx) {
     case "record-versions":
     case "record-notes":
     case "record-tasks":
+    case "record-mentions":
     case "record-activity":
       return <RecordPanel contentKey={RECORD_WIDGET_CONTENT[w.type]} record={ctx.record} />
     default:

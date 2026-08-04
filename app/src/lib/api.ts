@@ -37,6 +37,7 @@ export type {
   AutomationDryRun,
   AutomationRun,
   AutomationTrigger,
+  BacklinkRef,
   Concept,
   ConceptGraph,
   ConceptGraphEdge,
@@ -688,6 +689,12 @@ export const api = {
   /** Resolve a document's `@` mentions. Deduped server-side, so join the result
    *  on (kind, targetId) rather than by index. */
   resolveMentions: (refs: ReadonlyArray<MentionTarget>) => call((c) => c.resolveMentions({ refs })),
+  /** Everything that mentions this record. Sources the caller may not read are
+   *  absent, not placeholdered — see `BacklinkRef`. */
+  /** Records-only typeahead for the `@` menu, across every readable concept. */
+  searchMentionableRecords: (query: string, limit?: number) =>
+    call((c) => c.searchMentionableRecords({ query, limit })),
+  listBacklinks: (itemId: string) => call((c) => c.listBacklinks({ itemId })),
   createTask: (input: {
     subjectId: string | null
     title: string

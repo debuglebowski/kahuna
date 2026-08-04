@@ -1,5 +1,6 @@
 import { useLiveQuery } from "@tanstack/react-db"
 import {
+  AtSign,
   FileText,
   GitBranch,
   History,
@@ -22,6 +23,7 @@ import { DetailsBody } from "./DetailsContent"
 import { DocumentBody } from "./DocumentContent"
 import { GraphActions, GraphBody } from "./GraphContent"
 import { LabelsBody } from "./LabelsContent"
+import { MentionsBody, MentionsCount } from "./MentionsContent"
 import type { InstanceCtx, TileContent } from "./types"
 import { VersionsBody } from "./VersionsContent"
 
@@ -64,6 +66,12 @@ const ConnectedCount = ({ ctx }: { ctx: InstanceCtx }) => <Count n={ctx.related.
 /** The content catalog: everything a view tile (or tab) can hold. */
 export const TILE_CONTENTS: Record<TileContentKey, TileContent> = {
   details: { title: "Details", Icon: Rows3, Body: DetailsBody },
+  mentions: {
+    title: "Mentions",
+    Icon: AtSign,
+    Count: MentionsCount,
+    Body: MentionsBody,
+  },
   document: {
     title: "Document",
     Icon: FileText,

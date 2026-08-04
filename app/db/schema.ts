@@ -310,6 +310,68 @@ export const relations = pgTable(
   ],
 )
 
+/**
+ * The `@` mention index — the inbound side of a reference written inside rich text.
+ *
+ * NOT the source of truth. The mention itself lives in the document
+ * (`instances.state[fieldId].doc` or `annotations.description.doc`); this table is
+ * derived from that doc and rebuilt on every write of it, so that "what mentions
+ * this record?" is an indexed lookup rather than a scan of every document in the
+ * org. The `instances_state_gin` index cannot serve that question: it is
+ * `jsonb_path_ops`, whose `@>` is not a recursive search, and a mention sits at
+ * arbitrary depth inside `doc.content[…]`.
+ *
+ * A sibling of `relations` rather than a reuse of it: `RelationService.create`
+ * requires a `kind=relation` field and enforces from/to concept matching, and a
+ * free-form mention has neither.
+ *
+ * SOURCE is polymorphic over the two rich-text homes that are server-validated
+ * (a dashboard note widget's mentions render and link but are NOT indexed — its
+ * body is client-owned and never validated server-side):
+ *   `from_instance_id` + `from_field_id` — a richtext field on one instance VERSION
+ *   `from_annotation_id`                 — a task's description
+ * Exactly one branch is set (`mentions_one_source`).
+ *
+ * TARGET is the node's `kind` + `target_id` verbatim. `target_id` is opaque TEXT,
+ * not a typed FK: the six kinds point at four different tables plus a static nav
+ * key that has no row at all. `target_item_id` is the one typed column — it mirrors
+ * `target_id` when, and only when, `kind = 'record'`, which gives the backlink query
+ * a real uuid to index and lets an item purge cascade. Records are the only kind a
+ * user can stand on, so they are the only kind needing a backlink query. A record
+ * mention whose target has been purged indexes with a NULL `target_item_id`: it
+ * stops producing a backlink (correct — the target is gone) while `kind`/`target_id`
+ * still record what was meant.
+ *
+ * LIFECYCLE RULE — this table has FKs to `instances`, `fields`, `items` and
+ * `annotations`. Any DELETE from those four needs a mentions delete FIRST.
+ */
+export const mentions = pgTable(
+  "mentions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: text("org_id").notNull(),
+    // ── source: exactly one branch, per the mentions_one_source CHECK ──
+    fromInstanceId: uuid("from_instance_id").references(() => instances.id),
+    fromFieldId: uuid("from_field_id").references(() => fields.id),
+    fromAnnotationId: uuid("from_annotation_id").references(() => annotations.id),
+    // ── target ──
+    kind: text("kind").notNull(),
+    targetId: text("target_id").notNull(),
+    // Set iff kind='record'; the indexed, cascadable form of `target_id`.
+    targetItemId: uuid("target_item_id").references(() => items.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // THE backlink query: inbound record mentions of one lineage.
+    index("mentions_target_item_idx").on(t.orgId, t.targetItemId),
+    // Rebuild-on-write: delete this source's rows before re-inserting.
+    index("mentions_from_instance_idx").on(t.orgId, t.fromInstanceId),
+    index("mentions_from_annotation_idx").on(t.orgId, t.fromAnnotationId),
+    // Non-record backlinks later ("what mentions this dashboard?") without a migration.
+    index("mentions_target_idx").on(t.orgId, t.kind, t.targetId),
+  ],
+)
+
 export const events = pgTable(
   "events",
   {

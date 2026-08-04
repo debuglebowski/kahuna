@@ -474,6 +474,15 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
           if (instanceCount > 0) {
             return yield* Effect.fail(new ConceptInUse({ concept: concept.name, instanceCount }))
           }
+          // Mention index rows FK into both `fields` and `items`, so they go first.
+          // Zero instances means this concept's own OUTBOUND rows are already gone
+          // with their instances; what can remain is an INBOUND row — a record in
+          // another concept whose document still mentions one of these lineages.
+          yield* sql`
+            DELETE FROM mentions
+            WHERE org_id = ${orgId}
+              AND (from_field_id IN (SELECT id FROM fields WHERE org_id = ${orgId} AND concept_id = ${id})
+                   OR target_item_id IN (SELECT id FROM items WHERE org_id = ${orgId} AND concept_id = ${id}))`
           yield* sql`DELETE FROM fields WHERE org_id = ${orgId} AND concept_id = ${id}`
           // Zero instances ⇒ any remaining items rows are empty lineages; clear
           // them so the concept row's FK doesn't block the delete.

@@ -1,5 +1,6 @@
 import { PgClient } from "@effect/sql-pg"
 import { Effect } from "effect"
+import { extractMentions, isUuid } from "../domain/mentions"
 import {
   deriveRichText,
   isRichText,
@@ -105,6 +106,39 @@ export class AnnotationService extends Effect.Service<AnnotationService>()(
           )
         return Effect.succeed(deriveRichText(v))
       }
+
+      /**
+       * Rebuild the `mentions` index for one task's description. Same rebuild-not-
+       * diff approach as the instance side (`InstanceService.reindexInstanceMentions`);
+       * a task has exactly one rich-text home, so there is no per-field dimension
+       * and `from_field_id` stays null.
+       */
+      const reindexTaskMentions = (orgId: string, taskId: string, description: unknown) =>
+        Effect.gen(function* () {
+          yield* sql`DELETE FROM mentions WHERE org_id = ${orgId} AND from_annotation_id = ${taskId}`
+          if (!isRichText(description)) return
+          const refs = extractMentions(description.doc)
+          if (refs.length === 0) return
+          // A `record` mention whose target is gone indexes with a null
+          // `target_item_id` rather than failing the save — see the instance copy.
+          const candidates = [
+            ...new Set(
+              refs.filter((r) => r.kind === "record" && isUuid(r.targetId)).map((r) => r.targetId),
+            ),
+          ]
+          const live = new Set<string>()
+          if (candidates.length > 0) {
+            const found = yield* sql<{ readonly id: string }>`
+              SELECT id FROM items WHERE org_id = ${orgId} AND ${sql.in("id", candidates)}`
+            for (const f of found) live.add(f.id)
+          }
+          for (const r of refs) {
+            const targetItemId = r.kind === "record" && live.has(r.targetId) ? r.targetId : null
+            yield* sql`
+              INSERT INTO mentions (org_id, from_annotation_id, kind, target_id, target_item_id)
+              VALUES (${orgId}, ${taskId}, ${r.kind}, ${r.targetId}, ${targetItemId})`
+          }
+        })
 
       /** Label ids are stored raw and resolved to live labels at read time
        *  (orphan-tolerant, mirroring instance `__labels`) — only shape-checked. */
@@ -242,6 +276,7 @@ export class AnnotationService extends Effect.Service<AnnotationService>()(
                 (${orgId}, 'task', ${input.subjectId}, ${subjectKind}, ${input.title}, ${description ? sql.json(description) : null}, ${statusId}, ${input.priorityId ?? null}, ${JSON.stringify(labelIds)}, ${input.assignee ?? null}, ${dueAt}, ${actor}, ${sql.json(custom)})
               RETURNING *`
             const task = toTask(rows[0]!)
+            yield* reindexTaskMentions(orgId, task.id, task.description)
             yield* events.append({
               subjectKind: "task",
               subjectId: task.id,
@@ -305,6 +340,10 @@ export class AnnotationService extends Effect.Service<AnnotationService>()(
                   version = version + 1, updated_at = now()
               WHERE org_id = ${orgId} AND id = ${input.id} RETURNING *`
             const task = toTask(rows[0]!)
+            // Unconditional: `description` above already resolved "undefined means
+            // leave alone" to the value actually written, so re-deriving from the
+            // persisted row is correct whether or not this update touched it.
+            yield* reindexTaskMentions(orgId, task.id, task.description)
             yield* events.append({
               subjectKind: "task",
               subjectId: task.id,
@@ -571,6 +610,8 @@ export class AnnotationService extends Effect.Service<AnnotationService>()(
           Effect.gen(function* () {
             const { orgId } = yield* OrgContext
             const row = yield* loadForUpdate(id, "task")
+            // Mention rows FK into `annotations`.
+            yield* sql`DELETE FROM mentions WHERE org_id = ${orgId} AND from_annotation_id = ${id}`
             yield* sql`DELETE FROM annotations WHERE org_id = ${orgId} AND id = ${id}`
             yield* events.append({
               subjectKind: "task",
