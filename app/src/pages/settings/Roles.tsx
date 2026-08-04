@@ -220,6 +220,17 @@ function RuleEditor({ role, onClose }: { role: AccessRole; onClose: () => void }
   // "" = every one of that type. Only concept-shaped rules can name a target here;
   // a record is picked from the record's own Share dialog, not from a role.
   const [targetId, setTargetId] = useState("")
+  // The form is a deliberate step, not the resting state: a role's rules are read far
+  // more often than they are written, and an always-open form made the screen look
+  // like a data-entry page rather than a list of what this role grants.
+  const [adding, setAdding] = useState(false)
+
+  const resetDraft = () => {
+    setEffect("allow")
+    setResourceType("concept")
+    setTargetId("")
+    setActions(["view"])
+  }
 
   // Named targets for the picker AND for resolving ids in the table's Scope column.
   // Not gated on the selected type: the table needs names for rules that are already
@@ -240,8 +251,10 @@ function RuleEditor({ role, onClose }: { role: AccessRole; onClose: () => void }
       }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["rules", role.id] })
-      setActions(["view"])
-      setTargetId("")
+      // Collapse on success: the new rule is now visible in the table above, which is
+      // the confirmation. Leaving the form open invites an accidental duplicate.
+      setAdding(false)
+      resetDraft()
     },
   })
   const remove = useMutation({
@@ -339,112 +352,130 @@ function RuleEditor({ role, onClose }: { role: AccessRole; onClose: () => void }
         )}
         <Feedback error={remove.error ? roleMsg(remove.error) : undefined} />
 
-        <div className="space-y-4 rounded-lg border p-6">
-          <span className="block text-sm font-medium">Add a rule</span>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Effect">
-              <Select value={effect} onValueChange={(v) => setEffect(v as "allow" | "deny")}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="allow">Allow</SelectItem>
-                  <SelectItem value="deny">Deny — always wins</SelectItem>
-                </SelectContent>
-              </Select>
-            </Field>
-            <Field label="Applies to">
-              <Select
-                value={resourceType}
-                onValueChange={(v) => {
-                  setResourceType(v as AccessResourceType)
-                  // Drop the target: a concept id is meaningless against `dashboard`,
-                  // and carrying it over would silently scope the new rule.
-                  setTargetId("")
-                }}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {/* Grouped, because eleven flat engine words are a lookup table, not
-                      a menu someone can scan. */}
-                  {RESOURCE_GROUPS.map((g) => (
-                    <SelectGroup key={g.label}>
-                      <SelectLabel>{g.label}</SelectLabel>
-                      {g.items.map((r) => (
-                        <SelectItem key={r.id} value={r.id}>
-                          {r.label}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Field>
-          </div>
-          {resourceType === "concept" || resourceType === "record" ? (
-            <Field
-              label={resourceType === "record" ? "In which concept?" : "Which concept?"}
-              hint={
-                resourceType === "record"
-                  ? "Leave as All to cover records everywhere."
-                  : "Leave as All to cover every concept."
-              }
-            >
-              <Select
-                value={targetId || "__all"}
-                onValueChange={(v) => setTargetId(v === "__all" ? "" : v)}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {/* Radix forbids an empty SelectItem value, so "all" rides a
-                      sentinel mapped back to "" — the project's standard workaround. */}
-                  <SelectItem value="__all">All</SelectItem>
-                  {(concepts.data ?? []).map((c) => (
-                    <SelectItem key={c.id} value={c.id}>
-                      {c.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Field>
-          ) : null}
-          <Field label="Can" hint="Pick one or more.">
-            <div className="flex flex-wrap gap-1.5">
-              {ACTIONS.map((a) => (
-                <ToggleChip
-                  key={a.id}
-                  pressed={actions.includes(a.id)}
-                  onPressedChange={() => toggle(a.id)}
+        {!adding ? (
+          <Button variant="outline" size="sm" onClick={() => setAdding(true)}>
+            <Plus size={15} />
+            Add rule
+          </Button>
+        ) : (
+          <div className="space-y-4 rounded-lg border p-6">
+            <span className="block text-sm font-medium">Add a rule</span>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="Effect">
+                <Select value={effect} onValueChange={(v) => setEffect(v as "allow" | "deny")}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="allow">Allow</SelectItem>
+                    <SelectItem value="deny">Deny — always wins</SelectItem>
+                  </SelectContent>
+                </Select>
+              </Field>
+              <Field label="Applies to">
+                <Select
+                  value={resourceType}
+                  onValueChange={(v) => {
+                    setResourceType(v as AccessResourceType)
+                    // Drop the target: a concept id is meaningless against `dashboard`,
+                    // and carrying it over would silently scope the new rule.
+                    setTargetId("")
+                  }}
                 >
-                  {a.label}
-                </ToggleChip>
-              ))}
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {/* Grouped, because eleven flat engine words are a lookup table, not
+                      a menu someone can scan. */}
+                    {RESOURCE_GROUPS.map((g) => (
+                      <SelectGroup key={g.label}>
+                        <SelectLabel>{g.label}</SelectLabel>
+                        {g.items.map((r) => (
+                          <SelectItem key={r.id} value={r.id}>
+                            {r.label}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
             </div>
-          </Field>
-          <div className="flex items-center gap-3">
-            <Button
-              onClick={() => add.mutate()}
-              disabled={add.isPending || actions.length === 0}
-              size="sm"
-            >
-              <Plus size={15} />
-              {add.isPending ? "Adding…" : "Add rule"}
-            </Button>
-            {/* The one thing a reader can get badly wrong: thinking a `view` rule is
+            {resourceType === "concept" || resourceType === "record" ? (
+              <Field
+                label={resourceType === "record" ? "In which concept?" : "Which concept?"}
+                hint={
+                  resourceType === "record"
+                    ? "Leave as All to cover records everywhere."
+                    : "Leave as All to cover every concept."
+                }
+              >
+                <Select
+                  value={targetId || "__all"}
+                  onValueChange={(v) => setTargetId(v === "__all" ? "" : v)}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {/* Radix forbids an empty SelectItem value, so "all" rides a
+                      sentinel mapped back to "" — the project's standard workaround. */}
+                    <SelectItem value="__all">All</SelectItem>
+                    {(concepts.data ?? []).map((c) => (
+                      <SelectItem key={c.id} value={c.id}>
+                        {c.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
+            ) : null}
+            <Field label="Can" hint="Pick one or more.">
+              <div className="flex flex-wrap gap-1.5">
+                {ACTIONS.map((a) => (
+                  <ToggleChip
+                    key={a.id}
+                    pressed={actions.includes(a.id)}
+                    onPressedChange={() => toggle(a.id)}
+                  >
+                    {a.label}
+                  </ToggleChip>
+                ))}
+              </div>
+            </Field>
+            <div className="flex items-center gap-3">
+              <Button
+                onClick={() => add.mutate()}
+                disabled={add.isPending || actions.length === 0}
+                size="sm"
+              >
+                {add.isPending ? "Adding…" : "Add rule"}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setAdding(false)
+                  resetDraft()
+                  add.reset()
+                }}
+                disabled={add.isPending}
+              >
+                Cancel
+              </Button>
+              {/* The one thing a reader can get badly wrong: thinking a `view` rule is
                 how you open a restricted concept to everyone. It isn't — it outranks
                 the default, which is why no preset carries one. */}
-            {actions.includes("view") ? (
-              <span className="text-xs text-muted-foreground">
-                A View rule overrides the item's own default visibility.
-              </span>
-            ) : null}
+              {actions.includes("view") ? (
+                <span className="text-xs text-muted-foreground">
+                  A View rule overrides the item's own default visibility.
+                </span>
+              ) : null}
+            </div>
+            <Feedback error={add.error ? roleMsg(add.error) : undefined} />
           </div>
-          <Feedback error={add.error ? roleMsg(add.error) : undefined} />
-        </div>
+        )}
       </div>
     </Modal>
   )
