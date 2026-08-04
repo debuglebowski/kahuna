@@ -1515,6 +1515,10 @@ export const AccessRole = Schema.Struct({
   name: Schema.String,
   description: Schema.NullOr(Schema.String),
   builtin: Schema.Boolean,
+  /** Holds a blanket `*` and is exempt from per-resource values. The grid renders
+   *  these roles read-only, and create forms leave them out — a full-access role
+   *  cannot be "not allowed" to see something. */
+  fullAccess: Schema.Boolean,
   position: Schema.Number,
 })
 export type AccessRole = Schema.Schema.Type<typeof AccessRole>
@@ -1563,7 +1567,15 @@ export class KingsmakerRpcs extends RpcGroup.make(
   Rpc.make("createConcept", {
     // The client picks the default color (a free pill-palette hex, unique among
     // the org's concepts) — the server stores it verbatim like an explicit pick.
-    payload: { name: Schema.String, color: Schema.optional(Schema.NullOr(Schema.String)) },
+    payload: {
+      name: Schema.String,
+      color: Schema.optional(Schema.NullOr(Schema.String)),
+      /** Who can see it, per role, chosen while naming it. Absent = the creation
+       *  template decides. Only `view`: everything else comes from the template. */
+      access: Schema.optional(
+        Schema.Array(Schema.Struct({ roleId: Schema.String, view: Schema.Boolean })),
+      ),
+    },
     success: Concept,
     error: RpcError,
   }),
@@ -2491,7 +2503,13 @@ export class KingsmakerRpcs extends RpcGroup.make(
     error: RpcError,
   }),
   Rpc.make("createRole", {
-    payload: { name: Schema.String, description: Schema.optional(Schema.String) },
+    payload: {
+      name: Schema.String,
+      description: Schema.optional(Schema.String),
+      /** Copy this role's rules and templates as a starting point. A SNAPSHOT — later
+       *  changes to the source do not propagate. */
+      startFrom: Schema.optional(Schema.String),
+    },
     success: AccessRole,
     error: RpcError,
   }),

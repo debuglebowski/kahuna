@@ -733,15 +733,18 @@ export function Roles() {
   const [filter, setFilter] = useState("")
   const [creating, setCreating] = useState(false)
   const [name, setName] = useState("")
+  /** "" = start from nothing. See the note on the picker. */
+  const [startFrom, setStartFrom] = useState("")
   const [editing, setEditing] = useState<AccessRole | null>(null)
   const [deleting, setDeleting] = useState<AccessRole | null>(null)
 
   const create = useMutation({
-    mutationFn: () => api.createRole(name.trim()),
+    mutationFn: () => api.createRole(name.trim(), undefined, startFrom || undefined),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["roles"] })
       setCreating(false)
       setName("")
+      setStartFrom("")
     },
   })
   const del = useMutation({
@@ -826,6 +829,32 @@ export function Roles() {
                 if (e.key === "Enter" && name.trim()) create.mutate()
               }}
             />
+            {/* START FROM. A role with nothing sees nothing — safe, but unusable
+                until someone walks every concept and every action. This is the
+                shortcut, and it must say SNAPSHOT: later changes to Member do not
+                follow, and someone will expect them to. */}
+            <Field
+              label="Start from"
+              hint="A copy of that role's access, taken now. Later changes to it won't follow."
+            >
+              <Select value={startFrom} onValueChange={setStartFrom}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">Nothing — no access until you grant it</SelectItem>
+                  {(roles.data ?? [])
+                    // Copying a full-access role would mint a second one from a
+                    // dropdown; `full_access` is a property of the role, not a name.
+                    .filter((r) => !r.fullAccess)
+                    .map((r) => (
+                      <SelectItem key={r.id} value={r.id}>
+                        {r.name}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            </Field>
             <Feedback error={create.error ? roleMsg(create.error) : undefined} />
             <div className="flex justify-end gap-2">
               <Button variant="secondary" onClick={() => setCreating(false)}>

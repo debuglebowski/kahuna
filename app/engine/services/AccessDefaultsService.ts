@@ -127,6 +127,15 @@ export class AccessDefaultsService extends Effect.Service<AccessDefaultsService>
         readonly resourceType: AccessResourceType
         readonly resourceId?: string
         readonly conceptId?: string
+        /**
+         * Per-role overrides of the template's `view`, from a create form.
+         *
+         * Only `view` — that is the decision worth making while naming a thing, and a
+         * create dialog listing every action for every role is a settings screen
+         * wearing a disguise. Everything else comes from the template, so a role's
+         * write access stays consistent with what it has elsewhere.
+         */
+        readonly viewFor?: ReadonlyArray<{ readonly roleId: string; readonly view: boolean }>
       }) =>
         Effect.gen(function* () {
           const { orgId, actor } = yield* OrgContext
@@ -137,7 +146,18 @@ export class AccessDefaultsService extends Effect.Service<AccessDefaultsService>
             JOIN access_roles r ON r.id = d.role_id
             WHERE d.org_id = ${orgId} AND d.resource_type = ${input.resourceType}
               AND d.effect = 'allow' AND r.full_access = false`
-          for (const row of rows) {
+          const override = new Map((input.viewFor ?? []).map((v) => [v.roleId, v.view]))
+          for (const base of rows) {
+            const want = override.get(base.role_id)
+            const actions =
+              want === undefined
+                ? base.actions
+                : want
+                  ? [...new Set([...base.actions, "view"])]
+                  : base.actions.filter((a) => a !== "view")
+            // A role left with nothing gets no rule at all — absence IS "no".
+            if (actions.length === 0) continue
+            const row = { ...base, actions }
             yield* sql`
               INSERT INTO access_rules
                 (org_id, role_id, effect, actions, resource_type, resource_id,

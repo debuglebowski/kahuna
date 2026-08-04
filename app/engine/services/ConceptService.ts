@@ -139,6 +139,8 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
       // Connector-owned "managed concept" kind (e.g. "linear", "google.gmail");
       // null/omitted for a normal user concept. Set only by integration sync.
       readonly managedBy?: string | null
+      /** Per-role `view` chosen in the create form; the rest comes from the template. */
+      readonly access?: ReadonlyArray<{ readonly roleId: string; readonly view: boolean }>
     }) =>
       sql.withTransaction(
         Effect.gen(function* () {
@@ -166,8 +168,16 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
           // crash between the two would leave a concept only admins can see — and the
           // admin who created it would see nothing wrong. Two calls: the concept
           // itself, and "records in this concept" (scoped by container, not by id).
-          yield* defaults.materialize({ resourceType: "concept", resourceId: concept.id })
-          yield* defaults.materialize({ resourceType: "record", conceptId: concept.id })
+          yield* defaults.materialize({
+            resourceType: "concept",
+            resourceId: concept.id,
+            viewFor: input.access,
+          })
+          yield* defaults.materialize({
+            resourceType: "record",
+            conceptId: concept.id,
+            viewFor: input.access,
+          })
           yield* events.append({
             subjectKind: "concept",
             subjectId: concept.id,

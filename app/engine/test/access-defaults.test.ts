@@ -218,4 +218,54 @@ describe("access defaults — the creation template", () => {
       expect(rows[0]!.actions).toContain("view")
     }).pipe(Effect.provide(testLayer(org, ACTOR)))
   })
+
+  /**
+   * "Start from" is a SNAPSHOT, not a link. Copying is the whole behaviour — the new
+   * role must see what the source sees TODAY and start new resources the same way —
+   * and later divergence is correct, not a bug.
+   */
+  it.effect("a role created from another copies its rules AND its templates", () => {
+    const org = newOrgId()
+    return Effect.gen(function* () {
+      const roles = yield* AccessRoleService
+      const defaults = yield* AccessDefaultsService
+      const concepts = yield* ConceptService
+      yield* roles.ensureBuiltins
+      const member = yield* roles.getByKey("member")
+
+      // One concept, so Member holds a real per-resource rule to copy.
+      const concept = yield* concepts.create({ name: `Deal ${randomUUID().slice(0, 8)}` })
+      const sourceRules = (yield* roles.rulesOf(member!.id)).filter(
+        (r) => r.resourceId === concept.id,
+      )
+      expect(sourceRules.length).toBeGreaterThan(0)
+
+      const sales = yield* roles.create({ name: "Sales", startFrom: member!.id })
+
+      const copied = (yield* roles.rulesOf(sales.id)).filter((r) => r.resourceId === concept.id)
+      expect(copied.length).toBe(sourceRules.length)
+      expect(copied[0]!.actions).toEqual(sourceRules[0]!.actions)
+
+      // …and the template, so a concept created LATER treats Sales like Member.
+      const mine = (yield* defaults.list()).filter((d) => d.roleId === sales.id)
+      expect(mine.some((d) => d.resourceType === "concept" && d.actions.includes("view"))).toBe(
+        true,
+      )
+    }).pipe(Effect.provide(testLayer(org, ACTOR)))
+  })
+
+  it.effect("a role created from nothing holds nothing", () => {
+    const org = newOrgId()
+    return Effect.gen(function* () {
+      const roles = yield* AccessRoleService
+      const defaults = yield* AccessDefaultsService
+      const concepts = yield* ConceptService
+      yield* roles.ensureBuiltins
+      yield* concepts.create({ name: `Deal ${randomUUID().slice(0, 8)}` })
+
+      const bare = yield* roles.create({ name: "Contractor" })
+      expect((yield* roles.rulesOf(bare.id)).length).toBe(0)
+      expect((yield* defaults.list()).filter((d) => d.roleId === bare.id).length).toBe(0)
+    }).pipe(Effect.provide(testLayer(org, ACTOR)))
+  })
 })

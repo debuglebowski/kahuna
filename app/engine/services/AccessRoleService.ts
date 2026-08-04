@@ -15,6 +15,8 @@ export interface AccessRole {
   readonly name: string
   readonly description: string | null
   readonly builtin: boolean
+  /** Holds a blanket `*`; exempt from per-resource values. See `access_roles`. */
+  readonly fullAccess: boolean
   readonly position: number
 }
 
@@ -24,6 +26,7 @@ interface AccessRoleRow {
   readonly name: string
   readonly description: string | null
   readonly builtin: boolean
+  readonly full_access: boolean
   readonly position: number
 }
 
@@ -33,6 +36,7 @@ const toRole = (r: AccessRoleRow): AccessRole => ({
   name: r.name,
   description: r.description,
   builtin: r.builtin,
+  fullAccess: r.full_access,
   position: r.position,
 })
 
@@ -157,7 +161,7 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
         Effect.gen(function* () {
           const { orgId } = yield* OrgContext
           const rows = yield* sql<AccessRoleRow>`
-            SELECT id, key, name, description, builtin, position FROM access_roles
+            SELECT id, key, name, description, builtin, full_access, position FROM access_roles
             WHERE org_id = ${orgId} ORDER BY position ASC, name ASC`
           return rows.map(toRole)
         }).pipe(Effect.orDie)
@@ -167,7 +171,7 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
         Effect.gen(function* () {
           const { orgId } = yield* OrgContext
           const rows = yield* sql<AccessRoleRow>`
-            SELECT id, key, name, description, builtin, position FROM access_roles
+            SELECT id, key, name, description, builtin, full_access, position FROM access_roles
             WHERE org_id = ${orgId} AND key = ${key} LIMIT 1`
           return rows[0] ? toRole(rows[0]) : null
         }).pipe(Effect.orDie)
@@ -287,17 +291,58 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
        * Create a custom role. `key` stays null — only the seeded presets are pinned by
        * key, so a user-created role can be renamed freely.
        */
-      const create = (input: { readonly name: string; readonly description?: string | null }) =>
+      /**
+       * Create a role, optionally STARTING FROM another one.
+       *
+       * A brand-new role holds nothing, and with access fail-closed that means its
+       * holders see nothing at all — which is safe but useless, and walking a grid of
+       * every concept × every action before the role does anything is real work. So
+       * the create flow offers a starting point.
+       *
+       * It is a SNAPSHOT, not a link: later changes to Member do not propagate to a
+       * role started from it. The UI has to say so, or that is a guaranteed bug
+       * report.
+       */
+      const create = (input: {
+        readonly name: string
+        readonly description?: string | null
+        /** Copy this role's per-resource rules and creation templates. */
+        readonly startFrom?: string | null
+      }) =>
         Effect.gen(function* () {
-          const { orgId } = yield* OrgContext
+          const { orgId, actor } = yield* OrgContext
           const max = yield* sql<{ readonly max: number | string | null }>`
             SELECT MAX(position) AS max FROM access_roles WHERE org_id = ${orgId}`
           const position = Number(max[0]?.max ?? -1) + 1
           const rows = yield* sql<AccessRoleRow>`
             INSERT INTO access_roles (org_id, key, name, description, builtin, position)
             VALUES (${orgId}, NULL, ${input.name.trim()}, ${input.description ?? null}, false, ${position})
-            RETURNING id, key, name, description, builtin, position`
+            RETURNING id, key, name, description, builtin, full_access, position`
           const role = toRole(rows[0]!)
+          if (input.startFrom) {
+            // Rules first, then templates: the new role sees what the source sees
+            // today AND starts new resources the same way. Conditional rules copy
+            // too — they are as much a part of "what this role is" as the rest.
+            //
+            // A full-access source is NOT copied wholesale: `full_access` is a
+            // property of the role, and silently minting a second one from a name in
+            // a dropdown is not something a create form should be able to do.
+            yield* sql`
+              INSERT INTO access_rules
+                (org_id, role_id, effect, actions, resource_type, resource_id, concept_id,
+                 condition, created_by)
+              SELECT org_id, ${role.id}, effect, actions, resource_type, resource_id,
+                     concept_id, condition, ${actor}
+                FROM access_rules
+               WHERE org_id = ${orgId} AND role_id = ${input.startFrom}`
+            yield* sql`
+              INSERT INTO access_defaults
+                (org_id, role_id, resource_type, effect, actions, created_by)
+              SELECT org_id, ${role.id}, resource_type, effect, actions, ${actor}
+                FROM access_defaults
+               WHERE org_id = ${orgId} AND role_id = ${input.startFrom}
+              ON CONFLICT (role_id, resource_type, effect) DO NOTHING`
+          }
           yield* events.append({
             subjectKind: "accessRole",
             subjectId: role.id,
@@ -323,7 +368,7 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
                 description = ${input.description === undefined ? sql`description` : input.description},
                 updated_at = now()
             WHERE org_id = ${orgId} AND id = ${input.id}
-            RETURNING id, key, name, description, builtin, position`
+            RETURNING id, key, name, description, builtin, full_access, position`
           const row = rows[0]
           if (!row) return null
           yield* events.append({
@@ -348,7 +393,7 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
         Effect.gen(function* () {
           const { orgId } = yield* OrgContext
           const rows = yield* sql<AccessRoleRow>`
-            SELECT id, key, name, description, builtin, position FROM access_roles
+            SELECT id, key, name, description, builtin, full_access, position FROM access_roles
             WHERE org_id = ${orgId} AND id = ${id} LIMIT 1`
           const row = rows[0]
           if (!row) return "not-found" as const

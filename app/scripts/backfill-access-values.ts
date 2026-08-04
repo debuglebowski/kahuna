@@ -60,6 +60,22 @@ const isAdminRole = (r: string): boolean => r === "owner" || r === "admin"
 
 /** Actions the grid shows per area — the only ones worth materializing, because a
  *  rule for an action nothing decides against that type is dead weight. */
+/** Every resource type a preset grants over — must match `ALL_RESOURCES` in
+ *  engine/services/AccessRoleService.ts, which is what a full-access role holds. */
+const ALL_RESOURCE_TYPES = [
+  "org",
+  "concept",
+  "record",
+  "field",
+  "dashboard",
+  "view",
+  "automation",
+  "bucket",
+  "task",
+  "note",
+  "member",
+] as const
+
 const ACTIONS_BY_TYPE: Record<string, ReadonlyArray<AccessAction>> = {
   concept: ["view", "archive", "delete", "share", "configure"],
   record: ["view"],
@@ -133,10 +149,70 @@ async function main() {
     try {
       await client.query("BEGIN")
 
+      // FULL ACCESS is derived, not declared: a role holding `*` anywhere is one.
+      // The column was added with DEFAULT false, so every pre-existing owner/admin
+      // reads as scoped until this runs — which would materialize them into explicit
+      // rules and freeze them at today's action list, exactly what the exemption
+      // exists to prevent.
+      if (!DRY) {
+        await client.query(
+          `UPDATE access_roles SET full_access = true
+            WHERE org_id = $1 AND full_access = false
+              AND EXISTS (
+                SELECT 1 FROM access_rules r
+                 WHERE r.role_id = access_roles.id AND r.effect = 'allow'
+                   AND '*' = ANY(r.actions))`,
+          [orgId],
+        )
+      }
       const roles = await client.query<RoleRow>(
         `SELECT id, key, full_access FROM access_roles WHERE org_id = $1`,
         [orgId],
       )
+
+      // ── FULL-ACCESS REPAIR ──────────────────────────────────────────────────
+      //
+      // Undo materialization of a role that turned out to be full-access.
+      //
+      // The first run of this script predated `full_access` being derived, so every
+      // role read as scoped: owner/admin had their blanket `*` converted to a
+      // template and were expanded into one explicit rule per existing resource.
+      // That is precisely what the exemption exists to prevent — the wildcard means
+      // "every action, present and future", and the expansion freezes the role at
+      // today's list AND leaves it with no claim on anything created later. An owner
+      // would simply stop seeing new concepts, with nothing to explain it.
+      //
+      // Idempotent: after one pass the blanket rules exist and the backfill-written
+      // rows are gone, so a re-run matches nothing.
+      for (const role of roles.rows.filter((r) => r.full_access)) {
+        if (DRY) continue
+        // Only rows THIS script wrote. A blanket `*` plus a deliberate targeted rule
+        // is a legitimate combination, and dropping the latter would silently edit
+        // someone's intent.
+        await client.query(
+          `DELETE FROM access_rules
+            WHERE org_id = $1 AND role_id = $2 AND created_by = 'backfill'
+              AND (resource_id IS NOT NULL OR concept_id IS NOT NULL)`,
+          [orgId, role.id],
+        )
+        await client.query(`DELETE FROM access_defaults WHERE org_id = $1 AND role_id = $2`, [
+          orgId,
+          role.id,
+        ])
+        for (const type of ALL_RESOURCE_TYPES) {
+          await client.query(
+            `INSERT INTO access_rules
+               (org_id, role_id, effect, actions, resource_type, created_by)
+             SELECT $1, $2, 'allow', ARRAY['*'], $3, 'backfill-repair'
+              WHERE NOT EXISTS (
+                SELECT 1 FROM access_rules
+                 WHERE org_id = $1 AND role_id = $2 AND resource_type = $3
+                   AND resource_id IS NULL AND concept_id IS NULL AND effect = 'allow'
+                   AND '*' = ANY(actions))`,
+            [orgId, role.id, type],
+          )
+        }
+      }
       const allRules = await client.query<RuleRow>(
         `SELECT id, role_id, actor_id, effect, actions, resource_type, resource_id,
                 concept_id, condition

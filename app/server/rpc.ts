@@ -528,7 +528,7 @@ const ServerRpcs = KingsmakerRpcs.middleware(AuthMiddleware)
 const HandlersLive = ServerRpcs.toLayer({
   listConcepts: ({ includeArchived, withCounts }) =>
     as<ReadonlyArray<Concept>>(uc.listConcepts(includeArchived, withCounts)),
-  createConcept: ({ name, color }) => as<Concept>(uc.createConcept(name, color)),
+  createConcept: ({ name, color, access }) => as<Concept>(uc.createConcept(name, color, access)),
   updateConcept: ({
     id,
     name,
@@ -951,7 +951,8 @@ const HandlersLive = ServerRpcs.toLayer({
   listRoles: () => as<ReadonlyArray<AccessRole>>(uc.listRoles()),
   rolesOf: ({ userId }) => as<ReadonlyArray<AccessRole>>(uc.rolesOfUser(userId)),
   listRules: ({ roleId }) => admin<ReadonlyArray<AccessRule>>(uc.listRules(roleId)),
-  createRole: ({ name, description }) => admin<AccessRole>(uc.createRole({ name, description })),
+  createRole: ({ name, description, startFrom }) =>
+    admin<AccessRole>(uc.createRole({ name, description, startFrom })),
   updateRole: ({ id, name, description }) =>
     admin<AccessRole>(uc.updateRole({ id, name, description })),
   deleteRole: ({ id }) => admin<{ readonly id: string }>(uc.deleteRole(id)),

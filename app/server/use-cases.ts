@@ -515,11 +515,15 @@ export const conceptDashboardSeed = (conceptId: string): DashboardBody => ({
   ],
 })
 
-export const createConcept = (name: string, color?: string | null): UC<unknown> =>
+export const createConcept = (
+  name: string,
+  color?: string | null,
+  access?: ReadonlyArray<{ readonly roleId: string; readonly view: boolean }>,
+): UC<unknown> =>
   Effect.gen(function* () {
     const concepts = yield* ConceptService
     const dashboards = yield* DashboardService
-    const concept = yield* concepts.create({ name, color })
+    const concept = yield* concepts.create({ name, color, access })
     // Every concept starts with a dashboard (deletable like any other).
     yield* dashboards.create({
       name: concept.name,
@@ -2048,6 +2052,7 @@ export const listRules = (roleId: string): UC<unknown> =>
 export const createRole = (input: {
   readonly name: string
   readonly description?: string
+  readonly startFrom?: string
 }): UC<unknown> => Effect.flatMap(AccessRoleService, (r) => r.create(input))
 
 export const updateRole = (input: {

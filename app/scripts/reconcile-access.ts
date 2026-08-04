@@ -79,18 +79,24 @@ async function main() {
     for (const [resourceType, roleTemplates] of byType) {
       const src = SOURCES.find((s) => s.type === resourceType)
       if (!src) continue
-      const idCol = src.byConcept ? "concept_id" : "resource_id"
       /**
-       * UNMATERIALIZED, not merely "not allowed for this role".
+       * UNMATERIALIZED, not merely "not allowed".
        *
-       * The distinction is the whole correctness of this script. "No rule for role R"
-       * is the normal way of saying R may NOT see it — the backfill writes no rule
-       * where access was denied — so filling that in would WIDEN access, silently
-       * granting what someone deliberately withheld.
+       * The whole correctness of this script is in this predicate, and it is narrower
+       * than it first looks. Two wrong versions, both of which I shipped:
        *
-       * A resource that was never materialized is different in a way SQL can see: NO
-       * non-full-access role has any rule naming it. That only happens when a create
-       * path skipped the hook, which is a bug.
+       * 1. "No rule for role R" — that is the NORMAL way of saying R may not see it,
+       *    since the absence of an allow IS "no". Filling it in widens access,
+       *    silently granting what someone deliberately withheld.
+       *
+       * 2. "No rule of THIS TYPE for any role" — flags every admin-only concept,
+       *    because members correctly hold a `concept` rule for it and no `record`
+       *    rule. The concept was materialized; one of its two rules was simply
+       *    empty-and-therefore-absent.
+       *
+       * What actually indicates a skipped hook is a resource NO scoped role names AT
+       * ALL, in either column, for any type. `materialize` writes every applicable
+       * rule in one transaction, so a single row anywhere proves it ran.
        */
       const gaps = await pool.query<{ id: string; label: string | null }>(
         `SELECT s.id, s.name AS label
@@ -100,9 +106,9 @@ async function main() {
               SELECT 1 FROM access_rules r
                 JOIN access_roles ro ON ro.id = r.role_id
                WHERE r.org_id = $1 AND ro.full_access = false
-                 AND r.resource_type = $2 AND r.${idCol} = s.id
+                 AND (r.resource_id = s.id OR r.concept_id = s.id)
             )`,
-        [orgId, resourceType],
+        [orgId],
       )
       for (const gap of gaps.rows) {
         report.push(`org=${orgId.slice(0, 8)} ${resourceType}=${gap.label ?? gap.id}`)

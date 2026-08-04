@@ -107,4 +107,41 @@ describe("the explicit-values backfill and its proof agree", () => {
     expect(valuesSource).toContain("full_access")
     expect(verifySource).toContain("full_access")
   })
+
+  /**
+   * ── THE FULL-ACCESS ORDERING GUARD ─────────────────────────────────────────
+   *
+   * `full_access` must be DERIVED before anything reads it.
+   *
+   * This is a scar. The column was added with `DEFAULT false`, and the first run of
+   * the backfill read it before anything set it — so owner and admin looked like
+   * ordinary scoped roles. Their blanket `*` was converted into a template and they
+   * were expanded into one explicit rule per existing resource: frozen at that day's
+   * action list, and holding no claim at all on anything created afterwards. An owner
+   * would have quietly stopped seeing new concepts.
+   *
+   * So the derivation must appear BEFORE the roles are loaded, and the repair that
+   * undoes a bad expansion must be there too.
+   */
+  it("derives full_access before loading roles, and repairs a bad expansion", () => {
+    const derive = valuesSource.indexOf("SET full_access = true")
+    const load = valuesSource.indexOf("SELECT id, key, full_access FROM access_roles")
+    expect(derive, "no full_access derivation").toBeGreaterThan(-1)
+    expect(load, "no role load").toBeGreaterThan(-1)
+    expect(derive, "full_access is read before it is derived").toBeLessThan(load)
+    // The repair: blanket `*` restored, backfill-written targeted rows removed.
+    expect(valuesSource).toContain("FULL-ACCESS REPAIR")
+    expect(valuesSource).toContain("ARRAY['*']")
+  })
+
+  it("only ever deletes rows it wrote itself", () => {
+    // The repair drops targeted rules on a full-access role. Scoped to
+    // `created_by = 'backfill'`: a deliberate targeted rule alongside a blanket `*`
+    // is legitimate, and removing it would silently edit someone's intent.
+    for (const m of valuesSource.matchAll(/DELETE FROM access_rules[\s\S]*?`/g)) {
+      const stmt = m[0]
+      const scoped = stmt.includes("created_by = 'backfill'") || stmt.includes("WHERE id = $1")
+      expect(scoped, `unscoped DELETE: ${stmt.slice(0, 120)}`).toBe(true)
+    }
+  })
 })

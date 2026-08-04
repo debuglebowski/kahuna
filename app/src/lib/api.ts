@@ -488,8 +488,11 @@ export const api = {
     call((c) =>
       c.listConcepts({ includeArchived: opts?.includeArchived, withCounts: opts?.withCounts }),
     ),
-  createConcept: (name: string, color?: string | null) =>
-    call((c) => c.createConcept({ name, color })),
+  createConcept: (
+    name: string,
+    color?: string | null,
+    access?: ReadonlyArray<{ roleId: string; view: boolean }>,
+  ) => call((c) => c.createConcept({ name, color, access })),
   updateConcept: (
     id: string,
     patch: {
@@ -1290,8 +1293,8 @@ export const api = {
   rolesOf: (userId: string) => call((c) => c.rolesOf({ userId })),
   /** The rules inside a role — `configure` only. */
   listRules: (roleId: string) => call((c) => c.listRules({ roleId })),
-  createRole: (name: string, description?: string) =>
-    call((c) => c.createRole({ name, description })),
+  createRole: (name: string, description?: string, startFrom?: string) =>
+    call((c) => c.createRole({ name, description, startFrom })),
   updateRole: (id: string, patch: { name?: string; description?: string | null }) =>
     call((c) => c.updateRole({ id, ...patch })),
   deleteRole: (id: string) => call((c) => c.deleteRole({ id })),
