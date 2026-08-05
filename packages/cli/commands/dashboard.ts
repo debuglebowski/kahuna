@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync } from "node:fs"
 import type { DashboardBody } from "@kingsmaker/contract"
-import { loadConfig, resolveProfile } from "../config.ts"
+import { requireSession } from "../config.ts"
 import { CliError, EXIT } from "../errors.ts"
 import { requireConfirmation } from "../mutate.ts"
 import { note, printRows } from "../output.ts"
@@ -17,12 +17,8 @@ import { type Api, makeRuntime } from "../transport.ts"
  * against live collections, and a CLI that tried to validate it would encode a
  * second, always-stale copy of the widget catalogue.
  */
-const withApi = async <T>(
-  profileFlag: string | undefined,
-  f: (api: Api) => Promise<T>,
-): Promise<T> => {
-  const { profile } = resolveProfile(loadConfig(), profileFlag)
-  const api = makeRuntime(profile)
+const withApi = async <T>(f: (api: Api) => Promise<T>): Promise<T> => {
+  const api = makeRuntime(requireSession())
   try {
     return await f(api)
   } finally {
@@ -53,7 +49,7 @@ export const dashboardCommands: ReadonlyArray<Command> = [
     summary: "Every dashboard, including record-view templates",
     usage: "dashboard list [--json]",
     run: async (ctx) => {
-      await withApi(ctx.profile, async (api) => {
+      await withApi(async (api) => {
         const dashboards = await api.call((c) => c.listAllDashboards())
         printRows(
           ctx.format,
@@ -78,7 +74,7 @@ export const dashboardCommands: ReadonlyArray<Command> = [
     run: async (ctx) => {
       const [name] = ctx.args
       if (!name) throw new CliError("Which dashboard?", EXIT.usage)
-      await withApi(ctx.profile, async (api) => {
+      await withApi(async (api) => {
         const dashboard = await findDashboard(api, name)
         // Deliberately WITHOUT the id: an exported dashboard is a template to
         // import elsewhere, and carrying the source id invites an import that
@@ -137,7 +133,7 @@ export const dashboardCommands: ReadonlyArray<Command> = [
       if (scope !== "org" && scope !== "personal") {
         throw new CliError("--scope takes org or personal.", EXIT.usage)
       }
-      await withApi(ctx.profile, async (api) => {
+      await withApi(async (api) => {
         if (ctx.flags["dry-run"]) {
           note(`Would create dashboard "${name}" (${scope}).`)
           return
@@ -164,7 +160,7 @@ export const dashboardCommands: ReadonlyArray<Command> = [
       const [name] = ctx.args
       if (!name) throw new CliError("Which dashboard?", EXIT.usage)
       requireConfirmation(ctx.flags, `delete dashboard "${name}"`)
-      await withApi(ctx.profile, async (api) => {
+      await withApi(async (api) => {
         const dashboard = await findDashboard(api, name)
         if (ctx.flags["dry-run"]) {
           note(`Would delete "${dashboard.name}".`)

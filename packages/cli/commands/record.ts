@@ -1,5 +1,5 @@
 import type { Concept, Field, RecordVersion } from "@kingsmaker/contract"
-import { loadConfig, resolveProfile } from "../config.ts"
+import { requireSession } from "../config.ts"
 import { CliError, EXIT } from "../errors.ts"
 import { requireConfirmation, withVersion } from "../mutate.ts"
 import type { Format, Row } from "../output.ts"
@@ -9,9 +9,8 @@ import { conceptContext, labelOf, parseFieldAssignments } from "../resolve.ts"
 import { type Api, makeRuntime } from "../transport.ts"
 
 /** Open a client for this invocation and always dispose it. */
-const withApi = async <T>(ctx: CommandContext, f: (api: Api) => Promise<T>): Promise<T> => {
-  const { profile } = resolveProfile(loadConfig(), ctx.profile)
-  const api = makeRuntime(profile)
+const withApi = async <T>(f: (api: Api) => Promise<T>): Promise<T> => {
+  const api = makeRuntime(requireSession())
   try {
     return await f(api)
   } finally {
@@ -104,7 +103,7 @@ export const recordCommands: ReadonlyArray<Command> = [
     run: async (ctx) => {
       const [conceptName] = ctx.args
       if (!conceptName) throw new CliError("Which concept?", EXIT.usage)
-      await withApi(ctx, async (api) => {
+      await withApi(async (api) => {
         const { concept, fields } = await conceptContext(api, conceptName)
         const all = await api.call((c) =>
           c.listRecords({
@@ -148,7 +147,7 @@ export const recordCommands: ReadonlyArray<Command> = [
     run: async (ctx) => {
       const [target] = ctx.args
       if (!target) throw new CliError("Which record?", EXIT.usage)
-      await withApi(ctx, async (api) => {
+      await withApi(async (api) => {
         const detail = await getDetail(api, target)
         const row = toRow(detail.recordVersion, detail.concept, detail.fields)
         if (detail.labels.length > 0) row.labels = detail.labels.map((l) => l.name).join(", ")
@@ -164,7 +163,7 @@ export const recordCommands: ReadonlyArray<Command> = [
     run: async (ctx) => {
       const [conceptName] = ctx.args
       if (!conceptName) throw new CliError("Which concept?", EXIT.usage)
-      await withApi(ctx, async (api) => {
+      await withApi(async (api) => {
         const { concept, fields } = await conceptContext(api, conceptName)
         const values = parseFieldAssignments(fields, asArray(ctx.flags.field))
         if (ctx.flags["dry-run"]) {
@@ -186,7 +185,7 @@ export const recordCommands: ReadonlyArray<Command> = [
     run: async (ctx) => {
       const [id] = ctx.args
       if (!id) throw new CliError("Which record?", EXIT.usage)
-      await withApi(ctx, async (api) => {
+      await withApi(async (api) => {
         const detail = await getDetail(api, id)
         const patch = parseFieldAssignments(detail.fields, asArray(ctx.flags.field))
         if (Object.keys(patch).length === 0) throw new CliError("Nothing to change.", EXIT.usage)
@@ -215,7 +214,7 @@ export const recordCommands: ReadonlyArray<Command> = [
       const to = ctx.flags.to as string | undefined
       if (!id || !fieldName || !to)
         throw new CliError("Need <id> --field <name> --to <value>.", EXIT.usage)
-      await withApi(ctx, async (api) => {
+      await withApi(async (api) => {
         const detail = await getDetail(api, id)
         const field = detail.fields.find(
           (f) => f.name.toLowerCase() === fieldName.toLowerCase() || f.id === fieldName,
@@ -263,7 +262,7 @@ export const recordCommands: ReadonlyArray<Command> = [
       const [id] = ctx.args
       if (!id) throw new CliError("Which record?", EXIT.usage)
       requireConfirmation(ctx.flags, `permanently delete ${id}`)
-      await withApi(ctx, async (api) => {
+      await withApi(async (api) => {
         if (ctx.flags["dry-run"]) {
           note(`Would PURGE record version ${id}. This cannot be undone.`)
           return
@@ -282,7 +281,7 @@ export const recordCommands: ReadonlyArray<Command> = [
       const [conceptName, ...rest] = ctx.args
       const query = rest.join(" ")
       if (!conceptName || !query) throw new CliError("Need <concept> <query>.", EXIT.usage)
-      await withApi(ctx, async (api) => {
+      await withApi(async (api) => {
         const { concept } = await conceptContext(api, conceptName)
         // searchRecords REQUIRES a conceptId and returns picks (label + ids),
         // not full records — cross-concept search would be a fan-out.
@@ -311,7 +310,7 @@ export const recordCommands: ReadonlyArray<Command> = [
     summary: "The recent-changes feed",
     usage: "record changed [--json]",
     run: async (ctx) => {
-      await withApi(ctx, async (api) => {
+      await withApi(async (api) => {
         // `getChanged` takes NO payload — there is no `--since` to pass. A
         // windowed view is `record event list --since`.
         const feed = await api.call((c) => c.getChanged())
@@ -329,10 +328,10 @@ export const recordCommands: ReadonlyArray<Command> = [
     run: async (ctx) => {
       const [id] = ctx.args
       if (!id) throw new CliError("Which record?", EXIT.usage)
-      const { profile } = resolveProfile(loadConfig(), ctx.profile)
+      const session = requireSession()
       // `/records/:id` — see App.tsx. Printed rather than launched: a CLI that
       // opens a browser without being asked is a surprise in an ssh session.
-      process.stdout.write(`${profile.host}/records/${id}\n`)
+      process.stdout.write(`${session.host}/records/${id}\n`)
     },
   },
 ]
@@ -376,7 +375,7 @@ const archiveOrRestore = async (
   const [id] = ctx.args
   if (!id) throw new CliError("Which record?", EXIT.usage)
   const oneVersion = Boolean(ctx.flags.version)
-  await withApi(ctx, async (api) => {
+  await withApi(async (api) => {
     if (ctx.flags["dry-run"]) {
       note(`Would ${verb} ${oneVersion ? "version" : "the whole record"} ${id}.`)
       return

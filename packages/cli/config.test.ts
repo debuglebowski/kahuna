@@ -1,8 +1,8 @@
-import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, statSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { configPath, loadConfig, resolveProfile, saveConfig } from "./config.ts"
+import { configPath, loadConfig, requireHost, requireSession, saveConfig } from "./config.ts"
 import { EXIT } from "./errors.ts"
 
 let dir: string
@@ -11,7 +11,7 @@ const env = { ...process.env }
 beforeEach(() => {
   dir = mkdtempSync(path.join(tmpdir(), "km-config-"))
   process.env.XDG_CONFIG_HOME = dir
-  for (const k of ["KM_HOST", "KM_PROFILE", "KM_TOKEN"]) delete process.env[k]
+  for (const k of ["KM_HOST", "KM_TOKEN"]) delete process.env[k]
 })
 afterEach(() => {
   process.env = { ...env }
@@ -19,68 +19,95 @@ afterEach(() => {
 
 describe("the config file", () => {
   it("is written 0600 — it holds a live session cookie", () => {
-    saveConfig({ current: "a", profiles: { a: { host: "http://x", cookie: "s=1" } } })
+    saveConfig({ host: "http://x", cookie: "s=1" })
     expect(statSync(configPath()).mode & 0o777).toBe(0o600)
   })
 
   it("round-trips", () => {
-    saveConfig({ current: "a", profiles: { a: { host: "http://x", email: "k@example.com" } } })
-    expect(loadConfig()).toEqual({
-      current: "a",
-      profiles: { a: { host: "http://x", email: "k@example.com" } },
-    })
+    saveConfig({ host: "http://x", cookie: "s=1", email: "k@example.com" })
+    expect(loadConfig()).toEqual({ host: "http://x", cookie: "s=1", email: "k@example.com" })
   })
 
   it("treats a missing file as empty, but REFUSES to guess at a corrupt one", () => {
-    expect(loadConfig()).toEqual({ profiles: {} })
+    expect(loadConfig()).toEqual({})
     mkdirSync(path.dirname(configPath()), { recursive: true })
     writeFileSync(configPath(), "{ not json")
-    // Starting fresh here would drop every other profile on the next save.
+    // Starting fresh here would silently drop the stored session.
     expect(() => loadConfig()).toThrow(/not valid JSON/)
   })
 
-  it("does not leave the credential in a temp file after a save", () => {
-    saveConfig({ profiles: { a: { host: "http://x", cookie: "secret" } } })
-    const files = readFileSync(configPath(), "utf8")
-    expect(files).toContain("secret")
+  it("leaves no temp file holding the credential behind", () => {
+    saveConfig({ host: "http://x", cookie: "secret" })
     expect(() =>
       statSync(path.join(path.dirname(configPath()), `.config.json.${process.pid}`)),
     ).toThrow()
   })
 })
 
-describe("which profile a command uses", () => {
-  const config = {
-    current: "prod",
-    profiles: { prod: { host: "https://prod" }, local: { host: "http://localhost:3100" } },
-  }
-
-  it("prefers --profile over KM_PROFILE over the stored current", () => {
-    expect(resolveProfile(config).name).toBe("prod")
-    process.env.KM_PROFILE = "local"
-    expect(resolveProfile(config).name).toBe("local")
-    expect(resolveProfile(config, "prod").name).toBe("prod")
+describe("which deployment", () => {
+  it("uses the stored host", () => {
+    saveConfig({ host: "https://prod" })
+    expect(requireHost()).toBe("https://prod")
   })
 
-  it("lets KM_HOST override the host without touching the stored profile", () => {
+  it("lets KM_HOST override without touching the file", () => {
+    saveConfig({ host: "https://prod" })
     process.env.KM_HOST = "https://staging"
-    const r = resolveProfile(config)
-    expect(r.profile.host).toBe("https://staging")
-    expect(r.hostOverridden).toBe(true)
-    expect(config.profiles.prod.host).toBe("https://prod")
+    expect(requireHost()).toBe("https://staging")
+    expect(loadConfig().host).toBe("https://prod")
   })
 
   it("strips a trailing slash, so URLs never double up", () => {
     process.env.KM_HOST = "https://staging/"
-    expect(resolveProfile(config).profile.host).toBe("https://staging")
+    expect(requireHost()).toBe("https://staging")
   })
 
-  it("fails with a usage code when nothing is configured", () => {
+  it("REFUSES to guess when nothing is configured", () => {
+    // It used to fall back to http://localhost:3100, which meant a CLI could ask
+    // for a password while quietly aiming at the wrong machine.
     try {
-      resolveProfile({ profiles: {} })
+      requireHost()
       expect.unreachable("should have thrown")
     } catch (e) {
       expect((e as { exitCode: number }).exitCode).toBe(EXIT.usage)
+      expect((e as { message: string }).message).toContain("No deployment configured")
+    }
+  })
+
+  it("never invents localhost", () => {
+    expect(() => requireHost()).toThrow()
+    expect(() => requireHost({})).toThrow()
+  })
+})
+
+describe("requiring a session", () => {
+  it("returns the host and cookie together", () => {
+    saveConfig({ host: "https://prod", cookie: "s=1", email: "k@example.com" })
+    expect(requireSession()).toEqual({
+      host: "https://prod",
+      cookie: "s=1",
+      email: "k@example.com",
+    })
+  })
+
+  it("asks for a host before it asks for a sign-in", () => {
+    // Order matters: "not signed in" is confusing advice when the real problem
+    // is that the CLI does not know where to sign in TO.
+    try {
+      requireSession()
+      expect.unreachable("should have thrown")
+    } catch (e) {
+      expect((e as { message: string }).message).toContain("No deployment configured")
+    }
+  })
+
+  it("reports not-signed-in once a host is known", () => {
+    saveConfig({ host: "https://prod" })
+    try {
+      requireSession()
+      expect.unreachable("should have thrown")
+    } catch (e) {
+      expect((e as { exitCode: number }).exitCode).toBe(EXIT.unauthenticated)
     }
   })
 })

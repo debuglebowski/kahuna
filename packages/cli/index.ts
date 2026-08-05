@@ -13,7 +13,6 @@ import { eventCommands } from "./commands/event.ts"
 import { labelCommands } from "./commands/label.ts"
 import { noteCommands } from "./commands/note.ts"
 import { organizationCommands } from "./commands/organization.ts"
-import { profileCommands } from "./commands/profile.ts"
 import { recordCommands } from "./commands/record.ts"
 import { relationCommands } from "./commands/relation.ts"
 import { systemCommands } from "./commands/system.ts"
@@ -36,7 +35,6 @@ import { Registry } from "./registry.ts"
  */
 export const registry = new Registry([
   ...authCommands,
-  ...profileCommands,
   ...conceptCommands,
   ...bulkCommands,
   ...taskCommands,
@@ -58,7 +56,6 @@ export const registry = new Registry([
 const GLOBAL_OPTIONS = {
   json: { type: "boolean" as const },
   csv: { type: "boolean" as const },
-  profile: { type: "string" as const },
   yes: { type: "boolean" as const, short: "y" },
   "dry-run": { type: "boolean" as const },
   help: { type: "boolean" as const, short: "h" },
@@ -86,11 +83,10 @@ const usage = (): string => {
     "  --version, -v     print this CLI's version and exit",
     "  --json            machine-readable output (stdout only)",
     "  --csv             comma-separated output",
-    "  --profile <name>  which deployment to talk to",
     "  --yes, -y         do not ask before a destructive change",
     "  --dry-run         print what would happen and write nothing",
     "",
-    "Environment: KM_HOST, KM_PROFILE, KM_TOKEN, XDG_CONFIG_HOME",
+    "Environment: KM_HOST, KM_TOKEN, KM_NO_BROWSER, XDG_CONFIG_HOME",
   )
   return lines.join("\n")
 }
@@ -163,7 +159,6 @@ export const run = async (argv: ReadonlyArray<string>): Promise<number> => {
       args: parsed.positionals,
       flags: parsed.values,
       format: formatOf(parsed.values),
-      profile: parsed.values.profile as string | undefined,
     })
     return EXIT.ok
   } catch (e) {

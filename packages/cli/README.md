@@ -28,7 +28,7 @@ plus domain verbs where the domain has one (`publish`, `transition`, `sync`,
 always purges, `archive` is always reversible.
 
 Run `km help` for the full list, `km <command> --help` for one, and
-`km --version` (or `-v`) for the CLI's own version — no network, no profile, no
+`km --version` (or `-v`) for the CLI's own version — no network and no
 sign-in. That last one is deliberately not `km system version`, which asks the
 DEPLOYMENT what it is running and warns if the two have drifted.
 
@@ -47,18 +47,18 @@ to filter our chatter. `--json`, `--csv`, or an aligned table by default.
 | 5 | not found |
 | 6 | conflict (something changed underneath, or is still in use) |
 
-## Profiles
+## Configuration
 
-Credentials live in `$XDG_CONFIG_HOME/kingsmaker/config.json` (mode 0600).
+One deployment, stored in `$XDG_CONFIG_HOME/kingsmaker/config.json` (mode 0600):
 
-```bash
-km profile add production --host https://kingsmaker.example.com
-km profile use production
-km record list vendor --profile local     # one command, other deployment
+```json
+{ "host": "https://kingsmaker.example.com", "cookie": "…", "email": "you@example.com" }
 ```
 
-`KM_HOST` overrides the host without touching the stored profile, and
-`KM_PROFILE` picks one — both meant for CI.
+`km auth login --host <url>` writes it; every later command reads it. **There is
+no default host** — an unconfigured CLI says so rather than quietly trying
+`localhost`. `KM_HOST` overrides it without touching the file, which is what CI
+wants.
 
 ## Signing in through the browser
 

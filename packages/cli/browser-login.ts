@@ -31,6 +31,11 @@ interface DeviceStart {
 /** Open a URL without a dependency. Failure is fine — the URL is printed, which
  *  is what a headless or ssh session needs anyway. */
 const openBrowser = (url: string): void => {
+  // KM_NO_BROWSER exists because the end-to-end driver runs this command for
+  // real, and without it every test run spawns a browser tab on whoever's
+  // machine is running the suite. The URL is always printed, so suppressing the
+  // launch costs nothing.
+  if (process.env.KM_NO_BROWSER) return
   const command =
     process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open"
   try {

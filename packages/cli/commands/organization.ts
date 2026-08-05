@@ -1,4 +1,4 @@
-import { loadConfig, resolveProfile } from "../config.ts"
+import { requireSession } from "../config.ts"
 import { CliError, EXIT, exitCodeForStatus } from "../errors.ts"
 import { note, printRows } from "../output.ts"
 import type { Command } from "../registry.ts"
@@ -12,12 +12,8 @@ import { type Api, makeRuntime } from "../transport.ts"
  * BetterAuth's own endpoints decide from the membership TIER, which an
  * administrator no longer has (see router.ts).
  */
-const withApi = async <T>(
-  profileFlag: string | undefined,
-  f: (api: Api) => Promise<T>,
-): Promise<T> => {
-  const { profile } = resolveProfile(loadConfig(), profileFlag)
-  const api = makeRuntime(profile)
+const withApi = async <T>(f: (api: Api) => Promise<T>): Promise<T> => {
+  const api = makeRuntime(requireSession())
   try {
     return await f(api)
   } finally {
@@ -25,24 +21,19 @@ const withApi = async <T>(
   }
 }
 
-const post = async (
-  profileFlag: string | undefined,
-  path: string,
-  body?: unknown,
-  method = "POST",
-): Promise<unknown> => {
-  const { profile } = resolveProfile(loadConfig(), profileFlag)
-  const res = await fetch(`${profile.host}${path}`, {
+const post = async (path: string, body?: unknown, method = "POST"): Promise<unknown> => {
+  const session = requireSession()
+  const res = await fetch(`${session.host}${path}`, {
     method,
     headers: {
       "content-type": "application/json",
-      cookie: profile.cookie ?? "",
-      origin: profile.host,
+      cookie: session.cookie ?? "",
+      origin: session.host,
     },
     body: body === undefined ? undefined : JSON.stringify(body),
   }).catch((e: unknown) => {
     throw new CliError(
-      `Cannot reach ${profile.host} (${e instanceof Error ? e.message : String(e)}).`,
+      `Cannot reach ${session.host} (${e instanceof Error ? e.message : String(e)}).`,
       EXIT.failed,
     )
   })
@@ -62,7 +53,7 @@ export const organizationCommands: ReadonlyArray<Command> = [
     summary: "Everyone in the organization, with their roles",
     usage: "organization member list [--json]",
     run: async (ctx) => {
-      await withApi(ctx.profile, async (api) => {
+      await withApi(async (api) => {
         // There is no "list members" RPC — membership lives in BetterAuth's
         // tables. Role holders plus the deactivation list is what the API can
         // actually answer, so build the roster from those rather than inventing
@@ -107,7 +98,7 @@ export const organizationCommands: ReadonlyArray<Command> = [
       // operator provisions it first (scripts/create-user.ts). Say that when the
       // server reports no such user, rather than leaving "NO_SUCH_USER" bare.
       try {
-        await post(ctx.profile, "/api/org/members", { email })
+        await post("/api/org/members", { email })
       } catch (e) {
         if ((e as CliError).message === "NO_SUCH_USER") {
           throw new CliError(
@@ -136,12 +127,12 @@ export const organizationCommands: ReadonlyArray<Command> = [
 ]
 
 const memberState = async (
-  ctx: { args: ReadonlyArray<string>; profile?: string; flags: Record<string, unknown> },
+  ctx: { args: ReadonlyArray<string>; flags: Record<string, unknown> },
   verb: "deactivate" | "reactivate",
 ): Promise<void> => {
   const [userId] = ctx.args
   if (!userId) throw new CliError("Which member?", EXIT.usage)
-  await withApi(ctx.profile, async (api) => {
+  await withApi(async (api) => {
     if (ctx.flags["dry-run"]) {
       note(`Would ${verb} ${userId}.`)
       return

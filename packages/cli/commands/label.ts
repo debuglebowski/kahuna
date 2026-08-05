@@ -1,4 +1,4 @@
-import { loadConfig, resolveProfile } from "../config.ts"
+import { requireSession } from "../config.ts"
 import { CliError, EXIT } from "../errors.ts"
 import { requireConfirmation } from "../mutate.ts"
 import { note, printRows } from "../output.ts"
@@ -12,12 +12,8 @@ import { type Api, makeRuntime } from "../transport.ts"
  * (`LABELS_KEY`), so that is `record update <id> --labels a,b`. This noun owns
  * only the catalogue itself.
  */
-const withApi = async <T>(
-  profileFlag: string | undefined,
-  f: (api: Api) => Promise<T>,
-): Promise<T> => {
-  const { profile } = resolveProfile(loadConfig(), profileFlag)
-  const api = makeRuntime(profile)
+const withApi = async <T>(f: (api: Api) => Promise<T>): Promise<T> => {
+  const api = makeRuntime(requireSession())
   try {
     return await f(api)
   } finally {
@@ -49,7 +45,7 @@ export const labelCommands: ReadonlyArray<Command> = [
     usage: "label list [--archived] [--json]",
     options: { archived: { type: "boolean" } },
     run: async (ctx) => {
-      await withApi(ctx.profile, async (api) => {
+      await withApi(async (api) => {
         const labels = await api.call((c) =>
           c.listLabels({ includeArchived: Boolean(ctx.flags.archived) }),
         )
@@ -75,7 +71,7 @@ export const labelCommands: ReadonlyArray<Command> = [
     run: async (ctx) => {
       const [name] = ctx.args
       if (!name) throw new CliError("A name is required.", EXIT.usage)
-      await withApi(ctx.profile, async (api) => {
+      await withApi(async (api) => {
         if (ctx.flags["dry-run"]) {
           note(`Would create label "${name}".`)
           return
@@ -99,7 +95,7 @@ export const labelCommands: ReadonlyArray<Command> = [
     run: async (ctx) => {
       const [target] = ctx.args
       if (!target) throw new CliError("Which label?", EXIT.usage)
-      await withApi(ctx.profile, async (api) => {
+      await withApi(async (api) => {
         const label = await findLabel(api, target)
         if (ctx.flags["dry-run"]) {
           note(`Would update label "${label.name}".`)
@@ -143,12 +139,12 @@ export const labelCommands: ReadonlyArray<Command> = [
 ]
 
 const labelLifecycle = async (
-  ctx: { args: ReadonlyArray<string>; profile?: string; flags: Record<string, unknown> },
+  ctx: { args: ReadonlyArray<string>; flags: Record<string, unknown> },
   verb: "archive" | "restore" | "delete",
 ): Promise<void> => {
   const [target] = ctx.args
   if (!target) throw new CliError("Which label?", EXIT.usage)
-  await withApi(ctx.profile, async (api) => {
+  await withApi(async (api) => {
     const label = await findLabel(api, target)
     if (ctx.flags["dry-run"]) {
       note(`Would ${verb} label "${label.name}".`)

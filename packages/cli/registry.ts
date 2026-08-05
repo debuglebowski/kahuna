@@ -21,8 +21,6 @@ export interface CommandContext {
   /** Parsed flags for this command, plus the global ones. */
   readonly flags: Record<string, string | boolean | Array<string | boolean> | undefined>
   readonly format: Format
-  /** `--profile`, if given. */
-  readonly profile?: string
 }
 
 export interface Command {
@@ -52,7 +50,6 @@ export const VERBS = new Set([
   "whoami",
   "add",
   "remove",
-  "use",
   "health",
   "version",
   "search",

@@ -2,7 +2,7 @@ import { FetchHttpClient, HttpClient, HttpClientRequest } from "@effect/platform
 import { RpcClient, RpcSerialization } from "@effect/rpc"
 import { KingsmakerRpcs } from "@kingsmaker/contract"
 import { Cause, Context, Effect, Exit, Layer, ManagedRuntime } from "effect"
-import type { Profile } from "./config.ts"
+import type { Session } from "./config.ts"
 import { CliError, EXIT } from "./errors.ts"
 
 /**
@@ -18,7 +18,7 @@ import { CliError, EXIT } from "./errors.ts"
  * us — so the client is built per invocation and the cookie is injected through
  * `transformClient`.
  */
-const authHeaders = (profile: Profile): Record<string, string> => {
+const authHeaders = (session: Session): Record<string, string> => {
   // KM_TOKEN is read here so CI can pass a credential without a config file.
   // Bearer support is stubbed deliberately: the API-key plugin is not installed
   // server-side yet (`auth token create` is a later phase), so a token today
@@ -30,12 +30,9 @@ const authHeaders = (profile: Profile): Record<string, string> => {
       "Use `km auth login` for now; token credentials arrive with `km auth token create`.",
     )
   }
-  if (!profile.cookie) {
-    throw new CliError("Not signed in.", EXIT.unauthenticated, "Run `km auth login` first.")
-  }
   // `origin` for the same reason rest.ts sends it: anything that reaches
   // BetterAuth without one is refused, and Node's fetch adds none.
-  return { cookie: profile.cookie, origin: profile.host }
+  return { cookie: session.cookie, origin: session.host }
 }
 
 /**
@@ -49,11 +46,11 @@ export const unwrapExit = <A, E>(exit: Exit.Exit<A, E>): A => {
   throw Cause.squash(exit.cause)
 }
 
-export const makeRuntime = (profile: Profile) => {
-  const headers = authHeaders(profile)
+export const makeRuntime = (session: Session) => {
+  const headers = authHeaders(session)
 
   const protocol = RpcClient.layerProtocolHttp({
-    url: `${profile.host}/api/rpc`,
+    url: `${session.host}/api/rpc`,
     transformClient: HttpClient.mapRequest(HttpClientRequest.setHeaders(headers)),
   }).pipe(Layer.provide(FetchHttpClient.layer), Layer.provide(RpcSerialization.layerNdjson))
 

@@ -1,6 +1,6 @@
 import { createInterface } from "node:readline/promises"
 import { browserLogin } from "../browser-login.ts"
-import { DEFAULT_HOST, loadConfig, resolveProfile, saveConfig, upsertProfile } from "../config.ts"
+import { loadConfig, requireSession, saveConfig, stripSlash } from "../config.ts"
 import { CliError, EXIT } from "../errors.ts"
 import { note, printOne } from "../output.ts"
 import type { Command } from "../registry.ts"
@@ -14,7 +14,6 @@ const prompt = async (question: string, secret = false): Promise<string> => {
   try {
     if (!secret) return (await rl.question(question)).trim()
     process.stderr.write(question)
-    // Mute the echo by intercepting the output stream while reading.
     const muted = rl.question("")
     const output = rl as unknown as { output?: NodeJS.WriteStream }
     const write = output.output?.write.bind(output.output)
@@ -28,65 +27,50 @@ const prompt = async (question: string, secret = false): Promise<string> => {
   }
 }
 
+/**
+ * WHICH DEPLOYMENT, and never guessed.
+ *
+ * `--host`, then KM_HOST, then whatever a previous sign-in stored. If none of
+ * those know, ask — and if there is nobody to ask, fail. This used to fall
+ * through to `http://localhost:3100`, so someone with a remote deployment was
+ * asked for their password by a CLI quietly aiming at their own laptop.
+ */
+const resolveHost = async (flagHost: string | undefined): Promise<string> => {
+  const known = flagHost ?? process.env.KM_HOST ?? loadConfig().host
+  if (known) return stripSlash(known)
+  if (!process.stdin.isTTY) {
+    throw new CliError(
+      "No deployment configured.",
+      EXIT.usage,
+      "Pass --host <url>, or set KM_HOST.",
+    )
+  }
+  const asked = await prompt("Deployment URL: ")
+  if (!asked) throw new CliError("A deployment URL is required.", EXIT.usage)
+  return stripSlash(asked)
+}
+
 export const authCommands: ReadonlyArray<Command> = [
   {
     path: "auth login",
-    summary: "Sign in to a deployment and store the session (--browser for SSO and the like)",
-    usage: "auth login [--browser] [--host <url>] [--email <address>] [--profile <name>]",
+    summary: "Sign in to a deployment and store the session",
+    usage: "auth login [--host <url>] [--browser] [--email <address>]",
     options: {
       host: { type: "string" },
       email: { type: "string" },
       password: { type: "string" },
       browser: { type: "boolean" },
-      // `--sso` is an alias: SSO is just one of the sign-in methods the browser
-      // hand-off supports, and it is the word people reach for.
-      sso: { type: "boolean" },
     },
     run: async (ctx) => {
-      // SSO CANNOT WORK WITH A COOKIE JAR, and saying so is better than a flow
-      // that appears to run and then fails somewhere unhelpful.
-      //
-      // The browser round trip ends with `setSessionCookie` on the SERVER's
-      // origin and a redirect to callbackURL. A loopback listener therefore
-      // catches a redirect carrying NO credential — on success the callback gets
-      // nothing but the redirect itself (only failures carry `?error=`). There
-      // is no code to exchange, because nothing mints one.
-      //
-      // What unlocks it is a credential the server can hand to a non-browser
-      // client: BetterAuth's API-key plugin, which is `km auth token create` and
-      // is not installed yet. Until then an SSO-only organization has no CLI
-      // path at all, and pretending otherwise wastes the user's afternoon.
-      if (ctx.flags.sso || ctx.flags.browser) {
-        const config0 = loadConfig()
-        const name0 = ctx.profile ?? process.env.KM_PROFILE ?? config0.current ?? "default"
-        const host0 = (
-          (ctx.flags.host as string | undefined) ??
-          process.env.KM_HOST ??
-          config0.profiles[name0]?.host ??
-          DEFAULT_HOST
-        ).replace(/\/+$/, "")
-        const result0 = await browserLogin(host0)
-        upsertProfile(name0, { host: host0, cookie: result0.cookie, email: result0.email })
-        note(`Signed in to ${host0} (profile "${name0}").`)
+      const host = await resolveHost(ctx.flags.host as string | undefined)
+      note(`Signing in to ${host}`)
+
+      if (ctx.flags.browser) {
+        const viaBrowser = await browserLogin(host)
+        saveConfig({ host, cookie: viaBrowser.cookie, email: viaBrowser.email })
+        note("Signed in.")
         return
       }
-
-      const config = loadConfig()
-      const name = ctx.profile ?? process.env.KM_PROFILE ?? config.current ?? "default"
-      // WHICH DEPLOYMENT, and never silently.
-      //
-      // This used to fall through to `http://localhost:3100` when nothing said
-      // otherwise: someone with a remote deployment was asked for their email
-      // and password by a CLI quietly aiming at their own laptop, and found out
-      // only when the connection failed. A default nobody was told about is
-      // worse than a question.
-      const known =
-        (ctx.flags.host as string | undefined) ?? process.env.KM_HOST ?? config.profiles[name]?.host
-      const asked = known ?? (process.stdin.isTTY ? await prompt(`Host [${DEFAULT_HOST}]: `) : "")
-      const host = (asked || DEFAULT_HOST).replace(/\/+$/, "")
-      // Said out loud either way, including when it came from a flag — the host
-      // is the one thing a failed sign-in should never leave you guessing about.
-      note(`Signing in to ${host}`)
 
       const email = (ctx.flags.email as string | undefined) ?? (await prompt("Email: "))
       // --password exists for scripts, but it lands in shell history and `ps`,
@@ -101,41 +85,37 @@ export const authCommands: ReadonlyArray<Command> = [
       }
 
       const result = await signIn(host, email, password)
-      upsertProfile(name, { host, cookie: result.cookie, email: result.email })
-      note(`Signed in to ${host} as ${result.email} (profile "${name}").`)
+      saveConfig({ host, cookie: result.cookie, email: result.email })
+      note(`Signed in as ${result.email}.`)
     },
   },
   {
     path: "auth logout",
-    summary: "Drop the stored session for a profile",
-    usage: "auth logout [--profile <name>]",
-    run: async (ctx) => {
+    summary: "Drop the stored session",
+    usage: "auth logout",
+    run: async () => {
       const config = loadConfig()
-      const { name, profile } = resolveProfile(config, ctx.profile)
-      await signOut(profile)
-      const stored = config.profiles[name]
-      if (stored) {
-        // Keep the profile and its host — only the credential goes. Deleting the
-        // whole entry would make `km auth login` ask for the host again.
-        config.profiles[name] = { host: stored.host }
-        saveConfig(config)
+      if (config.cookie && config.host) {
+        await signOut({ host: config.host, cookie: config.cookie })
       }
-      note(`Signed out of profile "${name}".`)
+      // Keep the host — only the credential goes. Dropping it too would make the
+      // next `km auth login` ask for the deployment URL again.
+      saveConfig({ host: config.host })
+      note("Signed out.")
     },
   },
   {
     path: "auth whoami",
     summary: "Show who you are signed in as, and what you may do",
-    usage: "auth whoami [--profile <name>] [--json]",
+    usage: "auth whoami [--json]",
     run: async (ctx) => {
-      const { name, profile } = resolveProfile(loadConfig(), ctx.profile)
-      const api = makeRuntime(profile)
+      const session = requireSession()
+      const api = makeRuntime(session)
       try {
         const access = await api.call((c) => c.myAccess())
         printOne(ctx.format, {
-          profile: name,
-          host: profile.host,
-          email: profile.email ?? "",
+          host: session.host,
+          email: session.email ?? "",
           ...(access as Record<string, unknown>),
         })
       } finally {

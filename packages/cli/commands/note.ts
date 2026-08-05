@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs"
-import { loadConfig, resolveProfile } from "../config.ts"
+import { requireSession } from "../config.ts"
 import { CliError, EXIT } from "../errors.ts"
 import { requireConfirmation, withVersion } from "../mutate.ts"
 import { printRows, note as say } from "../output.ts"
@@ -13,12 +13,8 @@ import { type Api, makeRuntime } from "../transport.ts"
  * mandatory for listing and optional for creating. That asymmetry is the API's,
  * and pretending otherwise would mean inventing a listing the server cannot do.
  */
-const withApi = async <T>(
-  profileFlag: string | undefined,
-  f: (api: Api) => Promise<T>,
-): Promise<T> => {
-  const { profile } = resolveProfile(loadConfig(), profileFlag)
-  const api = makeRuntime(profile)
+const withApi = async <T>(f: (api: Api) => Promise<T>): Promise<T> => {
+  const api = makeRuntime(requireSession())
   try {
     return await f(api)
   } finally {
@@ -64,7 +60,7 @@ export const noteCommands: ReadonlyArray<Command> = [
           "listNotes needs a subject — there is no org-wide note listing.",
         )
       }
-      await withApi(ctx.profile, async (api) => {
+      await withApi(async (api) => {
         const notes = await api.call((c) =>
           c.listNotes({ subjectId, includeArchived: Boolean(ctx.flags.archived) }),
         )
@@ -89,7 +85,7 @@ export const noteCommands: ReadonlyArray<Command> = [
     run: async (ctx) => {
       const body = await readBody(ctx.args, ctx.flags.file)
       if (!body) throw new CliError("The note is empty.", EXIT.usage)
-      await withApi(ctx.profile, async (api) => {
+      await withApi(async (api) => {
         if (ctx.flags["dry-run"]) {
           say(`Would write a ${body.length}-character note.`)
           return
@@ -111,7 +107,7 @@ export const noteCommands: ReadonlyArray<Command> = [
       if (!id) throw new CliError("Which note?", EXIT.usage)
       const body = await readBody(rest, ctx.flags.file)
       if (!body) throw new CliError("The note is empty.", EXIT.usage)
-      await withApi(ctx.profile, async (api) => {
+      await withApi(async (api) => {
         if (ctx.flags["dry-run"]) {
           say(`Would replace note ${id}.`)
           return
@@ -149,7 +145,7 @@ export const noteCommands: ReadonlyArray<Command> = [
       const [id] = ctx.args
       if (!id) throw new CliError("Which note?", EXIT.usage)
       requireConfirmation(ctx.flags, `permanently delete note ${id}`)
-      await withApi(ctx.profile, async (api) => {
+      await withApi(async (api) => {
         if (ctx.flags["dry-run"]) {
           say(`Would PURGE note ${id}.`)
           return

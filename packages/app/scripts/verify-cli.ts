@@ -18,7 +18,7 @@ import { provisionVerifyIdentity } from "./verify-session"
  * Each run provisions its own throwaway account and org through the same
  * `provisionVerifyIdentity` every other verify driver uses, so it never touches
  * existing data, and writes its config to a temp XDG dir so it cannot disturb
- * the operator's real profiles.
+ * the operator's own configuration.
  *
  *   bun run --cwd packages/cli build && bun scripts/verify-cli.ts
  */
@@ -585,7 +585,9 @@ const main = async (): Promise<void> => {
   // — and it is the same sequence that works over ssh.
   const blHome = path.join(configHome, "browser")
   const child = spawn("node", [CLI, "auth", "login", "--browser"], {
-    env: { ...process.env, XDG_CONFIG_HOME: blHome, KM_HOST: API },
+    // KM_NO_BROWSER: this driver runs the real command, and without it every run
+    // opens a tab on the machine running the tests.
+    env: { ...process.env, XDG_CONFIG_HOME: blHome, KM_HOST: API, KM_NO_BROWSER: "1" },
   })
   let stderrBuf = ""
   child.stderr.on("data", (d: Buffer) => {

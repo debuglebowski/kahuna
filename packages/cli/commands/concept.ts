@@ -1,5 +1,5 @@
 import type { FieldKind } from "@kingsmaker/contract"
-import { loadConfig, resolveProfile } from "../config.ts"
+import { requireSession } from "../config.ts"
 import { CliError, EXIT } from "../errors.ts"
 import { requireConfirmation } from "../mutate.ts"
 import { note, printOne, printRows } from "../output.ts"
@@ -7,12 +7,8 @@ import type { Command } from "../registry.ts"
 import { conceptContext, findConcept, findField } from "../resolve.ts"
 import { type Api, makeRuntime } from "../transport.ts"
 
-const withApi = async <T>(
-  profileFlag: string | undefined,
-  f: (api: Api) => Promise<T>,
-): Promise<T> => {
-  const { profile } = resolveProfile(loadConfig(), profileFlag)
-  const api = makeRuntime(profile)
+const withApi = async <T>(f: (api: Api) => Promise<T>): Promise<T> => {
+  const api = makeRuntime(requireSession())
   try {
     return await f(api)
   } finally {
@@ -45,7 +41,7 @@ export const conceptCommands: ReadonlyArray<Command> = [
     usage: "concept list [--archived] [--counts] [--json]",
     options: { archived: { type: "boolean" }, counts: { type: "boolean" } },
     run: async (ctx) => {
-      await withApi(ctx.profile, async (api) => {
+      await withApi(async (api) => {
         const concepts = await api.call((c) =>
           c.listConcepts({
             includeArchived: Boolean(ctx.flags.archived),
@@ -75,7 +71,7 @@ export const conceptCommands: ReadonlyArray<Command> = [
     run: async (ctx) => {
       const [name] = ctx.args
       if (!name) throw new CliError("Which concept?", EXIT.usage)
-      await withApi(ctx.profile, async (api) => {
+      await withApi(async (api) => {
         const { concept, fields } = await conceptContext(api, name)
         if (ctx.format === "json") {
           printOne(ctx.format, { ...concept, fields } as unknown as Record<string, unknown>)
@@ -120,7 +116,7 @@ export const conceptCommands: ReadonlyArray<Command> = [
     run: async (ctx) => {
       const [name] = ctx.args
       if (!name) throw new CliError("A name is required.", EXIT.usage)
-      await withApi(ctx.profile, async (api) => {
+      await withApi(async (api) => {
         if (ctx.flags["dry-run"]) {
           note(`Would create concept "${name}".`)
           return
@@ -165,7 +161,7 @@ export const conceptCommands: ReadonlyArray<Command> = [
     run: async (ctx) => {
       const [target] = ctx.args
       if (!target) throw new CliError("Which concept?", EXIT.usage)
-      await withApi(ctx.profile, async (api) => {
+      await withApi(async (api) => {
         const { concept, fields } = await conceptContext(api, target)
         const onOff = (flag: string, value: unknown): boolean | undefined => {
           if (value === undefined) return undefined
@@ -236,7 +232,7 @@ export const conceptCommands: ReadonlyArray<Command> = [
       const [target] = ctx.args
       if (!target) throw new CliError("Which concept?", EXIT.usage)
       requireConfirmation(ctx.flags, `permanently delete "${target}" and all of its records`)
-      await withApi(ctx.profile, async (api) => {
+      await withApi(async (api) => {
         const concepts = await api.call((c) => c.listConcepts({ includeArchived: true }))
         const concept = findConcept(concepts, target)
         if (ctx.flags["dry-run"]) {
@@ -258,7 +254,7 @@ export const conceptCommands: ReadonlyArray<Command> = [
     run: async (ctx) => {
       const [target] = ctx.args
       if (!target) throw new CliError("Which concept?", EXIT.usage)
-      await withApi(ctx.profile, async (api) => {
+      await withApi(async (api) => {
         const concepts = await api.call((c) => c.listConcepts({}))
         const concept = findConcept(concepts, target)
         const fields = await api.call((c) =>
@@ -309,7 +305,7 @@ export const conceptCommands: ReadonlyArray<Command> = [
           `Kinds: ${KINDS.join(", ")}`,
         )
       }
-      await withApi(ctx.profile, async (api) => {
+      await withApi(async (api) => {
         const concepts = await api.call((c) => c.listConcepts({}))
         const concept = findConcept(concepts, target)
 
@@ -368,7 +364,7 @@ export const conceptCommands: ReadonlyArray<Command> = [
     run: async (ctx) => {
       const [target, fieldName] = ctx.args
       if (!target || !fieldName) throw new CliError("Need <concept> <field>.", EXIT.usage)
-      await withApi(ctx.profile, async (api) => {
+      await withApi(async (api) => {
         const { concept, fields } = await conceptContext(api, target)
         const field = findField(fields, fieldName)
         // Merge, never replace: `config` carries the relation target, the enum
@@ -409,7 +405,7 @@ export const conceptCommands: ReadonlyArray<Command> = [
       if (!target || names.length === 0) {
         throw new CliError("Need <concept> and at least one field.", EXIT.usage)
       }
-      await withApi(ctx.profile, async (api) => {
+      await withApi(async (api) => {
         const { concept, fields } = await conceptContext(api, target)
         const named = names.map((n) => findField(fields, n))
         // Fields the caller left out keep their relative order AFTER the named
@@ -452,11 +448,11 @@ export const conceptCommands: ReadonlyArray<Command> = [
 
 const conceptLifecycle = async (
   target: string | undefined,
-  ctx: { profile?: string; flags: Record<string, unknown>; format: string },
+  ctx: { flags: Record<string, unknown>; format: string },
   verb: "archive" | "restore",
 ): Promise<void> => {
   if (!target) throw new CliError("Which concept?", EXIT.usage)
-  await withApi(ctx.profile, async (api) => {
+  await withApi(async (api) => {
     const concepts = await api.call((c) => c.listConcepts({ includeArchived: true }))
     const concept = findConcept(concepts, target)
     if (ctx.flags["dry-run"]) {
@@ -473,12 +469,12 @@ const conceptLifecycle = async (
 }
 
 const fieldLifecycle = async (
-  ctx: { args: ReadonlyArray<string>; profile?: string; flags: Record<string, unknown> },
+  ctx: { args: ReadonlyArray<string>; flags: Record<string, unknown> },
   verb: "archive" | "restore" | "delete",
 ): Promise<void> => {
   const [target, fieldName] = ctx.args
   if (!target || !fieldName) throw new CliError("Need <concept> <field>.", EXIT.usage)
-  await withApi(ctx.profile, async (api) => {
+  await withApi(async (api) => {
     const concepts = await api.call((c) => c.listConcepts({ includeArchived: true }))
     const concept = findConcept(concepts, target)
     const fields = await api.call((c) =>

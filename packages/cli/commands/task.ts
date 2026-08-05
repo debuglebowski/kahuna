@@ -1,5 +1,5 @@
 import type { Task, TaskStatus } from "@kingsmaker/contract"
-import { loadConfig, resolveProfile } from "../config.ts"
+import { requireSession } from "../config.ts"
 import { CliError, EXIT } from "../errors.ts"
 import { requireConfirmation, withVersion } from "../mutate.ts"
 import { note, printRows } from "../output.ts"
@@ -14,12 +14,8 @@ import { type Api, makeRuntime } from "../transport.ts"
  * `task priority` are the catalogues those tasks point at — sub-nouns, because
  * they belong to tasks and to nothing else.
  */
-const withApi = async <T>(
-  profileFlag: string | undefined,
-  f: (api: Api) => Promise<T>,
-): Promise<T> => {
-  const { profile } = resolveProfile(loadConfig(), profileFlag)
-  const api = makeRuntime(profile)
+const withApi = async <T>(f: (api: Api) => Promise<T>): Promise<T> => {
+  const api = makeRuntime(requireSession())
   try {
     return await f(api)
   } finally {
@@ -67,7 +63,7 @@ export const taskCommands: ReadonlyArray<Command> = [
       limit: { type: "string" },
     },
     run: async (ctx) => {
-      await withApi(ctx.profile, async (api) => {
+      await withApi(async (api) => {
         const statuses = await api.call((c) => c.listTaskStatuses({}))
         const statusId = ctx.flags.status
           ? findStatus(statuses, ctx.flags.status as string).id
@@ -103,7 +99,7 @@ export const taskCommands: ReadonlyArray<Command> = [
     run: async (ctx) => {
       const title = ctx.args.join(" ")
       if (!title) throw new CliError("A title is required.", EXIT.usage)
-      await withApi(ctx.profile, async (api) => {
+      await withApi(async (api) => {
         const statuses = await api.call((c) => c.listTaskStatuses({}))
         const statusId = ctx.flags.status
           ? findStatus(statuses, ctx.flags.status as string).id
@@ -142,7 +138,7 @@ export const taskCommands: ReadonlyArray<Command> = [
     run: async (ctx) => {
       const [id] = ctx.args
       if (!id) throw new CliError("Which task?", EXIT.usage)
-      await withApi(ctx.profile, async (api) => {
+      await withApi(async (api) => {
         const statuses = await api.call((c) => c.listTaskStatuses({}))
         const current = await currentTask(api, id)
 
@@ -211,7 +207,7 @@ export const taskCommands: ReadonlyArray<Command> = [
       const [id] = ctx.args
       if (!id) throw new CliError("Which task?", EXIT.usage)
       requireConfirmation(ctx.flags, `permanently delete task ${id}`)
-      await withApi(ctx.profile, async (api) => {
+      await withApi(async (api) => {
         if (ctx.flags["dry-run"]) {
           note(`Would PURGE task ${id}.`)
           return
@@ -229,7 +225,7 @@ export const taskCommands: ReadonlyArray<Command> = [
     usage: "task status list [--archived]",
     options: { archived: { type: "boolean" } },
     run: async (ctx) => {
-      await withApi(ctx.profile, async (api) => {
+      await withApi(async (api) => {
         const statuses = await api.call((c) =>
           c.listTaskStatuses({ includeArchived: Boolean(ctx.flags.archived) }),
         )
@@ -260,7 +256,7 @@ export const taskCommands: ReadonlyArray<Command> = [
       const [name] = ctx.args
       const category = ctx.flags.category as string | undefined
       if (!name || !category) throw new CliError("Need <name> --category <category>.", EXIT.usage)
-      await withApi(ctx.profile, async (api) => {
+      await withApi(async (api) => {
         if (ctx.flags["dry-run"]) {
           note(`Would create status "${name}".`)
           return
@@ -283,7 +279,7 @@ export const taskCommands: ReadonlyArray<Command> = [
     usage: "task priority list [--archived]",
     options: { archived: { type: "boolean" } },
     run: async (ctx) => {
-      await withApi(ctx.profile, async (api) => {
+      await withApi(async (api) => {
         const priorities = await api.call((c) =>
           c.listTaskPriorities({ includeArchived: Boolean(ctx.flags.archived) }),
         )
@@ -315,12 +311,12 @@ const currentTask = async (api: Api, id: string): Promise<Task> => {
 }
 
 const taskLifecycle = async (
-  ctx: { args: ReadonlyArray<string>; profile?: string; flags: Record<string, unknown> },
+  ctx: { args: ReadonlyArray<string>; flags: Record<string, unknown> },
   verb: "archive" | "restore",
 ): Promise<void> => {
   const [id] = ctx.args
   if (!id) throw new CliError("Which task?", EXIT.usage)
-  await withApi(ctx.profile, async (api) => {
+  await withApi(async (api) => {
     if (ctx.flags["dry-run"]) {
       note(`Would ${verb} task ${id}.`)
       return

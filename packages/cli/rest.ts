@@ -1,4 +1,4 @@
-import type { Profile } from "./config.ts"
+import type { Session } from "./config.ts"
 import { CliError, EXIT, exitCodeForStatus } from "./errors.ts"
 
 /**
@@ -72,8 +72,8 @@ export interface VersionInfo {
   readonly updateAvailable: boolean
 }
 
-export const version = async (profile: Profile): Promise<VersionInfo> => {
-  const res = await request(profile.host, "/api/version", { cookie: profile.cookie })
+export const version = async (session: Session): Promise<VersionInfo> => {
+  const res = await request(session.host, "/api/version", { cookie: session.cookie })
   if (!res.ok) {
     throw new CliError(
       `Could not read the version (HTTP ${res.status}).`,
@@ -140,12 +140,12 @@ export const signIn = async (
   return { cookie: jar.join("; "), email }
 }
 
-export const signOut = async (profile: Profile): Promise<void> => {
-  if (!profile.cookie) return
+export const signOut = async (session: Session): Promise<void> => {
+  if (!session.cookie) return
   // A failure here is not worth aborting on: the local credential is dropped
   // either way, and a server that cannot be reached cannot be told anything.
-  await request(profile.host, "/api/auth/sign-out", {
+  await request(session.host, "/api/auth/sign-out", {
     method: "POST",
-    cookie: profile.cookie,
+    cookie: session.cookie,
   }).catch(() => undefined)
 }

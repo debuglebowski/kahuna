@@ -1,4 +1,4 @@
-import { loadConfig, resolveProfile } from "../config.ts"
+import { requireSession } from "../config.ts"
 import { CliError, EXIT } from "../errors.ts"
 import { note, printRows } from "../output.ts"
 import type { Command } from "../registry.ts"
@@ -13,12 +13,8 @@ import { type Api, makeRuntime } from "../transport.ts"
  * by the record it starts from and named by that field. So this is
  * `record relation add`, and it always takes the field name.
  */
-const withApi = async <T>(
-  profileFlag: string | undefined,
-  f: (api: Api) => Promise<T>,
-): Promise<T> => {
-  const { profile } = resolveProfile(loadConfig(), profileFlag)
-  const api = makeRuntime(profile)
+const withApi = async <T>(f: (api: Api) => Promise<T>): Promise<T> => {
+  const api = makeRuntime(requireSession())
   try {
     return await f(api)
   } finally {
@@ -39,7 +35,7 @@ export const relationCommands: ReadonlyArray<Command> = [
       if (!fromId || !fieldName || !to) {
         throw new CliError("Need <from-id> --field <name> --to <record-id>.", EXIT.usage)
       }
-      await withApi(ctx.profile, async (api) => {
+      await withApi(async (api) => {
         const detail = await api.call((c) => c.getRecord({ id: fromId }))
         const field = findField(detail.fields, fieldName)
         if (field.kind !== "relation") {
@@ -78,7 +74,7 @@ export const relationCommands: ReadonlyArray<Command> = [
           "`km record relation list <id>` prints the relation ids.",
         )
       }
-      await withApi(ctx.profile, async (api) => {
+      await withApi(async (api) => {
         if (ctx.flags["dry-run"]) {
           note(`Would remove relation ${relationId}.`)
           return
@@ -95,7 +91,7 @@ export const relationCommands: ReadonlyArray<Command> = [
     run: async (ctx) => {
       const [id] = ctx.args
       if (!id) throw new CliError("Which record?", EXIT.usage)
-      await withApi(ctx.profile, async (api) => {
+      await withApi(async (api) => {
         const detail = await api.call((c) => c.getRecord({ id }))
         printRows(
           ctx.format,

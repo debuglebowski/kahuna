@@ -1,4 +1,4 @@
-import { loadConfig, resolveProfile } from "../config.ts"
+import { requireSession } from "../config.ts"
 import { CliError, EXIT } from "../errors.ts"
 import { withVersion } from "../mutate.ts"
 import { note, printRows } from "../output.ts"
@@ -12,12 +12,8 @@ import { type Api, makeRuntime } from "../transport.ts"
  * `discardDraft` take a VERSION id. The rename made that distinction visible in
  * the names, so the commands keep it visible in their arguments too.
  */
-const withApi = async <T>(
-  profileFlag: string | undefined,
-  f: (api: Api) => Promise<T>,
-): Promise<T> => {
-  const { profile } = resolveProfile(loadConfig(), profileFlag)
-  const api = makeRuntime(profile)
+const withApi = async <T>(f: (api: Api) => Promise<T>): Promise<T> => {
+  const api = makeRuntime(requireSession())
   try {
     return await f(api)
   } finally {
@@ -39,7 +35,7 @@ export const versionCommands: ReadonlyArray<Command> = [
     run: async (ctx) => {
       const [id] = ctx.args
       if (!id) throw new CliError("Which record?", EXIT.usage)
-      await withApi(ctx.profile, async (api) => {
+      await withApi(async (api) => {
         const recordId = await recordIdOf(api, id)
         const versions = await api.call((c) => c.listVersions({ recordId }))
         printRows(
@@ -63,7 +59,7 @@ export const versionCommands: ReadonlyArray<Command> = [
     run: async (ctx) => {
       const [id] = ctx.args
       if (!id) throw new CliError("Which record?", EXIT.usage)
-      await withApi(ctx.profile, async (api) => {
+      await withApi(async (api) => {
         const recordId = await recordIdOf(api, id)
         if (ctx.flags["dry-run"]) {
           note(`Would open a new draft on ${recordId}.`)
@@ -81,7 +77,7 @@ export const versionCommands: ReadonlyArray<Command> = [
     run: async (ctx) => {
       const [id] = ctx.args
       if (!id) throw new CliError("Which version?", EXIT.usage)
-      await withApi(ctx.profile, async (api) => {
+      await withApi(async (api) => {
         if (ctx.flags["dry-run"]) {
           note(`Would publish version ${id}. Publishing is permanent.`)
           return
@@ -101,7 +97,7 @@ export const versionCommands: ReadonlyArray<Command> = [
     run: async (ctx) => {
       const [id] = ctx.args
       if (!id) throw new CliError("Which version?", EXIT.usage)
-      await withApi(ctx.profile, async (api) => {
+      await withApi(async (api) => {
         if (ctx.flags["dry-run"]) {
           note(`Would discard draft ${id}.`)
           return

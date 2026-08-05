@@ -1,4 +1,4 @@
-import { loadConfig, resolveProfile } from "../config.ts"
+import { requireSession } from "../config.ts"
 import { CliError, EXIT } from "../errors.ts"
 import { note, printOne, printRows } from "../output.ts"
 import type { Command } from "../registry.ts"
@@ -12,12 +12,8 @@ import { type Api, makeRuntime } from "../transport.ts"
  * that actually pays here — a dry run reports what WOULD happen and writes
  * nothing, which is exactly what you want before letting a rule loose.
  */
-const withApi = async <T>(
-  profileFlag: string | undefined,
-  f: (api: Api) => Promise<T>,
-): Promise<T> => {
-  const { profile } = resolveProfile(loadConfig(), profileFlag)
-  const api = makeRuntime(profile)
+const withApi = async <T>(f: (api: Api) => Promise<T>): Promise<T> => {
+  const api = makeRuntime(requireSession())
   try {
     return await f(api)
   } finally {
@@ -48,7 +44,7 @@ export const automationCommands: ReadonlyArray<Command> = [
     usage: "automation list [--archived] [--json]",
     options: { archived: { type: "boolean" } },
     run: async (ctx) => {
-      await withApi(ctx.profile, async (api) => {
+      await withApi(async (api) => {
         const automations = await api.call((c) =>
           c.listAutomations({ includeArchived: Boolean(ctx.flags.archived) }),
         )
@@ -74,7 +70,7 @@ export const automationCommands: ReadonlyArray<Command> = [
     run: async (ctx) => {
       const [name] = ctx.args
       if (!name) throw new CliError("Which automation?", EXIT.usage)
-      await withApi(ctx.profile, async (api) => {
+      await withApi(async (api) => {
         const found = await findAutomation(api, name)
         const full = await api.call((c) => c.getAutomation({ id: found.id }))
         printOne(ctx.format, full as unknown as Record<string, unknown>)
@@ -89,7 +85,7 @@ export const automationCommands: ReadonlyArray<Command> = [
     run: async (ctx) => {
       const [name] = ctx.args
       if (!name) throw new CliError("Which automation?", EXIT.usage)
-      await withApi(ctx.profile, async (api) => {
+      await withApi(async (api) => {
         const found = await findAutomation(api, name)
         const runs = await api.call((c) =>
           c.listAutomationRuns({
@@ -112,7 +108,7 @@ export const automationCommands: ReadonlyArray<Command> = [
     run: async (ctx) => {
       const [name] = ctx.args
       if (!name) throw new CliError("Which automation?", EXIT.usage)
-      await withApi(ctx.profile, async (api) => {
+      await withApi(async (api) => {
         const found = await findAutomation(api, name)
         const result = await api.call((c) =>
           c.testAutomation({

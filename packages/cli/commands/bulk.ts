@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs"
 import type { Concept, Field, RecordVersion } from "@kingsmaker/contract"
-import { loadConfig, resolveProfile } from "../config.ts"
+import { requireSession } from "../config.ts"
 import { csvToObjects } from "../csv.ts"
 import { CliError, EXIT } from "../errors.ts"
 import { withVersion } from "../mutate.ts"
@@ -9,12 +9,8 @@ import type { Command } from "../registry.ts"
 import { conceptContext, findConcept, findField, labelOf } from "../resolve.ts"
 import { type Api, makeRuntime } from "../transport.ts"
 
-const withApi = async <T>(
-  profileFlag: string | undefined,
-  f: (api: Api) => Promise<T>,
-): Promise<T> => {
-  const { profile } = resolveProfile(loadConfig(), profileFlag)
-  const api = makeRuntime(profile)
+const withApi = async <T>(f: (api: Api) => Promise<T>): Promise<T> => {
+  const api = makeRuntime(requireSession())
   try {
     return await f(api)
   } finally {
@@ -84,7 +80,7 @@ export const bulkCommands: ReadonlyArray<Command> = [
       if (!conceptName && !all) {
         throw new CliError("Which concept? (or pass --all-concepts)", EXIT.usage)
       }
-      await withApi(ctx.profile, async (api) => {
+      await withApi(async (api) => {
         const concepts = await api.call((c) => c.listConcepts({}))
         const targets = all ? concepts : [findConcept(concepts, conceptName as string)]
 
@@ -163,7 +159,7 @@ export const bulkCommands: ReadonlyArray<Command> = [
         return
       }
 
-      await withApi(ctx.profile, async (api) => {
+      await withApi(async (api) => {
         const { concept, fields } = await conceptContext(api, conceptName)
 
         // Columns the concept does not have are a FAILURE, not something to

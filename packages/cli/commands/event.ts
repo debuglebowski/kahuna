@@ -1,4 +1,4 @@
-import { loadConfig, resolveProfile } from "../config.ts"
+import { requireSession } from "../config.ts"
 import { CliError, EXIT } from "../errors.ts"
 import { note, printRows } from "../output.ts"
 import type { Command } from "../registry.ts"
@@ -26,8 +26,8 @@ export const eventCommands: ReadonlyArray<Command> = [
       limit: { type: "string" },
     },
     run: async (ctx) => {
-      const { profile } = resolveProfile(loadConfig(), ctx.profile)
-      const api = makeRuntime(profile)
+      const session = requireSession()
+      const api = makeRuntime(session)
       try {
         const conceptName = ctx.flags.concept as string | undefined
         const conceptId = conceptName

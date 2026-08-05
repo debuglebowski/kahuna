@@ -1,5 +1,5 @@
 import type { AccessActionName, AccessResourceType, AccessRole } from "@kingsmaker/contract"
-import { loadConfig, resolveProfile } from "../config.ts"
+import { requireSession } from "../config.ts"
 import { CliError, EXIT } from "../errors.ts"
 import { note, printOne, printRows } from "../output.ts"
 import type { Command } from "../registry.ts"
@@ -13,12 +13,8 @@ import { type Api, makeRuntime } from "../transport.ts"
  * point is why `access check` renders the whole layer trace: with a real
  * ordering, "why" is a sequence, and a single yes/no throws away the answer.
  */
-const withApi = async <T>(
-  profileFlag: string | undefined,
-  f: (api: Api) => Promise<T>,
-): Promise<T> => {
-  const { profile } = resolveProfile(loadConfig(), profileFlag)
-  const api = makeRuntime(profile)
+const withApi = async <T>(f: (api: Api) => Promise<T>): Promise<T> => {
+  const api = makeRuntime(requireSession())
   try {
     return await f(api)
   } finally {
@@ -80,7 +76,7 @@ export const accessCommands: ReadonlyArray<Command> = [
     run: async (ctx) => {
       const action = ctx.flags.action as string | undefined
       const resource = ctx.flags.resource as string | undefined
-      await withApi(ctx.profile, async (api) => {
+      await withApi(async (api) => {
         // No question asked → the whole picture (`effectiveAccess`). A specific
         // question → `explainAccess`, which is the CLI-shaped one: it answers
         // yes/no AND shows every layer that spoke, in order.
@@ -182,7 +178,7 @@ export const accessCommands: ReadonlyArray<Command> = [
     summary: "The role catalogue",
     usage: "access role list [--json]",
     run: async (ctx) => {
-      await withApi(ctx.profile, async (api) => {
+      await withApi(async (api) => {
         const roles = await api.call((c) => c.listRoles())
         printRows(
           ctx.format,
@@ -206,7 +202,7 @@ export const accessCommands: ReadonlyArray<Command> = [
     run: async (ctx) => {
       const [name] = ctx.args
       if (!name) throw new CliError("Which role?", EXIT.usage)
-      await withApi(ctx.profile, async (api) => {
+      await withApi(async (api) => {
         const roles = await api.call((c) => c.listRoles())
         const role = findRole(roles, name)
         const { actors } = await api.call((c) => c.roleHolders({ roleId: role.id }))
@@ -239,7 +235,7 @@ export const accessCommands: ReadonlyArray<Command> = [
       if (!userId || names.length === 0) {
         throw new CliError("Need <user-id> and at least one role.", EXIT.usage)
       }
-      await withApi(ctx.profile, async (api) => {
+      await withApi(async (api) => {
         const roles = await api.call((c) => c.listRoles())
         const roleIds = names.map((n) => findRole(roles, n).id)
         if (ctx.flags["dry-run"]) {
@@ -256,12 +252,12 @@ export const accessCommands: ReadonlyArray<Command> = [
 ]
 
 const roleAssignment = async (
-  ctx: { args: ReadonlyArray<string>; profile?: string; flags: Record<string, unknown> },
+  ctx: { args: ReadonlyArray<string>; flags: Record<string, unknown> },
   verb: "assign" | "unassign",
 ): Promise<void> => {
   const [roleName, userId] = ctx.args
   if (!roleName || !userId) throw new CliError("Need <role> <user-id>.", EXIT.usage)
-  await withApi(ctx.profile, async (api) => {
+  await withApi(async (api) => {
     const roles = await api.call((c) => c.listRoles())
     const role = findRole(roles, roleName)
     if (ctx.flags["dry-run"]) {

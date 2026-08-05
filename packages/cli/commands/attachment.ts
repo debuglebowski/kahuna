@@ -2,7 +2,7 @@ import { createWriteStream, readFileSync, statSync } from "node:fs"
 import { basename } from "node:path"
 import { Readable } from "node:stream"
 import { pipeline } from "node:stream/promises"
-import { loadConfig, resolveProfile } from "../config.ts"
+import { requireSession } from "../config.ts"
 import { CliError, EXIT, exitCodeForStatus } from "../errors.ts"
 import { requireConfirmation } from "../mutate.ts"
 import { note, printRows } from "../output.ts"
@@ -17,12 +17,8 @@ import { type Api, makeRuntime } from "../transport.ts"
  * binary GET. Neither can ride the RPC transport, so both are hand-rolled here
  * with the same Origin header rest.ts sends.
  */
-const withApi = async <T>(
-  profileFlag: string | undefined,
-  f: (api: Api) => Promise<T>,
-): Promise<T> => {
-  const { profile } = resolveProfile(loadConfig(), profileFlag)
-  const api = makeRuntime(profile)
+const withApi = async <T>(f: (api: Api) => Promise<T>): Promise<T> => {
+  const api = makeRuntime(requireSession())
   try {
     return await f(api)
   } finally {
@@ -42,7 +38,7 @@ export const attachmentCommands: ReadonlyArray<Command> = [
       archived: { type: "boolean" },
     },
     run: async (ctx) => {
-      await withApi(ctx.profile, async (api) => {
+      await withApi(async (api) => {
         const files = await api.call((c) =>
           c.listFiles({
             recordId: ctx.flags.record as string | undefined,
@@ -93,7 +89,7 @@ export const attachmentCommands: ReadonlyArray<Command> = [
         throw new CliError(`Cannot read ${file}.`, EXIT.notFound)
       }
 
-      const { profile } = resolveProfile(loadConfig(), ctx.profile)
+      const session = requireSession()
       if (ctx.flags["dry-run"]) {
         note(`Would upload ${basename(file)} (${bytes.length} bytes).`)
         return
@@ -102,15 +98,15 @@ export const attachmentCommands: ReadonlyArray<Command> = [
       const form = new FormData()
       form.append("file", new Blob([new Uint8Array(bytes)]), basename(file))
       const url = recordId
-        ? `${profile.host}/api/records/${recordId}/attachments`
-        : `${profile.host}/api/buckets/${bucketId}/attachments`
+        ? `${session.host}/api/records/${recordId}/attachments`
+        : `${session.host}/api/buckets/${bucketId}/attachments`
       const res = await fetch(url, {
         method: "POST",
         body: form,
-        headers: { cookie: profile.cookie ?? "", origin: profile.host },
+        headers: { cookie: session.cookie ?? "", origin: session.host },
       }).catch((e: unknown) => {
         throw new CliError(
-          `Cannot reach ${profile.host} (${e instanceof Error ? e.message : String(e)}).`,
+          `Cannot reach ${session.host} (${e instanceof Error ? e.message : String(e)}).`,
           EXIT.failed,
         )
       })
@@ -134,12 +130,12 @@ export const attachmentCommands: ReadonlyArray<Command> = [
     run: async (ctx) => {
       const [id] = ctx.args
       if (!id) throw new CliError("Which attachment?", EXIT.usage)
-      const { profile } = resolveProfile(loadConfig(), ctx.profile)
-      const res = await fetch(`${profile.host}/api/attachments/${id}/download`, {
-        headers: { cookie: profile.cookie ?? "", origin: profile.host },
+      const session = requireSession()
+      const res = await fetch(`${session.host}/api/attachments/${id}/download`, {
+        headers: { cookie: session.cookie ?? "", origin: session.host },
       }).catch((e: unknown) => {
         throw new CliError(
-          `Cannot reach ${profile.host} (${e instanceof Error ? e.message : String(e)}).`,
+          `Cannot reach ${session.host} (${e instanceof Error ? e.message : String(e)}).`,
           EXIT.failed,
         )
       })
@@ -164,7 +160,7 @@ export const attachmentCommands: ReadonlyArray<Command> = [
     run: async (ctx) => {
       const [id] = ctx.args
       if (!id) throw new CliError("Which attachment?", EXIT.usage)
-      await withApi(ctx.profile, async (api) => {
+      await withApi(async (api) => {
         if (ctx.flags["dry-run"]) {
           note(`Would archive attachment ${id}.`)
           return
@@ -181,7 +177,7 @@ export const attachmentCommands: ReadonlyArray<Command> = [
     run: async (ctx) => {
       const [id] = ctx.args
       if (!id) throw new CliError("Which attachment?", EXIT.usage)
-      await withApi(ctx.profile, async (api) => {
+      await withApi(async (api) => {
         if (ctx.flags["dry-run"]) {
           note(`Would restore attachment ${id}.`)
           return
@@ -199,7 +195,7 @@ export const attachmentCommands: ReadonlyArray<Command> = [
       const [id] = ctx.args
       if (!id) throw new CliError("Which attachment?", EXIT.usage)
       requireConfirmation(ctx.flags, `permanently delete attachment ${id}`)
-      await withApi(ctx.profile, async (api) => {
+      await withApi(async (api) => {
         if (ctx.flags["dry-run"]) {
           note(`Would PURGE attachment ${id}. The bytes are gone for good.`)
           return
@@ -218,7 +214,7 @@ export const attachmentCommands: ReadonlyArray<Command> = [
       const bucketId = ctx.flags.bucket as string | undefined
       if (!bucketId) throw new CliError("Need --bucket <id>.", EXIT.usage)
       requireConfirmation(ctx.flags, `permanently empty bucket ${bucketId}`)
-      await withApi(ctx.profile, async (api) => {
+      await withApi(async (api) => {
         if (ctx.flags["dry-run"]) {
           note(`Would PURGE every file in bucket ${bucketId}.`)
           return
