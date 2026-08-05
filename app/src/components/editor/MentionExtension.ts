@@ -76,7 +76,7 @@ export const Mention = Node.create({
    * How `editor.getText()` sees a mention. Must agree with `mentionText` in
    * `lib/richtext.ts` (and so with the engine's authoritative copy), because the
    * client's derived text decides whether a field looks empty BEFORE the server
-   * re-derives — `InstanceForm` drops a field it reads as empty, which would make
+   * re-derives — `RecordForm` drops a field it reads as empty, which would make
    * a mention-only field vanish on create.
    *
    * An unlabelled mention contributes nothing, and never its `targetId`: derived

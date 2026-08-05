@@ -271,7 +271,7 @@ export function WidgetEditor({
   const conceptId = "conceptId" in widget ? (widget.conceptId ?? "") : ""
   const fields = useFields(conceptId)
   // Record dashboards: relation-scope a concept-scoped widget to the current
-  // record's related instances. The owning concept's relation fields are the
+  // record's related record versions. The owning concept's relation fields are the
   // options; picking one sets conceptId = the relation's target.
   const RELATION_SCOPABLE = new Set(["metric", "list", "breakdown", "kanban"])
   const relationScopable = recordMode && !!recordConceptId && RELATION_SCOPABLE.has(widget.type)
@@ -390,7 +390,7 @@ export function WidgetEditor({
 
       <InspectorSection title="Content">
         {/* Record dashboards: scope a concept-scoped widget to the whole concept,
-          or to THIS record's related instances via one of its relations. */}
+          or to THIS record's related recordVersions via one of its relations. */}
         {relationScopable && (
           <FieldRow label="Source">
             <Select
@@ -1520,21 +1520,21 @@ export function WidgetEditor({
           ) : (
             <>
               <FieldRow label="Record">
-                <FilesInstancePicker
-                  instanceId={widget.instanceId ?? null}
+                <FilesRecordVersionPicker
+                  recordVersionId={widget.recordVersionId ?? null}
                   concepts={concepts}
-                  onPick={(instanceId, pickedConceptId) =>
+                  onPick={(recordVersionId, pickedConceptId) =>
                     // A new record carries its concept (the field scope) and clears
                     // the field; clearing the record clears both.
                     patch({
-                      instanceId,
-                      conceptId: instanceId ? (pickedConceptId ?? null) : null,
+                      recordVersionId,
+                      conceptId: recordVersionId ? (pickedConceptId ?? null) : null,
                       fieldId: null,
                     })
                   }
                 />
               </FieldRow>
-              {widget.instanceId ? (
+              {widget.recordVersionId ? (
                 <FieldRow label="Rich text field">
                   <Select
                     value={widget.fieldId || "__none"}
@@ -1875,20 +1875,20 @@ export function WidgetEditor({
               <Select
                 value={widget.scope}
                 onValueChange={(v) => {
-                  const scope = v as "instance" | "concept" | "org" | "widget"
+                  const scope = v as "recordVersion" | "concept" | "org" | "widget"
                   // Clear the other scopes' keys so a stale ref can't linger; the
                   // two uploadable scopes default the drop-zone on.
-                  // `bindToConceptRecord` is instance-scope only — every other scope
+                  // `bindToConceptRecord` is record version-scope only — every other scope
                   // clears it, or the flag would silently outlive its meaning.
                   if (scope === "concept")
-                    patch({ scope, instanceId: null, bindToConceptRecord: false })
-                  else if (scope === "instance")
+                    patch({ scope, recordVersionId: null, bindToConceptRecord: false })
+                  else if (scope === "recordVersion")
                     patch({ scope, conceptId: null, allowUpload: widget.allowUpload ?? true })
                   else if (scope === "widget")
                     patch({
                       scope,
                       conceptId: null,
-                      instanceId: null,
+                      recordVersionId: null,
                       bindToConceptRecord: false,
                       // One bucket per widget, minted once and kept for its life —
                       // reusing the widget id would make two dashboards share files.
@@ -1896,7 +1896,12 @@ export function WidgetEditor({
                       allowUpload: widget.allowUpload ?? true,
                     })
                   else
-                    patch({ scope, conceptId: null, instanceId: null, bindToConceptRecord: false })
+                    patch({
+                      scope,
+                      conceptId: null,
+                      recordVersionId: null,
+                      bindToConceptRecord: false,
+                    })
                 }}
               >
                 <SelectTrigger className="w-full">
@@ -1904,7 +1909,7 @@ export function WidgetEditor({
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="widget">This widget (its own files)</SelectItem>
-                  <SelectItem value="instance">One record</SelectItem>
+                  <SelectItem value="recordVersion">One record</SelectItem>
                   <SelectItem value="concept">A concept (recent uploads)</SelectItem>
                   <SelectItem value="org">Whole org</SelectItem>
                 </SelectContent>
@@ -1953,7 +1958,7 @@ export function WidgetEditor({
                 </Select>
               </FieldRow>
             )}
-            {widget.scope === "instance" &&
+            {widget.scope === "recordVersion" &&
               (widget.bindToConceptRecord ? (
                 <ConceptRecordBinding
                   conceptId={conceptId}
@@ -1971,13 +1976,13 @@ export function WidgetEditor({
               ) : (
                 <>
                   <FieldRow label="Record">
-                    <FilesInstancePicker
-                      instanceId={widget.instanceId ?? null}
+                    <FilesRecordVersionPicker
+                      recordVersionId={widget.recordVersionId ?? null}
                       concepts={concepts}
-                      onPick={(instanceId) => patch({ instanceId })}
+                      onPick={(recordVersionId) => patch({ recordVersionId })}
                     />
                   </FieldRow>
-                  {!widget.instanceId && (
+                  {!widget.recordVersionId && (
                     <BindToConceptRecordButton concepts={concepts} onChange={patch} />
                   )}
                 </>
@@ -2027,7 +2032,7 @@ export function WidgetEditor({
                 />
               </FieldRow>
             </div>
-            {(widget.scope === "instance" || widget.scope === "widget") && (
+            {(widget.scope === "recordVersion" || widget.scope === "widget") && (
               <FieldRow label="Show">
                 <ToggleChip
                   pressed={widget.allowUpload ?? false}
@@ -2057,20 +2062,20 @@ export function WidgetEditor({
   )
 }
 
-/** The picked record's display label: instance → its item lineage → the
- *  server-resolved subject ref (instance state keys by field id, so the client
+/** The picked record's display label: record version → its record → the
+ *  server-resolved subject ref (record version state keys by field id, so the client
  *  can't label it alone). A gone record degrades to an honest note. */
-function PickedInstanceLabel({ instanceId }: { instanceId: string }) {
+function PickedRecordLabel({ recordVersionId }: { recordVersionId: string }) {
   const detail = useQuery({
-    queryKey: ["instanceItem", instanceId],
-    queryFn: () => api.getInstance(instanceId),
+    queryKey: ["instanceItem", recordVersionId],
+    queryFn: () => api.getRecord(recordVersionId),
     retry: false,
   })
-  const itemId = detail.data?.instance.itemId
+  const recordId = detail.data?.recordVersion.recordId
   const ref = useQuery({
-    queryKey: ["subjectRef", itemId],
-    queryFn: () => api.resolveTaskSubjects(itemId ? [itemId] : []),
-    enabled: !!itemId,
+    queryKey: ["subjectRef", recordId],
+    queryFn: () => api.resolveTaskSubjects(recordId ? [recordId] : []),
+    enabled: !!recordId,
   })
   if (detail.error)
     return <span className="text-muted-foreground">Record unavailable — pick another.</span>
@@ -2100,7 +2105,7 @@ function BindToConceptRecordButton({
       onPressedChange={() =>
         onChange({
           bindToConceptRecord: true,
-          instanceId: null,
+          recordVersionId: null,
           conceptId: bindable.length === 1 ? bindable[0]!.id : null,
         } as Partial<NormWidget>)
       }
@@ -2176,32 +2181,32 @@ function ConceptRecordBinding({
   )
 }
 
-/** Concept + search → one instance ref (the Shortcuts picker pattern), with the
+/** Concept + search → one record version ref (the Shortcuts picker pattern), with the
  *  current pick shown as a clearable row. `onPick` also reports the search
  *  concept so callers that store it (the Document widget) can scope a field
  *  picker; callers that don't (Files) just ignore it. */
-function FilesInstancePicker({
-  instanceId,
+function FilesRecordVersionPicker({
+  recordVersionId,
   concepts,
   onPick,
 }: {
-  instanceId: string | null
+  recordVersionId: string | null
   concepts: readonly Concept[]
-  onPick: (instanceId: string | null, conceptId: string | null) => void
+  onPick: (recordVersionId: string | null, conceptId: string | null) => void
 }) {
   const [searchConceptId, setSearchConceptId] = useState("")
   const [query, setQuery] = useState("")
   const results = useQuery({
     queryKey: ["search", searchConceptId, query],
-    queryFn: () => api.searchInstances(searchConceptId, query),
+    queryFn: () => api.searchRecords(searchConceptId, query),
     enabled: !!searchConceptId,
   })
 
-  if (instanceId)
+  if (recordVersionId)
     return (
       <div className="flex items-center gap-2 rounded-md border border-border px-2.5 py-1.5 text-sm">
         <span className="min-w-0 flex-1 truncate">
-          <PickedInstanceLabel instanceId={instanceId} />
+          <PickedRecordLabel recordVersionId={recordVersionId} />
         </span>
         <IconButton aria-label="Clear record" onClick={() => onPick(null, null)}>
           <X size={14} />
@@ -2229,9 +2234,9 @@ function FilesInstancePicker({
           <div className="max-h-36 space-y-0.5 overflow-y-auto">
             {(results.data ?? []).map((r) => (
               <button
-                key={r.itemId}
+                key={r.recordId}
                 type="button"
-                onClick={() => onPick(r.instanceId, searchConceptId)}
+                onClick={() => onPick(r.recordVersionId, searchConceptId)}
                 className="flex w-full items-center rounded px-2 py-1 text-left text-sm hover:bg-accent"
               >
                 {r.label}

@@ -1,7 +1,7 @@
 import type { Attachment } from "./api"
 
 /**
- * Pure helpers for the Files surfaces (instance tile + dashboard widget):
+ * Pure helpers for the Files surfaces (record version tile + dashboard widget):
  * mime classification, size formatting, and the widget's sort/filter knobs.
  * No React — kept testable.
  */
@@ -68,31 +68,34 @@ export type UploadTarget =
   | { kind: "bucket"; bucketId: string; shared: boolean }
   /** The open record, because the widget's scope owns nothing of its own. The
    *  copy has to name the destination: "uploads to the org" is meaningless. */
-  | { kind: "record"; itemId: string }
-  /** A pinned record — needs the id → item-lineage hop before uploading. */
-  | { kind: "instance"; instanceId: string }
+  | { kind: "record"; recordId: string }
+  /** A pinned record version — needs the id → record hop before uploading. */
+  | { kind: "recordVersion"; recordVersionId: string }
   /** Browse only: nowhere for a file to go. */
   | null
 
 export const uploadTarget = (
   widget: {
-    scope: "instance" | "concept" | "org" | "widget"
-    instanceId?: string | null
+    // "instance" is the pre-rename value, still decodable for one release.
+    scope: "recordVersion" | "instance" | "concept" | "org" | "widget"
+    recordVersionId?: string | null
     bucketId?: string | null
     bucketShared?: boolean
     allowUpload?: boolean
   },
-  /** The open record's item lineage, when rendering on a record dashboard. */
-  recordItemId?: string,
+  /** The open record, when rendering on a record dashboard. */
+  recordId?: string,
 ): UploadTarget => {
   if (widget.allowUpload === false) return null
   if (widget.scope === "widget")
     return widget.bucketId
       ? { kind: "bucket", bucketId: widget.bucketId, shared: widget.bucketShared !== false }
       : null
-  if (widget.scope === "instance")
-    return widget.instanceId ? { kind: "instance", instanceId: widget.instanceId } : null
-  return recordItemId ? { kind: "record", itemId: recordItemId } : null
+  if (widget.scope === "recordVersion" || widget.scope === "instance")
+    return widget.recordVersionId
+      ? { kind: "recordVersion", recordVersionId: widget.recordVersionId }
+      : null
+  return recordId ? { kind: "record", recordId } : null
 }
 
 /** Apply the widget's display knobs: type filter → sort → limit. */

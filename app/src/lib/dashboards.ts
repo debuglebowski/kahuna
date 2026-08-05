@@ -94,7 +94,37 @@ const normNode = (n: DashboardNode): NormNode => {
   }
   // Drop the legacy `layout` placement; size comes from w/h (defaulted to fill).
   const { layout: _legacy, ...rest } = n
-  return { ...rest, w: dim(n.w, FILL), h: dim(n.h, FILL) } as NormWidget
+  return { ...normalizeLegacyValues(rest), w: dim(n.w, FILL), h: dim(n.h, FILL) } as NormWidget
+}
+
+/**
+ * Rewrite the pre-rename wire value `"instance"` to `"recordVersion"` wherever a
+ * stored widget still carries it (a row saved before the vocabulary migration,
+ * or the interim window before `0012_record_vocabulary` back-fills `dashboards.body`
+ * — see the plan's belt-and-braces note). The contract's `Schema.Literal` still
+ * accepts `"instance"` so decode doesn't reject the row; this is what actually
+ * makes it render like a normal one. Drop this once no stored body round-trips
+ * with the legacy value.
+ */
+const isLegacyInstance = (kind: string): boolean => kind === "instance"
+
+const normalizeLegacyValues = (w: DashboardWidget): DashboardWidget => {
+  if (w.type === "files" && isLegacyInstance(w.scope)) {
+    return { ...w, scope: "recordVersion" }
+  }
+  if (w.type === "shortcuts") {
+    return {
+      ...w,
+      items: w.items.map((i) => (isLegacyInstance(i.kind) ? { ...i, kind: "recordVersion" } : i)),
+    }
+  }
+  if (w.type === "welcome" && w.links) {
+    return {
+      ...w,
+      links: w.links.map((i) => (isLegacyInstance(i.kind) ? { ...i, kind: "recordVersion" } : i)),
+    }
+  }
+  return w
 }
 
 /**
@@ -317,7 +347,7 @@ export const referencedConceptIds = (body: NormBody): string[] => {
     // files/document skip even when they carry a `conceptId` — including a
     // `bindToConceptRecord` one. Their concept ref is a lookup key (which single
     // record? which fields?), resolved by their own RPCs; loading the concept's
-    // instance list would fetch rows nobody reads.
+    // record version list would fetch rows nobody reads.
     if (
       n.type === "trend" ||
       n.type === "activity" ||
@@ -455,7 +485,7 @@ export const newWidget = (type: DashboardWidget["type"], recordMode = false): No
     case "activity":
       return { ...scoped, type: "activity" } as NormWidget
     // Analytics carries a query, not a conceptId — its numbers come from the
-    // provider, not from instances.
+    // provider, not from record versions.
     case "analytics":
       return {
         ...base,
@@ -490,20 +520,20 @@ export const newWidget = (type: DashboardWidget["type"], recordMode = false): No
         startField: "",
       } as NormWidget
     case "files":
-      // On a record dashboard: this record's files, uploadable. `instanceId` stays
+      // On a record dashboard: this record's files, uploadable. `recordVersionId` stays
       // null — WidgetCanvas fills it from the open record, so one template serves
       // every record of the concept.
       return recordMode
         ? ({
             ...scoped,
             type: "files",
-            scope: "instance",
-            instanceId: null,
+            scope: "recordVersion",
+            recordVersionId: null,
             allowUpload: true,
           } as NormWidget)
         : ({ ...scoped, type: "files", scope: "org" } as NormWidget)
     case "document":
-      return { ...scoped, type: "document", instanceId: null, fieldId: null } as NormWidget
+      return { ...scoped, type: "document", recordVersionId: null, fieldId: null } as NormWidget
     // Record-scoped widgets carry no config — the current record is supplied by
     // page context on a record dashboard.
     case "record-details":

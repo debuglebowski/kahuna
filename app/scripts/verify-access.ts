@@ -12,7 +12,7 @@
  *      list correctly hid. (A `fallback = true` bug passes #1 and fails here.)
  *   3. Counts and pagination reflect visible rows, not fetched-then-filtered rows.
  *   4. A shared record's notes/tasks/files/activity follow it; a non-shared record's
- *      do not, even with its item id in hand.
+ *      do not, even with its record id in hand.
  *   5. Relations do NOT cascade: sharing a record does not disclose its targets.
  *   6. `share` is required to share, nobody can share more than they hold, and any
  *      holder of `share` may revoke.
@@ -123,24 +123,24 @@ const link = await asOwner.call((c) =>
   }),
 )
 const acme = await asOwner.call((c) =>
-  c.createInstance({ conceptId: companies.id, fields: { [cname.id]: "Acme" } }),
+  c.createRecord({ conceptId: companies.id, fields: { [cname.id]: "Acme" } }),
 )
 const mk = (n: string) =>
-  asOwner.call((c) => c.createInstance({ conceptId: deals.id, fields: { [title.id]: n } }))
+  asOwner.call((c) => c.createRecord({ conceptId: deals.id, fields: { [title.id]: n } }))
 const one = await mk("One")
 const two = await mk("Two")
 await mk("Three")
 // The shared record links to a company the contractor has no access to.
 await asOwner.call((c) =>
-  c.createRelation({ fieldId: link.id, fromId: two.id, toItemId: acme.itemId }),
+  c.createRelation({ fieldId: link.id, fromId: two.id, toRecordId: acme.recordId }),
 )
 // Annotations on both a shared and a non-shared record, to prove they follow access.
-await asOwner.call((c) => c.createNote({ subjectId: two.itemId, body: "shared-note" }))
-await asOwner.call((c) => c.createNote({ subjectId: one.itemId, body: "private-note" }))
+await asOwner.call((c) => c.createNote({ subjectId: two.recordId, body: "shared-note" }))
+await asOwner.call((c) => c.createNote({ subjectId: one.recordId, body: "private-note" }))
 
 ok(
   "member sees all three deals before restriction",
-  (await asMember.call((c) => c.listInstances({ conceptId: deals.id }))).length === 3,
+  (await asMember.call((c) => c.listRecords({ conceptId: deals.id }))).length === 3,
 )
 
 // ── restrict the concept, then share ONE record with the contractor ──────────
@@ -154,13 +154,13 @@ ok(
 )
 ok(
   "   …and its records are unreadable",
-  (await asMember.code((c) => c.listInstances({ conceptId: deals.id }))) === "NOT_FOUND",
+  (await asMember.code((c) => c.listRecords({ conceptId: deals.id }))) === "NOT_FOUND",
 )
 
 const grant = await asOwner.call((c) =>
   c.share({
     resourceType: "record",
-    resourceId: two.itemId,
+    resourceId: two.recordId,
     userId: contractor.userId,
     actions: ["view"],
   }),
@@ -168,10 +168,10 @@ const grant = await asOwner.call((c) =>
 ok("2. owner shares ONE record with the contractor", !!grant.id)
 
 // THE LIST HALF.
-const seen = await asContractor.call((c) => c.listInstances({ conceptId: deals.id }))
+const seen = await asContractor.call((c) => c.listRecords({ conceptId: deals.id }))
 ok(
   "3. the contractor's list holds EXACTLY the shared record",
-  seen.length === 1 && seen[0]!.itemId === two.itemId,
+  seen.length === 1 && seen[0]!.recordId === two.recordId,
   `n=${seen.length}`,
 )
 ok(
@@ -182,43 +182,43 @@ ok(
 // THE BY-ID HALF — must agree with the list.
 ok(
   "4. the shared record OPENS by id",
-  (await asContractor.code((c) => c.getInstance({ id: two.id }))) === null,
+  (await asContractor.code((c) => c.getRecord({ id: two.id }))) === null,
 )
 ok(
   "   THE AGREEMENT: a NON-shared record does NOT open",
-  (await asContractor.code((c) => c.getInstance({ id: one.id }))) === "NOT_FOUND",
+  (await asContractor.code((c) => c.getRecord({ id: one.id }))) === "NOT_FOUND",
 )
 ok(
   "   …nor its versions",
-  (await asContractor.code((c) => c.listVersions({ itemId: one.itemId }))) === "NOT_FOUND",
+  (await asContractor.code((c) => c.listVersions({ recordId: one.recordId }))) === "NOT_FOUND",
 )
 
 // Counts: the limit must bound VISIBLE rows.
 ok(
   "5. THE COUNT GUARD: the member (no share) sees zero, not a truncated page",
-  (await asMember.code((c) => c.listInstances({ conceptId: deals.id }))) === "NOT_FOUND",
+  (await asMember.code((c) => c.listRecords({ conceptId: deals.id }))) === "NOT_FOUND",
 )
-const ownerAll = await asOwner.call((c) => c.listInstances({ conceptId: deals.id }))
+const ownerAll = await asOwner.call((c) => c.listRecords({ conceptId: deals.id }))
 ok("   …while the owner still sees all three", ownerAll.length === 3, `n=${ownerAll.length}`)
 
 // Annotations follow the record.
 ok(
   "6. the shared record's notes ARE readable",
-  (await asContractor.call((c) => c.listNotes({ subjectId: two.itemId }))).some(
+  (await asContractor.call((c) => c.listNotes({ subjectId: two.recordId }))).some(
     (n) => n.body === "shared-note",
   ),
 )
 ok(
   "   THE ANNOTATION CHOKEPOINT: a non-shared record's notes are NOT",
-  (await asContractor.code((c) => c.listNotes({ subjectId: one.itemId }))) === "NOT_FOUND",
+  (await asContractor.code((c) => c.listNotes({ subjectId: one.recordId }))) === "NOT_FOUND",
 )
 ok(
   "   …nor its activity feed",
-  (await asContractor.code((c) => c.getActivity({ subjectId: one.itemId }))) === "NOT_FOUND",
+  (await asContractor.code((c) => c.getActivity({ subjectId: one.recordId }))) === "NOT_FOUND",
 )
 
 // Relations do NOT cascade.
-const detail = await asContractor.call((c) => c.getInstance({ id: two.id }))
+const detail = await asContractor.call((c) => c.getRecord({ id: two.id }))
 ok(
   "7. NO CASCADE: the shared record's relation target is not disclosed",
   !detail.related.some((r) => r.conceptId === companies.id),
@@ -234,7 +234,7 @@ ok(
   (await asContractor.code((c) =>
     c.share({
       resourceType: "record",
-      resourceId: two.itemId,
+      resourceId: two.recordId,
       userId: member.userId,
       actions: ["edit"],
     }),
@@ -245,7 +245,7 @@ ok(
   (await asContractor.code((c) =>
     c.share({
       resourceType: "record",
-      resourceId: one.itemId,
+      resourceId: one.recordId,
       userId: member.userId,
       actions: ["view"],
     }),
@@ -256,23 +256,23 @@ ok(
 await asOwner.call((c) => c.revoke({ grantId: grant.id }))
 ok(
   "9. after revoke the record is gone from the list",
-  (await asContractor.code((c) => c.listInstances({ conceptId: deals.id }))) === "NOT_FOUND",
+  (await asContractor.code((c) => c.listRecords({ conceptId: deals.id }))) === "NOT_FOUND",
 )
 ok(
   "   …and no longer opens by id",
-  (await asContractor.code((c) => c.getInstance({ id: two.id }))) === "NOT_FOUND",
+  (await asContractor.code((c) => c.getRecord({ id: two.id }))) === "NOT_FOUND",
 )
 ok("   …on the VERY NEXT request (no cache staleness)", true)
 
 // The owner's view is untouched throughout.
 ok(
   "10. the owner still reads everything",
-  (await asOwner.call((c) => c.listInstances({ conceptId: deals.id }))).length === 3,
+  (await asOwner.call((c) => c.listRecords({ conceptId: deals.id }))).length === 3,
 )
 await asOwner.call((c) => c.setConceptVisibility({ id: deals.id, visibility: "visible" }))
 ok(
   "   un-restricting restores the plain member",
-  (await asMember.call((c) => c.listInstances({ conceptId: deals.id }))).length === 3,
+  (await asMember.call((c) => c.listRecords({ conceptId: deals.id }))).length === 3,
 )
 
 console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILED`)

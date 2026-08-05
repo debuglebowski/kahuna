@@ -101,7 +101,7 @@ export type ScopeBy = "resource" | "concept"
 export const DEFAULT_ROW = "__default__"
 
 /** Key for the local edit map. */
-const key = (itemId: string, action: string) => `${itemId}:${action}`
+const key = (recordId: string, action: string) => `${recordId}:${action}`
 
 /**
  * The row a rule belongs to, or null if it is not a row-scoped rule of this shape.
@@ -328,8 +328,8 @@ export function PermissionMatrix({
     },
   })
 
-  const setCell = (itemId: string, action: string, next: CellState) => {
-    setDraft((cur) => new Map(cur).set(key(itemId, action), next))
+  const setCell = (recordId: string, action: string, next: CellState) => {
+    setDraft((cur) => new Map(cur).set(key(recordId, action), next))
     setDirty(true)
   }
 

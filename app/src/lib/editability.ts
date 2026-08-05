@@ -8,11 +8,11 @@
  * API then refuses.
  */
 
-import type { Concept, Instance } from "./api"
+import type { Concept, RecordVersion } from "./api"
 
 /**
  * May this version's fields and links be edited? Three ways to be editable:
- *  - the concept isn't versioned at all (every instance is a plain editable row —
+ *  - the concept isn't versioned at all (every record version is a plain editable row —
  *    note such rows are `published` too, which is why the status alone won't do);
  *  - it's the open draft;
  *  - the concept allows amending published versions (`editReach: "any"`).
@@ -22,13 +22,15 @@ import type { Concept, Instance } from "./api"
  */
 export const canEditVersion = (
   concept: Pick<Concept, "versioningEnabled" | "editReach"> | null | undefined,
-  instance: Pick<Instance, "versionStatus"> | null | undefined,
+  recordVersion: Pick<RecordVersion, "versionStatus"> | null | undefined,
 ): boolean => {
   // Nothing loaded yet ⇒ don't claim frozen; the server is the real gate, and
   // guessing "frozen" would flicker the UI read-only on every load.
-  if (!concept || !instance) return true
+  if (!concept || !recordVersion) return true
   return (
-    !concept.versioningEnabled || instance.versionStatus === "draft" || concept.editReach === "any"
+    !concept.versioningEnabled ||
+    recordVersion.versionStatus === "draft" ||
+    concept.editReach === "any"
   )
 }
 
@@ -44,8 +46,8 @@ export const canEditPublished = (
  *  {@link canEditVersion} is too (a frozen version isn't being edited at all). */
 export const isAmending = (
   concept: Pick<Concept, "versioningEnabled" | "editReach"> | null | undefined,
-  instance: Pick<Instance, "versionStatus"> | null | undefined,
+  recordVersion: Pick<RecordVersion, "versionStatus"> | null | undefined,
 ): boolean =>
   !!concept?.versioningEnabled &&
-  instance?.versionStatus === "published" &&
+  recordVersion?.versionStatus === "published" &&
   concept.editReach === "any"

@@ -100,7 +100,7 @@ const amount = await asOwner.call((c) =>
   c.addField({ conceptId: secret.id, name: "Amount", kind: "text" }),
 )
 const secretRec = await asOwner.call((c) =>
-  c.createInstance({ conceptId: secret.id, fields: { [amount.id]: "250000" } }),
+  c.createRecord({ conceptId: secret.id, fields: { [amount.id]: "250000" } }),
 )
 const open = await asOwner.call((c) => c.createConcept({ name: `Person ${Date.now()}` }))
 const link = await asOwner.call((c) =>
@@ -111,16 +111,16 @@ const link = await asOwner.call((c) =>
     config: { target: secret.id },
   }),
 )
-const openRec = await asOwner.call((c) => c.createInstance({ conceptId: open.id, fields: {} }))
+const openRec = await asOwner.call((c) => c.createRecord({ conceptId: open.id, fields: {} }))
 await asOwner.call((c) =>
-  c.createRelation({ fieldId: link.id, fromId: openRec.id, toItemId: secretRec.itemId }),
+  c.createRelation({ fieldId: link.id, fromId: openRec.id, toRecordId: secretRec.recordId }),
 )
 
 // Before restricting, the member can see both — so the assertions below are about
 // the flag, not about a fixture the member never had access to.
 const beforeIds = (await asMember.call((c) => c.listConcepts({}))).map((x) => x.id)
 ok("member sees the concept BEFORE it is restricted", beforeIds.includes(secret.id))
-const beforeDetail = await asMember.call((c) => c.getInstance({ id: openRec.id }))
+const beforeDetail = await asMember.call((c) => c.getRecord({ id: openRec.id }))
 ok(
   "…and sees the relation to it",
   beforeDetail.related.some((r) => r.conceptId === secret.id),
@@ -140,49 +140,49 @@ ok("   …but still includes the visible one", afterIds.includes(open.id))
 
 // 2. every by-id read fails, as NOT_FOUND
 ok(
-  "2. listInstances → NOT_FOUND",
-  (await asMember.code((c) => c.listInstances({ conceptId: secret.id }))) === "NOT_FOUND",
-  String(await asMember.code((c) => c.listInstances({ conceptId: secret.id }))),
+  "2. listRecords → NOT_FOUND",
+  (await asMember.code((c) => c.listRecords({ conceptId: secret.id }))) === "NOT_FOUND",
+  String(await asMember.code((c) => c.listRecords({ conceptId: secret.id }))),
 )
 ok(
-  "   getInstance → NOT_FOUND",
-  (await asMember.code((c) => c.getInstance({ id: secretRec.id }))) === "NOT_FOUND",
+  "   getRecord → NOT_FOUND",
+  (await asMember.code((c) => c.getRecord({ id: secretRec.id }))) === "NOT_FOUND",
 )
 ok(
   "   listVersions → NOT_FOUND",
-  (await asMember.code((c) => c.listVersions({ itemId: secretRec.itemId }))) === "NOT_FOUND",
+  (await asMember.code((c) => c.listVersions({ recordId: secretRec.recordId }))) === "NOT_FOUND",
 )
 ok(
   "   getActivity → NOT_FOUND",
-  (await asMember.code((c) => c.getActivity({ subjectId: secretRec.itemId }))) === "NOT_FOUND",
+  (await asMember.code((c) => c.getActivity({ subjectId: secretRec.recordId }))) === "NOT_FOUND",
 )
 ok(
-  "   searchInstances → NOT_FOUND",
-  (await asMember.code((c) => c.searchInstances({ conceptId: secret.id, query: "250" }))) ===
+  "   searchRecords → NOT_FOUND",
+  (await asMember.code((c) => c.searchRecords({ conceptId: secret.id, query: "250" }))) ===
     "NOT_FOUND",
 )
 // 3. the relation edge is DROPPED from the visible record's detail
-const afterDetail = await asMember.call((c) => c.getInstance({ id: openRec.id }))
+const afterDetail = await asMember.call((c) => c.getRecord({ id: openRec.id }))
 ok(
   "3. relation into the restricted concept is DROPPED, not '(unavailable)'",
   !afterDetail.related.some((r) => r.conceptId === secret.id) &&
     !afterDetail.related.some((r) => r.label === "(unavailable)"),
   `related=${JSON.stringify(afterDetail.related.map((r) => r.label))}`,
 )
-ok("   the visible record itself still reads fine", afterDetail.instance.id === openRec.id)
+ok("   the visible record itself still reads fine", afterDetail.recordVersion.id === openRec.id)
 
 // 4. the owner is unaffected, and un-restricting restores access
 ok(
   "4. owner still lists it",
   (await asOwner.call((c) => c.listConcepts({}))).some((x) => x.id === secret.id),
 )
-const ownerRows = await asOwner.call((c) => c.listInstances({ conceptId: secret.id }))
+const ownerRows = await asOwner.call((c) => c.listRecords({ conceptId: secret.id }))
 ok("   owner still reads the value", ownerRows[0]?.state[amount.id] === "250000")
 
 await asOwner.call((c) => c.setConceptVisibility({ id: secret.id, visibility: "visible" }))
 const restoredIds = (await asMember.call((c) => c.listConcepts({}))).map((x) => x.id)
 ok("   un-restricting restores member access", restoredIds.includes(secret.id))
-const restoredDetail = await asMember.call((c) => c.getInstance({ id: openRec.id }))
+const restoredDetail = await asMember.call((c) => c.getRecord({ id: openRec.id }))
 ok(
   "   …and the relation edge comes back",
   restoredDetail.related.some((r) => r.conceptId === secret.id),
@@ -197,14 +197,14 @@ const sSalary = await asOwner.call((c) =>
   c.addField({ conceptId: staff.id, name: "Salary", kind: "text" }),
 )
 const staffRec = await asOwner.call((c) =>
-  c.createInstance({
+  c.createRecord({
     conceptId: staff.id,
     fields: { [sName.id]: "Ada", [sSalary.id]: "250000" },
   }),
 )
 await asOwner.call((c) => c.setFieldVisibility({ id: sSalary.id, visibility: "admin" }))
 
-const mRows = await asMember.call((c) => c.listInstances({ conceptId: staff.id }))
+const mRows = await asMember.call((c) => c.listRecords({ conceptId: staff.id }))
 ok("5. member still lists the concept's records", mRows.length === 1)
 ok("   …sees the open field", mRows[0]?.state[sName.id] === "Ada")
 ok(
@@ -218,15 +218,15 @@ ok(
   mDefs.some((f) => f.id === sName.id) && !mDefs.some((f) => f.id === sSalary.id),
   `defs=${mDefs.map((f) => f.name).join(",")}`,
 )
-const mDetail = await asMember.call((c) => c.getInstance({ id: staffRec.id }))
-ok("   getInstance masks it too", mDetail.instance.state[sSalary.id] === undefined)
+const mDetail = await asMember.call((c) => c.getRecord({ id: staffRec.id }))
+ok("   getRecord masks it too", mDetail.recordVersion.state[sSalary.id] === undefined)
 ok("   …and its detail defs exclude it", !mDetail.fields.some((f) => f.id === sSalary.id))
 
 // writing it is refused, and indistinguishably from a bogus key
 const writeCode = await asMember.code((c) =>
-  c.updateInstance({
+  c.updateRecord({
     id: staffRec.id,
-    expectedVersion: mDetail.instance.version,
+    expectedVersion: mDetail.recordVersion.version,
     patch: { [sSalary.id]: "1" },
   }),
 )
@@ -234,28 +234,28 @@ ok("6. member CANNOT write the hidden field", writeCode === "VALIDATION", String
 
 // the member's own edit must not erase it — the data-loss guard, over real HTTP
 await asMember.call((c) =>
-  c.updateInstance({
+  c.updateRecord({
     id: staffRec.id,
-    expectedVersion: mDetail.instance.version,
+    expectedVersion: mDetail.recordVersion.version,
     patch: { [sName.id]: "Grace" },
   }),
 )
-const afterEdit = await asOwner.call((c) => c.getInstance({ id: staffRec.id }))
+const afterEdit = await asOwner.call((c) => c.getRecord({ id: staffRec.id }))
 ok(
   "7. THE DATA-LOSS GUARD: member's edit did NOT erase the hidden value",
-  afterEdit.instance.state[sSalary.id] === "250000" &&
-    afterEdit.instance.state[sName.id] === "Grace",
-  JSON.stringify(afterEdit.instance.state),
+  afterEdit.recordVersion.state[sSalary.id] === "250000" &&
+    afterEdit.recordVersion.state[sName.id] === "Grace",
+  JSON.stringify(afterEdit.recordVersion.state),
 )
 
 // owner still sees everything
-const oRows = await asOwner.call((c) => c.listInstances({ conceptId: staff.id }))
+const oRows = await asOwner.call((c) => c.listRecords({ conceptId: staff.id }))
 ok("8. owner reads the hidden field", oRows[0]?.state[sSalary.id] === "250000")
 const oDefs = await asOwner.call((c) => c.listFields({ conceptId: staff.id }))
 ok("   owner sees both defs", oDefs.length >= 2)
 
 // ── the activity feed is its own channel: raw payloads + a `previous` map ─────
-const mFeed = await asMember.call((c) => c.getActivity({ subjectId: staffRec.itemId }))
+const mFeed = await asMember.call((c) => c.getActivity({ subjectId: staffRec.recordId }))
 const mLeaks = mFeed.filter((e) => {
   const p = (e.payload ?? {}) as { fields?: object; patch?: object }
   const keys = [
@@ -271,7 +271,7 @@ ok(
   `leaks=${mLeaks.length}`,
 )
 ok("   …and still reports the visible field's history", mFeed.length > 0, `n=${mFeed.length}`)
-const oFeed = await asOwner.call((c) => c.getActivity({ subjectId: staffRec.itemId }))
+const oFeed = await asOwner.call((c) => c.getActivity({ subjectId: staffRec.recordId }))
 const oSees = oFeed.some((e) => {
   const p = (e.payload ?? {}) as { fields?: object; patch?: object }
   return sSalary.id in (p.fields ?? {}) || sSalary.id in (p.patch ?? {})

@@ -16,12 +16,12 @@ import { type Attachment, api, type FileOwner } from "../../lib/api"
 import { useSession } from "../../lib/auth-client"
 import { fileKind, formatBytes } from "../../lib/files"
 import { useIsAdmin } from "../../pages/settings/SettingsLayout"
-import { MemberAvatar, memberLabel, type OrgMember } from "../item/AssigneePicker"
+import { MemberAvatar, memberLabel, type OrgMember } from "../record/AssigneePicker"
 import { ConfirmDialog, IconButton, Modal } from "../ui"
 
 /**
  * The shared Files renderer — list rows or a thumbnail gallery — used by the
- * instance tile and the dashboard widget. Mutations (archive/restore/delete)
+ * record version tile and the dashboard widget. Mutations (archive/restore/delete)
  * live on the row; the host owns the data and passes `onChanged` to refetch.
  * Opening a file uses the inline URL (the browser renders img/pdf natively);
  * the download icon forces a save.
@@ -460,7 +460,7 @@ export function FileDropZone({
   onUploaded,
   children,
 }: {
-  /** A record's item lineage, or a Files widget's own bucket. */
+  /** A record, or a Files widget's own bucket. */
   owner: FileOwner
   onUploaded: () => void
   /** Custom idle content; default is the "drop files" hint. */

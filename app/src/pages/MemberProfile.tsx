@@ -4,8 +4,8 @@ import { Activity, ListTodo, Mail } from "lucide-react"
 import { useMemo } from "react"
 import { useNavigate, useParams } from "react-router-dom"
 import { EventRows } from "@/components/dashboard/ActivityWidget"
-import { isOverdue } from "@/components/item/DueDateControl"
-import { Dot } from "@/components/item/StatusSelect"
+import { isOverdue } from "@/components/record/DueDateControl"
+import { Dot } from "@/components/record/StatusSelect"
 import { Badge, Card, roleTone, Spinner } from "@/components/ui"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { api, type Task } from "@/lib/api"
@@ -71,7 +71,7 @@ export function MemberProfile() {
     [eventsQ.data, userId],
   )
 
-  // A task points at its item lineage; the route wants an instance, so resolve
+  // A task points at its record; the route wants a record version, so resolve
   // the head version (latest published, else the draft) on click.
   const open = useMutation({
     mutationFn: async (t: Task) => {

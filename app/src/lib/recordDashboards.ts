@@ -1,7 +1,7 @@
 import type { Dashboard, DashboardBody, DashboardNode } from "./api"
 
 /**
- * Pick which record dashboard renders an instance. `records` is a concept's
+ * Pick which record dashboard renders a record version. `records` is a concept's
  * record dashboards as returned by `listRecordDashboards` (ordered by position).
  * Resolution order:
  *   1. an explicit `viewRef` that names one of THIS concept's record dashboards
@@ -25,7 +25,7 @@ const recordW = (id: string, type: DashboardNode["type"]): DashboardNode =>
 
 // ── instance_view → record dashboard migration ───────────────────────────────
 
-/** A legacy instance-view tile (mirror of the contract `InstanceViewTile`). */
+/** A legacy record version-view tile (mirror of the contract `RecordViewTile`). */
 export interface ViewTileLike {
   readonly id: string
   readonly contents: ReadonlyArray<string>
@@ -57,7 +57,13 @@ const contentToNode = (key: string, id: string, opts: TilesToBodyOpts): Dashboar
     } as DashboardNode
   }
   if (key === "files") {
-    return { id, type: "files", title: null, scope: "instance", allowUpload: true } as DashboardNode
+    return {
+      id,
+      type: "files",
+      title: null,
+      scope: "recordVersion",
+      allowUpload: true,
+    } as DashboardNode
   }
   if (key === "versions" && !opts.versioned) return null
   const map: Record<string, DashboardNode["type"]> = {
@@ -75,7 +81,7 @@ const contentToNode = (key: string, id: string, opts: TilesToBodyOpts): Dashboar
 }
 
 /** One tile → a node: a single widget, or a tabs group when it held >1 content
- *  (the instance view rendered multi-content tiles as tabs). null when nothing in
+ *  (the record version view rendered multi-content tiles as tabs). null when nothing in
  *  it applies to this concept. */
 const tileToNode = (tile: ViewTileLike, opts: TilesToBodyOpts): DashboardNode | null => {
   const nodes = tile.contents
@@ -96,7 +102,7 @@ const tileToNode = (tile: ViewTileLike, opts: TilesToBodyOpts): DashboardNode | 
 }
 
 /**
- * Translate a saved instance-view tile layout into a record dashboard body —
+ * Translate a saved record version-view tile layout into a record dashboard body —
  * preserving WHICH panels a concept's custom layout showed (and their left-right
  * proportions) by grouping tiles into rows (by `y`, ordered by `x`) and mapping
  * each content key to its record widget. Tiles/contents that don't apply to the

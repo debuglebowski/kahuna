@@ -6,15 +6,15 @@
 
 /** Human phrase for an event type. Falls back to a de-camel/snake-cased label. */
 const LABELS: Record<string, string> = {
-  InstanceCreated: "created this item",
+  RecordVersionCreated: "created this item",
   VersionCreated: "started a new version",
-  InstanceUpdated: "edited fields",
+  RecordVersionUpdated: "edited fields",
   // An edit to an ALREADY-PUBLISHED version, distinct from an ordinary edit so the
   // feed reads as a correction to history (see the concept's "edit reach" setting).
   VersionAmended: "amended this version",
-  InstanceArchived: "archived this item",
-  InstanceRestored: "restored this item",
-  InstancePurged: "deleted this item",
+  RecordVersionArchived: "archived this item",
+  RecordVersionRestored: "restored this item",
+  RecordVersionPurged: "deleted this item",
   ComputedBandChanged: "status drifted",
   RelationCreated: "added a connection",
   RelationDeleted: "removed a connection",
@@ -22,8 +22,8 @@ const LABELS: Record<string, string> = {
   AttachmentArchived: "archived a file",
   AttachmentRestored: "restored a file",
   AttachmentPurged: "deleted a file",
-  ItemArchived: "archived this item",
-  ItemRestored: "restored this item",
+  RecordArchived: "archived this item",
+  RecordRestored: "restored this item",
   NoteCreated: "added a note",
   NoteUpdated: "edited a note",
   NoteArchived: "archived a note",
@@ -54,7 +54,7 @@ export const eventLabel = (eventType: string): string =>
 export const KNOWN_EVENT_TYPES: ReadonlyArray<string> = Object.keys(LABELS)
 
 /**
- * Title-case an event type for display: "InstanceCreated" → "Instance created".
+ * Title-case an event type for display: "InstanceCreated" → "Record version created".
  *
  * The blunt sibling of `eventLabel` above: that one renders a *phrase* from the
  * curated `LABELS` map ("created this item"), this one just splits the camel
@@ -79,7 +79,7 @@ export interface ActivityResolvers {
 }
 
 /** One labelled row in the expanded detail view. Exactly one of `text` (plain
- *  string) or `fieldId`+`value` (instance field value, rendered kind-aware by
+ *  string) or `fieldId`+`value` (record version field value, rendered kind-aware by
  *  the UI) is set. `hasPrev` marks a field edit whose overwritten value is
  *  known — the UI then renders `prev → value` (prev may be null = was empty). */
 export interface ActivityDetailRow {
@@ -132,7 +132,7 @@ export const eventSnippet = (
 ): string | null => {
   const p = rec(payload)
   switch (eventType) {
-    case "InstanceUpdated":
+    case "RecordVersionUpdated":
     case "VersionAmended":
       return fieldList(Object.keys(rec(p.patch)), r)
     case "ComputedBandChanged": {
@@ -214,11 +214,11 @@ export const eventDetails = (
           : row
       })
   switch (eventType) {
-    case "InstanceCreated":
+    case "RecordVersionCreated":
     case "VersionCreated":
       // Initial state: skip the untouched (empty) fields, show what was set.
       return fieldRows(rec(p.fields), true)
-    case "InstanceUpdated":
+    case "RecordVersionUpdated":
     case "VersionAmended":
       // The patch: keep nulls — "Status: —" reads as "cleared".
       return fieldRows(rec(p.patch), false)

@@ -13,10 +13,10 @@ import {
 } from "lucide-react"
 import { useCallback, useMemo, useState } from "react"
 import { Link } from "react-router-dom"
-import { MemberAvatar, memberLabel, type OrgMember } from "@/components/item/AssigneePicker"
-import { isOverdue } from "@/components/item/DueDateControl"
-import { Dot } from "@/components/item/StatusSelect"
-import { TaskComposer } from "@/components/item/TaskList"
+import { MemberAvatar, memberLabel, type OrgMember } from "@/components/record/AssigneePicker"
+import { isOverdue } from "@/components/record/DueDateControl"
+import { Dot } from "@/components/record/StatusSelect"
+import { TaskComposer } from "@/components/record/TaskList"
 import { PriorityFlag } from "@/components/tasks/PriorityControl"
 import { TaskModal } from "@/components/tasks/TaskModal"
 import {
@@ -77,7 +77,7 @@ export type TaskRowMeta = "due" | "priority" | "labels" | "assignee"
 const ALL_META: ReadonlyArray<TaskRowMeta> = ["due", "priority", "labels", "assignee"]
 
 /**
- * The org-global task directory: every task — item-bound and org-level —
+ * The org-global task directory: every task — record-bound and org-level —
  * bucketed by schedule (Overdue / Today / Tomorrow / month / Not scheduled),
  * Zero-style (or by status / priority / flat via `groupBy`). Rows are dense
  * single-liners (Linear-style): status dot, assignee avatar and due date edit
@@ -588,9 +588,9 @@ function TaskRow({
           }}
           className="h-6 flex-1 border-transparent bg-transparent px-1 text-sm shadow-none"
         />
-      ) : subjectRef?.instanceId ? (
+      ) : subjectRef?.recordVersionId ? (
         <Link
-          to={recordHref(subjectRef.instanceId)}
+          to={recordHref(subjectRef.recordVersionId)}
           className={`min-w-0 ${titleClass} hover:underline`}
         >
           {task.title}
@@ -631,9 +631,9 @@ function TaskRow({
       <span className="ml-auto flex shrink-0 items-center gap-2.5">
         {/* record (borderless, muted) */}
         {subjectRef &&
-          (subjectRef.instanceId ? (
+          (subjectRef.recordVersionId ? (
             <Link
-              to={recordHref(subjectRef.instanceId)}
+              to={recordHref(subjectRef.recordVersionId)}
               className="flex max-w-44 items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
             >
               <ConceptIcon value={concept?.icon || "lucide:CircleDot"} size={13} />

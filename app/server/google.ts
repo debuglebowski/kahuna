@@ -600,7 +600,7 @@ async function syncCalendar(connectionId: string, calendarId = "primary") {
       u.searchParams.set("timeMin", new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString())
     if (pageToken) u.searchParams.set("pageToken", pageToken)
     return googleRequest<{
-      records?: CalendarEvent[]
+      items?: CalendarEvent[]
       nextPageToken?: string
       nextSyncToken?: string
     }>(connectionId, u.toString())
@@ -609,7 +609,7 @@ async function syncCalendar(connectionId: string, calendarId = "primary") {
   try {
     do {
       const page = await fetchPage(pageToken)
-      for (const event of page.records ?? []) {
+      for (const event of page.items ?? []) {
         await upsertCalendarEvent(connection, calendarId, event)
       }
       pageToken = page.nextPageToken

@@ -117,9 +117,9 @@ interface Field {
   readonly id: string
   readonly name: string
 }
-interface Instance {
+interface RecordVersion {
   readonly id: string
-  readonly itemId: string
+  readonly recordId: string
   readonly version: number
   readonly versionSeq: number
   readonly state: Record<string, unknown>
@@ -135,12 +135,12 @@ const toggle = (conceptId: string, singleRecord: boolean, fields?: Record<string
   ) as unknown as Promise<Concept>
 const getRecord = (conceptId: string) =>
   call((c) => c.getSingleRecord({ conceptId })) as unknown as Promise<{
-    instance: Instance
+    recordVersion: RecordVersion
     concept: Concept
     fields: ReadonlyArray<Field>
   } | null>
 const listItems = (conceptId: string) =>
-  call((c) => c.listInstances({ conceptId })) as unknown as Promise<ReadonlyArray<Instance>>
+  call((c) => c.listRecords({ conceptId })) as unknown as Promise<ReadonlyArray<RecordVersion>>
 const conceptsNow = () =>
   call((c) => c.listConcepts({ includeArchived: true })) as unknown as Promise<
     ReadonlyArray<Concept>
@@ -164,8 +164,8 @@ ok("re-toggling on is idempotent (no second record)", (await listItems(plain.id)
 // ══ slice 6: /c/<slug> resolution ══════════════════════════════════════════════
 console.log("\n── /c/<slug> resolution ──")
 const detail = await getRecord(plain.id)
-ok("getSingleRecord returns the record", !!detail && detail.instance.id === created[0]?.id)
-ok("…in getInstance's shape (concept + fields alongside)", !!detail?.concept && !!detail?.fields)
+ok("getSingleRecord returns the record", !!detail && detail.recordVersion.id === created[0]?.id)
+ok("…in getRecord's shape (concept + fields alongside)", !!detail?.concept && !!detail?.fields)
 ok("…carrying the slug the route matches on", !!detail?.concept.slug, detail?.concept.slug)
 ok(
   "…and the fields the record view renders",
@@ -183,23 +183,23 @@ ok(
   "getSingleRecord is null when the concept has no records at all",
   (await getRecord(empty.id)) === null,
 )
-await call((c) => c.createInstance({ conceptId: empty.id, fields: {} }))
+await call((c) => c.createRecord({ conceptId: empty.id, fields: {} }))
 ok("…and resolves the lineage once one exists", (await getRecord(empty.id)) !== null)
 
 // ══ slice 3: the guards behind slice 10's hidden affordances ═══════════════════
 console.log("\n── guards (what the UI hides) ──")
 const rec = created[0]!
 await refused("create: a second record is refused", "SINGLE_RECORD_CONFLICT", (c) =>
-  c.createInstance({ conceptId: plain.id, fields: {} }),
+  c.createRecord({ conceptId: plain.id, fields: {} }),
 )
 await refused("archive: the record can't be archived", "SINGLE_RECORD_PROTECTED", (c) =>
-  c.archiveInstance({ id: rec.id, expectedVersion: rec.version }),
+  c.archiveRecordVersion({ id: rec.id, expectedVersion: rec.version }),
 )
 await refused("purge: the record can't be deleted", "SINGLE_RECORD_PROTECTED", (c) =>
-  c.deleteInstance({ id: rec.id }),
+  c.deleteRecordVersion({ id: rec.id }),
 )
-await refused("archiveItem: the lineage can't be archived", "SINGLE_RECORD_PROTECTED", (c) =>
-  c.archiveItem({ itemId: rec.itemId }),
+await refused("archiveRecord: the lineage can't be archived", "SINGLE_RECORD_PROTECTED", (c) =>
+  c.archiveRecord({ recordId: rec.recordId }),
 )
 ok("the record survived all four refusals", (await listItems(plain.id)).length === 1)
 
@@ -221,11 +221,11 @@ ok("toggle on WITH the value succeeds", seeded.singleRecord === true)
 const seededRec = await getRecord(strict.id)
 ok(
   "…and the seed landed on the record",
-  seededRec?.instance.state[orgName.id] === "Acme Inc",
-  JSON.stringify(seededRec?.instance.state),
+  seededRec?.recordVersion.state[orgName.id] === "Acme Inc",
+  JSON.stringify(seededRec?.recordVersion.state),
 )
 
-// ══ slice 3: composes with versioning (ITEM-level, not instance-level) ═════════
+// ══ slice 3: composes with versioning (ITEM-level, not record version-level) ═════════
 console.log("\n── versioned single record ──")
 const versioned = await newConcept(`Playbook ${Date.now()}`)
 await addField(versioned.id, "Body", "richtext")
@@ -235,30 +235,32 @@ await toggle(versioned.id, true)
 // every head-only query — precisely why resolution is `singleRecordOf`.
 const vDetail = await getRecord(versioned.id)
 ok("a versioned single record resolves while still a draft", !!vDetail)
-const vRec = vDetail!.instance
+const vRec = vDetail!.recordVersion
 await refused(
   "discardDraft: the only-ever draft can't be discarded",
   "SINGLE_RECORD_PROTECTED",
   (c) => c.discardDraft({ id: vRec.id }),
 )
 await call((c) => c.publishVersion({ id: vRec.id, expectedVersion: vRec.version }))
-const v2 = (await call((c) => c.newVersion({ itemId: vRec.itemId }))) as unknown as Instance
+const v2 = (await call((c) =>
+  c.newVersion({ recordId: vRec.recordId }),
+)) as unknown as RecordVersion
 await call((c) => c.publishVersion({ id: v2.id, expectedVersion: v2.version }))
 const versions = (await call((c) =>
-  c.listVersions({ itemId: vRec.itemId }),
-)) as unknown as ReadonlyArray<Instance>
+  c.listVersions({ recordId: vRec.recordId }),
+)) as unknown as ReadonlyArray<RecordVersion>
 ok("the lineage legitimately holds N versions", versions.length === 2, `n=${versions.length}`)
 ok("…and it is still ONE record", (await listItems(versioned.id)).length === 1)
 ok(
   "…with the head resolving as the single record",
-  (await getRecord(versioned.id))?.instance.id === v2.id,
+  (await getRecord(versioned.id))?.recordVersion.id === v2.id,
 )
 
 // ══ slice 3: toggle on with 2 live records is refused ══════════════════════════
 const crowded = await newConcept(`Crowded ${Date.now()}`)
 await addField(crowded.id, "Name")
-await call((c) => c.createInstance({ conceptId: crowded.id, fields: {} }))
-await call((c) => c.createInstance({ conceptId: crowded.id, fields: {} }))
+await call((c) => c.createRecord({ conceptId: crowded.id, fields: {} }))
+await call((c) => c.createRecord({ conceptId: crowded.id, fields: {} }))
 await refused(
   "toggle on with 2 live records is refused (which one would be 'the' one?)",
   "SINGLE_RECORD_CONFLICT",
@@ -273,10 +275,10 @@ ok("toggle off clears the flag", released.singleRecord === false)
 const relRec = (await listItems(plain.id))[0]!
 ok("…and the record stays, as an ordinary record", !!relRec)
 const archived = (await call((c) =>
-  c.archiveInstance({ id: relRec.id, expectedVersion: relRec.version }),
-)) as unknown as Instance
+  c.archiveRecordVersion({ id: relRec.id, expectedVersion: relRec.version }),
+)) as unknown as RecordVersion
 ok("…now archivable like any other", (await listItems(plain.id)).length === 0)
-await call((c) => c.restoreInstance({ id: archived.id, expectedVersion: archived.version }))
+await call((c) => c.restoreRecordVersion({ id: archived.id, expectedVersion: archived.version }))
 ok("…and restorable", (await listItems(plain.id)).length === 1)
 await toggle(plain.id, true)
 ok("toggling back on reuses the existing record", (await listItems(plain.id)).length === 1)
@@ -352,8 +354,8 @@ ok(
 const bound = await getRecord(plain.id)
 ok(
   "the bound widget and /c/<slug> resolve the SAME record",
-  !!bound && bound.instance.itemId === relRec.itemId,
-  `${bound?.instance.itemId} vs ${relRec.itemId}`,
+  !!bound && bound.recordVersion.recordId === relRec.recordId,
+  `${bound?.recordVersion.recordId} vs ${relRec.recordId}`,
 )
 
 // ══ slice 9: concept delete cascades to the record ═════════════════════════════
@@ -368,7 +370,7 @@ ok(
   !(await conceptsNow()).some((c) => c.id === doomed.id),
 )
 await refused("…and takes its record with it", "NOT_FOUND", (c) =>
-  c.getInstance({ id: doomedRec.id }),
+  c.getRecord({ id: doomedRec.id }),
 )
 
 // The versioned case exercises the newest-first loop: a leftover sibling version
@@ -377,17 +379,19 @@ const doomedV = await newConcept(`DoomedV ${Date.now()}`)
 await addField(doomedV.id, "Name")
 await call((c) => c.updateConcept({ id: doomedV.id, description: null, versioningEnabled: true }))
 await toggle(doomedV.id, true)
-const dv1 = (await getRecord(doomedV.id))!.instance
+const dv1 = (await getRecord(doomedV.id))!.recordVersion
 await call((c) => c.publishVersion({ id: dv1.id, expectedVersion: dv1.version }))
-const dv2 = (await call((c) => c.newVersion({ itemId: dv1.itemId }))) as unknown as Instance
+const dv2 = (await call((c) =>
+  c.newVersion({ recordId: dv1.recordId }),
+)) as unknown as RecordVersion
 await call((c) => c.publishVersion({ id: dv2.id, expectedVersion: dv2.version }))
 await call((c) => c.deleteConcept({ id: doomedV.id }))
 ok(
   "deleting a VERSIONED single-record concept succeeds",
   !(await conceptsNow()).some((c) => c.id === doomedV.id),
 )
-await refused("…purging the head", "NOT_FOUND", (c) => c.getInstance({ id: dv2.id }))
-await refused("…and the earlier version too", "NOT_FOUND", (c) => c.getInstance({ id: dv1.id }))
+await refused("…purging the head", "NOT_FOUND", (c) => c.getRecord({ id: dv2.id }))
+await refused("…and the earlier version too", "NOT_FOUND", (c) => c.getRecord({ id: dv1.id }))
 
 // A live relation pointing at the record is NOT forced through — orphaning it is
 // exactly what the archive/delete convention exists to prevent.
@@ -404,11 +408,11 @@ const relField = (await call((c) =>
   } as never),
 )) as unknown as Field
 const holderInst = (await call((c) =>
-  c.createInstance({ conceptId: holder.id, fields: {} }),
-)) as unknown as Instance
-const heldRec = (await getRecord(held.id))!.instance
+  c.createRecord({ conceptId: holder.id, fields: {} }),
+)) as unknown as RecordVersion
+const heldRec = (await getRecord(held.id))!.recordVersion
 await call((c) =>
-  c.createRelation({ fieldId: relField.id, fromId: holderInst.id, toItemId: heldRec.itemId }),
+  c.createRelation({ fieldId: relField.id, fromId: holderInst.id, toRecordId: heldRec.recordId }),
 )
 await refused(
   "a referenced record blocks the cascade rather than orphaning the edge",

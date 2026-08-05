@@ -277,7 +277,7 @@ const INTEGRATION_INFO = {
       <ul className="list-disc space-y-1.5 pl-4">
         <li>
           Enriched person/company fields you request (name, title, email, company — possibly phone),
-          written onto the instance you enrich.
+          written onto the recordVersion you enrich.
         </li>
         <li>An optional 30-day cache of those enrichment results (can be disabled).</li>
         <li>Your API key (stored encrypted).</li>
@@ -295,10 +295,10 @@ const INTEGRATION_INFO = {
     dataImported: (
       <ul className="list-disc space-y-1.5 pl-4">
         <li>
-          The instance fields you push to Clay, and the enriched values Clay returns — written back
-          onto instances.
+          The recordVersion fields you push to Clay, and the enriched values Clay returns — written
+          back onto recordVersions.
         </li>
-        <li>A correlation record linking each enrichment job to its instance.</li>
+        <li>A correlation record linking each enrichment job to its recordVersion.</li>
         <li>Your table webhook URL and optional API key (stored encrypted).</li>
       </ul>
     ),
@@ -789,7 +789,7 @@ function PosthogCard() {
           {region === "custom" && (
             <Field
               label="Self-hosted host"
-              hint="Base URL of your self-hosted PostHog instance, e.g. https://posthog.example.com."
+              hint="Base URL of your self-hosted PostHog recordVersion, e.g. https://posthog.example.com."
             >
               <Input
                 value={host}
@@ -1110,8 +1110,8 @@ function SlackCard() {
  * Apollo.io — a key-based connector (like PostHog), so `configured` is always
  * true. Connect stores an encrypted org-level API key; once connected, the card
  * surfaces how the connector is used (on-demand enrich / search / import) and
- * the count of enrichment fields available to map. Per-instance enrichment is
- * driven from the instance Details tile (the enrich route + client live here;
+ * the count of enrichment fields available to map. Per-record version enrichment is
+ * driven from the record version Details tile (the enrich route + client live here;
  * that UI affordance is a deferred follow-up).
  */
 function ApolloCard() {
@@ -1188,7 +1188,7 @@ function ApolloCard() {
       {connected ? (
         <div className="space-y-3 p-6 text-sm text-muted-foreground">
           <p>
-            Enrich instances, search for people, and import leads on demand.{" "}
+            Enrich recordVersions, search for people, and import leads on demand.{" "}
             {data.enrichmentFields?.length
               ? `${data.enrichmentFields.length} enrichment fields available to map.`
               : null}
@@ -1237,8 +1237,8 @@ function ApolloCard() {
  * true (no server OAuth gate). Connect stores the encrypted Clay table-webhook
  * URL + a KM-generated callback secret; once connected the card surfaces the
  * callback URL the operator pastes into Clay's "send result back" action. The
- * round-trip (push instance → Clay enriches → callback writes fields back) is
- * driven from the instance Details tile (the enrich route + client live here;
+ * round-trip (push record version → Clay enriches → callback writes fields back) is
+ * driven from the record version Details tile (the enrich route + client live here;
  * that "Send to Clay" UI affordance is a deferred follow-up).
  */
 function ClayCard() {
@@ -1300,9 +1300,9 @@ function ClayCard() {
       {connected ? (
         <div className="space-y-3 p-6 text-sm text-muted-foreground">
           <p>
-            Push instances into your Clay table for enrichment; enriched rows post back
+            Push recordVersions into your Clay table for enrichment; enriched rows post back
             automatically. Net-new Clay rows{" "}
-            {data.newRowAutoCreate ? "create instances" : "are queued for review"}.
+            {data.newRowAutoCreate ? "create recordVersions" : "are queued for review"}.
           </p>
           {data.callbackUrl && (
             <div className="space-y-1 break-all">

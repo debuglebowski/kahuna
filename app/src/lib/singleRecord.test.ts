@@ -17,7 +17,7 @@ const concept = (patch: Partial<Concept> = {}): Concept =>
     versioningEnabled: false,
     editReach: "draft",
     singleRecord: true,
-    instanceView: null,
+    recordView: null,
     titleFieldId: null,
     archivedAt: null,
     ...patch,

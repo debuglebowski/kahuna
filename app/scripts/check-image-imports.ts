@@ -74,7 +74,7 @@ const resolveFile = (base: string): string | null => {
  * reason this isn't a two-line regex: types are erased before the module is
  * loaded, so a type-only import of a file that isn't in the image is completely
  * fine. `src/lib/conditions.ts` does exactly that — `import type { Field,
- * Instance } from "./api"`, where api.ts is client code the image has no reason
+ * Record version } from "./api"`, where api.ts is client code the image has no reason
  * to ship. Counting it as a dependency would demand we copy the entire client
  * tree to satisfy an import that doesn't exist at runtime.
  *

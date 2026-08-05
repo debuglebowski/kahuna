@@ -1,8 +1,8 @@
 import { useQuery } from "@tanstack/react-query"
 import { useMemo } from "react"
-import { api, type Concept, type DashboardWidget, type Instance } from "@/lib/api"
+import { api, type Concept, type DashboardWidget, type RecordVersion } from "@/lib/api"
 import { useSession } from "@/lib/auth-client"
-import type { ConceptInstanceData } from "@/lib/conceptData"
+import type { ConceptRecordData } from "@/lib/conceptData"
 import { formatMetric, formatWidgetNumber, heroTextClass, sizeVariant } from "@/lib/dashboards"
 import { cn } from "@/lib/utils"
 import { createdOnOrBefore, metricSeries, metricValue } from "@/lib/widgetAggregations"
@@ -51,9 +51,12 @@ const SPARK_HEIGHT = { sm: "h-8", md: "h-12", lg: "h-16" } as const
 
 /** Currency code for the hero number: the first one stored on the summed
  *  field's values (money values carry their own code; USD covers none). */
-const sniffCurrency = (instances: readonly Instance[], fieldId?: string | null): string => {
+const sniffCurrency = (
+  recordVersions: readonly RecordVersion[],
+  fieldId?: string | null,
+): string => {
   if (!fieldId) return "USD"
-  for (const i of instances) {
+  for (const i of recordVersions) {
     const v = i.state[fieldId]
     if (v && typeof v === "object" && "currency" in v) {
       const c = (v as { currency?: unknown }).currency
@@ -63,7 +66,7 @@ const sniffCurrency = (instances: readonly Instance[], fieldId?: string | null):
   return "USD"
 }
 
-/** A single big number: count of matching instances, or sum/avg of a field.
+/** A single big number: count of matching record versions, or sum/avg of a field.
  *  Variants: centered tile (default), a wide stat bar, or a sparkline KPI
  *  (number beside an inline trend). All support an optional delta vs the value
  *  N days ago. */
@@ -73,7 +76,7 @@ export function MetricWidget({
   concept,
 }: {
   widget: Metric
-  data: ConceptInstanceData | undefined
+  data: ConceptRecordData | undefined
   concept: Concept | undefined
 }) {
   const { data: session } = useSession()
@@ -85,15 +88,15 @@ export function MetricWidget({
   // plain query (same pattern as the Kanban board's archived toggle).
   const archivedQ = useQuery({
     queryKey: ["metric-archived", conceptId],
-    queryFn: () => api.listInstances(conceptId, { includeArchived: true }),
+    queryFn: () => api.listRecords(conceptId, { includeArchived: true }),
     enabled: includeArchived && !!conceptId,
   })
-  const instances = useMemo(() => {
-    const live = data?.instances ?? []
+  const recordVersions = useMemo(() => {
+    const live = data?.recordVersions ?? []
     if (!includeArchived) return live
     const archived = (archivedQ.data ?? []).filter((i) => i.archivedAt != null)
     return [...live, ...archived]
-  }, [data?.instances, includeArchived, archivedQ.data])
+  }, [data?.recordVersions, includeArchived, archivedQ.data])
 
   // Sparkline trail (spark variant only): the metric sampled daily across a
   // window derived from the delta setting (7d → 7d, otherwise 30d), so it needs
@@ -105,7 +108,7 @@ export function MetricWidget({
     () =>
       isSpark
         ? metricSeries(
-            instances,
+            recordVersions,
             widget.agg,
             widget.conditions,
             widget.field,
@@ -117,7 +120,7 @@ export function MetricWidget({
         : [],
     [
       isSpark,
-      instances,
+      recordVersions,
       widget.agg,
       widget.conditions,
       widget.field,
@@ -133,7 +136,7 @@ export function MetricWidget({
   }
 
   const opts = { match: widget.match, me: session?.user.id ?? null }
-  const value = metricValue(instances, widget.agg, widget.conditions, widget.field, opts)
+  const value = metricValue(recordVersions, widget.agg, widget.conditions, widget.field, opts)
   const field = widget.field ? data?.fields.find((f) => f.id === widget.field) : undefined
   // A custom caption wins; otherwise auto-derive it from the aggregate.
   const sub =
@@ -143,16 +146,16 @@ export function MetricWidget({
       : `${widget.agg} of ${field?.name ?? "—"}`)
 
   const format = widget.format ?? "plain"
-  const currency = format === "currency" ? sniffCurrency(instances, widget.field) : undefined
+  const currency = format === "currency" ? sniffCurrency(recordVersions, widget.field) : undefined
   const hero = value == null ? "—" : formatMetric(value, format, currency)
 
-  // Delta vs N days ago: the metric over the instances that existed back then.
+  // Delta vs N days ago: the metric over the record versions that existed back then.
   // Created-at based — archived/deleted drift is invisible (approximation).
   const deltaDays = widget.delta === "7d" ? 7 : widget.delta === "30d" ? 30 : null
   let deltaLine: { text: string; dir: -1 | 0 | 1 } | null = null
   if (deltaDays != null && value != null) {
     const baseline = metricValue(
-      createdOnOrBefore(instances, Date.now() - deltaDays * DAY_MS),
+      createdOnOrBefore(recordVersions, Date.now() - deltaDays * DAY_MS),
       widget.agg,
       widget.conditions,
       widget.field,

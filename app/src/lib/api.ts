@@ -12,10 +12,10 @@ import {
   type FieldConfig,
   type FieldKind,
   type GraphLayout,
-  type InstanceViewLayout,
-  type InstanceViewPrefsBody,
   KingsmakerRpcs,
   type MentionTarget,
+  type RecordViewLayout,
+  type RecordViewPrefsBody,
   type RichTextEnvelope,
   type SidebarCondition,
   type SidebarViewBody,
@@ -55,20 +55,20 @@ export type {
   FieldConfig,
   FieldKind,
   GraphLayout,
-  Instance,
-  InstanceDetail,
-  InstancePick,
-  InstanceViewLayout,
-  InstanceViewPrefs,
-  InstanceViewPrefsBody,
-  InstanceViewTile,
-  Item,
+  KmRecord,
   Label,
   MentionKind,
   MentionRef,
   MentionTarget,
   Note,
-  RelatedInstance,
+  RecordDetail,
+  RecordPick,
+  RecordVersion,
+  RecordViewLayout,
+  RecordViewPrefs,
+  RecordViewPrefsBody,
+  RecordViewTile,
+  RelatedRecord,
   Relation,
   RichTextEnvelope,
   SidebarCondition,
@@ -83,18 +83,18 @@ export type {
   VersionStatus,
 } from "../../rpc/contract"
 
-/** Who a new upload belongs to: a record's item lineage, or a Files widget's own
- *  bucket (`shared: false` hides it from org-scope widgets). Mirrors the engine's
+/** Who a new upload belongs to: a record, or a Files widget's own bucket
+ *  (`shared: false` hides it from org-scope widgets). Mirrors the engine's
  *  `UploadOwner` — the two upload routes take exactly one of these. */
 export type FileOwner =
-  | { readonly itemId: string }
+  | { readonly recordId: string }
   | { readonly bucketId: string; readonly shared?: boolean }
 
 /** The server's cap, in MB, for the one message the user can act on. Kept in sync
  *  with `MAX_UPLOAD_BYTES` (the engine can't be imported into the browser bundle). */
 export const MAX_UPLOAD_MB = 25
 
-/** Computed-field shapes (carried inside an instance's `state`). */
+/** Computed-field shapes (carried inside a record version's `state`). */
 export interface DecayValue {
   readonly days: number | null
   readonly band: "fresh" | "warm" | "cooling" | "cold"
@@ -475,7 +475,7 @@ export interface ClayStatus {
   readonly lastError?: string | null
 }
 
-/** Result of pushing an instance into Clay (async — enriched data returns later). */
+/** Result of pushing a record version into Clay (async — enriched data returns later). */
 export interface ClayEnrichResult {
   readonly ok: boolean
   /** Correlation id KM embeds in the row and Clay echoes on callback. */
@@ -521,8 +521,8 @@ export const api = {
         defaultLabelIds: patch.defaultLabelIds,
       }),
     ),
-  setConceptInstanceView: (id: string, instanceView: InstanceViewLayout | null) =>
-    call((c) => c.setConceptInstanceView({ id, instanceView })),
+  setConceptRecordView: (id: string, recordView: RecordViewLayout | null) =>
+    call((c) => c.setConceptRecordView({ id, recordView })),
   setConceptTitleField: (id: string, titleFieldId: string | null) =>
     call((c) => c.setConceptTitleField({ id, titleFieldId })),
   /** Set who may READ a concept's records. Admin-only; applied immediately (not
@@ -558,9 +558,9 @@ export const api = {
   getConceptGraph: () => call((c) => c.getConceptGraph()),
   getGraphLayout: () => call((c) => c.getGraphLayout()),
   saveGraphLayout: (positions: GraphLayout) => call((c) => c.saveGraphLayout({ positions })),
-  getInstanceGraphLayout: (itemId: string) => call((c) => c.getInstanceGraphLayout({ itemId })),
-  saveInstanceGraphLayout: (itemId: string, positions: GraphLayout) =>
-    call((c) => c.saveInstanceGraphLayout({ itemId, positions })),
+  getRecordGraphLayout: (recordId: string) => call((c) => c.getRecordGraphLayout({ recordId })),
+  saveRecordGraphLayout: (recordId: string, positions: GraphLayout) =>
+    call((c) => c.saveRecordGraphLayout({ recordId, positions })),
   addField: (input: {
     conceptId: string
     name: string
@@ -581,40 +581,40 @@ export const api = {
   deleteField: (id: string) => call((c) => c.deleteField({ id })),
   reorderFields: (conceptId: string, orders: ReadonlyArray<{ id: string; position: number }>) =>
     call((c) => c.reorderFields({ conceptId, orders })),
-  listInstances: (conceptId: string, opts?: { includeArchived?: boolean }) =>
-    call((c) => c.listInstances({ conceptId, includeArchived: opts?.includeArchived })),
-  getInstance: (id: string) => call((c) => c.getInstance({ id })),
+  listRecords: (conceptId: string, opts?: { includeArchived?: boolean }) =>
+    call((c) => c.listRecords({ conceptId, includeArchived: opts?.includeArchived })),
+  getRecord: (id: string) => call((c) => c.getRecord({ id })),
   getSingleRecord: (conceptId: string) => call((c) => c.getSingleRecord({ conceptId })),
   getChanged: () => call((c) => c.getChanged()),
   listEvents: (input?: { conceptId?: string | null; since?: number; limit?: number }) =>
     call((c) =>
       c.listEvents({ conceptId: input?.conceptId, since: input?.since, limit: input?.limit }),
     ),
-  createInstance: (conceptId: string, fields: Fields) =>
-    call((c) => c.createInstance({ conceptId, fields })),
-  updateInstance: (id: string, expectedVersion: number, patch: Fields) =>
-    call((c) => c.updateInstance({ id, expectedVersion, patch })),
-  transitionInstance: (id: string, expectedVersion: number, field: string, to: string) =>
-    call((c) => c.transitionInstance({ id, expectedVersion, field, to })),
-  archiveInstance: (id: string, expectedVersion: number) =>
-    call((c) => c.archiveInstance({ id, expectedVersion })),
-  restoreInstance: (id: string, expectedVersion: number) =>
-    call((c) => c.restoreInstance({ id, expectedVersion })),
-  deleteInstance: (id: string) => call((c) => c.deleteInstance({ id })),
+  createRecord: (conceptId: string, fields: Fields) =>
+    call((c) => c.createRecord({ conceptId, fields })),
+  updateRecord: (id: string, expectedVersion: number, patch: Fields) =>
+    call((c) => c.updateRecord({ id, expectedVersion, patch })),
+  transitionRecord: (id: string, expectedVersion: number, field: string, to: string) =>
+    call((c) => c.transitionRecord({ id, expectedVersion, field, to })),
+  archiveRecordVersion: (id: string, expectedVersion: number) =>
+    call((c) => c.archiveRecordVersion({ id, expectedVersion })),
+  restoreRecordVersion: (id: string, expectedVersion: number) =>
+    call((c) => c.restoreRecordVersion({ id, expectedVersion })),
+  deleteRecordVersion: (id: string) => call((c) => c.deleteRecordVersion({ id })),
   // ── versioning ──────────────────────────────────────────────────────────────
-  listVersions: (itemId: string) => call((c) => c.listVersions({ itemId })),
-  newVersion: (itemId: string) => call((c) => c.newVersion({ itemId })),
+  listVersions: (recordId: string) => call((c) => c.listVersions({ recordId })),
+  newVersion: (recordId: string) => call((c) => c.newVersion({ recordId })),
   publishVersion: (id: string, expectedVersion: number) =>
     call((c) => c.publishVersion({ id, expectedVersion })),
   discardDraft: (id: string) => call((c) => c.discardDraft({ id })),
-  archiveItem: (itemId: string) => call((c) => c.archiveItem({ itemId })),
-  restoreItem: (itemId: string) => call((c) => c.restoreItem({ itemId })),
-  searchInstances: (conceptId: string, query?: string, limit?: number) =>
-    call((c) => c.searchInstances({ conceptId, query, limit })),
+  archiveRecord: (recordId: string) => call((c) => c.archiveRecord({ recordId })),
+  restoreRecord: (recordId: string) => call((c) => c.restoreRecord({ recordId })),
+  searchRecords: (conceptId: string, query?: string, limit?: number) =>
+    call((c) => c.searchRecords({ conceptId, query, limit })),
   createRelation: (input: {
     fieldId: string
     fromId: string
-    toItemId?: string
+    toRecordId?: string
     toVersionId?: string
     toId?: string
     properties?: Fields
@@ -697,7 +697,7 @@ export const api = {
   /** Records-only typeahead for the `@` menu, across every readable concept. */
   searchMentionableRecords: (query: string, limit?: number) =>
     call((c) => c.searchMentionableRecords({ query, limit })),
-  listBacklinks: (itemId: string) => call((c) => c.listBacklinks({ itemId })),
+  listBacklinks: (recordId: string) => call((c) => c.listBacklinks({ recordId })),
   createTask: (input: {
     subjectId: string | null
     title: string
@@ -743,8 +743,8 @@ export const api = {
   // Metadata via typed RPCs; the bytes ride plain HTTP (multipart up, binary
   // down — `uploadFile` / the URL helpers below).
   listFiles: (filter?: {
-    itemId?: string
-    instanceId?: string
+    recordId?: string
+    recordVersionId?: string
     bucketId?: string
     conceptId?: string
     includeArchived?: boolean
@@ -760,15 +760,15 @@ export const api = {
    *  so turning sharing off actually hides what's already there. */
   setBucketShared: (bucketId: string, shared: boolean) =>
     call((c) => c.setBucketShared({ bucketId, shared })),
-  /** Multipart upload onto a record's item lineage or into a Files widget's own
-   *  bucket. Callers refetch their list — the raw JSON body isn't schema-decoded
+  /** Multipart upload onto a record or into a Files widget's own bucket.
+   *  Callers refetch their list — the raw JSON body isn't schema-decoded
    *  like RPC results, so don't return it. */
   uploadFile: async (owner: FileOwner, file: File): Promise<void> => {
     const form = new FormData()
     form.append("file", file)
     const url =
-      "itemId" in owner
-        ? `/api/items/${owner.itemId}/attachments`
+      "recordId" in owner
+        ? `/api/items/${owner.recordId}/attachments`
         : `/api/buckets/${owner.bucketId}/attachments?shared=${owner.shared === false ? "false" : "true"}`
     const res = await fetch(url, { method: "POST", body: form })
     if (!res.ok) {
@@ -1109,9 +1109,9 @@ export const api = {
     const res = await fetch("/api/integrations/apollo/disconnect", { method: "POST" })
     if (!res.ok) throw new Error("Failed to disconnect Apollo")
   },
-  /** Enrich an instance's fields from Apollo via an {apolloKey → fieldId} mapping. */
-  enrichApolloInstance: async (input: {
-    instanceId: string
+  /** Enrich a record version's fields from Apollo via an {apolloKey → fieldId} mapping. */
+  enrichApolloRecord: async (input: {
+    recordVersionId: string
     mapping: Record<string, string>
     query?: Record<string, string>
     overwrite?: boolean
@@ -1146,7 +1146,7 @@ export const api = {
     }
     return (await res.json()) as ApolloSearchResult
   },
-  /** Bulk-import search results as new instances onto a concept via a mapping. */
+  /** Bulk-import search results as new record versions onto a concept via a mapping. */
   importApollo: async (input: {
     conceptId: string
     mapping: Record<string, string>
@@ -1191,12 +1191,12 @@ export const api = {
     if (!res.ok) throw new Error("Failed to disconnect Clay")
   },
   /**
-   * Push an instance into the Clay table via a {clayColumn → fieldId} mapping.
+   * Push a record version into the Clay table via a {clayColumn → fieldId} mapping.
    * Async: enriched data returns later through the Clay callback. (The Details-tile
    * "Send to Clay" button + mapping picker is a deferred follow-up.)
    */
-  sendInstanceToClay: async (input: {
-    instanceId: string
+  sendRecordToClay: async (input: {
+    recordVersionId: string
     mapping: Record<string, string>
     extra?: Record<string, unknown>
   }): Promise<ClayEnrichResult> => {
@@ -1266,10 +1266,10 @@ export const api = {
   ) => call((c) => c.reorderAnnotationFields({ annotationType, orders })),
   // Member deactivation; member purge is a plain-HTTP DELETE (see Members
   // directory page).
-  // Instance-view layout prefs — always the caller's own row.
-  getInstanceViewPrefs: () => call((c) => c.getInstanceViewPrefs()),
-  updateInstanceViewPrefs: (body: InstanceViewPrefsBody) =>
-    call((c) => c.updateInstanceViewPrefs({ body })),
+  // Record version-view layout prefs — always the caller's own row.
+  getRecordViewPrefs: () => call((c) => c.getRecordViewPrefs()),
+  updateRecordViewPrefs: (body: RecordViewPrefsBody) =>
+    call((c) => c.updateRecordViewPrefs({ body })),
   listDeactivatedMembers: () => call((c) => c.listDeactivatedMembers()),
   deactivateMember: (userId: string) => call((c) => c.deactivateMember({ userId })),
   reactivateMember: (userId: string) => call((c) => c.reactivateMember({ userId })),

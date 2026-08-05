@@ -114,7 +114,7 @@ const bandName = await asOwner.call((c) =>
 )
 await asOwner.call((c) => c.setConceptTitleField({ id: secret.id, titleFieldId: bandName.id }))
 const secretRec = await asOwner.call((c) =>
-  c.createInstance({ conceptId: secret.id, fields: { [bandName.id]: SECRET_LABEL } }),
+  c.createRecord({ conceptId: secret.id, fields: { [bandName.id]: SECRET_LABEL } }),
 )
 
 const open = await asOwner.call((c) => c.createConcept({ name: `Page ${Date.now()}` }))
@@ -122,13 +122,13 @@ const body = await asOwner.call((c) =>
   c.addField({ conceptId: open.id, name: "Body", kind: "richtext" }),
 )
 const openRec = await asOwner.call((c) =>
-  c.createInstance({
+  c.createRecord({
     conceptId: open.id,
-    fields: { [body.id]: mentionDoc("record", secretRec.itemId, SECRET_LABEL) },
+    fields: { [body.id]: mentionDoc("record", secretRec.recordId, SECRET_LABEL) },
   }),
 )
 
-const target = [{ kind: "record" as const, targetId: secretRec.itemId }]
+const target = [{ kind: "record" as const, targetId: secretRec.recordId }]
 
 // ── 1. BEFORE restricting, the member resolves it fully ───────────────────────
 const before = await asMember.call((c) => c.resolveMentions({ refs: target }))
@@ -162,8 +162,8 @@ const code = await asMember.code((c) => c.resolveMentions({ refs: target }))
 ok("3. the call SUCCEEDED (degrade, not error)", code === null, code ?? "ok")
 
 // ── 4. the accepted trade, and the anti-oracle rule ───────────────────────────
-const asMemberRec = await asMember.call((c) => c.getInstance({ id: openRec.id }))
-const stored = (asMemberRec.instance.state as Record<string, { text?: string } | undefined>)[
+const asMemberRec = await asMember.call((c) => c.getRecord({ id: openRec.id }))
+const stored = (asMemberRec.recordVersion.state as Record<string, { text?: string } | undefined>)[
   body.id
 ]
 ok(
@@ -173,7 +173,7 @@ ok(
 )
 ok(
   "   …but the derived text never carries the target's id",
-  !(stored?.text ?? "").includes(secretRec.itemId),
+  !(stored?.text ?? "").includes(secretRec.recordId),
   stored?.text ?? "",
 )
 
@@ -194,7 +194,7 @@ ok("   …and its label", restored[0]?.label === SECRET_LABEL, restored[0]?.labe
 // ── 6. backlinks DROP an unreadable source, rather than placeholdering it ─────
 // The mention lives in `open`; the target is the (restrictable) `secret` record.
 // Restricting the SOURCE's concept is what should make the backlink disappear.
-const baseline = await asMember.call((c) => c.listBacklinks({ itemId: secretRec.itemId }))
+const baseline = await asMember.call((c) => c.listBacklinks({ recordId: secretRec.recordId }))
 ok(
   "6. member sees the backlink while the source is readable",
   baseline.length === 1,
@@ -207,10 +207,10 @@ ok(
 )
 
 await asOwner.call((c) => c.setConceptVisibility({ id: open.id, visibility: "admin" }))
-const hidden = await asMember.call((c) => c.listBacklinks({ itemId: secretRec.itemId }))
+const hidden = await asMember.call((c) => c.listBacklinks({ recordId: secretRec.recordId }))
 ok("   restricting the SOURCE drops the row entirely", hidden.length === 0, `n=${hidden.length}`)
 ok("   …with no placeholder naming it", !JSON.stringify(hidden).includes(open.name))
-const ownerLinks = await asOwner.call((c) => c.listBacklinks({ itemId: secretRec.itemId }))
+const ownerLinks = await asOwner.call((c) => c.listBacklinks({ recordId: secretRec.recordId }))
 ok("   …while the owner still sees it", ownerLinks.length === 1, `n=${ownerLinks.length}`)
 await asOwner.call((c) => c.setConceptVisibility({ id: open.id, visibility: "visible" }))
 
@@ -220,7 +220,7 @@ const hits = await asMember.call((c) =>
 )
 ok(
   "7. member's record search finds a readable record",
-  hits.some((h) => h.targetId === secretRec.itemId),
+  hits.some((h) => h.targetId === secretRec.recordId),
   `n=${hits.length}`,
 )
 const bare = await asMember.call((c) => c.searchMentionableRecords({ query: "   " }))
@@ -232,7 +232,7 @@ const restrictedHits = await asMember.call((c) =>
 )
 ok(
   "   …and a restricted concept's records are unsearchable",
-  !restrictedHits.some((h) => h.targetId === secretRec.itemId),
+  !restrictedHits.some((h) => h.targetId === secretRec.recordId),
   `n=${restrictedHits.length}`,
 )
 ok("   …with its label absent entirely", !JSON.stringify(restrictedHits).includes(SECRET_LABEL))

@@ -2,7 +2,7 @@ import { useLiveQuery } from "@tanstack/react-db"
 import { useQuery } from "@tanstack/react-query"
 import { useNavigate } from "react-router-dom"
 import { useFields } from "@/components/ConditionList"
-import { MemberAvatar, memberLabel, type OrgMember } from "@/components/item/AssigneePicker"
+import { MemberAvatar, memberLabel, type OrgMember } from "@/components/record/AssigneePicker"
 import {
   type ActivityResolvers,
   eventLabel,
@@ -30,7 +30,7 @@ const relTime = (d: Date | string): string => {
   return new Date(d).toLocaleDateString()
 }
 
-/** The shared event-list rendering (humanized type + relative time, instance
+/** The shared event-list rendering (humanized type + relative time, record version
  *  events click through) — used by the member profile page. */
 export function EventRows({ events }: { events: readonly FeedItem[] }) {
   const navigate = useNavigate()
@@ -38,13 +38,13 @@ export function EventRows({ events }: { events: readonly FeedItem[] }) {
   return (
     <ul className="divide-y divide-border">
       {events.map((e) => {
-        const toInstance = e.subjectKind === "instance"
+        const toRecordVersion = e.subjectKind === "recordVersion"
         return (
           <li key={e.id} className="flex items-center justify-between gap-2 py-1 text-sm">
             <button
               type="button"
-              disabled={!toInstance}
-              onClick={() => toInstance && navigate(recordHref(e.subjectId))}
+              disabled={!toRecordVersion}
+              onClick={() => toRecordVersion && navigate(recordHref(e.subjectId))}
               className="truncate text-left text-foreground enabled:hover:underline disabled:cursor-default"
             >
               {humanizeEventType(e.eventType)}
@@ -57,7 +57,7 @@ export function EventRows({ events }: { events: readonly FeedItem[] }) {
   )
 }
 
-/** Recent events as a feed (whole-org, or one concept's instance events).
+/** Recent events as a feed (whole-org, or one concept's record version events).
  *  Variants: an avatar timeline rail (default) or a dense log. Inline diff
  *  snippets reuse the activity-feed derivations. */
 export function ActivityWidget({ widget }: { widget: Activity }) {
@@ -99,7 +99,8 @@ export function ActivityWidget({ widget }: { widget: Activity }) {
 
   const log = (widget.variant ?? "timeline") === "log"
   const showDiffs = widget.showDiffs ?? true
-  const open = (e: FeedItem) => e.subjectKind === "instance" && navigate(recordHref(e.subjectId))
+  const open = (e: FeedItem) =>
+    e.subjectKind === "recordVersion" && navigate(recordHref(e.subjectId))
 
   if (log) {
     return (
@@ -107,7 +108,7 @@ export function ActivityWidget({ widget }: { widget: Activity }) {
         <ul className="divide-y divide-border">
           {events.map((e) => {
             const snippet = showDiffs ? eventSnippet(e.eventType, e.payload, resolvers) : null
-            const toInstance = e.subjectKind === "instance"
+            const toRecordVersion = e.subjectKind === "recordVersion"
             return (
               <li key={e.id} className="flex items-center gap-2 py-1 text-sm">
                 <span className="w-10 shrink-0 text-xs tabular-nums text-muted-foreground">
@@ -115,7 +116,7 @@ export function ActivityWidget({ widget }: { widget: Activity }) {
                 </span>
                 <button
                   type="button"
-                  disabled={!toInstance}
+                  disabled={!toRecordVersion}
                   onClick={() => open(e)}
                   className="min-w-0 flex-1 truncate text-left enabled:hover:underline disabled:cursor-default"
                 >
@@ -139,7 +140,7 @@ export function ActivityWidget({ widget }: { widget: Activity }) {
         {events.map((e, idx) => {
           const member = e.actor ? byUser.get(e.actor) : undefined
           const snippet = showDiffs ? eventSnippet(e.eventType, e.payload, resolvers) : null
-          const toInstance = e.subjectKind === "instance"
+          const toRecordVersion = e.subjectKind === "recordVersion"
           return (
             <li key={e.id} className="relative flex gap-2.5 pb-2.5">
               {/* the rail: a connector line under every avatar but the last */}
@@ -155,7 +156,7 @@ export function ActivityWidget({ widget }: { widget: Activity }) {
               )}
               <button
                 type="button"
-                disabled={!toInstance}
+                disabled={!toRecordVersion}
                 onClick={() => open(e)}
                 className="min-w-0 flex-1 text-left text-sm enabled:hover:underline disabled:cursor-default"
               >

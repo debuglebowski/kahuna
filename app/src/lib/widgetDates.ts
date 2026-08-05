@@ -9,16 +9,16 @@ import {
   startOfQuarter,
   startOfWeek,
 } from "date-fns"
-import type { DashboardWidget, Field, Instance, Task } from "./api"
-import { type MatchOpts, matchInstance } from "./conditions"
+import type { DashboardWidget, Field, RecordVersion, Task } from "./api"
+import { type MatchOpts, matchRecordVersion } from "./conditions"
 import { parseDateValue, toISODate } from "./dates"
-import { instanceLabel } from "./instanceLabel"
 import { recordHref } from "./recordHref"
+import { recordLabel } from "./recordLabel"
 import { showValue } from "./utils"
 
 /**
  * Shared date plumbing for the date-plotting widgets (Calendar + Gantt): stored
- * field value → calendar day, source/instance → plotted events/spans, and the
+ * field value → calendar day, source/record version → plotted events/spans, and the
  * windowing math both grids share. Pure (no React / DOM), unit-tested like
  * `widgetAggregations`. The clock is always passed in (`today`) so callers own
  * "now" and the helpers stay deterministic.
@@ -43,12 +43,12 @@ export const dayKey = (d: Date): string => toISODate(d)
 // ── calendar ─────────────────────────────────────────────────────────────────
 
 export interface CalendarEvent {
-  /** Unique per plotted event (source index + instance/task id). */
+  /** Unique per plotted event (source index + record version/task id). */
   readonly id: string
   readonly day: string
   readonly label: string
   readonly color: string
-  /** In-app navigation target (instance detail / the tasks page). */
+  /** In-app navigation target (record version detail / the tasks page). */
   readonly href: string
 }
 
@@ -70,19 +70,19 @@ export const sourceColor = (color: string | null | undefined, index: number): st
 /** Hue for the synthetic "org tasks by due date" source (sky). */
 export const TASKS_SOURCE_COLOR = "#0ea5e9"
 
-/** Plot one source's matching instances onto days. Instances without a valid
+/** Plot one source's matching record versions onto days. Record versions without a valid
  *  date value are skipped (a calendar can only show dated rows). */
 export const sourceEvents = (
   source: CalendarSource,
   index: number,
-  instances: readonly Instance[],
+  recordVersions: readonly RecordVersion[],
   fields: readonly Field[],
   opts?: Pick<MatchOpts, "me"> & { titleFieldId?: string | null },
 ): CalendarEvent[] => {
   const color = sourceColor(source.color, index)
   const out: CalendarEvent[] = []
-  for (const inst of instances) {
-    if (!matchInstance(inst, source.conditions ?? [], { match: source.match, me: opts?.me }))
+  for (const inst of recordVersions) {
+    if (!matchRecordVersion(inst, source.conditions ?? [], { match: source.match, me: opts?.me }))
       continue
     const day = dayKeyOf(inst.state[source.dateField])
     if (!day) continue
@@ -90,7 +90,7 @@ export const sourceEvents = (
     out.push({
       id: `${index}:${inst.id}`,
       day,
-      label: picked || instanceLabel(inst, fields, opts?.titleFieldId),
+      label: picked || recordLabel(inst, fields, opts?.titleFieldId),
       color,
       href: recordHref(inst.id),
     })
@@ -173,7 +173,7 @@ const clampProgress = (v: unknown): number | null => {
   return Math.min(100, Math.max(0, n))
 }
 
-/** Matching instances as time spans, start order. No start date → skipped; an
+/** Matching record versions as time spans, start order. No start date → skipped; an
  *  end before its start is treated as start-only (milestone) rather than an
  *  inverted bar. */
 export const ganttSpans = (
@@ -187,13 +187,14 @@ export const ganttSpans = (
     | "conditions"
     | "match"
   >,
-  instances: readonly Instance[],
+  recordVersions: readonly RecordVersion[],
   fields: readonly Field[],
   opts?: Pick<MatchOpts, "me"> & { titleFieldId?: string | null },
 ): GanttSpan[] => {
   const out: GanttSpan[] = []
-  for (const inst of instances) {
-    if (!matchInstance(inst, widget.conditions, { match: widget.match, me: opts?.me })) continue
+  for (const inst of recordVersions) {
+    if (!matchRecordVersion(inst, widget.conditions, { match: widget.match, me: opts?.me }))
+      continue
     const start = dayKeyOf(inst.state[widget.startField])
     if (!start) continue
     const rawEnd = widget.endField ? dayKeyOf(inst.state[widget.endField]) : null
@@ -204,7 +205,7 @@ export const ganttSpans = (
       id: inst.id,
       start,
       end,
-      label: picked || instanceLabel(inst, fields, opts?.titleFieldId),
+      label: picked || recordLabel(inst, fields, opts?.titleFieldId),
       group: groupRaw == null || groupRaw === "" ? "" : String(groupRaw),
       progress: widget.progressField ? clampProgress(inst.state[widget.progressField]) : null,
     })

@@ -216,7 +216,7 @@ if (!concept) {
   process.exit(1)
 }
 const record = await call<{ id: string }>((c) =>
-  c.createInstance({ conceptId: concept.id, fields: {} }),
+  c.createRecord({ conceptId: concept.id, fields: {} }),
 )
 const dim = { unit: "fr" as const, value: 1, min: 6 }
 await call<{ id: string }>((c) =>
@@ -232,7 +232,7 @@ await call<{ id: string }>((c) =>
 
 // ── upload a file, then exercise the row actions ──
 console.log("step: upload a file into the widget")
-await send("Page.navigate", { url: `${BASE}/instances/${record.id}` }, sessionId)
+await send("Page.navigate", { url: `${BASE}/records/${record.id}` }, sessionId)
 await until("drop zone", 30000, async () =>
   (await text()).includes("Drop files or click to upload"),
 )

@@ -20,10 +20,10 @@ const filesRefetchShim = {
 }
 
 /**
- * Files — uploads browsed at a scope: one record (`instanceId`, resolved to its
- * item lineage), a concept (recent across its records), the whole org, or this
+ * Files — uploads browsed at a scope: one record (`recordVersionId`, resolved to its
+ * record), a concept (recent across its records), the whole org, or this
  * widget's own `bucketId` (files owned by no record). A consumer of the same RPCs
- * as the instance tile's Files panel. Uploads land on the record or the bucket;
+ * as the record version tile's Files panel. Uploads land on the record or the bucket;
  * concept/org scope have no single target, so they browse only.
  *
  * `interactive` is the canvas's render-vs-arrange flag (see `document`). While
@@ -35,13 +35,13 @@ const filesRefetchShim = {
 export function FilesWidget({
   widget,
   interactive = true,
-  recordItemId,
+  recordId,
 }: {
   widget: Files
   interactive?: boolean
-  /** The open record's item lineage, on a record dashboard. Gives a wide-scope
-   *  (org/concept) widget somewhere to put a dropped file — see `uploadTo`. */
-  recordItemId?: string
+  /** The open record, on a record dashboard. Gives a wide-scope (org/concept)
+   *  widget somewhere to put a dropped file — see `uploadTo`. */
+  recordId?: string
 }) {
   const scope = widget.scope
   const configured =
@@ -50,7 +50,7 @@ export function FilesWidget({
       ? !!widget.conceptId
       : scope === "widget"
         ? !!widget.bucketId
-        : !!widget.instanceId)
+        : !!widget.recordVersionId)
 
   useRegisterCollection(KEY.filesGlobal, filesRefetchShim)
   // Who's looking — decides whether a row may be archived or deleted.
@@ -64,7 +64,7 @@ export function FilesWidget({
       "files",
       scope,
       widget.conceptId ?? null,
-      widget.instanceId ?? null,
+      widget.recordVersionId ?? null,
       widget.bucketId ?? null,
     ],
     // Always fetch archived rows and filter below, like the record tile does.
@@ -75,8 +75,8 @@ export function FilesWidget({
       api.listFiles({
         ...(scope === "concept"
           ? { conceptId: widget.conceptId ?? undefined }
-          : scope === "instance"
-            ? { instanceId: widget.instanceId ?? undefined }
+          : scope === "recordVersion"
+            ? { recordVersionId: widget.recordVersionId ?? undefined }
             : scope === "widget"
               ? { bucketId: widget.bucketId ?? undefined }
               : {}),
@@ -85,7 +85,7 @@ export function FilesWidget({
     enabled: configured,
   })
   // Upload targets. A bucket IS the target, so it needs no resolution; a record
-  // stores an instance ref while files hang off the item lineage — resolve that
+  // stores a record version ref while files hang off the record — resolve that
   // one hop, and only when the drop-zone will actually render.
   //
   // `allowUpload` defaults to ON wherever there IS a single owner to upload to.
@@ -95,16 +95,16 @@ export function FilesWidget({
   // `false` = read-only browse); absent now reads as "yes, this is uploadable",
   // which is what pointing a Files widget at one record already means.
   // Single rule for "is there anywhere to put a dropped file" — see `uploadTarget`.
-  const target = uploadTarget(widget, recordItemId)
+  const target = uploadTarget(widget, recordId)
   const wantsUpload = target !== null
   // A wide scope borrowing the open record: the copy must name the destination.
   const widened = target?.kind === "record"
   const itemQ = useQuery({
-    queryKey: ["instanceItem", widget.instanceId],
-    queryFn: () => api.getInstance(widget.instanceId ?? ""),
+    queryKey: ["instanceItem", widget.recordVersionId],
+    queryFn: () => api.getRecord(widget.recordVersionId ?? ""),
     // Only a pinned record needs the id→lineage hop; a bucket and a borrowed record
     // are already usable as-is.
-    enabled: target?.kind === "instance",
+    enabled: target?.kind === "recordVersion",
   })
   const owner: FileOwner | null =
     target === null
@@ -112,9 +112,9 @@ export function FilesWidget({
       : target.kind === "bucket"
         ? { bucketId: target.bucketId, shared: target.shared }
         : target.kind === "record"
-          ? { itemId: target.itemId }
+          ? { recordId: target.recordId }
           : itemQ.data
-            ? { itemId: itemQ.data.instance.itemId }
+            ? { recordId: itemQ.data.recordVersion.recordId }
             : null
 
   if (!configured)
@@ -236,7 +236,7 @@ export function FilesWidget({
 
 /**
  * `bindToConceptRecord` Files: resolves the single-record concept's record, then
- * renders the ordinary widget with that `instanceId`. A wrapper rather than a
+ * renders the ordinary widget with that `recordVersionId`. A wrapper rather than a
  * branch inside `FilesWidget` because the resolution is a hook — `WidgetCanvas`'s
  * arm is a plain switch, and hooking there would make the hook count vary per
  * widget config.
@@ -248,9 +248,9 @@ export function ConceptRecordFilesWidget({
   widget: Files
   interactive?: boolean
 }) {
-  const { instanceId, loading } = useSingleRecord(widget.conceptId ?? "")
+  const { recordVersionId, loading } = useSingleRecord(widget.conceptId ?? "")
   if (loading) return <Spinner />
   // No record (flag switched off, or the concept is gone) falls through to the
   // widget's own "pick a record" empty state.
-  return <FilesWidget widget={{ ...widget, instanceId }} interactive={interactive} />
+  return <FilesWidget widget={{ ...widget, recordVersionId }} interactive={interactive} />
 }

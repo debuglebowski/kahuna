@@ -1,33 +1,33 @@
 import { describe, expect, it } from "vitest"
 import { LABELS_KEY } from "../../rpc/contract"
-import type { Instance, SidebarCondition } from "./api"
+import type { RecordVersion, SidebarCondition } from "./api"
 import {
   avgField,
   BANDS_KEY,
   bandOf,
   bandRollup,
   collapseOther,
-  countInstances,
+  countRecords,
   createdOnOrBefore,
   groupBy,
   groupSeries,
   kanbanBuckets,
-  matchInstance,
+  matchRecordVersion,
   metricSeries,
   metricValue,
   OTHER_KEY,
   sortBuckets,
-  staleInstances,
+  staleRecords,
   sumField,
   timeBucket,
 } from "./widgetAggregations"
 
-const inst = (state: Record<string, unknown>): Instance => {
+const inst = (state: Record<string, unknown>): RecordVersion => {
   const id = Math.random().toString(36).slice(2)
   return {
     id,
     conceptId: "c1",
-    itemId: id,
+    recordId: id,
     state,
     version: 0,
     versionStatus: "published",
@@ -41,21 +41,21 @@ const inst = (state: Record<string, unknown>): Instance => {
 const eq = (field: string, value: unknown): SidebarCondition => ({ field, op: "eq", value })
 const hasLabel = (value: string): SidebarCondition => ({ field: LABELS_KEY, op: "hasLabel", value })
 
-describe("matchInstance", () => {
+describe("matchRecordVersion", () => {
   it("ANDs all conditions; eq matches scalar or array containment", () => {
     const i = inst({ stage: "open", tags: ["a", "b"] })
-    expect(matchInstance(i, [eq("stage", "open")])).toBe(true)
-    expect(matchInstance(i, [eq("stage", "won")])).toBe(false)
-    expect(matchInstance(i, [eq("tags", "b")])).toBe(true)
-    expect(matchInstance(i, [eq("stage", "open"), eq("tags", "z")])).toBe(false)
-    expect(matchInstance(i, [])).toBe(true)
+    expect(matchRecordVersion(i, [eq("stage", "open")])).toBe(true)
+    expect(matchRecordVersion(i, [eq("stage", "won")])).toBe(false)
+    expect(matchRecordVersion(i, [eq("tags", "b")])).toBe(true)
+    expect(matchRecordVersion(i, [eq("stage", "open"), eq("tags", "z")])).toBe(false)
+    expect(matchRecordVersion(i, [])).toBe(true)
   })
 
   it("hasLabel reads the synthetic labels key", () => {
     const i = inst({ [LABELS_KEY]: ["urgent", "vip"] })
-    expect(matchInstance(i, [hasLabel("vip")])).toBe(true)
-    expect(matchInstance(i, [hasLabel("cold")])).toBe(false)
-    expect(matchInstance(inst({}), [hasLabel("vip")])).toBe(false)
+    expect(matchRecordVersion(i, [hasLabel("vip")])).toBe(true)
+    expect(matchRecordVersion(i, [hasLabel("cold")])).toBe(false)
+    expect(matchRecordVersion(inst({}), [hasLabel("vip")])).toBe(false)
   })
 })
 
@@ -69,8 +69,8 @@ describe("count / sum / avg", () => {
   ]
 
   it("count respects the filter", () => {
-    expect(countInstances(data, [])).toBe(5)
-    expect(countInstances(data, [eq("stage", "open")])).toBe(4)
+    expect(countRecords(data, [])).toBe(5)
+    expect(countRecords(data, [eq("stage", "open")])).toBe(4)
   })
 
   it("sum coerces strings + money, skips non-numeric", () => {
@@ -114,7 +114,7 @@ describe("groupBy", () => {
     ])
   })
 
-  it("groups by label id (one bucket per label), skipping no-label instances", () => {
+  it("groups by label id (one bucket per label), skipping no-label recordVersions", () => {
     const data = [
       inst({ [LABELS_KEY]: ["urgent", "vip"] }),
       inst({ [LABELS_KEY]: ["urgent"] }),
@@ -167,7 +167,7 @@ describe("sortBuckets / collapseOther (breakdown)", () => {
 })
 
 describe("createdOnOrBefore (metric delta baseline)", () => {
-  it("keeps only instances that existed at the cutoff", () => {
+  it("keeps only recordVersions that existed at the cutoff", () => {
     const old = { ...inst({}), createdAt: new Date("2026-01-01") }
     const recent = { ...inst({}), createdAt: new Date("2026-06-01") }
     const out = createdOnOrBefore([old, recent], Date.parse("2026-03-01"))
@@ -208,7 +208,7 @@ describe("metricSeries (sparkline)", () => {
 })
 
 describe("groupSeries (breakdown table trend/delta)", () => {
-  const at = (stage: string, day: string): Instance => ({
+  const at = (stage: string, day: string): RecordVersion => ({
     ...inst({ stage }),
     createdAt: new Date(day),
   })
@@ -268,11 +268,11 @@ describe("computed bands (attention)", () => {
     expect(bandRollup(data, F)).toEqual({ fresh: 1, cooling: 1, cold: 2 })
   })
 
-  it("staleInstances filters by band and sorts most-stale (days desc) first", () => {
+  it("staleRecords filters by band and sorts most-stale (days desc) first", () => {
     const a = inst({ [F]: { days: 18, band: "cooling" } })
     const b = inst({ [F]: { days: 50, band: "cold" } })
     const c = inst({ [F]: { days: 3, band: "fresh" } })
-    const out = staleInstances([a, b, c], F, ["cooling", "cold"])
+    const out = staleRecords([a, b, c], F, ["cooling", "cold"])
     expect(out.map((i) => i.id)).toEqual([b.id, a.id]) // fresh excluded; cold(50) before cooling(18)
   })
 })

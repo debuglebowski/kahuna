@@ -2,22 +2,22 @@
  * Resolving a single-record concept to its one record.
  *
  * A single-record concept holds exactly ONE record, so it can be addressed
- * without an instance id — by slug at `/c/<slug>`, or by concept id from a widget
+ * without a record version id — by slug at `/c/<slug>`, or by concept id from a widget
  * bound to "the record". Both need the same two-step resolution, which is what
  * lives here.
  *
- * The instance id is NOT derivable client-side: for a versioned concept the record
+ * The record version id is NOT derivable client-side: for a versioned concept the record
  * is a lineage whose head moves on every publish, and its first version is a draft
  * that no head-only list returns. So the id always comes from the server's
- * `getSingleRecord` (which uses `singleRecordOf`, not `listInstances[0]`).
+ * `getSingleRecord` (which uses `singleRecordOf`, not `listRecords[0]`).
  */
 
 import { useLiveQuery } from "@tanstack/react-db"
-import type { Concept, InstanceDetail } from "../../rpc/contract"
+import type { Concept, RecordDetail } from "../../rpc/contract"
 import { KEY, singleRecordOfConcept, useRegisterCollection } from "./collections"
 
 /**
- * The single record of `conceptId`, as the same `InstanceDetail` the ordinary
+ * The single record of `conceptId`, as the same `RecordDetail` the ordinary
  * record page renders. `conceptId` may be `""` (nothing to resolve yet) — the hook
  * stays mounted and reports `loading: false` with no detail, so callers don't need
  * a conditional hook.
@@ -27,8 +27,8 @@ import { KEY, singleRecordOfConcept, useRegisterCollection } from "./collections
  * so the caller can show a fault rather than an eternal spinner.
  */
 export function useSingleRecord(conceptId: string): {
-  readonly detail: InstanceDetail | undefined
-  readonly instanceId: string | null
+  readonly detail: RecordDetail | undefined
+  readonly recordVersionId: string | null
   readonly loading: boolean
   readonly refetch: () => void
 } {
@@ -41,7 +41,7 @@ export function useSingleRecord(conceptId: string): {
   const detail = q.data?.[0]
   return {
     detail,
-    instanceId: detail?.instance.id ?? null,
+    recordVersionId: detail?.recordVersion.id ?? null,
     loading: !!conceptId && q.isLoading,
     refetch: () => void collection.utils.refetch(),
   }

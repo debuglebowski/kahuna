@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import type { Field, Instance, Task } from "./api"
+import type { Field, RecordVersion, Task } from "./api"
 import {
   agendaEvents,
   dayKeyOf,
@@ -14,8 +14,8 @@ import {
   weekDays,
 } from "./widgetDates"
 
-const inst = (id: string, state: Record<string, unknown>): Instance =>
-  ({ id, state, version: 1, createdAt: new Date(), archivedAt: null }) as unknown as Instance
+const inst = (id: string, state: Record<string, unknown>): RecordVersion =>
+  ({ id, state, version: 1, createdAt: new Date(), archivedAt: null }) as unknown as RecordVersion
 
 const field = (id: string, kind: string, name = id): Field =>
   ({ id, kind, name, config: {} }) as unknown as Field
@@ -56,19 +56,19 @@ describe("calendar windowing", () => {
 
 describe("sourceEvents", () => {
   const fields = [field("name", "text"), field("due", "date"), field("stage", "enum")]
-  const instances = [
+  const recordVersions = [
     inst("a", { name: "Alpha", due: "2026-06-10", stage: "open" }),
     inst("b", { name: "Beta", due: "2026-06-11", stage: "won" }),
     inst("c", { name: "Gamma", stage: "open" }), // no date → skipped
   ]
 
-  it("plots matching instances on their date field", () => {
-    const events = sourceEvents({ conceptId: "c1", dateField: "due" }, 0, instances, fields)
+  it("plots matching recordVersions on their date field", () => {
+    const events = sourceEvents({ conceptId: "c1", dateField: "due" }, 0, recordVersions, fields)
     expect(events.map((e) => [e.day, e.label])).toEqual([
       ["2026-06-10", "Alpha"],
       ["2026-06-11", "Beta"],
     ])
-    expect(events[0]!.href).toBe("/instances/a")
+    expect(events[0]!.href).toBe("/records/a")
   })
 
   it("applies per-source conditions and label field", () => {
@@ -80,7 +80,7 @@ describe("sourceEvents", () => {
         conditions: [{ field: "stage", op: "eq", value: "open" }],
       },
       0,
-      instances,
+      recordVersions,
       fields,
     )
     expect(events).toHaveLength(1)

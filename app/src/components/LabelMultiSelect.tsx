@@ -6,7 +6,7 @@ import { LabelChip } from "./ui"
 /**
  * Multi-select over the org label vocabulary — selected labels render as
  * colored chips (with ×), and a searchable combobox adds more. `excludeIds`
- * hides options (e.g. static labels when picking item-level / default labels).
+ * hides options (e.g. static labels when picking record-level / default labels).
  */
 export function LabelMultiSelect({
   all,

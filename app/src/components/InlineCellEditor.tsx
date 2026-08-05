@@ -8,7 +8,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { LabelChip } from "../components/ui"
-import type { Field, Instance } from "../lib/api"
+import type { Field, RecordVersion } from "../lib/api"
 import { capitalize, FieldValueCell } from "../lib/fieldDisplay"
 import { type OrgMember, useMembers } from "../lib/members"
 import { cn, initialsOf } from "../lib/utils"
@@ -38,7 +38,11 @@ const INPUT_CLS =
 const TRIGGER_CLS =
   "h-auto gap-1 border-0 bg-transparent p-0 shadow-none data-[size=default]:h-auto focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring/50"
 
-export type SaveCell = (instance: Instance, fieldId: string, value: unknown) => Promise<void>
+export type SaveCell = (
+  recordVersion: RecordVersion,
+  fieldId: string,
+  value: unknown,
+) => Promise<void>
 
 /** Avatar + name (no link), matching the read `user` pill. Rendered in each
  *  option; Radix mirrors the selected one into the trigger. */
@@ -122,18 +126,18 @@ function UserCellEditor({
  */
 export function EditableCell({
   field,
-  instance,
+  recordVersion,
   onSave,
   align = "left",
   allowClear = false,
 }: {
   field: Field
-  instance: Instance
+  recordVersion: RecordVersion
   onSave: SaveCell
   align?: "left" | "right"
   allowClear?: boolean
 }) {
-  const stored = instance.state[field.id]
+  const stored = recordVersion.state[field.id]
   const [focused, setFocused] = useState(false)
   const [draft, setDraft] = useState("")
   const [saving, setSaving] = useState(false)
@@ -144,7 +148,7 @@ export function EditableCell({
     setSaving(true)
     setErr(null)
     try {
-      await onSave(instance, field.id, value)
+      await onSave(recordVersion, field.id, value)
     } catch (e) {
       setErr((e as { message?: string })?.message ?? "Couldn't save")
     } finally {

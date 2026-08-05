@@ -1,7 +1,7 @@
 import { type DragEvent, lazy, Suspense, useMemo, useState } from "react"
 import { Spinner } from "@/components/ui"
 import type { Concept } from "@/lib/api"
-import type { ConceptInstanceData } from "@/lib/conceptData"
+import type { ConceptRecordData } from "@/lib/conceptData"
 import {
   findNode,
   isGroup,
@@ -17,8 +17,8 @@ import {
   tilePx,
 } from "@/lib/dashboards"
 import { cn } from "@/lib/utils"
-import { capsOf, TILE_CONTENTS } from "../instance/registry"
-import type { InstanceCtx } from "../instance/types"
+import { capsOf, TILE_CONTENTS } from "../recordVersion/registry"
+import type { RecordVersionCtx } from "../recordVersion/types"
 import { ActivityWidget } from "./ActivityWidget"
 import { AttentionWidget } from "./AttentionWidget"
 import { CalendarWidget } from "./CalendarWidget"
@@ -51,13 +51,13 @@ const GAP = 16
 type Zone = "before" | "after" | "into"
 
 interface RenderCtx {
-  instData: Record<string, ConceptInstanceData>
+  instData: Record<string, ConceptRecordData>
   cIndex: Map<string, Concept>
   conceptsLoaded: boolean
   /** Present only on a RECORD dashboard — the current record's assembled context.
    *  Record-scoped widgets render from it; concept-scoped widgets with a
-   *  `relationFieldId` narrow to its related instances. Absent on page dashboards. */
-  record?: InstanceCtx
+   *  `relationFieldId` narrow to its related record versions. Absent on page dashboards. */
+  record?: RecordVersionCtx
   readOnly: boolean
   selectedId: string | null
   onSelect?: (id: string) => void
@@ -158,7 +158,7 @@ function DropLine({ zone, parentDir }: { zone: Zone | null; parentDir: "row" | "
   return <div className={cn("pointer-events-none absolute z-10 rounded bg-primary", pos)} />
 }
 
-/** Record-scoped widget type → the instance-detail content key whose panel it
+/** Record-scoped widget type → the record version-detail content key whose panel it
  *  reuses. (Document + Files have their own dashboard widgets already.) */
 const RECORD_WIDGET_CONTENT = {
   "record-details": "details",
@@ -172,14 +172,14 @@ const RECORD_WIDGET_CONTENT = {
   "record-mentions": "mentions",
 } as const
 
-/** Render one instance-detail panel for the current record. Empty state off a
+/** Render one record version-detail panel for the current record. Empty state off a
  *  record dashboard, or when the panel doesn't apply to this concept. */
 function RecordPanel({
   contentKey,
   record,
 }: {
   contentKey: keyof typeof TILE_CONTENTS
-  record?: InstanceCtx
+  record?: RecordVersionCtx
 }) {
   if (!record)
     return (
@@ -218,14 +218,14 @@ function renderWidget(w: NormWidget, ctx: RenderCtx) {
   let data = cid ? ctx.instData[cid] : undefined
   const concept = cid ? ctx.cIndex.get(cid) : undefined
   // Record dashboards: a concept-scoped widget bound to a relation field shows the
-  // CURRENT record's related instances of that relation, not the whole concept.
+  // CURRENT record's related record versions of that relation, not the whole concept.
   if (ctx.record && "relationFieldId" in w && w.relationFieldId && data) {
     const relIds = new Set(
       ctx.record.related
-        .filter((r) => r.fieldId === w.relationFieldId && r.instance)
-        .map((r) => r.instance!.id),
+        .filter((r) => r.fieldId === w.relationFieldId && r.recordVersion)
+        .map((r) => r.recordVersion!.id),
     )
-    data = { ...data, instances: data.instances.filter((i) => relIds.has(i.id)) }
+    data = { ...data, recordVersions: data.recordVersions.filter((i) => relIds.has(i.id)) }
   }
   if (cid && ctx.conceptsLoaded && !concept)
     return (
@@ -282,15 +282,15 @@ function renderWidget(w: NormWidget, ctx: RenderCtx) {
       // A concept-record binding wins over the page's record: a widget configured
       // to show one concept's record must mean the same thing on a page dashboard
       // and inside somebody else's record dashboard.
-      if (w.scope === "instance" && w.bindToConceptRecord)
+      if (w.scope === "recordVersion" && w.bindToConceptRecord)
         return <ConceptRecordFilesWidget widget={w} interactive={ctx.readOnly} />
-      // On a record dashboard an instance-scoped Files widget binds to the current
-      // record when no explicit instance is set.
+      // On a record dashboard a record version-scoped Files widget binds to the current
+      // record when no explicit record version is set.
       return (
         <FilesWidget
           widget={
-            ctx.record && w.scope === "instance" && !w.instanceId
-              ? { ...w, instanceId: ctx.record.instance.id }
+            ctx.record && w.scope === "recordVersion" && !w.recordVersionId
+              ? { ...w, recordVersionId: ctx.record.recordVersion.id }
               : w
           }
           // Same contract as `document` below: the drop zone always renders so the
@@ -301,8 +301,8 @@ function renderWidget(w: NormWidget, ctx: RenderCtx) {
           // own, so it used to be browse-only — but on a RECORD dashboard there is
           // an obvious place for a dropped file to go: this record. Files land on
           // it and then show up in the list like any other. Already the lineage id
-          // (files hang off `itemId`), so no extra round-trip.
-          recordItemId={ctx.record?.instance.itemId}
+          // (files hang off `recordId`), so no extra round-trip.
+          recordId={ctx.record?.recordVersion.recordId}
         />
       )
     case "document":
@@ -311,10 +311,14 @@ function renderWidget(w: NormWidget, ctx: RenderCtx) {
       // false while arranging tiles) only governs whether keystrokes land.
       if (w.bindToConceptRecord)
         return <ConceptRecordDocumentWidget widget={w} interactive={ctx.readOnly} />
-      // On a record dashboard the record supplies the instance when unset.
+      // On a record dashboard the record supplies the record version when unset.
       return (
         <DocumentWidget
-          widget={ctx.record && !w.instanceId ? { ...w, instanceId: ctx.record.instance.id } : w}
+          widget={
+            ctx.record && !w.recordVersionId
+              ? { ...w, recordVersionId: ctx.record.recordVersion.id }
+              : w
+          }
           interactive={ctx.readOnly}
         />
       )
@@ -693,11 +697,11 @@ export function WidgetCanvas({
   onMove,
 }: {
   body: NormBody
-  instData: Record<string, ConceptInstanceData>
+  instData: Record<string, ConceptRecordData>
   cIndex: Map<string, Concept>
   conceptsLoaded?: boolean
   /** The current record (record dashboards only) — drives record-scoped widgets. */
-  record?: InstanceCtx
+  record?: RecordVersionCtx
   readOnly?: boolean
   selectedId?: string | null
   onSelect?: (id: string) => void

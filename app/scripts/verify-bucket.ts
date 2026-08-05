@@ -80,7 +80,7 @@ const call = <A, E>(f: (c: Client) => Effect.Effect<A, E>): Promise<A> =>
 
 const listFiles = (filter: Record<string, unknown>) =>
   call((c) => c.listFiles(filter as never)) as Promise<
-    ReadonlyArray<{ id: string; itemId: string | null; bucketId: string | null }>
+    ReadonlyArray<{ id: string; recordId: string | null; bucketId: string | null }>
   >
 
 // ── uploads ──
@@ -103,8 +103,8 @@ const att1 = await up1.json()
 ok("bucket upload accepted", up1.ok, `${up1.status}`)
 ok(
   "uploaded file belongs to no record",
-  att1.itemId === null,
-  `itemId=${JSON.stringify(att1.itemId)}`,
+  att1.recordId === null,
+  `recordId=${JSON.stringify(att1.recordId)}`,
 )
 ok("uploaded file carries its bucket", att1.bucketId === bucketId)
 const up2 = await upload(

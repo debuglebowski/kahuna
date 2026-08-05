@@ -144,7 +144,7 @@ describe("Google integration", () => {
       }
       if (url.includes("/calendar/v3/calendars/primary/events")) {
         return okJson({
-          records: [
+          items: [
             {
               id: "event-1",
               summary: "Planning",
@@ -203,7 +203,7 @@ describe("Google integration", () => {
       const url = String(input)
       if (url.includes("/calendar/v3/calendars/primary/events")) {
         return okJson({
-          records: [
+          items: [
             {
               id: "event-1",
               summary: title,
@@ -371,7 +371,7 @@ describe("Google integration", () => {
       const url = String(input)
       if (url.includes("/calendar/v3/calendars/primary/events")) {
         calendarCalls += 1
-        return okJson({ records: [], nextSyncToken: "sync-push" })
+        return okJson({ items: [], nextSyncToken: "sync-push" })
       }
       return new Response("unexpected", { status: 500 })
     })

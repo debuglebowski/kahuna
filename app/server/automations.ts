@@ -23,7 +23,7 @@ import {
   RecordService,
   type RecordVersion,
 } from "#engine"
-import { matchInstance } from "../src/lib/conditions"
+import { matchRecordVersion } from "../src/lib/conditions"
 import { publicConnectorError } from "./integrations/errors"
 import { fetchGuardedJson, UnsafeUrlError } from "./integrations/url-guard"
 import {
@@ -682,7 +682,7 @@ const executeRun = (input: {
     // for the transition ops. No subject (a schedule with no match, or an event we
     // couldn't resolve) and a non-empty condition set = skip.
     if (subject) {
-      const matched = matchInstance(subject.recordVersion, automation.conditions, {
+      const matched = matchRecordVersion(subject.recordVersion, automation.conditions, {
         match: automation.match,
         prev: input.prevState,
       })
@@ -1033,7 +1033,7 @@ const runScheduled = (orgId: string, automationId: string) =>
     for (const recordVersion of rows) {
       // A scheduled run has no "before" state — transition ops can't hold, which
       // is correct: nothing changed, the clock merely advanced.
-      const matched = matchInstance(recordVersion, automation.conditions, {
+      const matched = matchRecordVersion(recordVersion, automation.conditions, {
         match: automation.match,
         prev: null,
       })
@@ -1097,7 +1097,7 @@ export const dryRun = (input: { readonly automation: Automation; readonly limit?
       (c) => c.op === "changedTo" || c.op === "changedFrom",
     )
     const matches = rows.filter((r) =>
-      matchInstance(r, automation.conditions, { match: automation.match, prev: null }),
+      matchRecordVersion(r, automation.conditions, { match: automation.match, prev: null }),
     )
     return {
       matched: matches.length,

@@ -258,14 +258,14 @@ describe("Files widget defaults by dashboard kind", () => {
   it("record mode: this record's files, uploadable, record supplied by context", () => {
     const w = newWidget("files", true) as {
       scope: string
-      instanceId: string | null
+      recordVersionId: string | null
       allowUpload: boolean
     }
-    expect(w.scope).toBe("instance")
+    expect(w.scope).toBe("recordVersion")
     expect(w.allowUpload).toBe(true)
     // Null on purpose: WidgetCanvas fills it from the open record, so one template
     // serves every record of the concept.
-    expect(w.instanceId).toBeNull()
+    expect(w.recordVersionId).toBeNull()
   })
 
   it("page mode: whole-org browse, unchanged", () => {
@@ -278,7 +278,7 @@ describe("Files widget defaults by dashboard kind", () => {
     const body = { direction: "col" as const, children: [newWidget("files", true)] }
     const decoded = Schema.decodeUnknownSync(DashboardBody)(body)
     expect(decoded.children?.[0]).toMatchObject({
-      scope: "instance",
+      scope: "recordVersion",
       allowUpload: true,
     })
   })
@@ -349,7 +349,7 @@ describe("Files widget bucket (widget scope)", () => {
 })
 
 // `bindToConceptRecord` says "use whichever record this single-record concept
-// holds" instead of pinning an `instanceId`. It's a flag rather than a second
+// holds" instead of pinning an `recordVersionId`. It's a flag rather than a second
 // concept id so the bound record and the field-picker scope share one `conceptId`
 // and can't drift — which also means the codec must keep the flag and the id
 // together through a round-trip.
@@ -360,8 +360,8 @@ describe("bindToConceptRecord (single-record binding)", () => {
       children: [
         {
           ...newWidget("files"),
-          scope: "instance" as const,
-          instanceId: null,
+          scope: "recordVersion" as const,
+          recordVersionId: null,
           conceptId: "c1",
           bindToConceptRecord: true,
         },
@@ -369,7 +369,7 @@ describe("bindToConceptRecord (single-record binding)", () => {
     }
     const decoded = Schema.decodeUnknownSync(DashboardBody)(body)
     expect(decoded.children?.[0]).toMatchObject({
-      scope: "instance",
+      scope: "recordVersion",
       conceptId: "c1",
       bindToConceptRecord: true,
     })
@@ -397,14 +397,19 @@ describe("bindToConceptRecord (single-record binding)", () => {
       expect(newWidget(t)).not.toHaveProperty("bindToConceptRecord")
   })
 
-  // Binding does NOT make the dashboard load the concept's instances:
+  // Binding does NOT make the dashboard load the concept's record versions:
   // files/document fetch their record through their own RPCs, so the concept ref
   // here is a lookup key, not a scope to prefetch.
   it("does not add the bound concept to referencedConceptIds", () => {
     const body = migrate({
       direction: "col",
       children: [
-        { ...newWidget("files"), scope: "instance", conceptId: "c1", bindToConceptRecord: true },
+        {
+          ...newWidget("files"),
+          scope: "recordVersion",
+          conceptId: "c1",
+          bindToConceptRecord: true,
+        },
         { ...newWidget("document"), conceptId: "c2", bindToConceptRecord: true },
         { ...newWidget("metric"), conceptId: "c3" },
       ],

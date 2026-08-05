@@ -1,13 +1,13 @@
 import { LABELS_KEY } from "../../rpc/contract"
-import type { Instance, SidebarCondition } from "./api"
-import { labelsOf, type MatchOpts, matchInstance } from "./conditions"
+import type { RecordVersion, SidebarCondition } from "./api"
+import { labelsOf, type MatchOpts, matchRecordVersion } from "./conditions"
 
-export { LABELS_KEY, labelsOf, matchInstance }
+export { LABELS_KEY, labelsOf, matchRecordVersion }
 
 /**
  * Pure aggregation helpers for dashboard widgets. No React / DOM — kept
  * unit-testable like `routeEnvelope`. Widget components feed already-loaded
- * instances in; these reduce them to numbers/series. Condition matching lives
+ * record versions in; these reduce them to numbers/series. Condition matching lives
  * in `conditions.ts` (the evaluator shared with the concept list + sidebar).
  */
 
@@ -24,32 +24,32 @@ const toNumber = (v: unknown): number | null => {
   return null
 }
 
-export const countInstances = (
-  instances: readonly Instance[],
+export const countRecords = (
+  recordVersions: readonly RecordVersion[],
   conds: readonly SidebarCondition[],
   opts?: MatchOpts,
-): number => instances.filter((i) => matchInstance(i, conds, opts)).length
+): number => recordVersions.filter((i) => matchRecordVersion(i, conds, opts)).length
 
 export const sumField = (
-  instances: readonly Instance[],
+  recordVersions: readonly RecordVersion[],
   conds: readonly SidebarCondition[],
   fieldId: string,
   opts?: MatchOpts,
 ): number =>
-  instances.reduce((acc, i) => {
-    if (!matchInstance(i, conds, opts)) return acc
+  recordVersions.reduce((acc, i) => {
+    if (!matchRecordVersion(i, conds, opts)) return acc
     const n = toNumber(i.state[fieldId])
     return n == null ? acc : acc + n
   }, 0)
 
 export const avgField = (
-  instances: readonly Instance[],
+  recordVersions: readonly RecordVersion[],
   conds: readonly SidebarCondition[],
   fieldId: string,
   opts?: MatchOpts,
 ): number | null => {
-  const nums = instances
-    .filter((i) => matchInstance(i, conds, opts))
+  const nums = recordVersions
+    .filter((i) => matchRecordVersion(i, conds, opts))
     .map((i) => toNumber(i.state[fieldId]))
     .filter((n): n is number => n != null)
   if (nums.length === 0) return null
@@ -99,26 +99,28 @@ export const collapseOther = (
   return [...head, { key: OTHER_KEY, count: rest }]
 }
 
-/** The subset of instances that already existed at `cutoffMs` — the baseline
+/** The subset of record versions that already existed at `cutoffMs` — the baseline
  *  population for a metric's "vs N days ago" delta. Approximate by design:
  *  archived/deleted drift is invisible to a created-at cutoff. */
-export const createdOnOrBefore = (instances: readonly Instance[], cutoffMs: number): Instance[] =>
-  instances.filter((i) => new Date(i.createdAt).getTime() <= cutoffMs)
+export const createdOnOrBefore = (
+  recordVersions: readonly RecordVersion[],
+  cutoffMs: number,
+): RecordVersion[] => recordVersions.filter((i) => new Date(i.createdAt).getTime() <= cutoffMs)
 
-/** Group matching instances by a field id, or by label (`__labels` fans one
+/** Group matching record versions by a field id, or by label (`__labels` fans one
  *  bucket per label id; multi-value fields fan out too). Buckets sorted by count
- *  desc. Missing scalar values fall into a "—" bucket; no-label instances are
+ *  desc. Missing scalar values fall into a "—" bucket; no-label record versions are
  *  skipped. Keys for label grouping are label ids (caller maps id → name). */
 export const groupBy = (
-  instances: readonly Instance[],
+  recordVersions: readonly RecordVersion[],
   conds: readonly SidebarCondition[],
   key: string,
   opts?: MatchOpts,
 ): GroupBucket[] => {
   const counts = new Map<string, number>()
   const bump = (k: string) => counts.set(k, (counts.get(k) ?? 0) + 1)
-  for (const i of instances) {
-    if (!matchInstance(i, conds, opts)) continue
+  for (const i of recordVersions) {
+    if (!matchRecordVersion(i, conds, opts)) continue
     if (key === LABELS_KEY) {
       for (const lid of labelsOf(i.state)) bump(lid)
     } else {
@@ -134,14 +136,14 @@ export const groupBy = (
 
 /** Per-group count series across [fromMs, toMs] — the breakdown table's trend
  *  sparkline + delta. Created-at based, like `metricSeries`: at each evenly-spaced
- *  sample time it re-groups the instances that already existed then. Every key
+ *  sample time it re-groups the record versions that already existed then. Every key
  *  that ever appears gets a full-length series (zero-filled for samples before it
  *  first shows up). The final sample lands on `toMs`, so each series' last value
  *  is the current count and `last − first` is the window's delta. `from`/`to` are
  *  passed in (not read from the clock) so this stays pure/testable; `points` is
  *  clamped to ≥ 2. */
 export const groupSeries = (
-  instances: readonly Instance[],
+  recordVersions: readonly RecordVersion[],
   conds: readonly SidebarCondition[],
   key: string,
   fromMs: number,
@@ -155,7 +157,10 @@ export const groupSeries = (
   for (let i = 0; i < n; i++) {
     const cutoff = i === n - 1 ? toMs : fromMs + step * i
     const counts = new Map(
-      groupBy(createdOnOrBefore(instances, cutoff), conds, key, opts).map((b) => [b.key, b.count]),
+      groupBy(createdOnOrBefore(recordVersions, cutoff), conds, key, opts).map((b) => [
+        b.key,
+        b.count,
+      ]),
     )
     // A key first seen at sample i was 0 for the i earlier samples.
     for (const k of counts.keys()) if (!series.has(k)) series.set(k, new Array(i).fill(0))
@@ -164,19 +169,19 @@ export const groupSeries = (
   return series
 }
 
-/** Bucket matching instances by an enum field's value for the Kanban board.
+/** Bucket matching record versions by an enum field's value for the Kanban board.
  *  Key "" collects unset values (the synthetic "no value" column); a `multiple`
  *  enum contributes its FIRST value (a card sits in exactly one column).
  *  Insertion order within a bucket preserves the input order. */
 export const kanbanBuckets = (
-  instances: readonly Instance[],
+  recordVersions: readonly RecordVersion[],
   conds: readonly SidebarCondition[],
   groupKey: string,
   opts?: MatchOpts,
-): Map<string, Instance[]> => {
-  const buckets = new Map<string, Instance[]>()
-  for (const i of instances) {
-    if (!matchInstance(i, conds, opts)) continue
+): Map<string, RecordVersion[]> => {
+  const buckets = new Map<string, RecordVersion[]>()
+  for (const i of recordVersions) {
+    if (!matchRecordVersion(i, conds, opts)) continue
     const v = i.state[groupKey]
     const first = Array.isArray(v) ? v[0] : v
     const key = first === undefined || first === null || first === "" ? "" : String(first)
@@ -187,14 +192,14 @@ export const kanbanBuckets = (
   return buckets
 }
 
-/** Synthetic state key holding an instance's current computed bands, keyed by
+/** Synthetic state key holding a record version's current computed bands, keyed by
  *  field id (the engine's decay-tick marker; mirror of `LABELS_KEY`). */
 export const BANDS_KEY = "__bands"
 
-/** An instance's current band for a computed field. Prefers the read-time
+/** A record version's current band for a computed field. Prefers the read-time
  *  decorated value (`state[fieldId].band|label`, always current) over the
  *  hourly `__bands` marker. Returns undefined when not computed yet. */
-export const bandOf = (inst: Instance, fieldId: string): string | undefined => {
+export const bandOf = (inst: RecordVersion, fieldId: string): string | undefined => {
   const v = inst.state[fieldId]
   if (v && typeof v === "object") {
     const o = v as { band?: unknown; label?: unknown }
@@ -210,7 +215,7 @@ export const bandOf = (inst: Instance, fieldId: string): string | undefined => {
 }
 
 /** Days-since for a decay field (drives the stale-queue ordering); else null. */
-export const daysOf = (inst: Instance, fieldId: string): number | null => {
+export const daysOf = (inst: RecordVersion, fieldId: string): number | null => {
   const v = inst.state[fieldId]
   if (v && typeof v === "object" && typeof (v as { days?: unknown }).days === "number") {
     return (v as { days: number }).days
@@ -218,28 +223,28 @@ export const daysOf = (inst: Instance, fieldId: string): number | null => {
   return null
 }
 
-/** Count instances per band for a computed field (decay or momentum). */
+/** Count record versions per band for a computed field (decay or momentum). */
 export const bandRollup = (
-  instances: readonly Instance[],
+  recordVersions: readonly RecordVersion[],
   fieldId: string,
 ): Record<string, number> => {
   const counts: Record<string, number> = {}
-  for (const i of instances) {
+  for (const i of recordVersions) {
     const b = bandOf(i, fieldId)
     if (b) counts[b] = (counts[b] ?? 0) + 1
   }
   return counts
 }
 
-/** Instances currently in one of `bands` for a computed field, most-stale first
+/** Record versions currently in one of `bands` for a computed field, most-stale first
  *  (highest decay `days`). The attention "needs a nudge" queue. */
-export const staleInstances = (
-  instances: readonly Instance[],
+export const staleRecords = (
+  recordVersions: readonly RecordVersion[],
   fieldId: string,
   bands: readonly string[],
-): Instance[] => {
+): RecordVersion[] => {
   const set = new Set(bands)
-  return instances
+  return recordVersions
     .filter((i) => {
       const b = bandOf(i, fieldId)
       return b != null && set.has(b)
@@ -247,29 +252,29 @@ export const staleInstances = (
     .sort((a, b) => (daysOf(b, fieldId) ?? 0) - (daysOf(a, fieldId) ?? 0))
 }
 
-/** Compute a Metric widget's value from loaded instances. `null` = no data. */
+/** Compute a Metric widget's value from loaded record versions. `null` = no data. */
 export const metricValue = (
-  instances: readonly Instance[],
+  recordVersions: readonly RecordVersion[],
   agg: "count" | "sum" | "avg",
   conds: readonly SidebarCondition[],
   fieldId?: string | null,
   opts?: MatchOpts,
 ): number | null => {
-  if (agg === "count") return countInstances(instances, conds, opts)
+  if (agg === "count") return countRecords(recordVersions, conds, opts)
   if (!fieldId) return null
   return agg === "sum"
-    ? sumField(instances, conds, fieldId, opts)
-    : avgField(instances, conds, fieldId, opts)
+    ? sumField(recordVersions, conds, fieldId, opts)
+    : avgField(recordVersions, conds, fieldId, opts)
 }
 
 /** A Metric sparkline series: the metric value sampled at `points` evenly-spaced
- *  times across [fromMs, toMs], each computed over the instances that already
+ *  times across [fromMs, toMs], each computed over the record versions that already
  *  existed at that time (created-at based — the same approximation as the
  *  "vs N days ago" delta). The final sample lands exactly on `toMs`. `from`/`to`
  *  are passed in (not read from the clock) so this stays pure/testable. `points`
  *  is clamped to ≥ 2; null samples count as 0 so the line is always continuous. */
 export const metricSeries = (
-  instances: readonly Instance[],
+  recordVersions: readonly RecordVersion[],
   agg: "count" | "sum" | "avg",
   conds: readonly SidebarCondition[],
   fieldId: string | null | undefined,
@@ -283,7 +288,9 @@ export const metricSeries = (
   const series: number[] = []
   for (let i = 0; i < n; i++) {
     const cutoff = i === n - 1 ? toMs : fromMs + step * i
-    series.push(metricValue(createdOnOrBefore(instances, cutoff), agg, conds, fieldId, opts) ?? 0)
+    series.push(
+      metricValue(createdOnOrBefore(recordVersions, cutoff), agg, conds, fieldId, opts) ?? 0,
+    )
   }
   return series
 }

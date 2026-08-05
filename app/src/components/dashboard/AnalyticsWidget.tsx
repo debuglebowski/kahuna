@@ -12,7 +12,7 @@ import {
   type AnalyticsSeries,
   api,
   type DashboardWidget,
-  type Instance,
+  type RecordVersion,
 } from "@/lib/api"
 
 type Analytics = Extract<DashboardWidget, { type: "analytics" }>
@@ -82,7 +82,7 @@ function QueryError({ error }: { error: Error }) {
 
 /**
  * Aggregated product metrics from an external analytics provider (PostHog).
- * The only data-bound widget that doesn't read concept instances — the server
+ * The only data-bound widget that doesn't read concept record versions — the server
  * runs the aggregation and returns named series. On a RECORD dashboard, an
  * optional `recordFilter` narrows the same query to the current record by
  * reading one of its field values and matching it against a provider property.
@@ -93,12 +93,12 @@ export function AnalyticsWidget({
   record,
 }: {
   widget: Analytics
-  record?: { readonly instance: Instance }
+  record?: { readonly recordVersion: RecordVersion }
 }) {
   const filter = widget.recordFilter ?? null
   // Resolve the record's identifying value client-side; the endpoint stays
-  // provider-facing and never reads the instance table.
-  const rawValue = filter ? record?.instance.state[filter.fieldId] : undefined
+  // provider-facing and never reads the record version table.
+  const rawValue = filter ? record?.recordVersion.state[filter.fieldId] : undefined
   const recordValue =
     rawValue == null ? null : typeof rawValue === "string" ? rawValue : String(rawValue)
   const showDelta = widget.showDelta ?? false

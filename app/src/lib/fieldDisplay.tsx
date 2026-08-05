@@ -111,7 +111,7 @@ const scalar = (v: unknown): ReactNode =>
 const asList = (v: unknown): ReadonlyArray<unknown> => (Array.isArray(v) ? v : [v])
 
 /**
- * Kind-aware preview of one field value for tables/lists (and the instance
+ * Kind-aware preview of one field value for tables/lists (and the record version
  * detail): URLs link out, `user` renders member pills, `bool` renders a ✓/✕
  * icon, `enum` renders pills, money/computed get their formatted shapes.
  * Anything else falls back to {@link showValue}.

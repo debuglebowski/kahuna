@@ -1,6 +1,6 @@
 import type { Concept, DashboardWidget } from "@/lib/api"
 import { useSession } from "@/lib/auth-client"
-import type { ConceptInstanceData } from "@/lib/conceptData"
+import type { ConceptRecordData } from "@/lib/conceptData"
 import { formatWidgetNumber, heroTextClass, sizeVariant } from "@/lib/dashboards"
 import { cn } from "@/lib/utils"
 import { metricValue } from "@/lib/widgetAggregations"
@@ -43,7 +43,7 @@ export function GoalWidget({
   concept,
 }: {
   widget: Goal
-  data: ConceptInstanceData | undefined
+  data: ConceptRecordData | undefined
   concept: Concept | undefined
 }) {
   const { data: session } = useSession()
@@ -56,7 +56,7 @@ export function GoalWidget({
   }
 
   const value =
-    metricValue(data?.instances ?? [], widget.agg, widget.conditions, widget.field, {
+    metricValue(data?.recordVersions ?? [], widget.agg, widget.conditions, widget.field, {
       match: widget.match,
       me: session?.user.id ?? null,
     }) ?? 0

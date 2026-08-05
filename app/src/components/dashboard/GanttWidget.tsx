@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom"
 import { pillStyle } from "@/components/ui"
 import type { Concept, DashboardWidget } from "@/lib/api"
 import { useSession } from "@/lib/auth-client"
-import type { ConceptInstanceData } from "@/lib/conceptData"
+import type { ConceptRecordData } from "@/lib/conceptData"
 import { parseDateValue } from "@/lib/dates"
 import { FieldValueCell } from "@/lib/fieldDisplay"
 import { recordHref } from "@/lib/recordHref"
@@ -19,7 +19,7 @@ const LABEL_W = 144
 const BAR_COLOR = "#3b82f6"
 
 /**
- * Instances as horizontal bars between two date fields — duration and overlap
+ * Record versions as horizontal bars between two date fields — duration and overlap
  * on one time axis. No end value = a milestone diamond at the start date. The
  * scale sets the zoom (px/day) and the surface scrolls both ways under a
  * sticky axis header and label rail; group-by folds rows into swimlanes.
@@ -30,7 +30,7 @@ export function GanttWidget({
   concept,
 }: {
   widget: Gantt
-  data: ConceptInstanceData | undefined
+  data: ConceptRecordData | undefined
   /** The bar's concept — its title field drives bar labels. */
   concept?: Concept
 }) {
@@ -42,11 +42,11 @@ export function GanttWidget({
 
   const spans = useMemo(
     () =>
-      ganttSpans(widget, data?.instances ?? [], fields, {
+      ganttSpans(widget, data?.recordVersions ?? [], fields, {
         me,
         titleFieldId: concept?.titleFieldId,
       }),
-    [widget, data?.instances, fields, me, concept?.titleFieldId],
+    [widget, data?.recordVersions, fields, me, concept?.titleFieldId],
   )
 
   if (!widget.conceptId) return <p className="text-sm text-muted-foreground">Pick a concept.</p>

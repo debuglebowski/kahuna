@@ -157,7 +157,7 @@ const clickText = (needle: string, sel = "button, [role=option], a, [role=menuit
     press(el)
     return true
   })()`) as Promise<boolean>
-/** Real CDP mouse input at an element's centre. Radix Select items only commit on
+/** Real CDP mouse input at an element's centre. Radix Select records only commit on
  *  a genuine pointer sequence (synthetic events skip its pointer-capture guards),
  *  so anything inside an open Select must go through here. */
 async function clickReal(needle: string, sel = "[role=option], button") {
@@ -288,7 +288,7 @@ await until("dashboards settings loaded", 30000, () => evaljs(hasNew) as Promise
     throw e
   },
 )
-// "New" is a dropdown; the page-dashboard item lives inside it.
+// "New" is a dropdown; the page-dashboard record lives inside it.
 const openedNew = await evaljs(`(() => {
   const press = ${POINTER}
   const b = [...document.querySelectorAll("button")].find((e) => (e.textContent ?? "").trim().startsWith("New"))

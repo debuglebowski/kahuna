@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest"
-import type { Instance, SidebarCondition } from "./api"
-import { LABELS_KEY, matchCondition, matchInstance } from "./conditions"
+import type { RecordVersion, SidebarCondition } from "./api"
+import { LABELS_KEY, matchCondition, matchRecordVersion } from "./conditions"
 
-const inst = (state: Record<string, unknown>): Instance => {
+const inst = (state: Record<string, unknown>): RecordVersion => {
   const id = Math.random().toString(36).slice(2)
   return {
     id,
     conceptId: "c1",
-    itemId: id,
+    recordId: id,
     state,
     version: 0,
     versionStatus: "published",
@@ -120,21 +120,21 @@ describe("matchCondition ops", () => {
   })
 })
 
-describe("matchInstance combine modes", () => {
+describe("matchRecordVersion combine modes", () => {
   const i = inst({ stage: "open", n: 1 })
   const hit = c("stage", "eq", "open")
   const miss = c("n", "eq", 99)
 
   it("defaults to all (AND)", () => {
-    expect(matchInstance(i, [hit, miss])).toBe(false)
-    expect(matchInstance(i, [hit, hit])).toBe(true)
-    expect(matchInstance(i, [])).toBe(true)
+    expect(matchRecordVersion(i, [hit, miss])).toBe(false)
+    expect(matchRecordVersion(i, [hit, hit])).toBe(true)
+    expect(matchRecordVersion(i, [])).toBe(true)
   })
 
   it("any (OR) needs one hit; an empty set still matches", () => {
-    expect(matchInstance(i, [hit, miss], { match: "any" })).toBe(true)
-    expect(matchInstance(i, [miss, miss], { match: "any" })).toBe(false)
-    expect(matchInstance(i, [], { match: "any" })).toBe(true)
+    expect(matchRecordVersion(i, [hit, miss], { match: "any" })).toBe(true)
+    expect(matchRecordVersion(i, [miss, miss], { match: "any" })).toBe(false)
+    expect(matchRecordVersion(i, [], { match: "any" })).toBe(true)
   })
 })
 
@@ -182,7 +182,7 @@ describe("transition ops (changedTo / changedFrom)", () => {
     expect(matchCondition(won, c("stage", "changedTo", "won"))).toBe(false)
     expect(matchCondition(won, c("stage", "changedFrom", "nego"), { prev: null })).toBe(false)
     // And it composes with the normal combine modes.
-    expect(matchInstance(won, [c("stage", "changedTo", "won")], { match: "all" })).toBe(false)
+    expect(matchRecordVersion(won, [c("stage", "changedTo", "won")], { match: "all" })).toBe(false)
   })
 
   it("coerces like the other ops (numbers through a JSON round-trip)", () => {

@@ -15,7 +15,7 @@ import {
 } from "recharts"
 import { api, type DashboardWidget } from "@/lib/api"
 import { useSession } from "@/lib/auth-client"
-import type { ConceptInstanceData } from "@/lib/conceptData"
+import type { ConceptRecordData } from "@/lib/conceptData"
 import { formatWidgetNumber } from "@/lib/dashboards"
 import { cn } from "@/lib/utils"
 import {
@@ -63,7 +63,7 @@ const valueText = (v: number, total: number, mode: "count" | "percent" | "both")
       ? `${v} (${pctText(v, total)})`
       : String(v)
 
-/** Group instances by an enum field or by label, then render as one of six
+/** Group record versions by an enum field or by label, then render as one of six
  *  presentations. Lazy-loaded by the canvas so dashboards without charts don't
  *  pay recharts' bundle cost. */
 export function BreakdownWidget({
@@ -71,7 +71,7 @@ export function BreakdownWidget({
   data,
 }: {
   widget: Breakdown
-  data: ConceptInstanceData | undefined
+  data: ConceptRecordData | undefined
 }) {
   // Resolve label ids → names when grouping by label.
   const byLabel = widget.groupBy === LABELS_KEY
@@ -89,7 +89,7 @@ export function BreakdownWidget({
   const me = session?.user.id ?? null
   const rows = useMemo<Row[]>(() => {
     if (!widget.conceptId || !widget.groupBy) return []
-    const buckets = groupBy(data?.instances ?? [], widget.conditions, widget.groupBy, {
+    const buckets = groupBy(data?.recordVersions ?? [], widget.conditions, widget.groupBy, {
       match: widget.match,
       me,
     })
@@ -106,7 +106,7 @@ export function BreakdownWidget({
       value: b.count,
     }))
   }, [
-    data?.instances,
+    data?.recordVersions,
     data?.fields,
     widget.conceptId,
     widget.groupBy,
@@ -127,7 +127,7 @@ export function BreakdownWidget({
   const series = useMemo(() => {
     if (!wantsSeries || !widget.conceptId || !widget.groupBy) return null
     return groupSeries(
-      data?.instances ?? [],
+      data?.recordVersions ?? [],
       widget.conditions,
       widget.groupBy,
       now - seriesDays * DAY_MS,
@@ -138,7 +138,7 @@ export function BreakdownWidget({
   }, [
     wantsSeries,
     seriesDays,
-    data?.instances,
+    data?.recordVersions,
     widget.conditions,
     widget.groupBy,
     widget.conceptId,

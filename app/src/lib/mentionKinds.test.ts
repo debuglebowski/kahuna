@@ -59,8 +59,8 @@ describe("clientHrefFor", () => {
   })
 
   it("passes a server-resolved href through untouched", () => {
-    expect(clientHrefFor({ kind: "record", targetId: "i", href: "/instances/abc" })).toBe(
-      "/instances/abc",
+    expect(clientHrefFor({ kind: "record", targetId: "i", href: "/records/abc" })).toBe(
+      "/records/abc",
     )
     // …including one shaped unlike an SPA route (a file download endpoint).
     expect(

@@ -5,9 +5,9 @@
  * A mention stores three attrs — `{ kind, targetId, label }` — and nothing else.
  * `targetId` means something different per kind, and the difference is load-bearing:
  *
- *   record     `items.id` (the LINEAGE, never an `instances.id`) so the reference
- *              survives someone publishing a new version, matching how relations
- *              and task subjects address a record.
+ *   record     `records.id` (the LINEAGE, never a `record_versions.id`) so the
+ *              reference survives someone publishing a new version, matching how
+ *              relations and task subjects address a record.
  *   person     `bauth_user.id` — the only stable member handle.
  *   page       a `GLOBAL_NAV` key ("overview", "tasks", …). The one non-uuid kind:
  *              it has no database row, mirroring `sidebarViews`' `global:<key>`.
@@ -18,11 +18,13 @@
  *   file       `attachments.id`.
  *
  * DELIBERATELY NOT unified with `ShortcutItem` (`rpc/contract.ts`), which also
- * models "a pointer to a thing" with a `{ kind, ref, label }` shape. Its `instance`
- * kind stores an INSTANCE id (see `ShortcutItemsEditor`, which keeps `instanceId`
- * and discards `itemId`) where a mention stores an ITEM id. Same word, different
- * identity model — merging them would need stored shortcut refs migrated, and the
- * mismatch is exactly the kind that produces a silent wrong-link bug.
+ * models "a pointer to a thing" with a `{ kind, ref, label }` shape. Its
+ * `"recordVersion"` kind stores a `record_versions.id` (see `ShortcutItemsEditor`,
+ * which keeps `recordVersionId` and discards `recordId`) where a mention's
+ * `"record"` kind stores a `records.id` — a DIFFERENT id space, now named
+ * differently on purpose. Merging them would still need every stored shortcut
+ * ref migrated, and picking the wrong one of the two is exactly the silent
+ * wrong-link bug this split exists to make impossible.
  */
 
 import {

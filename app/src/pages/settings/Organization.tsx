@@ -128,7 +128,7 @@ export function Organization() {
           so deleting it does not leave you somewhere else — it leaves every user
           with a 409 NO_ACTIVE_ORG from resolveOrg and no way back, since
           `bun run bootstrap` guards on "no user has EVER existed" and the users
-          survive the delete. Tearing down an instance is an operator action
+          survive the delete. Tearing down an recordVersion is an operator action
           (drop the database, or scripts/create-admin.ts to re-issue an org). */}
     </div>
   )

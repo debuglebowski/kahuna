@@ -18,7 +18,7 @@ type Item = Shortcuts["items"][number]
 
 /**
  * The Shortcuts widget's ordered item list — rows with reorder/remove, plus an
- * add form whose target picker switches by kind: instance (concept + search,
+ * add form whose target picker switches by kind: record version (concept + search,
  * mirrors the relation picker), dashboard (select), or URL (free input). Labels
  * are snapshotted at pick time; dashboards re-resolve live in the renderer.
  */
@@ -31,7 +31,7 @@ export function ShortcutItemsEditor({
   concepts: readonly Concept[]
   onChange: (items: ReadonlyArray<Item>) => void
 }) {
-  const [kind, setKind] = useState<Item["kind"]>("instance")
+  const [kind, setKind] = useState<Item["kind"]>("recordVersion")
   const [conceptId, setConceptId] = useState("")
   const [query, setQuery] = useState("")
   const [url, setUrl] = useState("")
@@ -44,8 +44,8 @@ export function ShortcutItemsEditor({
   })
   const results = useQuery({
     queryKey: ["search", conceptId, query],
-    queryFn: () => api.searchInstances(conceptId, query),
-    enabled: kind === "instance" && !!conceptId,
+    queryFn: () => api.searchRecords(conceptId, query),
+    enabled: kind === "recordVersion" && !!conceptId,
   })
 
   const add = (item: Omit<Item, "id">) => onChange([...items, { ...item, id: crypto.randomUUID() }])
@@ -98,13 +98,13 @@ export function ShortcutItemsEditor({
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="instance">Instance</SelectItem>
+            <SelectItem value="recordVersion">RecordVersion</SelectItem>
             <SelectItem value="dashboard">Dashboard</SelectItem>
             <SelectItem value="url">URL</SelectItem>
           </SelectContent>
         </Select>
 
-        {kind === "instance" && (
+        {kind === "recordVersion" && (
           <>
             <Select
               value={conceptId || "__none"}
@@ -128,9 +128,11 @@ export function ShortcutItemsEditor({
                 <div className="max-h-36 space-y-0.5 overflow-y-auto">
                   {(results.data ?? []).map((r) => (
                     <button
-                      key={r.itemId}
+                      key={r.recordId}
                       type="button"
-                      onClick={() => add({ kind: "instance", ref: r.instanceId, label: r.label })}
+                      onClick={() =>
+                        add({ kind: "recordVersion", ref: r.recordVersionId, label: r.label })
+                      }
                       className="flex w-full items-center rounded px-2 py-1 text-left text-sm hover:bg-accent"
                     >
                       {r.label}

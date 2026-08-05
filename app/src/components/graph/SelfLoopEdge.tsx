@@ -1,7 +1,7 @@
 import { BaseEdge, EdgeLabelRenderer, type EdgeProps } from "@xyflow/react"
 
 /** An edge pointing back at its own node — drawn as a loop above the node.
- *  Shared by the concept graph canvas and the instance relationship graph. */
+ *  Shared by the concept graph canvas and the record version relationship graph. */
 export function SelfLoopEdge({
   id,
   sourceX,

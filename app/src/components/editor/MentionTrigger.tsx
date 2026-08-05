@@ -29,7 +29,7 @@ interface TriggerState {
 
 const EMPTY: TriggerState = { open: false, query: "", rect: null, apply: null }
 
-/** One store per editor instance — several editors can be mounted at once. */
+/** One store per editor record version — several editors can be mounted at once. */
 export function createMentionTriggerStore() {
   let state: TriggerState = EMPTY
   const listeners = new Set<() => void>()

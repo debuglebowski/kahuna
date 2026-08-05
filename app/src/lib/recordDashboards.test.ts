@@ -35,12 +35,12 @@ const dash = (id: string): Dashboard =>
 
 describe("recordHref", () => {
   it("builds a bare link without a dashboard", () => {
-    expect(recordHref("i1")).toBe("/instances/i1")
-    expect(recordHref("i1", {})).toBe("/instances/i1")
-    expect(recordHref("i1", { dashboard: null })).toBe("/instances/i1")
+    expect(recordHref("i1")).toBe("/records/i1")
+    expect(recordHref("i1", {})).toBe("/records/i1")
+    expect(recordHref("i1", { dashboard: null })).toBe("/records/i1")
   })
   it("pins a record dashboard via the view query param", () => {
-    expect(recordHref("i1", { dashboard: "d2" })).toBe("/instances/i1?view=d2")
+    expect(recordHref("i1", { dashboard: "d2" })).toBe("/records/i1?view=d2")
   })
 })
 

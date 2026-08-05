@@ -9,9 +9,9 @@ import type {
   AutomationRun,
   Concept,
   FeedItem,
-  Instance,
-  InstanceDetail,
   Note,
+  RecordDetail,
+  RecordVersion,
   SidebarView,
   Task,
   TaskPriority,
@@ -106,31 +106,31 @@ export const sidebarViewsCollection = createCollection(
 const isNotFound = (e: unknown): boolean =>
   typeof e === "object" && e !== null && (e as { code?: string }).code === "NOT_FOUND"
 
-// ── lazy, per-scope collections (memoised so the instance is stable) ───────────
+// ── lazy, per-scope collections (memoised so the record version is stable) ───────────
 
 const conceptCollections = new Map<string, ReturnType<typeof makeConcept>>()
 const makeConcept = (conceptId: string) =>
   createCollection(
     queryCollectionOptions({
-      queryKey: ["live", "instances", conceptId],
+      queryKey: ["live", "recordVersions", conceptId],
       // A concept restricted to admins reads as NOT_FOUND for a member. Surface it
       // as EMPTY rather than an error: this collection backs every concept-scoped
       // widget, and a dashboard holding one widget for a restricted concept must
       // still render the rest of the board.
-      queryFn: async (): Promise<Instance[]> => {
+      queryFn: async (): Promise<RecordVersion[]> => {
         try {
-          return [...(await api.listInstances(conceptId))]
+          return [...(await api.listRecords(conceptId))]
         } catch (e) {
           if (isNotFound(e)) return []
           throw e
         }
       },
       queryClient,
-      getKey: (i: Instance) => i.id,
+      getKey: (i: RecordVersion) => i.id,
     }),
   )
 
-export const instancesByConcept = (conceptId: string) => {
+export const recordsByConcept = (conceptId: string) => {
   let c = conceptCollections.get(conceptId)
   if (!c) {
     c = makeConcept(conceptId)
@@ -139,8 +139,8 @@ export const instancesByConcept = (conceptId: string) => {
   return c
 }
 
-// One instance's full detail (own data + connected instances) — a single-row
-// collection per instance id, so the detail page reacts via the same registry.
+// One record version's full detail (own data + connected record versions) — a single-row
+// collection per record version id, so the detail page reacts via the same registry.
 const detailCollections = new Map<string, ReturnType<typeof makeDetail>>()
 const makeDetail = (id: string) =>
   createCollection(
@@ -149,9 +149,9 @@ const makeDetail = (id: string) =>
       // Same NOT_FOUND rule as the concept collection: a record in a concept the
       // caller may not read comes back empty, so a record widget renders blank
       // rather than throwing and taking its dashboard with it.
-      queryFn: async (): Promise<Array<InstanceDetail & { id: string }>> => {
+      queryFn: async (): Promise<Array<RecordDetail & { id: string }>> => {
         try {
-          return [{ id, ...(await api.getInstance(id)) }]
+          return [{ id, ...(await api.getRecord(id)) }]
         } catch (e) {
           if (isNotFound(e)) return []
           throw e
@@ -162,7 +162,7 @@ const makeDetail = (id: string) =>
     }),
   )
 
-export const instanceDetail = (id: string) => {
+export const recordDetail = (id: string) => {
   let c = detailCollections.get(id)
   if (!c) {
     c = makeDetail(id)
@@ -172,17 +172,17 @@ export const instanceDetail = (id: string) => {
 }
 
 // A single-record concept's one record, keyed by CONCEPT id — the same
-// `InstanceDetail` shape `instanceDetail` yields, so `/c/<slug>` renders through
-// the ordinary record view. Keyed by concept rather than instance because that's
-// the only id the caller has: which instance is "the" record moves on every
-// publish, and the server's `singleRecordOf` (not `listInstances[0]`) is what
+// `RecordDetail` shape `recordDetail` yields, so `/c/<slug>` renders through
+// the ordinary record view. Keyed by concept rather than record version because that's
+// the only id the caller has: which record version is "the" record moves on every
+// publish, and the server's `singleRecordOf` (not `listRecords[0]`) is what
 // knows, including for a versioned concept whose record is still a draft.
 const singleRecordCollections = new Map<string, ReturnType<typeof makeSingleRecord>>()
 const makeSingleRecord = (conceptId: string) =>
   createCollection(
     queryCollectionOptions({
       queryKey: ["live", "singleRecord", conceptId],
-      queryFn: async (): Promise<Array<InstanceDetail & { id: string }>> => {
+      queryFn: async (): Promise<Array<RecordDetail & { id: string }>> => {
         // Null = the flag is on with no record behind it, which shouldn't happen.
         // NOT_FOUND = the concept is restricted for this caller. Both yield an empty
         // collection, so the page says so instead of spinning or erroring.
@@ -208,7 +208,7 @@ export const singleRecordOfConcept = (conceptId: string) => {
   return c
 }
 
-// ── annotation layer (per-item: subjectId = the item lineage id) ───────────────
+// ── annotation layer (per-record: subjectId = the record id) ───────────────
 
 const notesCollections = new Map<string, ReturnType<typeof makeNotes>>()
 const makeNotes = (subjectId: string) =>
@@ -271,7 +271,7 @@ const makeFiles = (subjectId: string) =>
       queryKey: ["live", "files", subjectId],
       queryFn: async (): Promise<Attachment[]> => {
         try {
-          return [...(await api.listFiles({ itemId: subjectId, includeArchived: true }))]
+          return [...(await api.listFiles({ recordId: subjectId, includeArchived: true }))]
         } catch (e) {
           if (isNotFound(e)) return []
           throw e
@@ -338,7 +338,7 @@ export const taskPrioritiesCollection = createCollection(
   }),
 )
 
-/** Global "My Tasks" view — cross-item tasks (filter applied at read time). */
+/** Global "My Tasks" view — cross-record tasks (filter applied at read time). */
 export const tasksGlobalCollection = createCollection(
   queryCollectionOptions({
     queryKey: ["live", "tasks", "global"],

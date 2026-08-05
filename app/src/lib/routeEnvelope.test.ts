@@ -5,9 +5,9 @@ const env = (over: Partial<LiveEnvelope>): LiveEnvelope => ({
   org: "o",
   id: 1,
   at: 0,
-  kind: "instance",
+  kind: "recordVersion",
   subjectId: "x",
-  type: "InstanceUpdated",
+  type: "RecordVersionUpdated",
   conceptId: null,
   concept: null,
   ...over,
@@ -25,7 +25,7 @@ describe("routeEnvelope", () => {
     expect(routeEnvelope(env({ concept: "Deal" }), [])).toEqual([])
   })
 
-  it("an instance change only nudges the changed feed when no list/detail is mounted", () => {
+  it("an recordVersion change only nudges the changed feed when no list/detail is mounted", () => {
     const keys = new Set(routeEnvelope(env({ concept: "Deal", conceptId: "deal-id" }), GLOBALS))
     expect(keys).toEqual(new Set([KEY.changed]))
   })
@@ -42,24 +42,24 @@ describe("routeEnvelope", () => {
   })
 
   it("generic concept routes to its mounted ConceptView (by concept id)", () => {
-    const mounted = [KEY.changed, KEY.instances("widget-id")]
+    const mounted = [KEY.changed, KEY.recordVersions("widget-id")]
     const keys = new Set(routeEnvelope(env({ concept: "Widget", conceptId: "widget-id" }), mounted))
-    expect(keys).toEqual(new Set([KEY.changed, KEY.instances("widget-id")]))
+    expect(keys).toEqual(new Set([KEY.changed, KEY.recordVersions("widget-id")]))
   })
 
-  it("instance change with its ConceptView mounted refetches that collection", () => {
-    const mounted = [...GLOBALS, KEY.instances("account-id")]
+  it("recordVersion change with its ConceptView mounted refetches that collection", () => {
+    const mounted = [...GLOBALS, KEY.recordVersions("account-id")]
     const keys = new Set(
       routeEnvelope(
         env({ concept: "Account", conceptId: "account-id", subjectId: "acc1" }),
         mounted,
       ),
     )
-    expect(keys).toEqual(new Set([KEY.changed, KEY.instances("account-id")]))
+    expect(keys).toEqual(new Set([KEY.changed, KEY.recordVersions("account-id")]))
   })
 
-  it("instance change nudges mounted detail pages (viewed or connected)", () => {
-    // A detail page may render the changed instance directly or as a connected
+  it("recordVersion change nudges mounted detail pages (viewed or connected)", () => {
+    // A detail page may render the changed record version directly or as a connected
     // one — either way it refetches. Unmounted detail pages stay untouched.
     const mounted = [KEY.changed, KEY.detail("acc1"), KEY.detail("other")]
     const keys = new Set(
@@ -74,9 +74,9 @@ describe("routeEnvelope", () => {
     expect(keys).toEqual(new Set([KEY.changed, KEY.detail("acc1")]))
   })
 
-  it("instance/item change nudges the concept's mounted single-record resolution", () => {
+  it("recordVersion/item change nudges the concept's mounted single-record resolution", () => {
     // `/c/<slug>` resolves concept id → its one record, so a publish (which moves
-    // the lineage head to a NEW instance id) has to re-run the resolution, not just
+    // the lineage head to a NEW record version id) has to re-run the resolution, not just
     // refetch the detail the old id pointed at.
     const mounted = [KEY.changed, KEY.singleRecord("company-id")]
     const keys = new Set(
@@ -101,7 +101,7 @@ describe("routeEnvelope", () => {
   it("attachment events nudge mounted files panels, widgets, and activity feeds", () => {
     // The envelope's subjectId is the attachment id (not the host item), so the
     // routing fans out to every mounted files surface — incl. the widgets'
-    // shared files:global key — plus the per-item activity feeds.
+    // shared files:global key — plus the per-record activity feeds.
     const mounted = [
       KEY.changed,
       KEY.files("item1"),

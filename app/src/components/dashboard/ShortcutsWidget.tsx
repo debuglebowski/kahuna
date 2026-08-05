@@ -10,6 +10,8 @@ type Shortcuts = Extract<DashboardWidget, { type: "shortcuts" }>
 type Item = Shortcuts["items"][number]
 
 const KIND_ICON: Record<Item["kind"], typeof Box> = {
+  recordVersion: Box,
+  // "instance" is the pre-rename value, still decodable for one release.
   instance: Box,
   dashboard: LayoutDashboard,
   url: Globe,
@@ -20,7 +22,7 @@ const KIND_ICON: Record<Item["kind"], typeof Box> = {
 export const urlHref = (ref: string): string =>
   /^[a-z][a-z0-9+.-]*:/i.test(ref) ? ref : `https://${ref}`
 
-/** Curated jump-off points — hand-picked links to instances, dashboards, or
+/** Curated jump-off points — hand-picked links to record versions, dashboards, or
  *  external URLs. Fully manual by design: the curation IS the filter. */
 export function ShortcutsWidget({ widget }: { widget: Shortcuts }) {
   // Dashboard targets re-resolve to the live name (shares the page's query).

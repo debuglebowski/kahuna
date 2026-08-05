@@ -4,7 +4,7 @@ import "react-grid-layout/css/styles.css"
 import "react-resizable/css/styles.css"
 
 /** A react-grid-layout item (subset we use). The coarse 12-col grid that backs
- *  the instance-view editor — dashboards moved to a flexbox auto-layout tree. */
+ *  the record version-view editor — dashboards moved to a flexbox auto-layout tree. */
 export interface GridItem {
   i: string
   x: number
@@ -15,7 +15,7 @@ export interface GridItem {
   minH?: number
 }
 
-// Coarse grid (the instance-view editor's). cols/rowHeight/margin are props so a
+// Coarse grid (the record version-view editor's). cols/rowHeight/margin are props so a
 // caller can override; nothing overrides them today.
 const DEFAULT_COLS = 12
 const DEFAULT_ROW_HEIGHT = 72
@@ -73,7 +73,7 @@ export function useFillHeight<T extends HTMLElement = HTMLDivElement>() {
 
 /**
  * The one RGL setup shared by every canvas surface (dashboards, member pages,
- * instance view editor): self-measured width plus the house grid constants.
+ * record version view editor): self-measured width plus the house grid constants.
  * Children must be keyed by their layout item id, as RGL requires.
  */
 export function MeasuredGrid({
@@ -104,7 +104,7 @@ export function MeasuredGrid({
   /** Reports the measured grid container width (px) — feeds the px/% size
    *  conversions in the dashboard editor's widget config panel. */
   onWidth?: (width: number) => void
-  /** Grid resolution. Defaults to the coarse instance-view grid; the dashboard
+  /** Grid resolution. Defaults to the coarse record version-view grid; the dashboard
    *  passes a fine grid (≈1px cells, no gutter) for continuous sizing. */
   cols?: number
   rowHeight?: number

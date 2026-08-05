@@ -11,7 +11,7 @@ import {
 import type { GraphLayout } from "../../lib/api"
 
 /**
- * Position state management for a graph canvas (concept graph, instance
+ * Position state management for a graph canvas (concept graph, record version
  * relationship graph), split out of the components so a canvas only wires
  * handlers and renders status. The caller supplies `save` — a partial-patch
  * persister (node id → position) — so each canvas brings its own endpoint.

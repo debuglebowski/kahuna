@@ -1,13 +1,13 @@
 import { useMemo } from "react"
 import { useNavigate } from "react-router-dom"
 import { Badge, decayTone, momentumTone } from "@/components/ui"
-import type { Concept, DashboardWidget, Field, Instance } from "@/lib/api"
+import type { Concept, DashboardWidget, Field, RecordVersion } from "@/lib/api"
 import { useSession } from "@/lib/auth-client"
-import type { ConceptInstanceData } from "@/lib/conceptData"
-import { instanceLabel } from "@/lib/instanceLabel"
+import type { ConceptRecordData } from "@/lib/conceptData"
 import { recordHref } from "@/lib/recordHref"
+import { recordLabel } from "@/lib/recordLabel"
 import { cn } from "@/lib/utils"
-import { bandRollup, daysOf, matchInstance, staleInstances } from "@/lib/widgetAggregations"
+import { bandRollup, daysOf, matchRecordVersion, staleRecords } from "@/lib/widgetAggregations"
 
 type Attention = Extract<DashboardWidget, { type: "attention" }>
 
@@ -37,7 +37,7 @@ const pickField = (widget: Attention, fields: readonly Field[]): Field | undefin
 }
 
 /** Decay/momentum band rollup + a "needs a nudge" stale queue. Surfaces the
- *  computed-bands engine; reads bands from instance state (no extra RPC).
+ *  computed-bands engine; reads bands from record version state (no extra RPC).
  *  Variants: badge rollup (default) or a proportional heat strip + worst-N. */
 export function AttentionWidget({
   widget,
@@ -45,7 +45,7 @@ export function AttentionWidget({
   concept,
 }: {
   widget: Attention
-  data: ConceptInstanceData | undefined
+  data: ConceptRecordData | undefined
   concept: Concept | undefined
 }) {
   const navigate = useNavigate()
@@ -53,18 +53,21 @@ export function AttentionWidget({
   const me = session?.user.id ?? null
   const fields = data?.fields ?? []
   const conditions = widget.conditions
-  const instances = useMemo(() => {
-    const all = data?.instances ?? []
+  const recordVersions = useMemo(() => {
+    const all = data?.recordVersions ?? []
     return conditions && conditions.length > 0
-      ? all.filter((i) => matchInstance(i, conditions, { match: widget.match, me }))
+      ? all.filter((i) => matchRecordVersion(i, conditions, { match: widget.match, me }))
       : all
-  }, [data?.instances, conditions, widget.match, me])
+  }, [data?.recordVersions, conditions, widget.match, me])
   const field = useMemo(() => pickField(widget, fields), [widget, fields])
   const kind = field?.config.computedKind
   const order = kind === "momentum" ? MOMENTUM_ORDER : DECAY_ORDER
   const tone = kind === "momentum" ? momentumTone : decayTone
 
-  const rollup = useMemo(() => (field ? bandRollup(instances, field.id) : {}), [instances, field])
+  const rollup = useMemo(
+    () => (field ? bandRollup(recordVersions, field.id) : {}),
+    [recordVersions, field],
+  )
   const staleBands =
     widget.bands && widget.bands.length > 0
       ? widget.bands
@@ -73,8 +76,8 @@ export function AttentionWidget({
         : ["cooling", "cold"]
   const stale = useMemo(
     () =>
-      field ? staleInstances(instances, field.id, staleBands).slice(0, widget.limit ?? 5) : [],
-    [instances, field, staleBands, widget.limit],
+      field ? staleRecords(recordVersions, field.id, staleBands).slice(0, widget.limit ?? 5) : [],
+    [recordVersions, field, staleBands, widget.limit],
   )
 
   if (!widget.conceptId || !concept)
@@ -91,7 +94,7 @@ export function AttentionWidget({
 
   const staleList = stale.length > 0 && (
     <div className="min-h-0 flex-1 overflow-auto">
-      {stale.map((i: Instance) => {
+      {stale.map((i: RecordVersion) => {
         const d = field ? daysOf(i, field.id) : null
         return (
           <button
@@ -101,7 +104,7 @@ export function AttentionWidget({
             className="flex w-full items-center justify-between gap-2 rounded px-1 py-1 text-left text-sm hover:bg-muted"
           >
             <span className="truncate text-foreground">
-              {instanceLabel(i, fields, concept?.titleFieldId)}
+              {recordLabel(i, fields, concept?.titleFieldId)}
             </span>
             {showDays && d != null && (
               <span className="shrink-0 text-xs text-muted-foreground">{d}d quiet</span>

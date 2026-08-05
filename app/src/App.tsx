@@ -7,10 +7,10 @@ import { AuthPage } from "./pages/AuthPage"
 import { Automations } from "./pages/Automations"
 import { ConceptRecordView } from "./pages/ConceptRecordView"
 import { Dashboards } from "./pages/Dashboards"
-import { InstanceView } from "./pages/InstanceView"
 import { MemberProfile } from "./pages/MemberProfile"
 import { MembersDirectory } from "./pages/MembersDirectory"
 import { Overview } from "./pages/Overview"
+import { RecordView } from "./pages/RecordView"
 import { Authentication } from "./pages/settings/Authentication"
 import { Concepts } from "./pages/settings/Concepts"
 import { Dashboards as DashboardsSettings } from "./pages/settings/Dashboards"
@@ -82,8 +82,8 @@ export function App() {
           <Route path="automations" element={<Automations />} />
           <Route path="automations/:id" element={<Automations />} />
         </Route>
-        <Route path="/instances/:id" element={<InstanceView />} />
-        {/* A single-record concept's one record, addressed by slug — no instance
+        <Route path="/records/:id" element={<RecordView />} />
+        {/* A single-record concept's one record, addressed by slug — no recordVersion
             id, because there's only ever one. Renders the same record page. */}
         <Route path="/c/:slug" element={<ConceptRecordView />} />
         <Route path="*" element={<Navigate to="/" replace />} />

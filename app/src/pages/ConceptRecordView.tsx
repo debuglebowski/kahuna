@@ -4,13 +4,13 @@ import { useNavigate, useParams } from "react-router-dom"
 import { Button, Spinner } from "../components/ui"
 import { api } from "../lib/api"
 import { conceptBySlug, useSingleRecord } from "../lib/singleRecord"
-import { InstanceViewBody } from "./InstanceView"
+import { RecordVersionViewBody } from "./RecordView"
 
 /**
  * A single-record concept's record at `/c/<slug>` — the whole point of the mode:
- * one URL, no instance id, so the concept behaves like a page rather than a list.
+ * one URL, no record version id, so the concept behaves like a page rather than a list.
  *
- * Renders through {@link InstanceViewBody}, the SAME component `/instances/:id`
+ * Renders through {@link InstanceViewBody}, the SAME component `/records/:id`
  * uses, so the record view, its widgets, and the amendment banner all behave
  * identically. Only the resolution differs (slug → concept → its one record).
  */
@@ -48,7 +48,7 @@ export function ConceptRecordView() {
       />
     )
   }
-  return <InstanceViewBody detail={detail} loading={loading} refetch={refetch} />
+  return <RecordVersionViewBody detail={detail} loading={loading} refetch={refetch} />
 }
 
 /** A dead-end state with one way out — used for both a bad slug and a missing record. */

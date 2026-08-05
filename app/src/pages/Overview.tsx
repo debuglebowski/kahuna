@@ -3,8 +3,8 @@ import { useMutation } from "@tanstack/react-query"
 import { ListTodo } from "lucide-react"
 import { useMemo, useState } from "react"
 import { useNavigate } from "react-router-dom"
-import { isOverdue } from "@/components/item/DueDateControl"
-import { Dot } from "@/components/item/StatusSelect"
+import { isOverdue } from "@/components/record/DueDateControl"
+import { Dot } from "@/components/record/StatusSelect"
 import { Spinner } from "@/components/ui"
 import { Checkbox } from "@/components/ui/checkbox"
 import type { Task } from "@/lib/api"
@@ -23,7 +23,7 @@ import { pickWelcome } from "@/lib/welcomeMessages"
 
 /**
  * The landing page (`/`): a random big-title greeting plus the viewer's tasks.
- * "Mine" = open tasks from the global annotation layer (cross-item) assigned to
+ * "Mine" = open tasks from the global annotation layer (cross-record) assigned to
  * the session user — done and archived tasks drop off the list.
  */
 export function Overview() {
@@ -60,7 +60,7 @@ export function Overview() {
     mutationFn: (t: Task) => api.setTaskStatus(t.id, t.version, doneStatus?.id ?? ""),
     onSuccess: () => tasksGlobalCollection.utils.refetch(),
   })
-  // A task points at its item lineage; the route wants an instance, so resolve
+  // A task points at its record; the route wants a record version, so resolve
   // the head version (latest published, else the draft) on click.
   const open = useMutation({
     mutationFn: async (t: Task) => {

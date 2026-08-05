@@ -25,7 +25,7 @@ import {
 } from "./use-cases"
 
 /**
- * `getActivity` is a SEPARATE leak channel from `record versions.state`: it ships raw
+ * `getActivity` is a SEPARATE leak channel from `record_versions.state`: it ships raw
  * event payloads plus a server-reconstructed `previous` map of overwritten values.
  * Field masking has to reach both — and ONLY at the final map, because the fold
  * that builds `previous` must see complete payloads or a later event would report a
@@ -161,7 +161,7 @@ describe("activity feed field masking", () => {
 
 describe("subject-keyed reads on a restricted concept", () => {
   /**
-   * `annotations.subject_id` and `attachments.item_id` carry no concept column, so
+   * `annotations.subject_id` and `attachments.record_id` carry no concept column, so
    * these queries cannot filter on visibility themselves. Without an explicit gate a
    * member holding a restricted record's LINEAGE id could read its notes, tasks and
    * files — the same hole `getActivity` had.

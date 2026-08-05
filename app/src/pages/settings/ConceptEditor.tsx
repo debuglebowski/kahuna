@@ -68,13 +68,13 @@ import {
   type Dashboard,
   type EditReach,
   type Field,
-  type Instance,
   type Label,
+  type RecordVersion,
 } from "../../lib/api"
 import { ConceptIcon, DEFAULT_CONCEPT_ICON, DEFAULT_FIELD_ICON } from "../../lib/icons"
 import { useUnsavedGuard } from "../../lib/useUnsavedGuard"
 import { showValue } from "../../lib/utils"
-import { InstanceForm } from "../InstanceForm"
+import { RecordForm } from "../RecordForm"
 import { FieldForm, type FieldFormValue, fieldKindLabel } from "./FieldForm"
 import { DangerZone } from "./parts"
 
@@ -250,7 +250,7 @@ interface Draft {
 type ModalDialog =
   | { kind: "archiveField"; field: Field }
   | { kind: "deleteField"; field: Field }
-  | { kind: "deleteItem"; inst: Instance }
+  | { kind: "deleteItem"; inst: RecordVersion }
   | null
 
 /**
@@ -263,7 +263,7 @@ type ModalDialog =
  * Identity, labels and versioning edit a local draft; one Save persists them
  * together (everything is a single `updateConcept`), Cancel/back returns to the
  * concept graph (a discard confirm fires on any nav away while dirty). Field and
- * archived-item operations are row-level APIs of their own and apply
+ * archived-record operations are row-level APIs of their own and apply
  * immediately. Concept archive/restore/delete confirm at the page level — the
  * archived-concepts list shares those dialogs.
  */
@@ -387,7 +387,7 @@ export function ConceptEditor({
   const userFields = liveFields.filter((f) => !f.managedBy)
 
   // Layout tab: the concept's RECORD VIEWS — per-concept dashboards that render
-  // one instance at a time. Editing happens on the dashboard-editor route; this
+  // one record version at a time. Editing happens on the dashboard-editor route; this
   // tab lists them in order (the FIRST opens by default; drag to reorder).
   // (Replaces the old instance_view tile layout.)
   const recordDashboards = useQuery({
@@ -454,7 +454,7 @@ export function ConceptEditor({
       setSeedModal(false)
       qc.invalidateQueries({ queryKey: ["concepts"] })
       // The record it just created (or released) changes both lists.
-      qc.invalidateQueries({ queryKey: ["instances", concept.id] })
+      qc.invalidateQueries({ queryKey: ["recordVersions", concept.id] })
       refetchGraph()
     },
   })
@@ -472,8 +472,8 @@ export function ConceptEditor({
       api.setFieldVisibility(v.id, v.visibility),
     onSuccess: () => {
       refetchFields()
-      // Masked values disappear from every instance read of this concept.
-      qc.invalidateQueries({ queryKey: ["instances", concept.id] })
+      // Masked values disappear from every record version read of this concept.
+      qc.invalidateQueries({ queryKey: ["recordVersions", concept.id] })
     },
   })
 
@@ -579,8 +579,8 @@ export function ConceptEditor({
   // Archived items: restore, or purge (admin) — the data-hygiene side of a
   // concept, so it lives here with the rest of its configuration.
   const archivedItems = useQuery({
-    queryKey: ["instances", concept.id, "archived"],
-    queryFn: () => api.listInstances(concept.id, { includeArchived: true }),
+    queryKey: ["recordVersions", concept.id, "archived"],
+    queryFn: () => api.listRecords(concept.id, { includeArchived: true }),
     select: (rows) => rows.filter((i) => i.archivedAt),
   })
   // The live side of the SAME fetch (one shared cache entry, two selects) — tells
@@ -589,18 +589,18 @@ export function ConceptEditor({
   // just means we ask for seed values the engine then ignores (it counts item
   // lineages, adopts the draft, and skips the create). Harmless, never wrong.
   const liveItems = useQuery({
-    queryKey: ["instances", concept.id, "archived"],
-    queryFn: () => api.listInstances(concept.id, { includeArchived: true }),
+    queryKey: ["recordVersions", concept.id, "archived"],
+    queryFn: () => api.listRecords(concept.id, { includeArchived: true }),
     select: (rows) => rows.filter((i) => !i.archivedAt),
   })
   const refetchArchived = () =>
-    qc.invalidateQueries({ queryKey: ["instances", concept.id, "archived"] })
-  const restoreItem = useMutation({
-    mutationFn: (i: Instance) => api.restoreInstance(i.id, i.version),
+    qc.invalidateQueries({ queryKey: ["recordVersions", concept.id, "archived"] })
+  const restoreRecord = useMutation({
+    mutationFn: (i: RecordVersion) => api.restoreRecordVersion(i.id, i.version),
     onSuccess: refetchArchived,
   })
   const delItem = useMutation({
-    mutationFn: (i: Instance) => api.deleteInstance(i.id),
+    mutationFn: (i: RecordVersion) => api.deleteRecordVersion(i.id),
     onSuccess: () => {
       setDialog(null)
       refetchArchived()
@@ -1024,8 +1024,8 @@ export function ConceptEditor({
                   archiveHint={
                     <>
                       Hides it from the sidebar and lists; its fields
-                      {concept.itemCount
-                        ? ` and ${concept.itemCount} item${concept.itemCount === 1 ? "" : "s"}`
+                      {concept.recordCount
+                        ? ` and ${concept.recordCount} item${concept.recordCount === 1 ? "" : "s"}`
                         : ""}{" "}
                       are kept. Restore anytime.
                     </>
@@ -1233,8 +1233,8 @@ export function ConceptEditor({
                     </span>
                     <IconButton
                       aria-label={`Restore ${itemLabel(r.state)}`}
-                      disabled={restoreItem.isPending}
-                      onClick={() => restoreItem.mutate(r)}
+                      disabled={restoreRecord.isPending}
+                      onClick={() => restoreRecord.mutate(r)}
                     >
                       <ArchiveRestore size={15} />
                     </IconButton>
@@ -1250,8 +1250,8 @@ export function ConceptEditor({
                   </li>
                 ))}
               </ul>
-              {restoreItem.error && (
-                <p className="pt-3 text-sm text-destructive">{msgOf(restoreItem.error)}</p>
+              {restoreRecord.error && (
+                <p className="pt-3 text-sm text-destructive">{msgOf(restoreRecord.error)}</p>
               )}
             </TabsContent>
           )}
@@ -1357,7 +1357,7 @@ export function ConceptEditor({
             Single record mode needs one record to hold {concept.name}'s values. Fill in what you
             know — you can edit it anytime afterwards.
           </p>
-          <InstanceForm
+          <RecordForm
             fields={liveFields}
             defaultLabelIds={concept.defaultLabelIds}
             onSubmit={(fields) => saveSingleRecord.mutate({ on: true, fields })}

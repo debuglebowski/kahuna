@@ -274,8 +274,8 @@ const maskPayload = (payload: unknown, hidden: ReadonlySet<string>): unknown => 
  * Gate a read that keys purely off a record id.
  *
  * The annotation + attachment tables (`annotations.subject_id`,
- * `attachments.item_id`) carry no concept column, so their queries cannot filter on
- * visibility themselves — a member holding a restricted record's record id could
+ * `attachments.record_id`) carry no concept column, so their queries cannot filter
+ * on visibility themselves — a member holding a restricted record's id could
  * otherwise read its notes, tasks, files and activity. `RecordService.getRecord`
  * carries the concept read gate, so resolving the lineage IS the check.
  *
@@ -1177,7 +1177,7 @@ export const createRelation = (input: {
 export const removeRelation = (relationId: string): UC<unknown> =>
   Effect.flatMap(RelationService, (r) => r.remove({ relationId }))
 
-/** `owner` is a record's record or a Files widget's bucket — see UploadOwner. */
+/** `owner` is a record or a Files widget's bucket — see UploadOwner. */
 export const uploadAttachment = (
   owner: UploadOwner,
   filename: string,

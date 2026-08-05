@@ -20,8 +20,8 @@ import {
   opsForKind,
 } from "@/lib/conditions"
 import { useFullOrg } from "@/pages/settings/SettingsLayout"
-import { MemberAvatar, memberLabel } from "./item/AssigneePicker"
 import { MultiCombobox } from "./MultiCombobox"
+import { MemberAvatar, memberLabel } from "./record/AssigneePicker"
 import { IconButton, Input } from "./ui"
 
 /** Live field defs for a concept (shared by the sidebar + dashboard editors). */

@@ -134,11 +134,11 @@ const winner = await call((c) =>
 ok("automation created enabled", winner.enabled)
 
 const deal = await call((c) =>
-  c.createInstance({ conceptId: concept.id, fields: { [stage.id]: "nego" } }),
+  c.createRecord({ conceptId: concept.id, fields: { [stage.id]: "nego" } }),
 )
 // The edit that should trigger it.
 const moved = await call((c) =>
-  c.updateInstance({
+  c.updateRecord({
     id: deal.id,
     expectedVersion: deal.version,
     patch: { [stage.id]: "won" },
@@ -147,13 +147,13 @@ const moved = await call((c) =>
 ok("record moved to won", moved.state[stage.id] === "won")
 
 const afterFire = await until(
-  () => call((c) => c.getInstance({ id: deal.id })),
-  (d) => typeof d.instance.state[flag.id] === "string",
+  () => call((c) => c.getRecord({ id: deal.id })),
+  (d) => typeof d.recordVersion.state[flag.id] === "string",
 )
 ok(
   "1. the rule FIRED and wrote the field",
-  afterFire.instance.state[flag.id] === "closed won",
-  String(afterFire.instance.state[flag.id] ?? "(unset)"),
+  afterFire.recordVersion.state[flag.id] === "closed won",
+  String(afterFire.recordVersion.state[flag.id] ?? "(unset)"),
 )
 
 const winnerRuns = await until(
@@ -167,8 +167,8 @@ ok("   run carries the triggering event id", typeof okRun?.eventId === "number")
 
 // The trace: an AutomationRan on the record's own activity feed.
 const feed = await until(
-  () => call((c) => c.getActivity({ subjectId: deal.itemId })),
-  (items) => items.some((i) => i.eventType === "AutomationRan"),
+  () => call((c) => c.getActivity({ subjectId: deal.recordId })),
+  (records) => records.some((i) => i.eventType === "AutomationRan"),
 )
 ok(
   "   the record's activity feed explains itself",
@@ -180,11 +180,11 @@ ok(
 const beforeCount = (await call((c) => c.listAutomationRuns({ automationId: winner.id }))).filter(
   (r) => r.status === "ok",
 ).length
-const cur = await call((c) => c.getInstance({ id: deal.id }))
+const cur = await call((c) => c.getRecord({ id: deal.id }))
 await call((c) =>
-  c.updateInstance({
+  c.updateRecord({
     id: deal.id,
-    expectedVersion: cur.instance.version,
+    expectedVersion: cur.recordVersion.version,
     patch: { [notes.id]: "an unrelated edit" },
   }),
 )
@@ -211,10 +211,10 @@ const chainer = await call((c) =>
   }),
 )
 const deal2 = await call((c) =>
-  c.createInstance({ conceptId: concept.id, fields: { [stage.id]: "nego" } }),
+  c.createRecord({ conceptId: concept.id, fields: { [stage.id]: "nego" } }),
 )
 await call((c) =>
-  c.updateInstance({
+  c.updateRecord({
     id: deal2.id,
     expectedVersion: deal2.version,
     patch: { [stage.id]: "won" },
@@ -222,18 +222,18 @@ await call((c) =>
 )
 // Wait for automation 1 to fire on deal2 (it writes Flag) …
 const deal2Fired = await until(
-  () => call((c) => c.getInstance({ id: deal2.id })),
-  (d) => typeof d.instance.state[flag.id] === "string",
+  () => call((c) => c.getRecord({ id: deal2.id })),
+  (d) => typeof d.recordVersion.state[flag.id] === "string",
 )
-ok("   automation 1 fired on the second record", !!deal2Fired.instance.state[flag.id])
+ok("   automation 1 fired on the second record", !!deal2Fired.recordVersion.state[flag.id])
 // … then give the chainer every chance to react to that write.
 await new Promise((r) => setTimeout(r, 2500))
 const chainRuns = await call((c) => c.listAutomationRuns({ automationId: chainer.id }))
 const chainActed = chainRuns.filter((r) => r.status === "ok").length
-const deal2After = await call((c) => c.getInstance({ id: deal2.id }))
+const deal2After = await call((c) => c.getRecord({ id: deal2.id }))
 ok(
   "3. ONE-HOP: an automation's own write triggers nothing",
-  chainActed === 0 && deal2After.instance.state[notes.id] !== "chained!",
+  chainActed === 0 && deal2After.recordVersion.state[notes.id] !== "chained!",
   `chainer ok-runs ${chainActed}`,
 )
 
@@ -246,7 +246,7 @@ const off = await call((c) =>
   }),
 )
 ok("   created disabled by default", !off.enabled)
-await call((c) => c.createInstance({ conceptId: concept.id, fields: { [stage.id]: "open" } }))
+await call((c) => c.createRecord({ conceptId: concept.id, fields: { [stage.id]: "open" } }))
 await new Promise((r) => setTimeout(r, 2000))
 const offRuns = await call((c) => c.listAutomationRuns({ automationId: off.id }))
 ok("4. a disabled rule never runs", offRuns.length === 0, `${offRuns.length} runs`)
@@ -262,10 +262,10 @@ const picky = await call((c) =>
   }),
 )
 const deal3 = await call((c) =>
-  c.createInstance({ conceptId: concept.id, fields: { [stage.id]: "open" } }),
+  c.createRecord({ conceptId: concept.id, fields: { [stage.id]: "open" } }),
 )
 await call((c) =>
-  c.updateInstance({
+  c.updateRecord({
     id: deal3.id,
     expectedVersion: deal3.version,
     patch: { [stage.id]: "nego" },
@@ -286,9 +286,9 @@ ok(
 )
 
 // ── the dry run writes nothing ────────────────────────────────────────────────
-const notesBefore = (await call((c) => c.getInstance({ id: deal3.id }))).instance.state[notes.id]
+const notesBefore = (await call((c) => c.getRecord({ id: deal3.id }))).recordVersion.state[notes.id]
 const dry = await call((c) => c.testAutomation({ id: picky.id }))
-const notesAfter = (await call((c) => c.getInstance({ id: deal3.id }))).instance.state[notes.id]
+const notesAfter = (await call((c) => c.getRecord({ id: deal3.id }))).recordVersion.state[notes.id]
 ok("dry run reports a scan", dry.scanned > 0, `${dry.matched}/${dry.scanned}`)
 ok("dry run wrote nothing", notesBefore === notesAfter)
 ok(

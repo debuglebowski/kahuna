@@ -209,7 +209,7 @@ async function dragFileOnto(name: string, target: "zone" | "body" = "zone") {
   if (!box) return false
   const { x, y } = JSON.parse(box) as { x: number; y: number }
   const data = {
-    items: [{ mimeType: "application/pdf", data: path, title: name }],
+    records: [{ mimeType: "application/pdf", data: path, title: name }],
     files: [path],
     dragOperationsMask: 1,
   }
@@ -390,7 +390,7 @@ if (liveZone) {
 }
 
 // ── surface 3: a real RECORD page's Files tile ──
-// A different component path entirely (FilesPanel via the instance tile registry,
+// A different component path entirely (FilesPanel via the record version tile registry,
 // not a dashboard widget), and the surface most likely to be tried first — so it
 // gets its own check rather than an assumption inherited from the dashboard.
 console.log("step: record page — can a real drag reach the Files tile's zone?")
@@ -421,7 +421,7 @@ const runtime = ManagedRuntime.make(
 // None of the seeded concepts' default record views carry a Files tile, so waiting
 // for one to appear just reports "skipped" and leaves the surface untested — the
 // exact gap that hid the editor bug. Build the record view instead: a record-kind
-// dashboard for the first concept, holding an instance-scoped Files widget that
+// dashboard for the first concept, holding a record version-scoped Files widget that
 // binds to whichever record is open.
 type ConceptRow = { id: string; slug: string; name: string }
 const concepts = (await runtime
@@ -443,13 +443,13 @@ for (const c of concepts) {
   const made = await runtime
     .runPromise(
       Effect.flatMap(ApiClient, (cl) =>
-        cl.createInstance({ conceptId: c.id, fields: {} }),
+        cl.createRecord({ conceptId: c.id, fields: {} }),
       ) as unknown as Effect.Effect<{ id: string }, unknown, never>,
     )
     // Say why, don't swallow — a silent null here spent a whole run looking like
     // "the record surface has no drop zone" when the create call was just wrong.
     .catch((e) => {
-      console.log(`  createInstance failed for ${c.name}: ${String(e).slice(0, 200)}`)
+      console.log(`  createRecord failed for ${c.name}: ${String(e).slice(0, 200)}`)
       return null
     })
   if (!made?.id) continue
@@ -488,7 +488,7 @@ for (const c of concepts) {
       return null
     })
   if (!built) continue
-  await send("Page.navigate", { url: `${BASE}/instances/${made.id}` }, sessionId)
+  await send("Page.navigate", { url: `${BASE}/records/${made.id}` }, sessionId)
   const found = await until("record files zone", 15000, async () =>
     (await text()).includes("Drop files or click to upload"),
   ).then(
@@ -499,7 +499,7 @@ for (const c of concepts) {
     picked = c
     break
   }
-  console.log(`  no zone on /instances/${made.id} (${c.name}) — trying the next concept`)
+  console.log(`  no zone on /records/${made.id} (${c.name}) — trying the next concept`)
 }
 if (!concepts.length) {
   failures++
@@ -568,7 +568,7 @@ if (!concepts.length) {
         const path = "/tmp/wide-drag.pdf"
         writeFileSync(path, "%PDF-1.4\nwide\n%%EOF")
         const data = {
-          items: [{ mimeType: "application/pdf", data: path, title: "wide-drag.pdf" }],
+          records: [{ mimeType: "application/pdf", data: path, title: "wide-drag.pdf" }],
           files: [path],
           dragOperationsMask: 1,
         }

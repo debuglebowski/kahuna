@@ -2,19 +2,19 @@ import { useMutation, useQuery } from "@tanstack/react-query"
 import { ChevronDown, ChevronRight, Lock, LockOpen, Plus } from "lucide-react"
 import { useMemo, useState } from "react"
 import { useNavigate } from "react-router-dom"
-import { InstanceTable } from "@/components/InstanceTable"
+import { RecordTable } from "@/components/RecordTable"
 import { Badge, IconButton, Modal, Spinner } from "@/components/ui"
-import { api, type Concept, type DashboardWidget, type Field, type Instance } from "@/lib/api"
+import { api, type Concept, type DashboardWidget, type Field, type RecordVersion } from "@/lib/api"
 import { useSession } from "@/lib/auth-client"
-import { instancesByConcept } from "@/lib/collections"
-import type { ConceptInstanceData } from "@/lib/conceptData"
+import { recordsByConcept } from "@/lib/collections"
+import type { ConceptRecordData } from "@/lib/conceptData"
 import { capitalize, FieldValueCell } from "@/lib/fieldDisplay"
 import { useQuickEdit } from "@/lib/quickEdit"
 import { recordHref } from "@/lib/recordHref"
 import { cn, showValue } from "@/lib/utils"
 import { resolveVariantId } from "@/lib/variantCatalog"
-import { kanbanBuckets, matchInstance } from "@/lib/widgetAggregations"
-import { InstanceForm } from "@/pages/InstanceForm"
+import { kanbanBuckets, matchRecordVersion } from "@/lib/widgetAggregations"
+import { RecordForm } from "@/pages/RecordForm"
 
 type List = Extract<DashboardWidget, { type: "list" }>
 
@@ -30,8 +30,8 @@ const optionColorFor = (field: Field, value: unknown): string | null => {
 const optionsOf = (field: Field): readonly string[] =>
   field.kind === "enum" ? (field.config.options ?? []) : []
 
-/** Instances of a concept matching the widget's filter. Six presentations chosen
- *  by `variant`: a real instance `table` (inline quick-edit), stacked `cards`, a
+/** Record versions of a concept matching the widget's filter. Six presentations chosen
+ *  by `variant`: a real record version `table` (inline quick-edit), stacked `cards`, a
  *  compact `rows` feed (status dot + meta), `grouped` collapsible sections, a
  *  `gallery` tile grid, or `auto` (table on wide tiles, cards otherwise). Carries
  *  its own create ("+") action and the per-user sticky quick-edit mode. */
@@ -41,7 +41,7 @@ export function ListWidget({
   concept,
 }: {
   widget: List
-  data: ConceptInstanceData | undefined
+  data: ConceptRecordData | undefined
   concept: Concept | undefined
 }) {
   const navigate = useNavigate()
@@ -57,7 +57,7 @@ export function ListWidget({
   // plain query (same pattern as the Kanban board's archived toggle).
   const archivedQ = useQuery({
     queryKey: ["list-archived", conceptId],
-    queryFn: () => api.listInstances(conceptId, { includeArchived: true }),
+    queryFn: () => api.listRecords(conceptId, { includeArchived: true }),
     enabled: archived !== "exclude" && !!conceptId,
   })
 
@@ -75,9 +75,11 @@ export function ListWidget({
       archived === "only"
         ? archivedRows
         : archived === "include"
-          ? [...(data?.instances ?? []), ...archivedRows]
-          : (data?.instances ?? [])
-    let r = pool.filter((i) => matchInstance(i, widget.conditions, { match: widget.match, me }))
+          ? [...(data?.recordVersions ?? []), ...archivedRows]
+          : (data?.recordVersions ?? [])
+    let r = pool.filter((i) =>
+      matchRecordVersion(i, widget.conditions, { match: widget.match, me }),
+    )
     if (widget.orderBy) {
       const key = widget.orderBy
       r = [...r].sort((a, b) => showValue(a.state[key]).localeCompare(showValue(b.state[key])))
@@ -85,7 +87,7 @@ export function ListWidget({
     if (widget.limit && widget.limit > 0) r = r.slice(0, widget.limit)
     return r
   }, [
-    data?.instances,
+    data?.recordVersions,
     archived,
     archivedQ.data,
     widget.conditions,
@@ -109,24 +111,25 @@ export function ListWidget({
   // silently section by a surprise field), so an unset/invalid groupBy prompts.
   const groupField = fields.find((f) => f.id === widget.groupBy && f.kind === "enum")
 
-  const open = (i: Instance) => navigate(recordHref(i.id, { dashboard: widget.recordDashboardId }))
+  const open = (i: RecordVersion) =>
+    navigate(recordHref(i.id, { dashboard: widget.recordDashboardId }))
   const titleCol = columns[0]
 
   // One field saved per edit; refetch (success or fail) reconciles value + version.
-  const onSaveCell = async (inst: Instance, fieldId: string, value: unknown) => {
+  const onSaveCell = async (inst: RecordVersion, fieldId: string, value: unknown) => {
     try {
-      await api.updateInstance(inst.id, inst.version, { [fieldId]: value })
+      await api.updateRecord(inst.id, inst.version, { [fieldId]: value })
     } finally {
-      instancesByConcept(conceptId).utils.refetch()
+      recordsByConcept(conceptId).utils.refetch()
     }
   }
 
   const create = useMutation({
-    mutationFn: (values: Record<string, unknown>) => api.createInstance(conceptId, values),
+    mutationFn: (values: Record<string, unknown>) => api.createRecord(conceptId, values),
     onSuccess: (created) => {
       setAdding(false)
       create.reset()
-      instancesByConcept(conceptId).utils.refetch()
+      recordsByConcept(conceptId).utils.refetch()
       // On a versioned concept the new item is an unpublished draft — invisible
       // in this head-only list — so go straight to its detail page to edit/publish.
       if (concept?.versioningEnabled)
@@ -151,7 +154,7 @@ export function ListWidget({
     body = <p className="px-1 text-sm text-muted-foreground">No matching items.</p>
   } else if (variant === "table") {
     body = (
-      <InstanceTable
+      <RecordTable
         columns={columns}
         rows={rows}
         quickEdit={quickEdit}
@@ -166,7 +169,7 @@ export function ListWidget({
     body = (
       <div className="space-y-1.5 px-1">
         {rows.map((i) => (
-          <InstanceCard key={i.id} inst={i} columns={columns} onOpen={() => open(i)} />
+          <RecordCard key={i.id} inst={i} columns={columns} onOpen={() => open(i)} />
         ))}
       </div>
     )
@@ -177,7 +180,7 @@ export function ListWidget({
         style={{ gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))" }}
       >
         {rows.map((i) => (
-          <InstanceCard key={i.id} inst={i} columns={columns} onOpen={() => open(i)} />
+          <RecordCard key={i.id} inst={i} columns={columns} onOpen={() => open(i)} />
         ))}
       </div>
     )
@@ -193,7 +196,7 @@ export function ListWidget({
     body = (
       <div className="space-y-0.5 px-1">
         {rows.map((i) => (
-          <InstanceRow
+          <RecordVersionRow
             key={i.id}
             inst={i}
             titleCol={titleCol}
@@ -231,7 +234,7 @@ export function ListWidget({
               to see that one row. */}
           {!concept?.singleRecord && (
             <IconButton
-              aria-label={`New ${concept?.name ?? "instance"}`}
+              aria-label={`New ${concept?.name ?? "recordVersion"}`}
               onClick={() => setAdding(true)}
             >
               <Plus size={14} />
@@ -241,11 +244,11 @@ export function ListWidget({
       </div>
       <div className="-mx-1 min-h-0 flex-1 overflow-auto">{body}</div>
       {adding && (
-        <Modal title={`New ${concept?.name ?? "instance"}`} onClose={() => setAdding(false)}>
+        <Modal title={`New ${concept?.name ?? "recordVersion"}`} onClose={() => setAdding(false)}>
           {!data ? (
             <Spinner />
           ) : (
-            <InstanceForm
+            <RecordForm
               fields={fields}
               defaultLabelIds={concept?.defaultLabelIds ?? []}
               onSubmit={(v) => create.mutate(v)}
@@ -265,12 +268,12 @@ export function ListWidget({
 }
 
 /** Narrow-tile / gallery card: first column as the title, the next few as a meta line. */
-function InstanceCard({
+function RecordCard({
   inst,
   columns,
   onOpen,
 }: {
-  inst: Instance
+  inst: RecordVersion
   columns: readonly Field[]
   onOpen: () => void
 }) {
@@ -307,14 +310,14 @@ function InstanceCard({
 /** One borderless line: optional leading status dot (`false` = no dot column,
  *  `null` = neutral, hex = the enum option color), the title, then right-aligned
  *  field cells. Used by the `rows` feed and inside `grouped` sections. */
-function InstanceRow({
+function RecordVersionRow({
   inst,
   titleCol,
   metaCols,
   dot,
   onOpen,
 }: {
-  inst: Instance
+  inst: RecordVersion
   titleCol: Field | undefined
   metaCols: readonly Field[]
   dot: string | null | false
@@ -361,10 +364,10 @@ function GroupedRows({
   groupField,
   onOpen,
 }: {
-  rows: readonly Instance[]
+  rows: readonly RecordVersion[]
   columns: readonly Field[]
   groupField: Field
-  onOpen: (i: Instance) => void
+  onOpen: (i: RecordVersion) => void
 }) {
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set())
   const titleCol = columns[0]
@@ -427,7 +430,7 @@ function GroupedRows({
             {!isCollapsed && (
               <div className="mt-0.5 space-y-0.5">
                 {items.map((i) => (
-                  <InstanceRow
+                  <RecordVersionRow
                     key={i.id}
                     inst={i}
                     titleCol={titleCol}

@@ -8,7 +8,7 @@
  *     `policy.ts:can()`.
  *  3. Assign every existing automation the full-access preset — automations ran as
  *     `system` before, so anything narrower would silently change behaviour.
- *  4. Stamp `items.created_by` from each lineage's first `InstanceCreated` event,
+ *  4. Stamp `records.created_by` from each lineage's first `RecordVersionCreated` event,
  *     which is what the `actorIs: "creator"` condition filters on.
  *
  * Deliberately raw SQL over the pool rather than the engine: it spans orgs, and
@@ -177,16 +177,16 @@ const main = async () => {
     )
   }
 
-  // Step 4 — attribute lineages. The first `InstanceCreated` in a lineage is who
+  // Step 4 — attribute lineages. The first `RecordVersionCreated` in a lineage is who
   // made the record; later versions don't change that. Only rows still null are
   // touched, so a re-run is a no-op and a manual correction is never clobbered.
   const attributed = await pool.query(
-    `UPDATE items i SET created_by = src.actor
+    `UPDATE records i SET created_by = src.actor
      FROM (
        SELECT DISTINCT ON (inst.item_id) inst.item_id, e.actor
        FROM events e
-       JOIN instances inst ON inst.id = e.subject_id AND inst.org_id = e.org_id
-       WHERE e.event_type = 'InstanceCreated' AND e.actor IS NOT NULL
+       JOIN recordVersions inst ON inst.id = e.subject_id AND inst.org_id = e.org_id
+       WHERE e.event_type = 'RecordVersionCreated' AND e.actor IS NOT NULL
        ORDER BY inst.item_id, e.id ASC
      ) src
      WHERE i.id = src.item_id AND i.created_by IS NULL`,
@@ -194,7 +194,7 @@ const main = async () => {
 
   console.log(
     `roles seeded: ${rolesSeeded}  members assigned: ${assigned}  ` +
-      `automations assigned: ${automationsAssigned}  items attributed: ${attributed.rowCount}`,
+      `automations assigned: ${automationsAssigned}  records attributed: ${attributed.rowCount}`,
   )
   await pool.end()
 }

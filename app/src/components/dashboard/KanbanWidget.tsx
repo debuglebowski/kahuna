@@ -15,13 +15,13 @@ import { type ReactNode, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { useNavigate } from "react-router-dom"
 import { Badge, LabelChip } from "@/components/ui"
-import { api, type Concept, type DashboardWidget, type Field, type Instance } from "@/lib/api"
+import { api, type Concept, type DashboardWidget, type Field, type RecordVersion } from "@/lib/api"
 import { useSession } from "@/lib/auth-client"
-import { instancesByConcept } from "@/lib/collections"
-import type { ConceptInstanceData } from "@/lib/conceptData"
+import { recordsByConcept } from "@/lib/collections"
+import type { ConceptRecordData } from "@/lib/conceptData"
 import { capitalize, FieldValueCell } from "@/lib/fieldDisplay"
-import { instanceLabel } from "@/lib/instanceLabel"
 import { recordHref } from "@/lib/recordHref"
+import { recordLabel } from "@/lib/recordLabel"
 import { isRichTextEmpty } from "@/lib/richtext"
 import { cn, showValue } from "@/lib/utils"
 import { kanbanBuckets } from "@/lib/widgetAggregations"
@@ -56,8 +56,8 @@ const moveErrorText = (err: unknown): string => {
 }
 
 /**
- * Instances as cards in columns keyed by an enum field; dragging a card to
- * another column writes that value through the instance-update RPC (dropping
+ * Record versions as cards in columns keyed by an enum field; dragging a card to
+ * another column writes that value through the record version-update RPC (dropping
  * on "No value" clears via explicit null). The optimistic move lives in a
  * local override until the collection refetch confirms or reverts it. Card
  * drags never fight the canvas: view-mode RGL is frozen, and in the edit
@@ -69,7 +69,7 @@ export function KanbanWidget({
   concept,
 }: {
   widget: Kanban
-  data: ConceptInstanceData | undefined
+  data: ConceptRecordData | undefined
   /** The board's concept — its title field drives card labels. */
   concept?: Concept
 }) {
@@ -94,26 +94,26 @@ export function KanbanWidget({
   // plain query (archived cards are read-only, so staleness is harmless).
   const archivedQ = useQuery({
     queryKey: ["kanban-archived", conceptId],
-    queryFn: () => api.listInstances(conceptId, { includeArchived: true }),
+    queryFn: () => api.listRecords(conceptId, { includeArchived: true }),
     enabled: includeArchived && !!conceptId,
   })
 
-  const instances = useMemo(() => {
-    const live = data?.instances ?? []
+  const recordVersions = useMemo(() => {
+    const live = data?.recordVersions ?? []
     if (!includeArchived) return live
     const archived = (archivedQ.data ?? []).filter((i) => i.archivedAt != null)
     return [...live, ...archived]
-  }, [data?.instances, includeArchived, archivedQ.data])
+  }, [data?.recordVersions, includeArchived, archivedQ.data])
 
   // Optimistic overrides applied to the state itself, so bucketing stays pure.
   const effective = useMemo(
     () =>
-      instances.map((i) =>
+      recordVersions.map((i) =>
         pending[i.id] !== undefined
           ? { ...i, state: { ...i.state, [widget.groupBy]: pending[i.id] || null } }
           : i,
       ),
-    [instances, pending, widget.groupBy],
+    [recordVersions, pending, widget.groupBy],
   )
 
   const buckets = useMemo(
@@ -155,7 +155,7 @@ export function KanbanWidget({
   const colValues = chosen.length > 0 ? chosen : options
   const showEmpty = widget.showEmptyColumns ?? true
 
-  const cardsOf = (key: string): Instance[] => {
+  const cardsOf = (key: string): RecordVersion[] => {
     const cards = buckets.get(key) ?? []
     if (!widget.orderBy) return cards
     const k = widget.orderBy
@@ -163,7 +163,7 @@ export function KanbanWidget({
   }
 
   const noValueCards = cardsOf("")
-  const columns: Array<{ value: string; cards: Instance[] }> = [
+  const columns: Array<{ value: string; cards: RecordVersion[] }> = [
     // The synthetic clear-target only earns space when something sits in it.
     ...(noValueCards.length > 0 ? [{ value: "", cards: noValueCards }] : []),
     ...colValues
@@ -184,8 +184,8 @@ export function KanbanWidget({
     if (!e.over) return
     const instId = String(e.active.id)
     const target = colValue(String(e.over.id))
-    // Resolve against the RAW instance — its version is the concurrency token.
-    const inst = instances.find((i) => i.id === instId)
+    // Resolve against the RAW record version — its version is the concurrency token.
+    const inst = recordVersions.find((i) => i.id === instId)
     if (!inst) return
     const v = inst.state[widget.groupBy]
     const current = Array.isArray(v) ? String(v[0] ?? "") : v == null ? "" : String(v)
@@ -193,11 +193,11 @@ export function KanbanWidget({
     setPending((p) => ({ ...p, [instId]: target }))
     setMoveError(null)
     try {
-      await api.updateInstance(inst.id, inst.version, { [widget.groupBy]: target || null })
+      await api.updateRecord(inst.id, inst.version, { [widget.groupBy]: target || null })
     } catch (err) {
       setMoveError(moveErrorText(err))
     } finally {
-      await instancesByConcept(conceptId).utils.refetch()
+      await recordsByConcept(conceptId).utils.refetch()
       if (includeArchived) archivedQ.refetch()
       setPending((p) => {
         const { [instId]: _, ...rest } = p
@@ -241,7 +241,7 @@ export function KanbanWidget({
                 <KanbanCard
                   key={inst.id}
                   inst={inst}
-                  title={instanceLabel(inst, fields, concept?.titleFieldId)}
+                  title={recordLabel(inst, fields, concept?.titleFieldId)}
                   cardFields={cardFields}
                   // Archived rows are frozen server-side — don't offer the drag.
                   draggable={dragToUpdate && inst.archivedAt == null}
@@ -259,7 +259,7 @@ export function KanbanWidget({
           <DragOverlay>
             {activeInst ? (
               <CardBody
-                title={instanceLabel(activeInst, fields, concept?.titleFieldId)}
+                title={recordLabel(activeInst, fields, concept?.titleFieldId)}
                 inst={activeInst}
                 cardFields={cardFields}
                 ghost
@@ -313,7 +313,7 @@ function KanbanCard({
   draggable,
   onOpen,
 }: {
-  inst: Instance
+  inst: RecordVersion
   title: string
   cardFields: readonly Field[]
   draggable: boolean
@@ -346,7 +346,7 @@ function CardBody({
   ghost,
 }: {
   title: string
-  inst: Instance
+  inst: RecordVersion
   cardFields: readonly Field[]
   ghost?: boolean
 }) {

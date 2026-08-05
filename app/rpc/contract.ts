@@ -490,7 +490,7 @@ const RecordRelationScoped = { relationFieldId: Schema.optional(Schema.NullOr(Sc
 /** One curated shortcut. `ref` is a record-version id, dashboard id, or URL per
  *  `kind`; `label` is a display snapshot (dashboards re-resolve to the live name).
  *  Used by the Shortcuts widget and the Welcome widget's quick links.
- *  `"record version"` accepted for one release to decode rows saved before the
+ *  `"instance"` accepted for one release to decode rows saved before the
  *  vocabulary rename; drop once `dashboards.body` has no more legacy rows. */
 const ShortcutItem = Schema.Struct({
   id: Schema.String,
@@ -670,7 +670,7 @@ const WelcomeWidget = Schema.Struct({
   type: Schema.Literal("welcome"),
   /** "12 members · 87 events this week" line under the greeting. */
   showPulse: Schema.optional(Schema.Boolean),
-  /** Curated quick links (same shape as Shortcuts records); absent/empty = none. */
+  /** Curated quick links (same shape as Shortcuts items); absent/empty = none. */
   links: Schema.optional(Schema.Array(ShortcutItem)),
 })
 // Goal — a metric with a finish line: current value vs a manual target.
@@ -693,7 +693,7 @@ const GoalWidget = Schema.Struct({
 const ShortcutsWidget = Schema.Struct({
   ...widgetBase,
   type: Schema.Literal("shortcuts"),
-  records: Schema.Array(ShortcutItem),
+  items: Schema.Array(ShortcutItem),
   /** Open URL targets in a new tab (internal targets always navigate in-app). */
   newTab: Schema.optional(Schema.Boolean),
 })
@@ -785,7 +785,7 @@ const FilesWidget = Schema.Struct({
   type: Schema.Literal("files"),
   /** recordVersion = one record's files; concept = recent across its records;
    *  org = all; widget = this widget's own `bucketId` files (no record involved).
-   *  `"record version"` accepted for one release to decode pre-rename rows. */
+   *  `"instance"` accepted for one release to decode pre-rename rows. */
   scope: Schema.Literal("recordVersion", "instance", "concept", "org", "widget"),
   /** Record-version id for `scope: "recordVersion"` on a dashboard (no implicit
    *  context). */

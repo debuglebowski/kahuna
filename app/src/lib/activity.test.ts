@@ -16,18 +16,18 @@ describe("clip", () => {
 })
 
 describe("eventSnippet", () => {
-  it("lists resolved field names for InstanceUpdated", () => {
-    expect(eventSnippet("InstanceUpdated", { patch: { f1: "v", f2: null } }, r)).toBe(
+  it("lists resolved field names for RecordVersionUpdated", () => {
+    expect(eventSnippet("RecordVersionUpdated", { patch: { f1: "v", f2: null } }, r)).toBe(
       "Name, Status",
     )
   })
   it("falls back to a count when no field name resolves", () => {
-    expect(eventSnippet("InstanceUpdated", { patch: { gone: 1 } }, r)).toBe("1 field")
-    expect(eventSnippet("InstanceUpdated", { patch: { a: 1, b: 2 } }, r)).toBe("2 fields")
+    expect(eventSnippet("RecordVersionUpdated", { patch: { gone: 1 } }, r)).toBe("1 field")
+    expect(eventSnippet("RecordVersionUpdated", { patch: { a: 1, b: 2 } }, r)).toBe("2 fields")
   })
   it("caps the list and counts the rest", () => {
     const many: ActivityResolvers = { fieldName: (id) => `F${id}` }
-    expect(eventSnippet("InstanceUpdated", { patch: { 1: 1, 2: 2, 3: 3, 4: 4 } }, many)).toBe(
+    expect(eventSnippet("RecordVersionUpdated", { patch: { 1: 1, 2: 2, 3: 3, 4: 4 } }, many)).toBe(
       "F1, F2, F3 +1 more",
     )
   })
@@ -57,30 +57,30 @@ describe("eventSnippet", () => {
     expect(eventSnippet("ComputedBandChanged", { from: null, to: "cold" }, r)).toBe("— → cold")
   })
   it("is null for payload-free events and garbage payloads", () => {
-    expect(eventSnippet("InstanceArchived", {}, r)).toBeNull()
-    expect(eventSnippet("InstanceUpdated", undefined, r)).toBeNull()
-    expect(eventSnippet("InstanceUpdated", "junk", r)).toBeNull()
+    expect(eventSnippet("RecordVersionArchived", {}, r)).toBeNull()
+    expect(eventSnippet("RecordVersionUpdated", undefined, r)).toBeNull()
+    expect(eventSnippet("RecordVersionUpdated", "junk", r)).toBeNull()
   })
 })
 
 describe("eventDetails", () => {
   it("keeps nulls in an update patch (a cleared field) but skips empties on create", () => {
-    expect(eventDetails("InstanceUpdated", { patch: { f1: "v", f2: null } }, r)).toEqual([
+    expect(eventDetails("RecordVersionUpdated", { patch: { f1: "v", f2: null } }, r)).toEqual([
       { label: "Name", fieldId: "f1", value: "v" },
       { label: "Status", fieldId: "f2", value: null },
     ])
-    expect(eventDetails("InstanceCreated", { fields: { f1: "v", f2: null, f3: "" } }, r)).toEqual([
-      { label: "Name", fieldId: "f1", value: "v" },
-    ])
+    expect(
+      eventDetails("RecordVersionCreated", { fields: { f1: "v", f2: null, f3: "" } }, r),
+    ).toEqual([{ label: "Name", fieldId: "f1", value: "v" }])
   })
   it("labels a patch key whose field def is gone", () => {
-    expect(eventDetails("InstanceUpdated", { patch: { gone: 1 } }, r)).toEqual([
+    expect(eventDetails("RecordVersionUpdated", { patch: { gone: 1 } }, r)).toEqual([
       { label: "Removed field", fieldId: "gone", value: 1 },
     ])
   })
   it("attaches the overwritten value when `previous` is provided", () => {
     expect(
-      eventDetails("InstanceUpdated", { patch: { f1: "new", f2: "kept" } }, r, {
+      eventDetails("RecordVersionUpdated", { patch: { f1: "new", f2: "kept" } }, r, {
         f1: "old",
         f2: "kept",
       }),
@@ -92,7 +92,7 @@ describe("eventDetails", () => {
   })
   it("marks 'was empty' with a null prev and skips fields absent from previous", () => {
     expect(
-      eventDetails("InstanceUpdated", { patch: { f1: "v", f2: "w" } }, r, { f1: null }),
+      eventDetails("RecordVersionUpdated", { patch: { f1: "v", f2: "w" } }, r, { f1: null }),
     ).toEqual([
       { label: "Name", fieldId: "f1", value: "v", prev: null, hasPrev: true },
       { label: "Status", fieldId: "f2", value: "w" },
@@ -121,7 +121,7 @@ describe("eventDetails", () => {
     ])
   })
   it("is empty for payload-free events", () => {
-    expect(eventDetails("InstanceArchived", {}, r)).toEqual([])
-    expect(eventDetails("ItemRestored", undefined, r)).toEqual([])
+    expect(eventDetails("RecordVersionArchived", {}, r)).toEqual([])
+    expect(eventDetails("RecordRestored", undefined, r)).toEqual([])
   })
 })

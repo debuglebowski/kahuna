@@ -9,7 +9,7 @@ import {
   CommandList,
 } from "@/components/ui/command"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import type { Field, Instance, Label, SidebarCondition } from "@/lib/api"
+import type { Field, Label, RecordVersion, SidebarCondition } from "@/lib/api"
 import {
   BANDS_FOR,
   type ConditionMatch,
@@ -23,7 +23,7 @@ import {
 import { ConceptIcon } from "@/lib/icons"
 import { cn } from "@/lib/utils"
 import { useFullOrg } from "@/pages/settings/SettingsLayout"
-import { MemberAvatar, memberLabel, type OrgMember } from "./item/AssigneePicker"
+import { MemberAvatar, memberLabel, type OrgMember } from "./record/AssigneePicker"
 import { Button, IconButton, Input, Modal } from "./ui"
 
 /**
@@ -39,7 +39,7 @@ export interface FilterProps {
   conceptId: string
   fields: readonly Field[]
   labels: readonly Label[]
-  instances: readonly Instance[]
+  recordVersions: readonly RecordVersion[]
   conditions: readonly SidebarCondition[]
   match: ConditionMatch
   onChange: (conditions: SidebarCondition[], match: ConditionMatch) => void
@@ -158,25 +158,25 @@ function ValueChecklist({
   op,
   value,
   options,
-  instances,
+  recordVersions,
   onValue,
 }: {
   target: Target
   op: ConditionOp
   value: unknown
   options: ValueOption[]
-  instances: readonly Instance[]
+  recordVersions: readonly RecordVersion[]
   onValue: (next: unknown) => void
 }) {
   const multi = isMultiValue(op)
   const selected = new Set(
     (Array.isArray(value) ? value : value != null && value !== "" ? [value] : []).map(String),
   )
-  // One pass over the instances per (instances, field) — not per option, and
-  // unaffected by toggling values (which re-renders with the same instances).
+  // One pass over the record versions per (record versions, field) — not per option, and
+  // unaffected by toggling values (which re-renders with the same record versions).
   const counts = useMemo(() => {
     const m = new Map<string, number>()
-    for (const i of instances) {
+    for (const i of recordVersions) {
       const v = i.state[target.key]
       for (const x of Array.isArray(v) ? v : [v]) {
         const k = String(unwrapValue(x))
@@ -184,7 +184,7 @@ function ValueChecklist({
       }
     }
     return m
-  }, [instances, target.key])
+  }, [recordVersions, target.key])
   return (
     <Command filter={keywordFilter}>
       <CommandInput placeholder="Filter…" />
@@ -294,7 +294,7 @@ function ValueDialog({
 export function FilterTrigger({
   fields,
   labels,
-  instances,
+  recordVersions,
   conditions,
   match,
   onChange,
@@ -431,7 +431,7 @@ export function FilterTrigger({
                     op="in"
                     value={subIdx >= 0 ? conditions[subIdx]?.value : []}
                     options={optionsFor(sub.target, labels, members)}
-                    instances={instances}
+                    recordVersions={recordVersions}
                     onValue={setSubValue}
                   />
                 ) : (
@@ -486,7 +486,7 @@ function ConditionChip({
   target,
   labels,
   members,
-  instances,
+  recordVersions,
   onSet,
   onRemove,
 }: {
@@ -494,7 +494,7 @@ function ConditionChip({
   target: Target | undefined
   labels: readonly Label[]
   members: readonly OrgMember[]
-  instances: readonly Instance[]
+  recordVersions: readonly RecordVersion[]
   onSet: (next: SidebarCondition) => void
   onRemove: () => void
 }) {
@@ -574,7 +574,7 @@ function ConditionChip({
                 op={cond.op}
                 value={cond.value}
                 options={optionsFor(target, labels, members)}
-                instances={instances}
+                recordVersions={recordVersions}
                 onValue={(next) => {
                   onSet({ ...cond, value: next })
                   if (!isMultiValue(cond.op)) setValueOpen(false)
@@ -627,7 +627,7 @@ function ConditionChip({
 export function FilterChips({
   fields,
   labels,
-  instances,
+  recordVersions,
   conditions,
   match,
   onChange,
@@ -659,7 +659,7 @@ export function FilterChips({
           target={targets.find((t) => t.key === c.field)}
           labels={labels}
           members={members}
-          instances={instances}
+          recordVersions={recordVersions}
           onSet={(next) => setAt(i, next)}
           onRemove={() => removeAt(i)}
         />

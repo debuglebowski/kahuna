@@ -107,12 +107,12 @@ const title = await asOwner.call((c) =>
   c.addField({ conceptId: deals.id, name: "Title", kind: "text" }),
 )
 const rec = await asOwner.call((c) =>
-  c.createInstance({ conceptId: deals.id, fields: { [title.id]: "Secret" } }),
+  c.createRecord({ conceptId: deals.id, fields: { [title.id]: "Secret" } }),
 )
 await asOwner.call((c) => c.setConceptVisibility({ id: deals.id, visibility: "admin" }))
 ok(
   "2. the member cannot see the restricted concept",
-  (await asMember.code((c) => c.listInstances({ conceptId: deals.id }))) === "NOT_FOUND",
+  (await asMember.code((c) => c.listRecords({ conceptId: deals.id }))) === "NOT_FOUND",
 )
 const sales = await asOwner.call((c) => c.createRole({ name: `Sales ${stamp}` }))
 ok("   a custom role is created", !!sales.id)
@@ -127,10 +127,10 @@ await asOwner.call((c) =>
 )
 ok(
   "   the rule alone changes nothing (not yet assigned)",
-  (await asMember.code((c) => c.listInstances({ conceptId: deals.id }))) === "NOT_FOUND",
+  (await asMember.code((c) => c.listRecords({ conceptId: deals.id }))) === "NOT_FOUND",
 )
 await asOwner.call((c) => c.assignRole({ roleId: sales.id, userId: m.userId }))
-const nowSees = await asMember.call((c) => c.listInstances({ conceptId: deals.id }))
+const nowSees = await asMember.call((c) => c.listRecords({ conceptId: deals.id }))
 ok("   ASSIGNED → the member sees it immediately", nowSees.length === 1, `n=${nowSees.length}`)
 ok(
   "   …and the role shows on them",
@@ -139,7 +139,7 @@ ok(
 
 // 3. a CONDITION on a rule.
 const mine = await asMember.call((c) =>
-  c.createInstance({ conceptId: deals.id, fields: { [title.id]: "Mine" } }),
+  c.createRecord({ conceptId: deals.id, fields: { [title.id]: "Mine" } }),
 )
 ok("3. the member creates a record of their own", !!mine.id)
 const scoped = await asOwner.call((c) => c.createRole({ name: `Own only ${stamp}` }))
@@ -156,15 +156,15 @@ await asOwner.call((c) =>
 // Swap the blanket concept role for the conditional record one.
 await asOwner.call((c) => c.unassignRole({ roleId: sales.id, userId: m.userId }))
 await asOwner.call((c) => c.assignRole({ roleId: scoped.id, userId: m.userId }))
-const onlyMine = await asMember.call((c) => c.listInstances({ conceptId: deals.id }))
+const onlyMine = await asMember.call((c) => c.listRecords({ conceptId: deals.id }))
 ok(
   "   a condition filters for real — only their OWN record",
-  onlyMine.length === 1 && onlyMine[0]!.itemId === mine.itemId,
+  onlyMine.length === 1 && onlyMine[0]!.recordId === mine.recordId,
   `n=${onlyMine.length}`,
 )
 ok(
   "   …and the owner's record does not open by id",
-  (await asMember.code((c) => c.getInstance({ id: rec.id }))) === "NOT_FOUND",
+  (await asMember.code((c) => c.getRecord({ id: rec.id }))) === "NOT_FOUND",
 )
 
 // 4. THE FLOOR.

@@ -76,8 +76,8 @@ export function UpdateNotice({ collapsed }: { collapsed: boolean }) {
             </div>
 
             <p className="text-muted-foreground">
-              Nothing has been downloaded or changed — updating is done from wherever this instance
-              is deployed.
+              Nothing has been downloaded or changed — updating is done from wherever this
+              recordVersion is deployed.
             </p>
 
             <div className="space-y-1.5">

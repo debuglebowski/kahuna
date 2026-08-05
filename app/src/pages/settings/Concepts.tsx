@@ -166,8 +166,8 @@ export function Concepts() {
             <>
               Archive <strong>{target.name}</strong>? It's hidden from the sidebar and lists, but
               its fields
-              {target.itemCount
-                ? ` and ${target.itemCount} item${target.itemCount === 1 ? "" : "s"}`
+              {target.recordCount
+                ? ` and ${target.recordCount} item${target.recordCount === 1 ? "" : "s"}`
                 : ""}{" "}
               are kept — you can restore it anytime.
             </>
@@ -192,10 +192,10 @@ export function Concepts() {
                 Permanently delete <strong>{target.name}</strong>, its fields, and its record? This
                 can't be undone.
               </>
-            ) : target.itemCount ? (
+            ) : target.recordCount ? (
               <>
-                <strong>{target.name}</strong> still has {target.itemCount} item
-                {target.itemCount === 1 ? "" : "s"}, so it can't be deleted. Archive it (its items
+                <strong>{target.name}</strong> still has {target.recordCount} item
+                {target.recordCount === 1 ? "" : "s"}, so it can't be deleted. Archive it (its items
                 come back on restore), or delete its items first.
               </>
             ) : (
@@ -279,7 +279,9 @@ export function Concepts() {
                   {c.name}
                 </button>
                 <span className="flex-1 text-xs text-muted-foreground">
-                  {c.itemCount ? `${c.itemCount} item${c.itemCount === 1 ? "" : "s"}` : "empty"}
+                  {c.recordCount
+                    ? `${c.recordCount} item${c.recordCount === 1 ? "" : "s"}`
+                    : "empty"}
                 </span>
                 {admin && (
                   <>

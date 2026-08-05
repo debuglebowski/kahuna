@@ -9,7 +9,7 @@ import { uploadTarget } from "./files"
  * `allowUpload` being opt-in on a widget that plainly owns one record).
  */
 describe("uploadTarget", () => {
-  const REC = "item-lineage-1"
+  const REC = "record-1"
 
   it("a widget's own bucket is the target, sharing default on", () => {
     expect(uploadTarget({ scope: "widget", bucketId: "b1" })).toEqual({
@@ -30,9 +30,9 @@ describe("uploadTarget", () => {
   })
 
   it("a pinned record needs the id → lineage hop", () => {
-    expect(uploadTarget({ scope: "instance", instanceId: "i1" })).toEqual({
-      kind: "instance",
-      instanceId: "i1",
+    expect(uploadTarget({ scope: "recordVersion", recordVersionId: "i1" })).toEqual({
+      kind: "recordVersion",
+      recordVersionId: "i1",
     })
   })
 
@@ -40,10 +40,10 @@ describe("uploadTarget", () => {
   // browse-only everywhere — including on a record page, where the open record is
   // an obvious destination and the user reasonably expects to drop a file.
   it("a wide scope borrows the open record on a record page", () => {
-    expect(uploadTarget({ scope: "org" }, REC)).toEqual({ kind: "record", itemId: REC })
+    expect(uploadTarget({ scope: "org" }, REC)).toEqual({ kind: "record", recordId: REC })
     expect(uploadTarget({ scope: "concept", conceptId: "c1" } as never, REC)).toEqual({
       kind: "record",
-      itemId: REC,
+      recordId: REC,
     })
   })
 
@@ -56,12 +56,14 @@ describe("uploadTarget", () => {
   // uploads until someone found the toggle.
   it("allowUpload absent means uploadable", () => {
     expect(uploadTarget({ scope: "widget", bucketId: "b1" })).not.toBeNull()
-    expect(uploadTarget({ scope: "instance", instanceId: "i1" })).not.toBeNull()
+    expect(uploadTarget({ scope: "recordVersion", recordVersionId: "i1" })).not.toBeNull()
   })
 
   it("allowUpload false is honoured at every scope", () => {
     expect(uploadTarget({ scope: "widget", bucketId: "b1", allowUpload: false })).toBeNull()
-    expect(uploadTarget({ scope: "instance", instanceId: "i1", allowUpload: false })).toBeNull()
+    expect(
+      uploadTarget({ scope: "recordVersion", recordVersionId: "i1", allowUpload: false }),
+    ).toBeNull()
     expect(uploadTarget({ scope: "org", allowUpload: false }, REC)).toBeNull()
   })
 })

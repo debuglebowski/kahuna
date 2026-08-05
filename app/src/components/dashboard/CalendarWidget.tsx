@@ -7,7 +7,7 @@ import { pillStyle } from "@/components/ui"
 import type { Concept, DashboardWidget } from "@/lib/api"
 import { useSession } from "@/lib/auth-client"
 import { KEY, tasksGlobalCollection, useRegisterCollection } from "@/lib/collections"
-import type { ConceptInstanceData } from "@/lib/conceptData"
+import type { ConceptRecordData } from "@/lib/conceptData"
 import { formatDateValue } from "@/lib/dates"
 import { cn } from "@/lib/utils"
 import {
@@ -26,7 +26,7 @@ type Calendar = Extract<DashboardWidget, { type: "calendar" }>
 const WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
 /**
- * Instances plotted by a date field, several concepts overlaid on one grid
+ * Record versions plotted by a date field, several concepts overlaid on one grid
  * (plus the org's tasks by due date as an opt-in extra source). Month/week are
  * cursor-navigated; agenda is a fixed upcoming list. Multi-source: this reads
  * `instData` directly instead of the single-concept `data` prop the scoped
@@ -38,7 +38,7 @@ export function CalendarWidget({
   cIndex,
 }: {
   widget: Calendar
-  instData: Record<string, ConceptInstanceData>
+  instData: Record<string, ConceptRecordData>
   /** Concept lookup so each source's title field drives its event labels. */
   cIndex: Map<string, Concept>
 }) {
@@ -60,7 +60,7 @@ export function CalendarWidget({
       const d = s.conceptId ? instData[s.conceptId] : undefined
       if (!d || !s.dateField) return
       const titleFieldId = s.conceptId ? (cIndex.get(s.conceptId)?.titleFieldId ?? null) : null
-      out.push(...sourceEvents(s, i, d.instances, d.fields, { me, titleFieldId }))
+      out.push(...sourceEvents(s, i, d.recordVersions, d.fields, { me, titleFieldId }))
     })
     if (includeTasks) out.push(...taskEvents(tasksQ.data ?? []))
     return out

@@ -60,9 +60,9 @@ import {
   unwrapGroup,
   updateNode,
 } from "@/lib/dashboards"
-import { instanceLabel } from "@/lib/instanceLabel"
 import { recordHref } from "@/lib/recordHref"
-import { useInstanceCtx } from "@/lib/useInstanceCtx"
+import { recordLabel } from "@/lib/recordLabel"
+import { useRecordVersionCtx } from "@/lib/useRecordVersionCtx"
 import { useUnsavedGuard } from "@/lib/useUnsavedGuard"
 import { cn } from "@/lib/utils"
 import { InspectorSection } from "./InspectorSection"
@@ -691,22 +691,22 @@ export function DashboardEditor({
   }, [draft.body, recordMode, recordConceptId])
   const { instData, loaders } = useConceptData(ids)
 
-  // Record dashboards render their widgets against a real sample instance so the
-  // preview shows live data. Defaults to the first instance; the picker overrides.
-  const sampleInstances = recordConceptId ? (instData[recordConceptId]?.instances ?? []) : []
+  // Record dashboards render their widgets against a real sample record version so the
+  // preview shows live data. Defaults to the first record version; the picker overrides.
+  const sampleRecords = recordConceptId ? (instData[recordConceptId]?.recordVersions ?? []) : []
   const sampleFields = recordConceptId ? (instData[recordConceptId]?.fields ?? []) : []
   const [previewId, setPreviewId] = useState<string | null>(null)
   const effectivePreviewId =
-    previewId && sampleInstances.some((i) => i.id === previewId)
+    previewId && sampleRecords.some((i) => i.id === previewId)
       ? previewId
-      : (sampleInstances[0]?.id ?? "")
+      : (sampleRecords[0]?.id ?? "")
 
   // For a versioned concept the preview can be rendered against any version of the
   // chosen sample record (not just its head), so the designer can check how the
   // layout behaves for a draft vs a published version. The version picker lists the
   // selected record's lineage; switching just repoints which version row renders.
   const versioned = !!(recordConceptId && cIndex.get(recordConceptId)?.versioningEnabled)
-  const previewItemId = sampleInstances.find((i) => i.id === effectivePreviewId)?.itemId ?? null
+  const previewItemId = sampleRecords.find((i) => i.id === effectivePreviewId)?.recordId ?? null
   const [previewVersionId, setPreviewVersionId] = useState<string | null>(null)
   const versionsQ = useQuery({
     queryKey: ["versions", previewItemId],
@@ -720,7 +720,7 @@ export function DashboardEditor({
     previewVersionId && versions.some((v) => v.id === previewVersionId)
       ? previewVersionId
       : effectivePreviewId
-  const { ctx: previewCtx } = useInstanceCtx(recordMode ? effectiveVersionId : "")
+  const { ctx: previewCtx } = useRecordVersionCtx(recordMode ? effectiveVersionId : "")
   const recordCtx = recordMode ? (previewCtx ?? undefined) : undefined
 
   const editing = editingId ? findNode(draft.body, editingId) : null
@@ -908,7 +908,7 @@ export function DashboardEditor({
             pinned top-right above the tab toolbar. */}
         {recordMode && (
           <div className="ml-auto flex shrink-0 items-center gap-2 text-sm font-normal">
-            {sampleInstances.length > 0 && (
+            {sampleRecords.length > 0 && (
               <>
                 <span className="text-muted-foreground">Preview</span>
                 <Select
@@ -924,9 +924,9 @@ export function DashboardEditor({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {sampleInstances.slice(0, 50).map((inst) => (
+                    {sampleRecords.slice(0, 50).map((inst) => (
                       <SelectItem key={inst.id} value={inst.id}>
-                        {instanceLabel(
+                        {recordLabel(
                           inst,
                           sampleFields,
                           recordConceptId

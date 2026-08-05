@@ -1,12 +1,12 @@
 import { LABELS_KEY } from "../../rpc/contract"
-import type { Field, Instance, SidebarCondition } from "./api"
+import type { Field, RecordVersion, SidebarCondition } from "./api"
 import { isRichTextValue, richTextPlain } from "./richtext"
 
 export { LABELS_KEY }
 
 /**
  * The shared client-side condition evaluator. One matcher for every surface
- * that filters instances — the concept list filter bar, dashboard widgets and
+ * that filters record versions — the concept list filter bar, dashboard widgets and
  * sidebar list/group sources — so the op semantics can't drift apart. Pure
  * (no React / DOM), unit-tested like `widgetAggregations`.
  */
@@ -76,7 +76,11 @@ const cmp = (a: unknown, b: unknown): number | null => {
   return String(a).localeCompare(String(b))
 }
 
-export const matchCondition = (inst: Instance, c: SidebarCondition, opts?: MatchOpts): boolean => {
+export const matchCondition = (
+  inst: RecordVersion,
+  c: SidebarCondition,
+  opts?: MatchOpts,
+): boolean => {
   if (c.op === "hasLabel") return labelsOf(inst.state).includes(String(c.value))
   if (c.op === "notHasLabel") return !labelsOf(inst.state).includes(String(c.value))
 
@@ -142,10 +146,10 @@ export const matchCondition = (inst: Instance, c: SidebarCondition, opts?: Match
   return false
 }
 
-/** Evaluate a condition set against an instance. Absent/`all` match = every
+/** Evaluate a condition set against a record version. Absent/`all` match = every
  *  condition must hold; `any` = at least one (an empty set always matches). */
-export const matchInstance = (
-  inst: Instance,
+export const matchRecordVersion = (
+  inst: RecordVersion,
   conds: readonly SidebarCondition[],
   opts?: MatchOpts,
 ): boolean =>
@@ -174,7 +178,7 @@ const TRANSITION_OPS: OpDef[] = [
 ]
 
 /** Ops offered for a field kind (filter editors). Relation/file fields don't
- *  live in instance state and are not filterable client-side.
+ *  live in record version state and are not filterable client-side.
  *
  *  `transitions` appends `changedTo`/`changedFrom` — pass it only from the
  *  automation editor, where a previous state is available at evaluation time. */

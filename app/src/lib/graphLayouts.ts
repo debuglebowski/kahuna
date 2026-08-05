@@ -77,7 +77,7 @@ export interface LayoutInput {
   /** Deduplicated, self-loops excluded (they don't affect placement). */
   edges: ReadonlyArray<{ source: string; target: string }>
   /** The card footprint layouts reserve per node — taller cards (e.g. the
-   *  instance graph's label + concept pill) get proportionally more room.
+   *  record version graph's label + concept pill) get proportionally more room.
    *  Defaults to the concept-canvas box. */
   nodeSize?: { w: number; h: number }
 }

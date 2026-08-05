@@ -59,7 +59,7 @@ export function RichTextEditor({
   chrome?: boolean
 }) {
   const showChrome = chrome ?? editable
-  // Latest callbacks behind refs — the editor instance captures its options once.
+  // Latest callbacks behind refs — the editor record version captures its options once.
   const onChangeRef = useRef(onChange)
   onChangeRef.current = onChange
   const onBlurRef = useRef(onBlur)
@@ -77,7 +77,7 @@ export function RichTextEditor({
   const brokenRef = useRef(false)
   brokenRef.current = broken
 
-  // One trigger store per editor instance — several editors can be mounted at
+  // One trigger store per editor record version — several editors can be mounted at
   // once (a record page with two document tiles), and each needs its own menu.
   const triggerStore = useRef(createMentionTriggerStore()).current
 

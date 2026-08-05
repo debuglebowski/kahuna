@@ -521,7 +521,7 @@ export type EventPayload =
   | { readonly _tag: "AutomationRestored" }
   | { readonly _tag: "AutomationDeleted" }
   // A completed RUN, appended on the acted-on record's own stream (subjectKind
-  // "record version", subject_id = the record) so the record's activity feed explains
+  // "recordVersion", subject_id = the record) so the record's activity feed explains
   // itself: "Automation 'Won deals → #wins' created task 'Send contract'".
   // Folds like `ComputedBandChanged` — a marker that never bumps `version`, so it
   // can't collide with a user's optimistic-concurrency check. For a run with no
@@ -853,10 +853,11 @@ export interface GoalWidget extends WidgetBase {
   readonly direction?: "reach" | "stay"
   readonly showPercent?: boolean
 }
-/** One curated shortcut. `ref` is a record version id, dashboard id, or URL per `kind`. */
+/** One curated shortcut. `ref` is a record version id, dashboard id, or URL per
+ *  `kind`. `"instance"` accepted for one release to decode pre-rename rows. */
 export interface ShortcutItem {
   readonly id: string
-  readonly kind: "recordVersion" | "dashboard" | "url"
+  readonly kind: "recordVersion" | "instance" | "dashboard" | "url"
   readonly ref: string
   readonly label?: string | null
   readonly icon?: string | null
@@ -864,7 +865,7 @@ export interface ShortcutItem {
 /** Shortcuts — hand-picked jump-off points; fully manual by design (no filters). */
 export interface ShortcutsWidget extends WidgetBase {
   readonly type: "shortcuts"
-  readonly records: ReadonlyArray<ShortcutItem>
+  readonly items: ReadonlyArray<ShortcutItem>
   /** Open URL targets in a new tab (internal targets always navigate in-app). */
   readonly newTab?: boolean
 }
@@ -932,9 +933,10 @@ export interface GanttWidget extends WidgetBase {
 export interface FilesWidget extends WidgetBase {
   readonly type: "files"
   readonly conceptId?: string | null
-  readonly scope: "recordVersion" | "concept" | "org" | "widget"
+  // "instance" accepted for one release to decode pre-rename rows.
+  readonly scope: "recordVersion" | "instance" | "concept" | "org" | "widget"
   readonly recordVersionId?: string | null
-  /** `scope: "record version"` only — take the record from `conceptId`'s single record
+  /** `scope: "recordVersion"` only — take the record from `conceptId`'s single record
    *  rather than a pinned `recordVersionId` (resolved client-side). */
   readonly bindToConceptRecord?: boolean
   /** `scope: "widget"` only — the bucket owning this widget's files. */

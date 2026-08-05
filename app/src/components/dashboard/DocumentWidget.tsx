@@ -47,10 +47,10 @@ function SaveStatus({ status, error }: { status: AutosaveStatus; error: string |
 }
 
 /** Autosave for one record's richtext field — the same policy the Document
- *  instance-tile uses (`lib/autosave.ts`: debounce, serialized saves, one
- *  conflict retry), wired to `updateInstance` + a refetch. The chained version
+ *  record version-tile uses (`lib/autosave.ts`: debounce, serialized saves, one
+ *  conflict retry), wired to `updateRecord` + a refetch. The chained version
  *  is kept monotonic from the live query so a write landing elsewhere self-heals. */
-function useDocAutosave(instanceId: string, fieldId: string, refetch: () => void) {
+function useDocAutosave(recordVersionId: string, fieldId: string, refetch: () => void) {
   const [ui, setUi] = useState<{ status: AutosaveStatus; error: string | null }>({
     status: "idle",
     error: null,
@@ -60,11 +60,11 @@ function useDocAutosave(instanceId: string, fieldId: string, refetch: () => void
   const [autosave] = useState(() =>
     createAutosave<RichTextValue>({
       save: async (value, expectedVersion) => {
-        const res = await api.updateInstance(instanceId, expectedVersion, { [fieldId]: value })
+        const res = await api.updateRecord(recordVersionId, expectedVersion, { [fieldId]: value })
         refetchRef.current()
         return res.version
       },
-      fetchVersion: async () => (await api.getInstance(instanceId)).instance.version,
+      fetchVersion: async () => (await api.getRecord(recordVersionId)).recordVersion.version,
       isConflict: isVersionConflict,
       onStatus: (status, error) => setUi({ status, error }),
     }),
@@ -82,7 +82,7 @@ function useDocAutosave(instanceId: string, fieldId: string, refetch: () => void
 
 /**
  * Document — one record's rich text field, edited inline on the canvas. A
- * dashboard consumer of the same `RichTextEditor` the instance Document tile
+ * dashboard consumer of the same `RichTextEditor` the record version Document tile
  * uses. The tile always renders its full editing chrome (toolbar + framed
  * surface) so it looks identical in the layout editor and on the live page;
  * `interactive` (the canvas's render-vs-arrange flag) only governs whether
@@ -91,7 +91,7 @@ function useDocAutosave(instanceId: string, fieldId: string, refetch: () => void
  * footer banner under the content.
  */
 export function DocumentWidget({ widget, interactive }: { widget: Doc; interactive: boolean }) {
-  if (!widget.instanceId || !widget.fieldId)
+  if (!widget.recordVersionId || !widget.fieldId)
     return (
       <p className="text-sm text-muted-foreground">
         Pick a record and a rich text field in the widget settings.
@@ -101,8 +101,8 @@ export function DocumentWidget({ widget, interactive }: { widget: Doc; interacti
   // autosave (its save closure captures the ids once).
   return (
     <DocumentEditor
-      key={`${widget.instanceId}:${widget.fieldId}`}
-      instanceId={widget.instanceId}
+      key={`${widget.recordVersionId}:${widget.fieldId}`}
+      recordVersionId={widget.recordVersionId}
       fieldId={widget.fieldId}
       interactive={interactive}
     />
@@ -122,27 +122,27 @@ export function ConceptRecordDocumentWidget({
   widget: Doc
   interactive: boolean
 }) {
-  const { instanceId, loading } = useSingleRecord(widget.conceptId ?? "")
+  const { recordVersionId, loading } = useSingleRecord(widget.conceptId ?? "")
   if (loading) return <Spinner />
-  return <DocumentWidget widget={{ ...widget, instanceId }} interactive={interactive} />
+  return <DocumentWidget widget={{ ...widget, recordVersionId }} interactive={interactive} />
 }
 
 function DocumentEditor({
-  instanceId,
+  recordVersionId,
   fieldId,
   interactive,
 }: {
-  instanceId: string
+  recordVersionId: string
   fieldId: string
   interactive: boolean
 }) {
   const navigate = useNavigate()
   const instanceQ = useQuery({
-    queryKey: ["instanceItem", instanceId],
-    queryFn: () => api.getInstance(instanceId),
+    queryKey: ["instanceItem", recordVersionId],
+    queryFn: () => api.getRecord(recordVersionId),
     retry: false,
   })
-  const inst = instanceQ.data?.instance
+  const inst = instanceQ.data?.recordVersion
   const fieldsQ = useFields(inst?.conceptId ?? "")
   const field = fieldsQ.data?.find((f) => f.id === fieldId)
   const conceptsQ = useQuery({ queryKey: ["concepts"], queryFn: () => api.listConcepts() })
@@ -152,20 +152,20 @@ function DocumentEditor({
   // read-only with a jump to the draft instead. A published version on a concept
   // that allows amendments is NOT frozen — it saves in place, so no strip.
   const frozen = !!inst && !canEditVersion(concept, inst)
-  const itemId = inst?.itemId
+  const recordId = inst?.recordId
   // Only the frozen strip offers the draft jump, so only it needs the version list.
   const versionsQ = useQuery({
-    queryKey: ["versions", itemId],
-    queryFn: () => api.listVersions(itemId as string),
-    enabled: frozen && !!itemId,
+    queryKey: ["versions", recordId],
+    queryFn: () => api.listVersions(recordId as string),
+    enabled: frozen && !!recordId,
   })
   const openDraft = versionsQ.data?.find((v) => v.versionStatus === "draft" && !v.archivedAt)
   const newVersion = useMutation({
-    mutationFn: () => api.newVersion(itemId as string),
+    mutationFn: () => api.newVersion(recordId as string),
     onSuccess: (d) => navigate(recordHref(d.id)),
   })
 
-  const autosave = useDocAutosave(instanceId, fieldId, () => void instanceQ.refetch())
+  const autosave = useDocAutosave(recordVersionId, fieldId, () => void instanceQ.refetch())
   // Keep the autosave's chained version in step with the server (also pre-arms
   // the very first save so it doesn't waste its conflict retry on a stale 0).
   const version = inst?.version
