@@ -1,0 +1,12 @@
+{
+  // NODE, not Bun and not the DOM. The CLI is published to npm and must run
+  // under a plain `npx`, so `@types/bun` is deliberately absent — reaching for
+  // `Bun.file` would typecheck here and crash for anyone without Bun installed.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022"],
+    "types": ["node"]
+  },
+  "include": ["**/*.ts"],
+  "exclude": ["dist"]
+}

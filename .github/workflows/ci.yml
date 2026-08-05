@@ -64,6 +64,14 @@ jobs:
       # assertion that matters; this one is just a fast signal.
       - run: bun run check:imports
 
+      # The CLI is published and must run under plain Node, so bundling it is a
+      # correctness check, not a packaging chore: TypeScript syntax that emits
+      # code (parameter properties, enums) typechecks happily and then breaks for
+      # anyone without Bun. Building here catches that in CI rather than in an
+      # `npx` on someone else's machine.
+      - run: bun run cli:build
+      - run: node packages/cli/dist/index.js help
+
       # Includes server/migrations.test.ts, which drives the real `drizzle-kit`
       # deploy path against an empty scratch database and asserts completeness,
       # idempotency, journal monotonicity, and schema drift. The rest of the suite

@@ -78,6 +78,23 @@
         "vitest": "3.2.6",
       },
     },
+    "packages/cli": {
+      "name": "@kingsmaker/cli",
+      "version": "0.0.0",
+      "bin": {
+        "km": "./index.ts",
+      },
+      "dependencies": {
+        "@effect/platform": "0.96.1",
+        "@effect/rpc": "0.75.1",
+        "@kingsmaker/contract": "workspace:*",
+        "effect": "3.21.3",
+      },
+      "devDependencies": {
+        "@types/node": "25.9.2",
+        "vitest": "3.2.6",
+      },
+    },
     "packages/contract": {
       "name": "@kingsmaker/contract",
       "version": "0.0.0",
@@ -271,6 +288,8 @@
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.31", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.1.0", "@jridgewell/sourcemap-codec": "^1.4.14" } }, "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw=="],
 
     "@kingsmaker/app": ["@kingsmaker/app@workspace:packages/app"],
+
+    "@kingsmaker/cli": ["@kingsmaker/cli@workspace:packages/cli"],
 
     "@kingsmaker/contract": ["@kingsmaker/contract@workspace:packages/contract"],
 

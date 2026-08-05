@@ -16,16 +16,18 @@
     "health": "bun run --cwd packages/app health",
     "seed": "bun run --cwd packages/app seed",
     "bootstrap": "bun run --cwd packages/app bootstrap",
-    "typecheck": "tsc -p packages/contract && tsc -p packages/app",
+    "typecheck": "tsc -p packages/contract && tsc -p packages/app && tsc -p packages/cli",
     "check:imports": "bun run --cwd packages/app check:imports",
-    "test": "bun run --cwd packages/app test",
+    "test": "bun run --cwd packages/app test && bun run --cwd packages/cli test",
     "lint": "biome lint .",
     "format": "biome format --write .",
     "check": "biome check .",
     "db:generate": "bun run --cwd packages/app db:generate",
     "db:migrate": "bun run --cwd packages/app db:migrate",
     "db:check": "bun run --cwd packages/app db:check",
-    "snapshot": "bash scripts/snapshot.sh"
+    "snapshot": "bash scripts/snapshot.sh",
+    "cli": "bun run --cwd packages/cli start",
+    "cli:build": "bun run --cwd packages/cli build"
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.16",

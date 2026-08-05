@@ -12,6 +12,7 @@ packages/app          THE DEPLOYMENT — private, never published
   scripts             one-off backfills + end-to-end verify drivers
 
 packages/contract     the typed wire schema — @kingsmaker/contract
+packages/cli          the `km` command line — @kingsmaker/cli, published to npm
 ```
 
 `#engine` / `#db` resolve through the `imports` field in
@@ -30,6 +31,12 @@ import `@kingsmaker/contract`, so it has exactly one owner. Consumed as
 TypeScript source with no build step, like `#engine`. Typechecked on its own
 (`tsc -p packages/contract` runs first) so a contract error is reported against
 the contract rather than whichever consumer tripped over it.
+
+**The CLI targets NODE, not Bun.** `packages/cli` is published, so `@types/bun`
+is deliberately absent from its tsconfig and nothing may reach for `Bun.*`.
+TypeScript syntax that *emits* — parameter properties, enums, namespaces —
+typechecks and then breaks `node --experimental-strip-types`, so `bun run
+cli:build` runs in CI and the bundle is smoke-tested with plain `node`.
 
 **Dependencies live in the package that imports them.** With real workspace
 members Bun installs into `packages/<name>/node_modules` and leaves the root

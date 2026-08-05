@@ -1,0 +1,31 @@
+{
+  "name": "@kingsmaker/cli",
+  "version": "0.0.0",
+  "description": "The Kingsmaker command line \u2014 km.",
+  "type": "module",
+  "bin": {
+    "km": "./dist/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "test": "vitest run",
+    "start": "bun index.ts",
+    "build": "bun build index.ts --target=node --outdir dist --sourcemap=linked"
+  },
+  "dependencies": {
+    "@effect/platform": "0.96.1",
+    "@effect/rpc": "0.75.1",
+    "@kingsmaker/contract": "workspace:*",
+    "effect": "3.21.3"
+  },
+  "devDependencies": {
+    "@types/node": "25.9.2",
+    "vitest": "3.2.6"
+  },
+  "files": [
+    "dist"
+  ]
+}
