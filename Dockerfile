@@ -25,17 +25,25 @@ FROM oven/bun:1.3.6-alpine AS build
 
 WORKDIR /srv/kingsmaker
 
-# Manifests first so `bun install` caches independently of source edits. EVERY
-# workspace member's manifest must be here: with `workspaces: ["packages/*"]`,
-# `--frozen-lockfile` resolves each member and fails if one is missing.
+# THE WHOLE `packages` TREE, not a hand-listed set of manifests.
+#
+# This used to copy each workspace member's package.json by name, so that
+# `bun install` cached independently of source edits. That list rotted the first
+# time a package was added: `workspaces: ["packages/*"]` resolves every member,
+# a missing one makes the resolved set differ from the lockfile, and
+# `--frozen-lockfile` fails with "lockfile had changes" — pointing at the
+# install, not at the COPY that caused it.
+#
+# A list that must be updated by hand, in a file nobody edits when adding a
+# package, is a trap regardless of how loudly its comment warns. Copying the
+# tree cannot go stale; the cost is that a source edit re-runs an install that
+# takes about two seconds.
 COPY package.json bun.lock ./
-COPY packages/contract/package.json ./packages/contract/
-COPY packages/app/package.json ./packages/app/
+COPY packages ./packages
 
 RUN bun install --frozen-lockfile
 
 COPY tsconfig.base.json tsconfig.json biome.json ./
-COPY packages ./packages
 
 # Emits packages/app/dist, which server/index.ts resolves as `../dist`.
 RUN bun run build
@@ -45,9 +53,9 @@ FROM oven/bun:1.3.6-alpine AS prod-deps
 
 WORKDIR /srv/kingsmaker
 
+# Same reasoning as the build stage: the tree, not a list.
 COPY package.json bun.lock ./
-COPY packages/contract/package.json ./packages/contract/
-COPY packages/app/package.json ./packages/app/
+COPY packages ./packages
 
 RUN bun install --frozen-lockfile --production
 
