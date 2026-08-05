@@ -5,10 +5,10 @@ import { note } from "./output.ts"
 /**
  * Sign in through a browser — any browser, on any machine.
  *
- * The CLI asks the deployment for a short code, shows it, and waits. The person
- * opens the URL wherever it is convenient, signs in however this deployment
- * allows, and confirms the code. Nothing is redirected anywhere, and nothing
- * listens on a local port.
+ * The CLI asks the deployment for a link, prints it, and waits. The person opens
+ * it wherever it is convenient and signs in however this deployment allows —
+ * opening the link is the approval, with nothing to type. Nothing is redirected
+ * anywhere, and nothing listens on a local port.
  *
  * THAT IS THE POINT. The other standard approach — a loopback redirect — needs
  * the browser and the CLI on the same machine, so it breaks over ssh, in a
@@ -23,7 +23,6 @@ interface DeviceStart {
   readonly deviceCode: string
   readonly userCode: string
   readonly verificationUri: string
-  readonly verificationUriComplete: string
   readonly intervalSeconds: number
   readonly expiresInSeconds: number
 }
@@ -76,14 +75,13 @@ export const browserLogin = async (host: string): Promise<BrowserLoginResult> =>
   }
   const device = (await started.json()) as DeviceStart
 
-  // The code goes on STDERR with everything else: a script capturing stdout
-  // gets data, not an interactive prompt it cannot answer.
+  // On STDERR with everything else: a script capturing stdout gets data, not a
+  // prompt it cannot answer.
   note("")
-  note(`  Your code:  ${device.userCode}`)
-  note(`  Open:       ${device.verificationUri}`)
+  note(`  Open:  ${device.verificationUri}`)
   note("")
-  note("Opening your browser. Sign in there, confirm the code, and this will continue.")
-  openBrowser(device.verificationUriComplete)
+  note("Opening your browser. Sign in there and this will continue on its own.")
+  openBrowser(device.verificationUri)
 
   const deadline = Date.now() + device.expiresInSeconds * 1000
   let interval = Math.max(1, device.intervalSeconds) * 1000

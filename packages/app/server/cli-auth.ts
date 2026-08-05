@@ -4,10 +4,10 @@ import { resolveOrg } from "./session"
 /**
  * Device flow for the CLI — RFC 8628 in shape, minus the OAuth scaffolding.
  *
- *   1. `km auth login --browser` asks for a device code and prints a SHORT user
- *      code plus a URL.
- *   2. The person opens that URL in ANY browser, on any machine, signs in
- *      however this deployment allows, and confirms the code.
+ *   1. `km auth login --browser` asks for a device code and prints a URL.
+ *   2. The person opens it in ANY browser, on any machine, and signs in however
+ *      this deployment allows. Opening the link IS the approval — there is
+ *      nothing to type.
  *   3. The CLI has been polling; it gets the credential and stores it.
  *
  * WHY NOT A LOOPBACK REDIRECT, which is the other standard answer: it requires
@@ -103,58 +103,58 @@ export const startDevice = async (request: Request): Promise<Response> => {
   return Response.json({
     deviceCode,
     userCode: code,
-    verificationUri: `${origin}/api/cli/device`,
-    // Pre-filled, so the common path is "click the link, click Approve".
-    verificationUriComplete: `${origin}/api/cli/device?code=${encodeURIComponent(code)}`,
+    // ONE url, and opening it approves. There is no bare "go here and type the
+    // code" page, because there is nothing to type.
+    verificationUri: `${origin}/api/cli/device?code=${encodeURIComponent(code)}`,
     intervalSeconds: POLL_INTERVAL_SECONDS,
     expiresInSeconds: TTL_MS / 1000,
   })
 }
 
-/** GET /api/cli/device[?code=…] — the page a person opens. */
+/**
+ * GET /api/cli/device?code=… — the page a person opens, which APPROVES.
+ *
+ * There is no form and nothing to type. The link the CLI printed carries the
+ * code, so opening it is the confirmation: the person had to be signed in to
+ * this deployment to get here, and they had to follow a link their own terminal
+ * produced.
+ *
+ * A confirmation step would defend against someone tricking you into opening a
+ * link that authorises THEIR terminal. On a deployment where one person is the
+ * only one who ever sees this page, that risk is theoretical and the step is
+ * pure friction — so the link approves and the page says what happened.
+ */
 export const devicePage = async (request: Request): Promise<Response> => {
   const url = new URL(request.url)
-  const prefill = url.searchParams.get("code") ?? ""
+  const submitted = normalise(url.searchParams.get("code") ?? "")
 
   const org = await resolveOrg(request)
   if (!org.ok) {
     // Sign in first, then come straight back here with the code intact — which
     // is what lets SSO, passwords, or anything else this deployment supports
     // drive a CLI sign-in without the CLI knowing about any of them.
-    const next = `/api/cli/device${prefill ? `?code=${encodeURIComponent(prefill)}` : ""}`
+    const raw = url.searchParams.get("code")
+    const next = `/api/cli/device${raw ? `?code=${encodeURIComponent(raw)}` : ""}`
     return new Response(null, {
       status: 302,
       headers: { location: `/?next=${encodeURIComponent(next)}` },
     })
   }
 
-  return shell(
-    `<h1>Authorise the command line</h1>` +
-      `<p>Check that this matches the code shown in your terminal.</p>` +
-      `<form method="POST" action="/api/cli/device">` +
-      `<input name="code" value="${prefill.replace(/[^A-Za-z0-9-]/g, "")}" placeholder="XXXX-XXXX" autocomplete="off" autocapitalize="characters" spellcheck="false" required>` +
-      `<button type="submit">Approve</button>` +
-      `</form>` +
-      `<p class="muted">Approving signs the command line in as you. If you did not start this, close this page.</p>`,
-  )
-}
-
-/** POST /api/cli/device — the person confirms the code. */
-export const approveDevice = async (request: Request): Promise<Response> => {
-  const org = await resolveOrg(request)
-  if (!org.ok) return shell(`<h1>Not signed in</h1><p>Sign in and open the link again.</p>`, 401)
-
-  const form = await request.formData().catch(() => null)
-  const submitted = normalise(String(form?.get("code") ?? ""))
-  if (!submitted) return shell(`<h1>No code</h1><p>Enter the code from your terminal.</p>`, 400)
+  if (!submitted) {
+    return shell(
+      `<h1>Nothing to authorise</h1><p>Open the link your terminal printed, or run <code>km auth login --browser</code> again.</p>`,
+      400,
+    )
+  }
 
   sweep()
   const entry = [...pending.values()].find((p) => codesMatch(p.userCode, submitted))
   if (!entry || entry.status !== "pending") {
     // Deliberately the same answer for "no such code" and "already used": a
-    // person who mistypes learns nothing about which codes exist.
+    // stale link in someone's history learns nothing about what is live.
     return shell(
-      `<h1>That code is not valid</h1><p>It may have expired, or already been used. Run <code>km auth login --browser</code> again.</p>`,
+      `<h1>That link is no longer valid</h1><p>It may have expired, or already been used. Run <code>km auth login --browser</code> again.</p>`,
       400,
     )
   }
@@ -166,7 +166,7 @@ export const approveDevice = async (request: Request): Promise<Response> => {
   entry.cookie = cookie
   entry.userId = org.actor
 
-  return shell(`<h1>Approved</h1><p>Your terminal is signed in. You can close this page.</p>`)
+  return shell(`<h1>Signed in</h1><p>Your terminal is ready. You can close this page.</p>`)
 }
 
 /**

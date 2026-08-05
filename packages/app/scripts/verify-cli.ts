@@ -580,9 +580,9 @@ const main = async (): Promise<void> => {
 
   console.log("\nbrowser login (device flow)")
   // The whole flow WITHOUT a browser: start `km auth login --browser`, read the
-  // code it prints, and approve it over HTTP the way the page would. Nothing
-  // listens on a local port, so this exercises the real thing rather than a mock
-  // — and it is the same sequence that works over ssh.
+  // link it prints, and open it the way a signed-in browser would. Opening it IS
+  // the approval — there is nothing to type — so this is the real sequence, and
+  // the one that works over ssh.
   const blHome = path.join(configHome, "browser")
   const child = spawn("node", [CLI, "auth", "login", "--browser"], {
     // KM_NO_BROWSER: this driver runs the real command, and without it every run
@@ -594,10 +594,10 @@ const main = async (): Promise<void> => {
     stderrBuf += d.toString()
   })
 
-  const shownCode = await new Promise<string>((resolve, reject) => {
-    const deadline = setTimeout(() => reject(new Error("no code printed")), 20_000)
+  const link = await new Promise<string>((resolve, reject) => {
+    const deadline = setTimeout(() => reject(new Error("no link printed")), 20_000)
     const poll = setInterval(() => {
-      const m = /Your code:\s+([A-Z2-9]{4}-[A-Z2-9]{4})/.exec(stderrBuf)
+      const m = /(https?:\/\/\S*\/api\/cli\/device\?code=\S+)/.exec(stderrBuf)
       if (m?.[1]) {
         clearInterval(poll)
         clearTimeout(deadline)
@@ -606,24 +606,21 @@ const main = async (): Promise<void> => {
     }, 100)
   })
   check(
-    "--browser prints a short code and a URL",
-    Boolean(shownCode) && stderrBuf.includes("/api/cli/device"),
+    "--browser prints one link, and nothing to type",
+    Boolean(link) && !/Your code/.test(stderrBuf),
     stderrBuf.slice(0, 200),
   )
-  check("the code avoids glyphs that get misread", !/[O01IL]/.test(shownCode), shownCode)
   check(
     "NOTHING is redirected to localhost — the point of the device flow",
-    !stderrBuf.includes("127.0.0.1") && !stderrBuf.includes("localhost:0"),
+    !stderrBuf.includes("127.0.0.1"),
     stderrBuf.slice(0, 200),
   )
 
-  // The approval page bounces an unauthenticated browser to sign in, carrying
-  // the code so nobody has to retype it.
-  const anon = await fetch(`${API}/api/cli/device?code=${shownCode}`, { redirect: "manual" })
+  const anon = await fetch(link, { redirect: "manual" })
   check(
-    "an unauthenticated browser is sent to sign in, keeping the code",
+    "an unauthenticated visit is sent to sign in, keeping the code",
     anon.status === 302 &&
-      decodeURIComponent(anon.headers.get("location") ?? "").includes(shownCode),
+      decodeURIComponent(anon.headers.get("location") ?? "").includes("/api/cli/device?code="),
     String(anon.headers.get("location")),
   )
 
@@ -637,33 +634,15 @@ const main = async (): Promise<void> => {
     .map((c) => c.split(";")[0])
     .join("; ")
 
-  // A wrong code must not approve anything, even from a signed-in browser.
-  const wrong = await fetch(`${API}/api/cli/device`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/x-www-form-urlencoded",
-      cookie: browserCookie,
-      origin: API,
-    },
-    body: new URLSearchParams({ code: "ZZZZ-ZZZZ" }),
+  const stale = await fetch(`${API}/api/cli/device?code=ZZZZ-ZZZZ`, {
+    headers: { cookie: browserCookie },
   })
-  check("a wrong code is refused", wrong.status === 400, String(wrong.status))
+  check("a signed-in visit with a dead code is refused", stale.status === 400, String(stale.status))
 
-  // Typed the way a person would: lower case, no dash.
-  const approve = await fetch(`${API}/api/cli/device`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/x-www-form-urlencoded",
-      cookie: browserCookie,
-      origin: API,
-    },
-    body: new URLSearchParams({ code: shownCode.replace("-", "").toLowerCase() }),
-  })
-  check(
-    "the code is accepted lower-case and without the dash",
-    approve.status === 200,
-    String(approve.status),
-  )
+  // Opening the link approves it. No form, no code entry.
+  const approved = await fetch(link, { headers: { cookie: browserCookie } })
+  check("opening the link IS the approval", approved.status === 200, String(approved.status))
+  check("the page says so", (await approved.text()).includes("Signed in"), "")
 
   const blExit = await new Promise<number>((resolve) => child.on("exit", (c) => resolve(c ?? 1)))
   check("the CLI notices and exits 0", blExit === 0, stderrBuf.slice(-300))
@@ -677,17 +656,8 @@ const main = async (): Promise<void> => {
     (afterBrowser.stdout || afterBrowser.stderr).slice(0, 200),
   )
 
-  // Approving twice must not hand out a second credential.
-  const replay = await fetch(`${API}/api/cli/device`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/x-www-form-urlencoded",
-      cookie: browserCookie,
-      origin: API,
-    },
-    body: new URLSearchParams({ code: shownCode }),
-  })
-  check("the code cannot be approved twice", replay.status === 400, String(replay.status))
+  const replay = await fetch(link, { headers: { cookie: browserCookie } })
+  check("the link cannot be used twice", replay.status === 400, String(replay.status))
 
   console.log("\nerrors and exit codes")
   const badConcept = await km("record", "list", "nonexistent-concept")

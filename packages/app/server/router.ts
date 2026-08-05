@@ -18,7 +18,7 @@ import {
   enrichForRequest as enrichClayForRequest,
   handleClayCallback,
 } from "./clay"
-import { approveDevice, devicePage, pollDevice, startDevice } from "./cli-auth"
+import { devicePage, pollDevice, startDevice } from "./cli-auth"
 import { db, pool } from "./db"
 import {
   disconnectGoogle,
@@ -214,13 +214,9 @@ export const handleApi = async (req: Request): Promise<Response | null> => {
     // The device flow: the CLI starts one and polls; the person approves in any
     // browser, on any machine. Nothing is redirected to a loopback address, so
     // this works over ssh and from a phone.
+    // GET approves — opening the link the CLI printed is the confirmation.
     if (seg[2] === "device" && !seg[3] && m === "GET") return devicePage(req)
-    if (seg[2] === "device" && !seg[3] && m === "POST") {
-      // One path is a browser form (approve), the other is the CLI asking to
-      // start. Told apart by content type, so the browser needs no extra route.
-      const kind = req.headers.get("content-type") ?? ""
-      return kind.includes("form") ? approveDevice(req) : startDevice(req)
-    }
+    if (seg[2] === "device" && !seg[3] && m === "POST") return startDevice(req)
     if (seg[2] === "device" && seg[3] === "poll" && m === "POST") return pollDevice(req)
   }
 

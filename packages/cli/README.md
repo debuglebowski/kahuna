@@ -67,14 +67,13 @@ km auth login --browser     # or --sso, which is the same thing
 ```
 
 ```
-  Your code:  WDJB-MJHT
-  Open:       https://kingsmaker.example.com/api/cli/device
+  Open:  https://kingsmaker.example.com/api/cli/device?code=WDJB-MJHT
 ```
 
-The CLI shows a short code and waits. You open that URL in **any browser, on any
-machine** — your laptop, your phone — sign in however this deployment allows
-(password, SSO, anything), and confirm the code. The CLI is polling, and
-continues on its own.
+The CLI prints a link and waits. Open it in **any browser, on any machine** —
+your laptop, your phone — and sign in however this deployment allows (password,
+SSO, anything). Opening the link is the approval; there is nothing to type. The
+CLI is polling, and continues on its own.
 
 Nothing is redirected anywhere and nothing listens on a local port, which is
 deliberate: the usual loopback-redirect flow needs the browser and the CLI on

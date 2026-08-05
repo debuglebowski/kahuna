@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest"
 import {
-  approveDevice,
   devicePage,
   __normaliseForTest as normalise,
   __pendingForTest as pending,
@@ -42,8 +41,11 @@ describe("starting a flow", () => {
     const body = (await res.json()) as Record<string, string | number>
     expect(String(body.userCode)).toMatch(/^[A-Z2-9]{4}-[A-Z2-9]{4}$/)
     expect(String(body.deviceCode).length).toBeGreaterThan(30)
-    expect(body.verificationUri).toBe("http://localhost:3100/api/cli/device")
-    expect(String(body.verificationUriComplete)).toContain(`code=${body.userCode}`)
+    // ONE url, carrying the code: opening it is the approval, so there is no
+    // second "go here and type it" address.
+    expect(String(body.verificationUri)).toBe(
+      `http://localhost:3100/api/cli/device?code=${body.userCode}`,
+    )
     expect(Number(body.expiresInSeconds)).toBeGreaterThan(0)
   })
 
@@ -138,46 +140,39 @@ describe("polling", () => {
   })
 })
 
-describe("approving", () => {
-  const form = (code: string) => {
-    const body = new URLSearchParams({ code })
-    return req("/api/cli/device", {
-      method: "POST",
-      body,
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-    })
-  }
-
-  it("refuses without a session, whatever the code says", async () => {
+describe("approving by opening the link", () => {
+  it("refuses without a session, and leaves the request untouched", async () => {
     pending.set("dev-2", {
       userCode: "GGGG-HHHH",
       status: "pending",
       expiresAt: Date.now() + 60_000,
       attempts: 0,
     })
-    const res = await approveDevice(form("GGGG-HHHH"))
-    expect(res.status).toBe(401)
-    // And crucially it stays pending — an unauthenticated POST must not
-    // consume, approve, or otherwise disturb a live request.
+    // Redirected to sign in — NOT approved. An unauthenticated GET must not
+    // consume or approve a live request, which matters more now that a mere
+    // page load is what authorises.
+    const res = await devicePage(req("/api/cli/device?code=GGGG-HHHH"))
+    expect(res.status).toBe(302)
     expect(pending.get("dev-2")?.status).toBe("pending")
   })
 
-  it("tells an unauthenticated caller NOTHING about which codes exist", async () => {
-    // The session is checked before the code is even looked at, so probing for
-    // live codes without signing in gets the same 401 either way. (That a live
-    // code and a spent one look alike to a SIGNED-IN caller is asserted by the
-    // end-to-end driver, which can hold a real session.)
-    pending.set("dev-3", {
-      userCode: "JJJJ-KKKK",
+  it("tells an unauthenticated visitor NOTHING about which codes are live", async () => {
+    // The session is checked before the code is looked at, so every visit gets
+    // the same sign-in bounce whether the code is real, spent or invented.
+    // (What a SIGNED-IN visitor sees for a stale code is asserted end to end by
+    // verify-cli.ts, which can hold a real session.)
+    pending.set("dev-4", {
+      userCode: "LLLL-MMMM",
       status: "pending",
       expiresAt: Date.now() + 60_000,
       attempts: 0,
     })
-    const real = await approveDevice(form("JJJJ-KKKK"))
-    const fake = await approveDevice(form("ZZZZ-ZZZZ"))
-    expect(real.status).toBe(401)
-    expect(fake.status).toBe(401)
-    expect(await real.text()).toBe(await fake.text())
-    expect(pending.get("dev-3")?.status).toBe("pending")
+    const real = await devicePage(req("/api/cli/device?code=LLLL-MMMM"))
+    const fake = await devicePage(req("/api/cli/device?code=ZZZZ-ZZZZ"))
+    const none = await devicePage(req("/api/cli/device"))
+    expect(real.status).toBe(302)
+    expect(fake.status).toBe(302)
+    expect(none.status).toBe(302)
+    expect(pending.get("dev-4")?.status).toBe("pending")
   })
 })
