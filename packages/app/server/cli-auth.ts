@@ -2,166 +2,206 @@ import { randomBytes, timingSafeEqual } from "node:crypto"
 import { resolveOrg } from "./session"
 
 /**
- * Browser hand-off for the CLI — RFC 8252's loopback flow, minus the IdP.
+ * Device flow for the CLI — RFC 8628 in shape, minus the OAuth scaffolding.
  *
- *   1. `km auth login --browser` binds 127.0.0.1:<port> and opens
- *      `/api/cli/authorize?port=<port>&state=<state>` in the browser.
- *   2. The person signs in however this deployment lets them — password, SSO,
- *      anything. That is the whole point: the CLI never touches the IdP, so it
- *      works for methods it could not otherwise support.
- *   3. We redirect to `http://127.0.0.1:<port>/callback?code=…&state=…`.
- *   4. The CLI POSTs the code to `/api/cli/exchange` and gets the credential in
- *      the RESPONSE BODY.
+ *   1. `km auth login --browser` asks for a device code and prints a SHORT user
+ *      code plus a URL.
+ *   2. The person opens that URL in ANY browser, on any machine, signs in
+ *      however this deployment allows, and confirms the code.
+ *   3. The CLI has been polling; it gets the credential and stores it.
  *
- * WHY A CODE RATHER THAN THE CREDENTIAL IN THE REDIRECT: a URL lands in browser
- * history, and on some platforms in the shell that launched the browser. The
- * code is worthless without a POST from the process that requested it.
+ * WHY NOT A LOOPBACK REDIRECT, which is the other standard answer: it requires
+ * the browser and the CLI to be on the same machine. Run the CLI over ssh, or in
+ * a devcontainer, or open the link on your phone, and the server redirects to a
+ * `127.0.0.1` that has nothing listening — the flow fails in exactly the setting
+ * a command-line tool is most used in. Nothing here is redirected anywhere.
  *
- * WHAT THE CREDENTIAL IS: the browser's own session cookie, handed over
- * verbatim. Minting a separate session would be better hygiene — the CLI would
- * survive a browser sign-out — but BetterAuth's cookie is SIGNED
- * (`setSignedCookie` with the server secret), so producing one here means
- * reimplementing their signing scheme and re-breaking it on every upgrade. That
- * trade goes away when API keys land: this endpoint then returns a token and
- * nothing else changes.
+ * The credential is the approving browser's session cookie, handed over
+ * verbatim. Minting a separate session would be better hygiene, but BetterAuth
+ * signs its cookie with the server secret, so producing one here means
+ * reimplementing their signing and re-breaking it on every upgrade.
  */
 
-interface PendingCode {
-  readonly cookie: string
-  readonly userId: string
-  readonly state: string
+type Status = "pending" | "approved" | "denied"
+
+interface Pending {
+  /** Short, human-typed. Lives in the URL and on screen. */
+  readonly userCode: string
+  status: Status
+  /** Set only once approved. */
+  cookie?: string
+  userId?: string
   readonly expiresAt: number
+  /** Wrong-code attempts against this entry, to bound guessing. */
+  attempts: number
 }
 
-/** In memory on purpose: a code lives 60 seconds and must not survive a
- *  restart. A table would outlive its usefulness and become a thing to purge. */
-const codes = new Map<string, PendingCode>()
+/** Keyed by DEVICE code — the long secret only the CLI ever holds. */
+const pending = new Map<string, Pending>()
 
-const CODE_TTL_MS = 60_000
+const TTL_MS = 10 * 60_000
+export const POLL_INTERVAL_SECONDS = 3
+
+/**
+ * No 0/O, no 1/I/L: the code is read off one screen and typed on another, and
+ * every ambiguous glyph is a support conversation. 8 characters from 30 symbols
+ * is ~49 bits, which is far more than a 10-minute window with 10 attempts needs.
+ */
+const ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+
+const userCode = (): string => {
+  const bytes = randomBytes(8)
+  const chars = [...bytes].map((b) => ALPHABET[b % ALPHABET.length])
+  return `${chars.slice(0, 4).join("")}-${chars.slice(4).join("")}`
+}
 
 const sweep = (): void => {
   const now = Date.now()
-  for (const [code, pending] of codes) if (pending.expiresAt <= now) codes.delete(code)
+  for (const [code, entry] of pending) if (entry.expiresAt <= now) pending.delete(code)
 }
 
-/**
- * THE SECURITY OF THIS WHOLE FLOW IS THIS FUNCTION.
- *
- * `authorize` takes a redirect target from the query string. If anything but a
- * loopback port can get through, it is an open redirect that sends a live
- * session cookie to whoever asked — so the port is parsed as an integer and the
- * host is hard-coded. There is deliberately no `redirect_uri` parameter to
- * validate: the caller supplies a PORT, never a URL.
- *
- * Ports below 1024 are refused as well; a CLI binds an ephemeral port, and
- * anything privileged means someone is trying to aim this somewhere odd.
- */
-export const loopbackTarget = (rawPort: string | null): string | null => {
-  if (rawPort === null || !/^\d{1,5}$/.test(rawPort)) return null
-  const port = Number(rawPort)
-  if (!Number.isInteger(port) || port < 1024 || port > 65535) return null
-  return `http://127.0.0.1:${port}/callback`
+/** Compare short codes without leaking position through timing. */
+const codesMatch = (a: string, b: string): boolean => {
+  const x = Buffer.from(a.toUpperCase())
+  const y = Buffer.from(b.toUpperCase())
+  return x.length === y.length && timingSafeEqual(x, y)
 }
 
-/** Opaque, bounded, and echoed back untouched so the CLI can prove the callback
- *  belongs to the request it started. */
-const validState = (state: string | null): state is string =>
-  state !== null && /^[A-Za-z0-9_-]{8,128}$/.test(state)
+const normalise = (raw: string): string =>
+  raw
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "")
+    .replace(/^(.{4})(.{4})$/, "$1-$2")
 
-const html = (body: string, status = 200): Response =>
+const shell = (body: string, status = 200): Response =>
   new Response(
     `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">` +
       `<title>Kingsmaker CLI</title>` +
       `<style>body{font:16px/1.6 system-ui,sans-serif;margin:0;display:grid;place-items:center;min-height:100vh;padding:24px;color:#15181d;background:#f1f2f5}` +
-      `main{max-width:34rem}h1{font-size:1.25rem;margin:0 0 .5rem}p{margin:.5rem 0;color:#4b525d}code{background:#e6e8ec;padding:.1em .35em;border-radius:3px}` +
-      `@media(prefers-color-scheme:dark){body{background:#0f1216;color:#e8ebf0}p{color:#a7afbb}code{background:#262c35}}</style>` +
+      `main{max-width:26rem;width:100%}h1{font-size:1.25rem;margin:0 0 .25rem}p{margin:.4rem 0;color:#4b525d}` +
+      `input{font:inherit;font-family:ui-monospace,monospace;font-size:1.5rem;letter-spacing:.12em;text-align:center;text-transform:uppercase;width:100%;box-sizing:border-box;padding:.6rem;margin:1rem 0 .75rem;border:1px solid #c3c8d1;border-radius:6px;background:#fff;color:inherit}` +
+      `button{font:inherit;font-weight:600;width:100%;padding:.7rem;border:0;border-radius:6px;background:#15181d;color:#fff;cursor:pointer}` +
+      `.muted{font-size:.85rem}code{background:#e6e8ec;padding:.1em .35em;border-radius:3px}` +
+      `@media(prefers-color-scheme:dark){body{background:#0f1216;color:#e8ebf0}p{color:#a7afbb}input{background:#161a20;border-color:#363e49}button{background:#e8ebf0;color:#0f1216}code{background:#262c35}}</style>` +
       `<main>${body}</main>`,
     { status, headers: { "content-type": "text/html; charset=utf-8" } },
   )
 
-/**
- * GET /api/cli/authorize?port=<port>&state=<state>
- *
- * Requires a signed-in browser. When there is no session we send the person to
- * the app's sign-in page with `?next=` pointing back here, so signing in
- * finishes the hand-off instead of dead-ending on the dashboard.
- */
-export const authorizeCli = async (request: Request): Promise<Response> => {
-  const url = new URL(request.url)
-  const target = loopbackTarget(url.searchParams.get("port"))
-  const state = url.searchParams.get("state")
+/** POST /api/cli/device — the CLI starts a flow. Unauthenticated by design:
+ *  nobody is signed in yet, which is the entire point. */
+export const startDevice = async (request: Request): Promise<Response> => {
+  sweep()
+  const deviceCode = randomBytes(32).toString("base64url")
+  const code = userCode()
+  pending.set(deviceCode, {
+    userCode: code,
+    status: "pending",
+    expiresAt: Date.now() + TTL_MS,
+    attempts: 0,
+  })
+  const origin = new URL(request.url).origin
+  return Response.json({
+    deviceCode,
+    userCode: code,
+    verificationUri: `${origin}/api/cli/device`,
+    // Pre-filled, so the common path is "click the link, click Approve".
+    verificationUriComplete: `${origin}/api/cli/device?code=${encodeURIComponent(code)}`,
+    intervalSeconds: POLL_INTERVAL_SECONDS,
+    expiresInSeconds: TTL_MS / 1000,
+  })
+}
 
-  if (!target || !validState(state)) {
-    return html(
-      `<h1>That link is not valid</h1><p>The CLI must supply a loopback <code>port</code> and a <code>state</code>. Re-run <code>km auth login --browser</code>.</p>`,
-      400,
-    )
-  }
+/** GET /api/cli/device[?code=…] — the page a person opens. */
+export const devicePage = async (request: Request): Promise<Response> => {
+  const url = new URL(request.url)
+  const prefill = url.searchParams.get("code") ?? ""
 
   const org = await resolveOrg(request)
   if (!org.ok) {
-    // Not signed in (or no membership yet). Bounce through the app's own
-    // sign-in, which is what makes SSO work here without the CLI knowing
-    // anything about it.
-    const next = `/api/cli/authorize?port=${url.searchParams.get("port")}&state=${state}`
+    // Sign in first, then come straight back here with the code intact — which
+    // is what lets SSO, passwords, or anything else this deployment supports
+    // drive a CLI sign-in without the CLI knowing about any of them.
+    const next = `/api/cli/device${prefill ? `?code=${encodeURIComponent(prefill)}` : ""}`
     return new Response(null, {
       status: 302,
       headers: { location: `/?next=${encodeURIComponent(next)}` },
     })
   }
 
-  const cookie = request.headers.get("cookie")
-  if (!cookie) {
-    return html(`<h1>No session cookie</h1><p>Sign in to this deployment and try again.</p>`, 401)
-  }
+  return shell(
+    `<h1>Authorise the command line</h1>` +
+      `<p>Check that this matches the code shown in your terminal.</p>` +
+      `<form method="POST" action="/api/cli/device">` +
+      `<input name="code" value="${prefill.replace(/[^A-Za-z0-9-]/g, "")}" placeholder="XXXX-XXXX" autocomplete="off" autocapitalize="characters" spellcheck="false" required>` +
+      `<button type="submit">Approve</button>` +
+      `</form>` +
+      `<p class="muted">Approving signs the command line in as you. If you did not start this, close this page.</p>`,
+  )
+}
+
+/** POST /api/cli/device — the person confirms the code. */
+export const approveDevice = async (request: Request): Promise<Response> => {
+  const org = await resolveOrg(request)
+  if (!org.ok) return shell(`<h1>Not signed in</h1><p>Sign in and open the link again.</p>`, 401)
+
+  const form = await request.formData().catch(() => null)
+  const submitted = normalise(String(form?.get("code") ?? ""))
+  if (!submitted) return shell(`<h1>No code</h1><p>Enter the code from your terminal.</p>`, 400)
 
   sweep()
-  const code = randomBytes(32).toString("base64url")
-  codes.set(code, {
-    cookie,
-    userId: org.actor,
-    state,
-    expiresAt: Date.now() + CODE_TTL_MS,
-  })
+  const entry = [...pending.values()].find((p) => codesMatch(p.userCode, submitted))
+  if (!entry || entry.status !== "pending") {
+    // Deliberately the same answer for "no such code" and "already used": a
+    // person who mistypes learns nothing about which codes exist.
+    return shell(
+      `<h1>That code is not valid</h1><p>It may have expired, or already been used. Run <code>km auth login --browser</code> again.</p>`,
+      400,
+    )
+  }
 
-  return new Response(null, {
-    status: 302,
-    headers: { location: `${target}?code=${code}&state=${encodeURIComponent(state)}` },
-  })
+  const cookie = request.headers.get("cookie")
+  if (!cookie) return shell(`<h1>No session cookie</h1><p>Sign in and try again.</p>`, 401)
+
+  entry.status = "approved"
+  entry.cookie = cookie
+  entry.userId = org.actor
+
+  return shell(`<h1>Approved</h1><p>Your terminal is signed in. You can close this page.</p>`)
 }
 
 /**
- * POST /api/cli/exchange  {code, state}
+ * POST /api/cli/device/poll {deviceCode} — the CLI waits here.
  *
- * Single use, and the state must match the one the CLI generated — so a code
- * that leaks out of the redirect is useless to anyone who was not part of the
- * original request.
+ * The device code is the secret; the short user code is only ever a
+ * confirmation the human reads. So polling reveals nothing to anyone who does
+ * not already hold the device code.
  */
-export const exchangeCli = async (request: Request): Promise<Response> => {
-  const body = (await request.json().catch(() => null)) as {
-    code?: string
-    state?: string
-  } | null
-  const code = body?.code
-  const state = body?.state
-  if (!code || !state) return Response.json({ error: "MISSING_CODE" }, { status: 400 })
+export const pollDevice = async (request: Request): Promise<Response> => {
+  const body = (await request.json().catch(() => null)) as { deviceCode?: string } | null
+  const deviceCode = body?.deviceCode
+  if (!deviceCode) return Response.json({ error: "MISSING_DEVICE_CODE" }, { status: 400 })
 
   sweep()
-  const pending = codes.get(code)
-  // Consume it whether or not the state matches: a code is one attempt, so a
-  // wrong guess cannot be retried against the same code.
-  codes.delete(code)
-  if (!pending) return Response.json({ error: "UNKNOWN_OR_EXPIRED_CODE" }, { status: 400 })
+  const entry = pending.get(deviceCode)
+  if (!entry) return Response.json({ status: "expired" }, { status: 400 })
 
-  const a = Buffer.from(pending.state)
-  const b = Buffer.from(state)
-  if (a.length !== b.length || !timingSafeEqual(a, b)) {
-    return Response.json({ error: "STATE_MISMATCH" }, { status: 400 })
+  if (entry.status === "pending") {
+    entry.attempts++
+    if (entry.attempts > (TTL_MS / 1000 / POLL_INTERVAL_SECONDS) * 2) {
+      // Polling far faster than told: drop it rather than serve a busy loop.
+      pending.delete(deviceCode)
+      return Response.json({ status: "expired" }, { status: 400 })
+    }
+    return Response.json({ status: "pending", intervalSeconds: POLL_INTERVAL_SECONDS })
   }
 
-  return Response.json({ cookie: pending.cookie, userId: pending.userId })
+  // Approved: hand it over ONCE, then forget it.
+  pending.delete(deviceCode)
+  return Response.json({ status: "approved", cookie: entry.cookie, userId: entry.userId })
 }
 
-/** Test seam: the pending-code store, so a test can assert single use and
- *  expiry without sleeping for a minute. */
-export const __codesForTest = codes
+/** Test seam: the pending store, so expiry and single-use are testable without
+ *  waiting ten minutes. */
+export const __pendingForTest = pending
+export const __userCodeForTest = userCode
+export const __normaliseForTest = normalise

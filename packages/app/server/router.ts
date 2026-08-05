@@ -18,7 +18,7 @@ import {
   enrichForRequest as enrichClayForRequest,
   handleClayCallback,
 } from "./clay"
-import { authorizeCli, exchangeCli } from "./cli-auth"
+import { approveDevice, devicePage, pollDevice, startDevice } from "./cli-auth"
 import { db, pool } from "./db"
 import {
   disconnectGoogle,
@@ -207,14 +207,21 @@ export const handleApi = async (req: Request): Promise<Response | null> => {
     if (seg[2] === "methods" && !seg[3] && m === "POST") return updateAuthMethods(req)
   }
 
-  // Browser hand-off for the CLI: the person signs in normally in a browser and
-  // the credential comes back to a loopback listener. Deliberately NOT under
-  // /api/auth (that whole prefix belongs to BetterAuth's own handler) and
-  // deliberately not an RPC — `authorize` has to be a plain GET a browser can
-  // follow, and it answers with a redirect.
+  // Browser hand-off for the CLI. Deliberately NOT under /api/auth (that whole
+  // prefix belongs to BetterAuth's own handler) and deliberately not an RPC —
+  // the approval page has to be a plain GET a browser can open.
   if (seg[1] === "cli") {
-    if (seg[2] === "authorize" && !seg[3] && m === "GET") return authorizeCli(req)
-    if (seg[2] === "exchange" && !seg[3] && m === "POST") return exchangeCli(req)
+    // The device flow: the CLI starts one and polls; the person approves in any
+    // browser, on any machine. Nothing is redirected to a loopback address, so
+    // this works over ssh and from a phone.
+    if (seg[2] === "device" && !seg[3] && m === "GET") return devicePage(req)
+    if (seg[2] === "device" && !seg[3] && m === "POST") {
+      // One path is a browser form (approve), the other is the CLI asking to
+      // start. Told apart by content type, so the browser needs no extra route.
+      const kind = req.headers.get("content-type") ?? ""
+      return kind.includes("form") ? approveDevice(req) : startDevice(req)
+    }
+    if (seg[2] === "device" && seg[3] === "poll" && m === "POST") return pollDevice(req)
   }
 
   // Per-org overrides for the connector toggles. Sibling of the connectors

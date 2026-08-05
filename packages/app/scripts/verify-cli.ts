@@ -578,12 +578,11 @@ const main = async (): Promise<void> => {
   const automations = await km("automation", "list", "--json")
   check("automation list", automations.code === 0, automations.stderr)
 
-  console.log("\nbrowser login")
+  console.log("\nbrowser login (device flow)")
   // The whole flow WITHOUT a browser: start `km auth login --browser`, read the
-  // authorize URL it prints, and fetch that URL with a signed-in cookie the way
-  // a browser would. The server redirects to the CLI's own loopback listener,
-  // which completes the exchange. This is the only way to prove the hand-off
-  // end to end in CI, and it exercises the real listener, not a mock.
+  // code it prints, and approve it over HTTP the way the page would. Nothing
+  // listens on a local port, so this exercises the real thing rather than a mock
+  // — and it is the same sequence that works over ssh.
   const blHome = path.join(configHome, "browser")
   const child = spawn("node", [CLI, "auth", "login", "--browser"], {
     env: { ...process.env, XDG_CONFIG_HOME: blHome, KM_HOST: API },
@@ -593,11 +592,10 @@ const main = async (): Promise<void> => {
     stderrBuf += d.toString()
   })
 
-  // The URL appears on stderr (data goes to stdout, chatter to stderr).
-  const authorizeUrl = await new Promise<string>((resolve, reject) => {
-    const deadline = setTimeout(() => reject(new Error("no authorize URL printed")), 20_000)
+  const shownCode = await new Promise<string>((resolve, reject) => {
+    const deadline = setTimeout(() => reject(new Error("no code printed")), 20_000)
     const poll = setInterval(() => {
-      const m = /(http:\/\/\S*\/api\/cli\/authorize\?\S+)/.exec(stderrBuf)
+      const m = /Your code:\s+([A-Z2-9]{4}-[A-Z2-9]{4})/.exec(stderrBuf)
       if (m?.[1]) {
         clearInterval(poll)
         clearTimeout(deadline)
@@ -605,21 +603,28 @@ const main = async (): Promise<void> => {
       }
     }, 100)
   })
-  check("--browser prints an authorize URL to stderr", authorizeUrl.includes("/api/cli/authorize"))
   check(
-    "the URL carries a loopback port and a state",
-    /port=\d+/.test(authorizeUrl) && /state=/.test(authorizeUrl),
+    "--browser prints a short code and a URL",
+    Boolean(shownCode) && stderrBuf.includes("/api/cli/device"),
+    stderrBuf.slice(0, 200),
+  )
+  check("the code avoids glyphs that get misread", !/[O01IL]/.test(shownCode), shownCode)
+  check(
+    "NOTHING is redirected to localhost — the point of the device flow",
+    !stderrBuf.includes("127.0.0.1") && !stderrBuf.includes("localhost:0"),
+    stderrBuf.slice(0, 200),
   )
 
-  // Unauthenticated first: it must bounce to sign-in carrying `next`, not 500.
-  const anon = await fetch(authorizeUrl, { redirect: "manual" })
+  // The approval page bounces an unauthenticated browser to sign in, carrying
+  // the code so nobody has to retype it.
+  const anon = await fetch(`${API}/api/cli/device?code=${shownCode}`, { redirect: "manual" })
   check(
-    "an unauthenticated browser is sent to sign in, with next= back to authorize",
-    anon.status === 302 && (anon.headers.get("location") ?? "").includes("next="),
+    "an unauthenticated browser is sent to sign in, keeping the code",
+    anon.status === 302 &&
+      decodeURIComponent(anon.headers.get("location") ?? "").includes(shownCode),
     String(anon.headers.get("location")),
   )
 
-  // Now as a signed-in browser would.
   const signIn = await fetch(`${API}/api/auth/sign-in/email`, {
     method: "POST",
     headers: { "content-type": "application/json", origin: API },
@@ -629,24 +634,38 @@ const main = async (): Promise<void> => {
     .getSetCookie()
     .map((c) => c.split(";")[0])
     .join("; ")
-  const redirected = await fetch(authorizeUrl, {
-    headers: { cookie: browserCookie },
-    redirect: "manual",
+
+  // A wrong code must not approve anything, even from a signed-in browser.
+  const wrong = await fetch(`${API}/api/cli/device`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/x-www-form-urlencoded",
+      cookie: browserCookie,
+      origin: API,
+    },
+    body: new URLSearchParams({ code: "ZZZZ-ZZZZ" }),
   })
-  const callback = redirected.headers.get("location") ?? ""
+  check("a wrong code is refused", wrong.status === 400, String(wrong.status))
+
+  // Typed the way a person would: lower case, no dash.
+  const approve = await fetch(`${API}/api/cli/device`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/x-www-form-urlencoded",
+      cookie: browserCookie,
+      origin: API,
+    },
+    body: new URLSearchParams({ code: shownCode.replace("-", "").toLowerCase() }),
+  })
   check(
-    "a signed-in browser is redirected to the CLI's loopback listener",
-    redirected.status === 302 && callback.startsWith("http://127.0.0.1:"),
-    callback,
+    "the code is accepted lower-case and without the dash",
+    approve.status === 200,
+    String(approve.status),
   )
-  check("the redirect carries a one-time code", callback.includes("code="), callback)
 
-  // Follow it, which is what the browser does — and what completes the CLI.
-  await fetch(callback).catch(() => undefined)
   const blExit = await new Promise<number>((resolve) => child.on("exit", (c) => resolve(c ?? 1)))
-  check("the CLI completes and exits 0", blExit === 0, stderrBuf.slice(-300))
+  check("the CLI notices and exits 0", blExit === 0, stderrBuf.slice(-300))
 
-  // The proof: the credential landed and works for a real request.
   const afterBrowser = await exec("node", [CLI, "concept", "list", "--json"], {
     env: { ...process.env, XDG_CONFIG_HOME: blHome, KM_HOST: API },
   }).catch((e: unknown) => ({ stdout: "", stderr: String(e) }))
@@ -656,27 +675,17 @@ const main = async (): Promise<void> => {
     (afterBrowser.stdout || afterBrowser.stderr).slice(0, 200),
   )
 
-  // A replayed code must be worthless.
-  const replay = await fetch(`${API}/api/cli/exchange`, {
+  // Approving twice must not hand out a second credential.
+  const replay = await fetch(`${API}/api/cli/device`, {
     method: "POST",
-    headers: { "content-type": "application/json", origin: API },
-    body: JSON.stringify({
-      code: new URL(callback).searchParams.get("code"),
-      state: new URL(callback).searchParams.get("state"),
-    }),
+    headers: {
+      "content-type": "application/x-www-form-urlencoded",
+      cookie: browserCookie,
+      origin: API,
+    },
+    body: new URLSearchParams({ code: shownCode }),
   })
-  check("replaying the code afterwards is refused", replay.status === 400, String(replay.status))
-
-  // And the open-redirect attempt the whole design hinges on.
-  const openRedirect = await fetch(
-    `${API}/api/cli/authorize?port=80@evil.example&state=abcdefghij`,
-    { headers: { cookie: browserCookie }, redirect: "manual" },
-  )
-  check(
-    "a non-loopback port is refused outright",
-    openRedirect.status === 400,
-    String(openRedirect.status),
-  )
+  check("the code cannot be approved twice", replay.status === 400, String(replay.status))
 
   console.log("\nerrors and exit codes")
   const badConcept = await km("record", "list", "nonexistent-concept")

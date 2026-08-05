@@ -66,11 +66,21 @@ km record list vendor --profile local     # one command, other deployment
 km auth login --browser     # or --sso, which is the same thing
 ```
 
-The CLI binds a port on `127.0.0.1`, opens the deployment in your browser, and
-waits. You sign in however this deployment allows — password, SSO, anything —
-and the server hands the credential back to that listener through a one-time
-code. The CLI never talks to your identity provider, which is why this works
-where a CLI-driven SSO flow cannot.
+```
+  Your code:  WDJB-MJHT
+  Open:       https://kingsmaker.example.com/api/cli/device
+```
+
+The CLI shows a short code and waits. You open that URL in **any browser, on any
+machine** — your laptop, your phone — sign in however this deployment allows
+(password, SSO, anything), and confirm the code. The CLI is polling, and
+continues on its own.
+
+Nothing is redirected anywhere and nothing listens on a local port, which is
+deliberate: the usual loopback-redirect flow needs the browser and the CLI on
+the same machine, so it breaks over ssh, in a devcontainer, or any time you would
+rather open the link on your phone. The CLI never talks to your identity
+provider either, which is why this works where a CLI-driven SSO flow cannot.
 
 The credential is the browser's session, so **signing out in the browser signs
 the CLI out too**. That goes away when token credentials land.

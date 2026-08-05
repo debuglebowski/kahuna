@@ -1,141 +1,183 @@
 import { describe, expect, it } from "vitest"
-import { __codesForTest, authorizeCli, exchangeCli, loopbackTarget } from "./cli-auth"
+import {
+  approveDevice,
+  devicePage,
+  __normaliseForTest as normalise,
+  __pendingForTest as pending,
+  pollDevice,
+  startDevice,
+  __userCodeForTest as userCode,
+} from "./cli-auth"
 
-/**
- * The browser hand-off gives a live session cookie to whoever the redirect
- * points at, so `loopbackTarget` is the entire security of the flow. Everything
- * that is not a loopback port must be refused — and the refusals are what this
- * file is mostly about.
- */
-describe("the redirect target", () => {
-  it("accepts an ephemeral loopback port", () => {
-    expect(loopbackTarget("49152")).toBe("http://127.0.0.1:49152/callback")
-    expect(loopbackTarget("1024")).toBe("http://127.0.0.1:1024/callback")
-    expect(loopbackTarget("65535")).toBe("http://127.0.0.1:65535/callback")
-  })
+const req = (url: string, init?: RequestInit) => new Request(`http://localhost:3100${url}`, init)
 
-  it("REFUSES anything that is not purely a port number", () => {
-    // Each of these is an attempt to aim the credential somewhere else.
-    for (const attack of [
-      "80@evil.com",
-      "1234;evil.com",
-      "1234/../../evil",
-      "1234#@evil.com",
-      "1234 ",
-      " 1234",
-      "0x1234",
-      "1e4",
-      "+1234",
-      "-1234",
-      "12_34",
-      "evil.com",
-      "//evil.com",
-      "http://evil.com",
-      "",
-    ]) {
-      expect(loopbackTarget(attack), `"${attack}" must be refused`).toBeNull()
+describe("the user code", () => {
+  it("is XXXX-XXXX and avoids glyphs that get misread", () => {
+    for (let i = 0; i < 200; i++) {
+      const code = userCode()
+      expect(code).toMatch(/^[A-Z2-9]{4}-[A-Z2-9]{4}$/)
+      // 0/O and 1/I/L are read off one screen and typed on another.
+      expect(code).not.toMatch(/[O01IL]/)
     }
   })
 
-  it("refuses privileged and out-of-range ports", () => {
-    expect(loopbackTarget("0")).toBeNull()
-    expect(loopbackTarget("80")).toBeNull()
-    expect(loopbackTarget("443")).toBeNull()
-    expect(loopbackTarget("1023")).toBeNull()
-    expect(loopbackTarget("65536")).toBeNull()
-    expect(loopbackTarget("999999")).toBeNull()
+  it("does not repeat itself", () => {
+    const seen = new Set(Array.from({ length: 500 }, () => userCode()))
+    expect(seen.size).toBe(500)
   })
+})
 
-  it("refuses a missing port", () => {
-    expect(loopbackTarget(null)).toBeNull()
-  })
-
-  it("never produces a host other than 127.0.0.1", () => {
-    // The host is not caller-supplied at all; this pins that it stays that way.
-    for (const port of ["1024", "8080", "65535"]) {
-      expect(loopbackTarget(port)).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/callback$/)
+describe("what a person may type", () => {
+  it("accepts the code in the shapes people actually enter it", () => {
+    // Lower case, no dash, spaces, and stray punctuation all normalise to one.
+    for (const typed of ["wdjb-mjht", "WDJBMJHT", "wdjb mjht", "WDJB–MJHT", " wdjb-mjht "]) {
+      expect(normalise(typed)).toBe("WDJB-MJHT")
     }
   })
 })
 
-describe("authorize", () => {
-  const get = (query: string) =>
-    authorizeCli(new Request(`http://localhost:3100/api/cli/authorize${query}`))
-
-  it("rejects a bad port or state before looking at the session", async () => {
-    expect((await get("?port=80&state=abcdefgh")).status).toBe(400)
-    expect((await get("?port=49152&state=short")).status).toBe(400)
-    expect((await get("?port=49152")).status).toBe(400)
-    // A state with characters that would need escaping in a URL is refused
-    // rather than escaped, so nothing downstream has to guess an encoding.
-    expect((await get("?port=49152&state=abc%20def%3Cscript%3E")).status).toBe(400)
+describe("starting a flow", () => {
+  it("hands back a device code, a user code and where to go", async () => {
+    const res = await startDevice(req("/api/cli/device", { method: "POST" }))
+    const body = (await res.json()) as Record<string, string | number>
+    expect(String(body.userCode)).toMatch(/^[A-Z2-9]{4}-[A-Z2-9]{4}$/)
+    expect(String(body.deviceCode).length).toBeGreaterThan(30)
+    expect(body.verificationUri).toBe("http://localhost:3100/api/cli/device")
+    expect(String(body.verificationUriComplete)).toContain(`code=${body.userCode}`)
+    expect(Number(body.expiresInSeconds)).toBeGreaterThan(0)
   })
 
-  it("sends an unauthenticated browser to sign in, and comes back here", async () => {
-    const res = await get("?port=49152&state=abcdefghij")
+  it("needs no session — nobody is signed in yet, which is the point", async () => {
+    expect((await startDevice(req("/api/cli/device", { method: "POST" }))).status).toBe(200)
+  })
+})
+
+describe("the approval page", () => {
+  it("sends an unauthenticated browser to sign in, keeping the code", async () => {
+    const res = await devicePage(req("/api/cli/device?code=WDJB-MJHT"))
     expect(res.status).toBe(302)
-    const location = res.headers.get("location") ?? ""
-    expect(location.startsWith("/?next=")).toBe(true)
-    // The round trip must return to authorize with the SAME port and state, or
-    // signing in would strand the CLI waiting forever.
-    const next = decodeURIComponent(location.slice("/?next=".length))
-    expect(next).toContain("/api/cli/authorize")
-    expect(next).toContain("port=49152")
-    expect(next).toContain("state=abcdefghij")
+    const location = decodeURIComponent(res.headers.get("location") ?? "")
+    expect(location).toContain("/?next=")
+    // Signing in has to land back on the approval page WITH the code, or the
+    // person has to retype it and the flow feels broken.
+    expect(location).toContain("/api/cli/device?code=WDJB-MJHT")
   })
 })
 
-describe("exchange", () => {
-  const post = (body: unknown) =>
-    exchangeCli(
-      new Request("http://localhost:3100/api/cli/exchange", {
-        method: "POST",
-        body: JSON.stringify(body),
-      }),
+describe("polling", () => {
+  it("says pending until someone approves", async () => {
+    const started = await startDevice(req("/api/cli/device", { method: "POST" }))
+    const { deviceCode } = (await started.json()) as { deviceCode: string }
+    const res = await pollDevice(
+      req("/api/cli/device/poll", { method: "POST", body: JSON.stringify({ deviceCode }) }),
     )
-
-  it("refuses an unknown code", async () => {
-    const res = await post({ code: "nope", state: "abcdefghij" })
-    expect(res.status).toBe(400)
-    expect(await res.json()).toEqual({ error: "UNKNOWN_OR_EXPIRED_CODE" })
+    expect((await res.json()).status).toBe("pending")
   })
 
   it("hands the credential over exactly once", async () => {
-    __codesForTest.set("code-1", {
+    pending.set("dev-1", {
+      userCode: "AAAA-BBBB",
+      status: "approved",
       cookie: "session=abc",
       userId: "u1",
-      state: "abcdefghij",
       expiresAt: Date.now() + 60_000,
+      attempts: 0,
     })
-    const first = await post({ code: "code-1", state: "abcdefghij" })
-    expect(await first.json()).toEqual({ cookie: "session=abc", userId: "u1" })
-    // Replaying a captured code must get nothing.
-    expect((await post({ code: "code-1", state: "abcdefghij" })).status).toBe(400)
+    const first = await pollDevice(
+      req("/api/cli/device/poll", {
+        method: "POST",
+        body: JSON.stringify({ deviceCode: "dev-1" }),
+      }),
+    )
+    expect(await first.json()).toMatchObject({ status: "approved", cookie: "session=abc" })
+    // A captured device code must be worthless afterwards.
+    const second = await pollDevice(
+      req("/api/cli/device/poll", {
+        method: "POST",
+        body: JSON.stringify({ deviceCode: "dev-1" }),
+      }),
+    )
+    expect((await second.json()).status).toBe("expired")
   })
 
-  it("BURNS the code on a wrong state, so it cannot be brute-forced", async () => {
-    __codesForTest.set("code-2", {
-      cookie: "session=abc",
-      userId: "u1",
-      state: "the-real-state",
-      expiresAt: Date.now() + 60_000,
-    })
-    expect((await post({ code: "code-2", state: "wrong-state!!!" })).status).toBe(400)
-    // Even with the right state now, the code is spent.
-    expect((await post({ code: "code-2", state: "the-real-state" })).status).toBe(400)
-  })
-
-  it("refuses an expired code without waiting for one to expire", async () => {
-    __codesForTest.set("code-3", {
-      cookie: "session=abc",
-      userId: "u1",
-      state: "abcdefghij",
+  it("refuses an unknown or expired device code", async () => {
+    pending.set("dev-old", {
+      userCode: "CCCC-DDDD",
+      status: "pending",
       expiresAt: Date.now() - 1,
+      attempts: 0,
     })
-    expect((await post({ code: "code-3", state: "abcdefghij" })).status).toBe(400)
+    for (const code of ["never-existed", "dev-old"]) {
+      const res = await pollDevice(
+        req("/api/cli/device/poll", { method: "POST", body: JSON.stringify({ deviceCode: code }) }),
+      )
+      expect(res.status).toBe(400)
+    }
   })
 
-  it("refuses a request with no code at all", async () => {
-    expect((await post({})).status).toBe(400)
+  it("refuses a request with no device code", async () => {
+    const res = await pollDevice(req("/api/cli/device/poll", { method: "POST", body: "{}" }))
+    expect(res.status).toBe(400)
+  })
+
+  it("drops a client that polls far faster than it was told to", async () => {
+    pending.set("dev-spam", {
+      userCode: "EEEE-FFFF",
+      status: "pending",
+      expiresAt: Date.now() + 600_000,
+      attempts: 10_000,
+    })
+    const res = await pollDevice(
+      req("/api/cli/device/poll", {
+        method: "POST",
+        body: JSON.stringify({ deviceCode: "dev-spam" }),
+      }),
+    )
+    expect(res.status).toBe(400)
+    expect(pending.has("dev-spam")).toBe(false)
+  })
+})
+
+describe("approving", () => {
+  const form = (code: string) => {
+    const body = new URLSearchParams({ code })
+    return req("/api/cli/device", {
+      method: "POST",
+      body,
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+    })
+  }
+
+  it("refuses without a session, whatever the code says", async () => {
+    pending.set("dev-2", {
+      userCode: "GGGG-HHHH",
+      status: "pending",
+      expiresAt: Date.now() + 60_000,
+      attempts: 0,
+    })
+    const res = await approveDevice(form("GGGG-HHHH"))
+    expect(res.status).toBe(401)
+    // And crucially it stays pending — an unauthenticated POST must not
+    // consume, approve, or otherwise disturb a live request.
+    expect(pending.get("dev-2")?.status).toBe("pending")
+  })
+
+  it("tells an unauthenticated caller NOTHING about which codes exist", async () => {
+    // The session is checked before the code is even looked at, so probing for
+    // live codes without signing in gets the same 401 either way. (That a live
+    // code and a spent one look alike to a SIGNED-IN caller is asserted by the
+    // end-to-end driver, which can hold a real session.)
+    pending.set("dev-3", {
+      userCode: "JJJJ-KKKK",
+      status: "pending",
+      expiresAt: Date.now() + 60_000,
+      attempts: 0,
+    })
+    const real = await approveDevice(form("JJJJ-KKKK"))
+    const fake = await approveDevice(form("ZZZZ-ZZZZ"))
+    expect(real.status).toBe(401)
+    expect(fake.status).toBe(401)
+    expect(await real.text()).toBe(await fake.text())
+    expect(pending.get("dev-3")?.status).toBe("pending")
   })
 })
