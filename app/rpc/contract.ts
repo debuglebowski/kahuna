@@ -1520,6 +1520,10 @@ export const AccessRole = Schema.Struct({
    *  cannot be "not allowed" to see something. */
   fullAccess: Schema.Boolean,
   position: Schema.Number,
+  /** The role this one inherits from — null for none. Set via `updateRole`;
+   *  `updateRole`'s guards refuse a cycle, a kind mismatch, or a personal role
+   *  as the target. */
+  basedOn: Schema.NullOr(Schema.String),
 })
 export type AccessRole = Schema.Schema.Type<typeof AccessRole>
 
@@ -2558,7 +2562,8 @@ export class KingsmakerRpcs extends RpcGroup.make(
     success: AccessRole,
     error: RpcError,
   }),
-  /** Rename, re-describe, or flip either switch. `kind` is absent on purpose. */
+  /** Rename, re-describe, flip either switch, or change what this role is based
+   *  on. `kind` is absent on purpose. */
   Rpc.make("updateRole", {
     payload: {
       id: Schema.String,
@@ -2568,6 +2573,10 @@ export class KingsmakerRpcs extends RpcGroup.make(
       autoAssign: Schema.optional(Schema.Boolean),
       /** False turns the role off entirely, reversibly — see `AccessRole.active`. */
       active: Schema.optional(Schema.Boolean),
+      /** null clears it. Omit to leave unchanged. Refused (`FieldValidationError`,
+       *  422) for a self-reference, a cycle, a kind mismatch, or a personal role
+       *  as the target — see `AccessRoleService.update`'s doc. */
+      basedOn: Schema.optional(Schema.NullOr(Schema.String)),
     },
     success: AccessRole,
     error: RpcError,

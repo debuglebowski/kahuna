@@ -2031,6 +2031,7 @@ export const updateRole = (input: {
   readonly description?: string | null
   readonly autoAssign?: boolean
   readonly active?: boolean
+  readonly basedOn?: string | null
 }): UC<unknown> =>
   Effect.gen(function* () {
     const roles = yield* AccessRoleService

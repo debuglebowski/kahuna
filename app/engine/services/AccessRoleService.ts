@@ -3,7 +3,7 @@ import { Effect } from "effect"
 import type { AccessAction, AccessCondition, AccessResourceType } from "../domain/access"
 import { ACTION_ALL } from "../domain/access"
 import { isAutomationActor } from "../domain/types"
-import { BlanketRuleRefused, RoleKindMismatch } from "../errors"
+import { BlanketRuleRefused, FieldValidationError, RoleKindMismatch } from "../errors"
 import { TEMPLATED_TYPES } from "./AccessDefaultsService"
 import { EventStore } from "./EventStore"
 import { OrgContext } from "./OrgContext"
@@ -29,6 +29,10 @@ export interface AccessRole {
   /** Holds a blanket `*`; exempt from per-resource values. See `access_roles`. */
   readonly fullAccess: boolean
   readonly position: number
+  /** The role this one inherits from — null for none. `PolicyService.loadRules`
+   *  walks this chain to add depth to precedence; `update`'s cycle guard is what
+   *  keeps that walk terminating. */
+  readonly basedOn: string | null
 }
 
 interface AccessRoleRow {
@@ -42,11 +46,12 @@ interface AccessRoleRow {
   readonly active: boolean
   readonly full_access: boolean
   readonly position: number
+  readonly based_on: string | null
 }
 
 /** Every SELECT reads the same shape — one place to change when a column lands. */
 const ROLE_COLUMNS =
-  "id, key, name, description, managed, kind, auto_assign, active, full_access, position"
+  "id, key, name, description, managed, kind, auto_assign, active, full_access, position, based_on"
 
 const toRole = (r: AccessRoleRow): AccessRole => ({
   id: r.id,
@@ -61,6 +66,7 @@ const toRole = (r: AccessRoleRow): AccessRole => ({
   active: r.active,
   fullAccess: r.full_access,
   position: r.position,
+  basedOn: r.based_on,
 })
 
 /** A rule to seed with a managed role. */
@@ -386,7 +392,7 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
           const { orgId } = yield* OrgContext
           const rows = yield* sql<AccessRoleRow>`
             SELECT r.id, r.key, r.name, r.description, r.managed, r.kind, r.auto_assign,
-                   r.active, r.full_access, r.position
+                   r.active, r.full_access, r.position, r.based_on
             FROM access_roles r
             JOIN access_role_actors a ON a.role_id = r.id AND a.org_id = r.org_id
             WHERE r.org_id = ${orgId} AND a.actor_id = ${actorId} AND r.personal_for IS NULL
@@ -589,11 +595,52 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
         }).pipe(Effect.orDie)
 
       /**
-       * Rename / re-describe a role, and set its two switches.
+       * Walk UP from `candidateParentId` (its own `based_on`, then that role's,
+       * and so on) — true if `roleId` is reachable, meaning pointing `roleId` at
+       * `candidateParentId` would close a loop. Capped at 32 hops as a backstop
+       * against a row corrupted outside this guard; a real org's chains are a
+       * handful of roles deep at most.
+       */
+      const wouldCycle = (
+        orgId: string,
+        roleId: string,
+        candidateParentId: string,
+      ): Effect.Effect<boolean> =>
+        Effect.gen(function* () {
+          let current: string | null = candidateParentId
+          let depth = 0
+          while (current !== null && depth < 32) {
+            if (current === roleId) return true
+            const rows: ReadonlyArray<{ readonly based_on: string | null }> = yield* sql<{
+              readonly based_on: string | null
+            }>`
+              SELECT based_on FROM access_roles
+              WHERE org_id = ${orgId} AND id = ${current} LIMIT 1`.pipe(Effect.orDie)
+            current = rows[0]?.based_on ?? null
+            depth++
+          }
+          return false
+        })
+
+      /**
+       * Rename / re-describe a role, set its two switches, or change what it is
+       * BASED ON.
        *
        * Managed roles are editable here too — they are ordinary rows, and `key` (not
        * the name) is what the seed pins by. `kind` is deliberately absent: see
        * `create`.
+       *
+       * ── THE BASED-ON GUARDS ──────────────────────────────────────────────────
+       *
+       * Four refusals, all `FieldValidationError` (422 — a rejected CHOICE, not a
+       * permission problem): self-reference, a cycle anywhere in the chain
+       * (`wouldCycle`, walked before the write, since the recursive CTE that
+       * resolves precedence has no way to refuse one, only a depth cap to survive
+       * it), a personal role as the target (Layer 1 is "this person, specifically"
+       * — inheriting FROM it would leak one person's overrides into a reusable
+       * role), and a KIND mismatch (the same reasoning as `assign`'s guard: an
+       * automation role's chain reaching into people-role rules, or the reverse,
+       * is a category error the picker should never have offered).
        */
       const update = (input: {
         readonly id: string
@@ -601,32 +648,88 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
         readonly description?: string | null
         readonly autoAssign?: boolean
         readonly active?: boolean
+        readonly basedOn?: string | null
       }) =>
         Effect.gen(function* () {
           const { orgId } = yield* OrgContext
+          if (input.basedOn !== undefined && input.basedOn !== null) {
+            if (input.basedOn === input.id) {
+              return yield* Effect.fail(
+                new FieldValidationError({
+                  message: "a role can't be based on itself",
+                  field: "basedOn",
+                }),
+              )
+            }
+            const own = yield* sql<{ readonly kind: string }>`
+              SELECT kind FROM access_roles
+              WHERE org_id = ${orgId} AND id = ${input.id} LIMIT 1`.pipe(Effect.orDie)
+            const parentRows = yield* sql<{
+              readonly kind: string
+              readonly personal_for: string | null
+            }>`
+              SELECT kind, personal_for FROM access_roles
+              WHERE org_id = ${orgId} AND id = ${input.basedOn} LIMIT 1`.pipe(Effect.orDie)
+            const parent = parentRows[0]
+            if (!own[0] || !parent) {
+              return yield* Effect.fail(
+                new FieldValidationError({
+                  message: "that role no longer exists",
+                  field: "basedOn",
+                }),
+              )
+            }
+            if (parent.personal_for !== null) {
+              return yield* Effect.fail(
+                new FieldValidationError({
+                  message: "a personal role can't be a based-on target",
+                  field: "basedOn",
+                }),
+              )
+            }
+            if (parent.kind !== own[0].kind) {
+              return yield* Effect.fail(
+                new FieldValidationError({
+                  message: "a role can only be based on another role of the same kind",
+                  field: "basedOn",
+                }),
+              )
+            }
+            if (yield* wouldCycle(orgId, input.id, input.basedOn)) {
+              return yield* Effect.fail(
+                new FieldValidationError({
+                  message: "that would create a cycle — this role is already in the chain",
+                  field: "basedOn",
+                }),
+              )
+            }
+          }
           const rows = yield* sql<AccessRoleRow>`
             UPDATE access_roles
             SET name = COALESCE(${input.name?.trim() ?? null}, name),
                 description = ${input.description === undefined ? sql`description` : input.description},
                 auto_assign = COALESCE(${input.autoAssign ?? null}, auto_assign),
                 active = COALESCE(${input.active ?? null}, active),
+                based_on = ${input.basedOn === undefined ? sql`based_on` : input.basedOn},
                 updated_at = now()
             WHERE org_id = ${orgId} AND id = ${input.id}
-            RETURNING ${sql.unsafe(ROLE_COLUMNS)}`
+            RETURNING ${sql.unsafe(ROLE_COLUMNS)}`.pipe(Effect.orDie)
           const row = rows[0]
           if (!row) return null
-          yield* events.append({
-            subjectKind: "accessRole",
-            subjectId: input.id,
-            eventType: "AccessRoleRenamed",
-            payload: { _tag: "AccessRoleRenamed", name: row.name } as never,
-          })
+          yield* events
+            .append({
+              subjectKind: "accessRole",
+              subjectId: input.id,
+              eventType: "AccessRoleRenamed",
+              payload: { _tag: "AccessRoleRenamed", name: row.name } as never,
+            })
+            .pipe(Effect.orDie)
           // `active` and `auto_assign` both change what a resolved policy contains, so
           // the generation has to move or the change lands only after the cache ages
           // out — which it never does, since it is keyed on the version.
-          yield* policies.bump(orgId)
+          yield* policies.bump(orgId).pipe(Effect.orDie)
           return toRole(row)
-        }).pipe(Effect.orDie)
+        })
 
       /**
        * Delete a role. Its rules and assignments go with it (ON DELETE CASCADE), so

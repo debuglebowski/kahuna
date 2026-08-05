@@ -1328,6 +1328,7 @@ export const api = {
       description?: string | null
       autoAssign?: boolean
       active?: boolean
+      basedOn?: string | null
     },
   ) => call((c) => c.updateRole({ id, ...patch })),
   deleteRole: (id: string) => call((c) => c.deleteRole({ id })),

@@ -344,6 +344,31 @@ export function RuleEditor({ role, onClose }: { role: AccessRole; onClose: () =>
   /** Which pane the rail is showing: a per-area grid, or the full rule list. */
   const [area, setArea] = useState<string>("concept")
 
+  // For the "Based on" picker — every OTHER role of the same kind. `listRoles`
+  // already excludes personal roles (never a valid target) and this role itself
+  // is filtered client-side below; the server re-checks everything (cycle, kind,
+  // self, personal) regardless, since the picker's options are a convenience,
+  // not the enforcement.
+  //
+  // Local state, not the `role` prop: `role` is a snapshot handed in when the
+  // modal opened, and only `["roles"]` (the LIST) gets invalidated on save — the
+  // prop itself never changes, so the picker would keep showing the old value
+  // after a successful change without this.
+  const [basedOnValue, setBasedOnValue] = useState<string | null>(role.basedOn)
+  const allRoles = useQuery({ queryKey: ["roles"], queryFn: () => api.listRoles() })
+  const basedOnMut = useMutation({
+    mutationFn: (basedOn: string | null) => api.updateRole(role.id, { basedOn }),
+    onSuccess: (updated) => {
+      setBasedOnValue(updated.basedOn)
+      void qc.invalidateQueries({ queryKey: ["roles"] })
+    },
+  })
+  const basedOnOptions = (allRoles.data ?? []).filter(
+    (r) => r.id !== role.id && r.kind === role.kind,
+  )
+  const basedOnParent = (allRoles.data ?? []).find((r) => r.id === basedOnValue)
+  const NONE_BASED_ON = "__none"
+
   const resetDraft = () => {
     setEffect("allow")
     setResourceType("field")
@@ -473,6 +498,34 @@ export function RuleEditor({ role, onClose }: { role: AccessRole; onClose: () =>
 
   return (
     <Modal onClose={onClose} title={`Rules — ${role.name}`} size="wide">
+      {/* Chain inheritance (P6): a role's OWN rules always beat what it
+          inherits (see PolicyService's chain-depth precedence), so this adds a
+          floor under the role rather than changing anything above. */}
+      <div className="mb-4 flex items-center gap-2 border-b pb-4">
+        <span className="shrink-0 text-sm font-medium text-muted-foreground">Based on</span>
+        <Select
+          value={basedOnValue ?? NONE_BASED_ON}
+          onValueChange={(v) => basedOnMut.mutate(v === NONE_BASED_ON ? null : v)}
+        >
+          <SelectTrigger className="w-56">
+            <SelectValue placeholder="Nothing" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={NONE_BASED_ON}>Nothing</SelectItem>
+            {basedOnOptions.map((r) => (
+              <SelectItem key={r.id} value={r.id}>
+                {r.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {basedOnParent && (
+          <span className="text-xs text-muted-foreground">
+            Inherits {basedOnParent.name}'s rules where this role stays silent.
+          </span>
+        )}
+        {basedOnMut.error && <Feedback error={basedOnMut.error} />}
+      </div>
       <div className="flex min-h-0 gap-6">
         {/* Area rail. The grid is per-area by necessity — one matrix over every
             resource type at once would have no meaningful row axis — so the areas

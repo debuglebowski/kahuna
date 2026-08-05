@@ -992,11 +992,11 @@ const HandlersLive = ServerRpcs.toLayer({
       { type: "role" },
       uc.createRole({ name, description, kind, startFrom }),
     ),
-  updateRole: ({ id, name, description, autoAssign, active }) =>
+  updateRole: ({ id, name, description, autoAssign, active, basedOn }) =>
     adminOn<AccessRole>(
       "configure",
       { type: "role" },
-      uc.updateRole({ id, name, description, autoAssign, active }),
+      uc.updateRole({ id, name, description, autoAssign, active, basedOn }),
     ),
   deleteRole: ({ id }) =>
     adminOn<{ readonly id: string }>("configure", { type: "role" }, uc.deleteRole(id)),
