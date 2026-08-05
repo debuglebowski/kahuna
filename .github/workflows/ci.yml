@@ -55,6 +55,11 @@ jobs:
 
       - run: bun run check
 
+      # One repo, one version. Four manifests that must hold the same string will
+      # not, eventually — and the drift only shows up as a released CLI claiming
+      # a different version than the server built beside it.
+      - run: bun run version:check
+
       # Validates the migration snapshots + detects duplicate journal ids. ~1s.
       - run: bun run db:check
 

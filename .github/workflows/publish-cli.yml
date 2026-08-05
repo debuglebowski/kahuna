@@ -50,18 +50,24 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
-      # The published version comes from the TAG, exactly as the image's
-      # KINGSMAKER_VERSION does. package.json stays at 0.0.0 in the repo, so a
-      # local build is always identifiably "not a release", and the artifact
-      # carries the same number the server reports at /api/version — which is
-      # what `km system version` compares to warn about skew.
-      - name: Stamp the version from the tag
-        if: github.ref_type == 'tag'
+      # THE MANIFESTS ARE THE SOURCE OF THE VERSION, not the tag. Every package
+      # in the repo carries the same number (`bun run version:set`), and this
+      # only checks that the tag agrees. Stamping from the tag instead would
+      # mean the source that built an artifact never records what it built —
+      # `git show v0.1.0:packages/cli/package.json` would say 0.0.0.
+      - name: The tag must match the manifests
         run: |
           set -eux
-          VERSION="${GITHUB_REF_NAME#v}"
-          npm version "$VERSION" --no-git-tag-version --workspace @kingsmaker/cli
-          test "$(node -p "require('./packages/cli/package.json').version")" = "$VERSION"
+          bun run version:check
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+            ACTUAL="$(node -p "require('./packages/cli/package.json').version")"
+            if [ "$VERSION" != "$ACTUAL" ]; then
+              echo "tag v$VERSION does not match the manifests ($ACTUAL)." >&2
+              echo "Run: bun run version:set $VERSION && git commit -am 'release $VERSION'" >&2
+              exit 1
+            fi
+          fi
 
       - run: bun run cli:build
 

@@ -27,6 +27,8 @@
     "db:migrate": "bun run --cwd packages/app db:migrate",
     "db:check": "bun run --cwd packages/app db:check",
     "snapshot": "bash scripts/snapshot.sh",
+    "version:set": "bun scripts/version.ts",
+    "version:check": "bun scripts/version.ts --check",
     "cli": "bun run --cwd packages/cli start",
     "cli:build": "bun run --cwd packages/cli build"
   },
