@@ -4,6 +4,7 @@ import {
   KeyRound,
   LayoutDashboard,
   ListTodo,
+  Palette,
   PanelLeft,
   Plug,
   Shapes,
@@ -45,7 +46,12 @@ interface SettingsGroup {
 export const SETTINGS_NAV: ReadonlyArray<SettingsGroup> = [
   {
     title: "Account",
-    items: [{ to: "profile", label: "Profile", admin: false, icon: <UserRound size={16} /> }],
+    items: [
+      { to: "profile", label: "Profile", admin: false, icon: <UserRound size={16} /> },
+      // Browser-local, not part of the account record — but it belongs to "me",
+      // so it sits with the personal tabs rather than under Workspace.
+      { to: "appearance", label: "Appearance", admin: false, icon: <Palette size={16} /> },
+    ],
   },
   // Who gets into the org, what they may do, and what it is wired to.
   {

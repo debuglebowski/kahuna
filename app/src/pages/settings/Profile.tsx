@@ -1,46 +1,13 @@
 import { useMutation } from "@tanstack/react-query"
-import { Check, Monitor, Moon, Sun } from "lucide-react"
+import { Check } from "lucide-react"
 import { useState } from "react"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
-import { Button, Card, CardHeader, Field, Input, ToggleChip } from "../../components/ui"
+import { Button, Card, CardHeader, Field, Input } from "../../components/ui"
 import { authClient, useSession } from "../../lib/auth-client"
-import { setTheme, type Theme, useTheme } from "../../lib/theme"
 import { MyAccess } from "./MyAccess"
 import { Feedback } from "./parts"
-
-const THEME_OPTIONS: ReadonlyArray<{ value: Theme; label: string; icon: typeof Sun }> = [
-  { value: "light", label: "Light", icon: Sun },
-  { value: "dark", label: "Dark", icon: Moon },
-  { value: "system", label: "System", icon: Monitor },
-]
-
-/** Local to this browser — not synced with the account, same as before. */
-function Appearance() {
-  const theme = useTheme()
-  return (
-    <Card>
-      <CardHeader title="Appearance" />
-      <div className="max-w-md space-y-2 p-6">
-        <Field label="Theme">
-          <div className="flex gap-1.5">
-            {THEME_OPTIONS.map(({ value, label, icon: Icon }) => (
-              <ToggleChip
-                key={value}
-                pressed={theme === value}
-                onPressedChange={() => setTheme(value)}
-              >
-                <Icon size={14} />
-                {label}
-              </ToggleChip>
-            ))}
-          </div>
-        </Field>
-      </div>
-    </Card>
-  )
-}
 
 function ProfileInfo() {
   const { data: session } = useSession()
@@ -201,7 +168,6 @@ export function Profile() {
   return (
     <div className="space-y-5">
       <ProfileInfo />
-      <Appearance />
       {/* Self-serve: answers "why can't I see X?" without an admin in the loop. */}
       <MyAccess />
       <AccountEmail />

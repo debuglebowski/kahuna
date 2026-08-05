@@ -11,6 +11,7 @@ import { MemberProfile } from "./pages/MemberProfile"
 import { MembersDirectory } from "./pages/MembersDirectory"
 import { Overview } from "./pages/Overview"
 import { RecordView } from "./pages/RecordView"
+import { Appearance } from "./pages/settings/Appearance"
 import { Authentication } from "./pages/settings/Authentication"
 import { Concepts } from "./pages/settings/Concepts"
 import { Dashboards as DashboardsSettings } from "./pages/settings/Dashboards"
@@ -59,6 +60,7 @@ export function App() {
         <Route path="/settings" element={<SettingsLayout />}>
           <Route index element={<Navigate to="profile" replace />} />
           <Route path="profile" element={<Profile />} />
+          <Route path="appearance" element={<Appearance />} />
           <Route path="security" element={<Navigate to="/settings/profile" replace />} />
           <Route path="organization" element={<Organization />} />
           <Route path="authentication" element={<Authentication />} />
