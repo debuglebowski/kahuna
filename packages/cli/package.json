@@ -13,7 +13,7 @@
     "typecheck": "tsc -p .",
     "test": "vitest run",
     "start": "bun index.ts",
-    "build": "bun build index.ts --target=node --outdir dist --sourcemap=linked",
+    "build": "bun build index.ts --target=node --outdir dist --minify",
     "prepublishOnly": "bun run build"
   },
   "devDependencies": {

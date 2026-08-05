@@ -90,6 +90,12 @@ bun run cli:build                    # bundle for Node -> dist/index.js
 bun run --cwd packages/app scripts/verify-cli.ts   # end-to-end, needs a live server
 ```
 
+The bundle is ~620 KB, ~190 KB installed, with no dependencies. Effect is about
+80% of that: the wire contract is defined with `effect/Schema` and the client is
+`@effect/rpc`, so the CLI carries the server's runtime in order to speak its
+format. That is the price of one shared contract and no drift, and it is a price
+paid once at install.
+
 The CLI targets **Node**, not Bun: `@types/bun` is deliberately absent, and
 TypeScript that emits (parameter properties, enums) breaks
 `node --experimental-strip-types` even though it typechecks. CI builds the
