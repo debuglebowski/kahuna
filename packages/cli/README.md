@@ -27,7 +27,10 @@ plus domain verbs where the domain has one (`publish`, `transition`, `sync`,
 `assign`, `deactivate`). A verb means the same thing under every noun: `delete`
 always purges, `archive` is always reversible.
 
-Run `km help` for the full list, or `km <command> --help` for one.
+Run `km help` for the full list, `km <command> --help` for one, and
+`km --version` (or `-v`) for the CLI's own version — no network, no profile, no
+sign-in. That last one is deliberately not `km system version`, which asks the
+DEPLOYMENT what it is running and warns if the two have drifted.
 
 ## Output
 

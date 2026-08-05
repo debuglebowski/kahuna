@@ -22,6 +22,7 @@ import { versionCommands } from "./commands/version.ts"
 import { CliError, EXIT, toFailure } from "./errors.ts"
 import type { Format } from "./output.ts"
 import { note } from "./output.ts"
+import pkg from "./package.json" with { type: "json" }
 import { Registry } from "./registry.ts"
 
 /**
@@ -82,6 +83,7 @@ const usage = (): string => {
   lines.push(
     "",
     "Global flags:",
+    "  --version, -v     print this CLI's version and exit",
     "  --json            machine-readable output (stdout only)",
     "  --csv             comma-separated output",
     "  --profile <name>  which deployment to talk to",
@@ -102,6 +104,17 @@ const formatOf = (flags: Record<string, unknown>): Format => {
 export const run = async (argv: ReadonlyArray<string>): Promise<number> => {
   if (argv.length === 0 || argv[0] === "help" || argv[0] === "--help" || argv[0] === "-h") {
     process.stdout.write(`${usage()}\n`)
+    return EXIT.ok
+  }
+
+  // The BARE version number on stdout, and no network. `--version` is what a
+  // script greps and what a bug report quotes, so it answers instantly and
+  // works before sign-in, on an unreachable host, with no profile configured.
+  //
+  // Not to be confused with `km system version`, which asks the DEPLOYMENT what
+  // it is running and compares the two.
+  if (argv[0] === "--version" || argv[0] === "-v") {
+    process.stdout.write(`${pkg.version}\n`)
     return EXIT.ok
   }
 
