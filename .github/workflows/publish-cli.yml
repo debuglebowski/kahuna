@@ -69,6 +69,18 @@ jobs:
             fi
           fi
 
+      # THIS WORKFLOW DOES NOT WAIT FOR ci.yml. GitHub runs them in parallel on a
+      # tag push, so without these, a tag with failing tests would still publish
+      # — and an npm version is permanent.
+      #
+      # Only the fast, database-free checks: typecheck covers all three packages
+      # (so a contract change that breaks the CLI fails here), and the CLI's own
+      # suite needs no Postgres. The app's suite stays in ci.yml, which gates the
+      # image; duplicating its service container here would double every release
+      # for a suite that cannot tell us anything new about this artifact.
+      - run: bun run typecheck
+      - run: bun run --cwd packages/cli test
+
       - run: bun run cli:build
 
       # The same two checks CI runs, repeated here because THIS is the artifact
