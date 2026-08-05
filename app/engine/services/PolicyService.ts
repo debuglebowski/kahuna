@@ -173,8 +173,8 @@ export class PolicyService extends Effect.Service<PolicyService>()("engine/Polic
      * `chain` is a recursive CTE: it starts at every role `actorId` directly holds
      * (depth 0, precedence `(position + 1) * 100` — Layer 1 is reserved for a
      * PERSONAL role, `personal_for IS NOT NULL`, which always resolves at 0
-     * regardless of position, and Layer 0 is the owner bypass, added by the caller
-     * of this service, never a row here), then walks each role's `based_on` parent
+     * regardless of position, and Layer 0 is the owner's recovery floor, added by
+     * the caller of this service, never a row here), then walks each role's `based_on` parent
      * upward, one hop = one more point of precedence AND one more step of `depth`
      * (a defensive cap, `< 8`, purely against a cycle nothing today can create —
      * `based_on` accepts no write path yet — but this runs on every request, so a

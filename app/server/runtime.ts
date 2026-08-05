@@ -145,7 +145,7 @@ type Runnable<A, E> = Effect.Effect<A, E, OrgContext | EngineServices | PgClient
  * every precedence a role could ever occupy, not the engine's own exemption. See
  * `sessionScope`'s doc for why that distinction is the whole point.
  */
-const withLayer0 = (actor: string, policy: PolicySet | undefined): PolicySet => ({
+export const withLayer0 = (actor: string, policy: PolicySet | undefined): PolicySet => ({
   ...(policy ?? { actorId: actor, unrestricted: false, version: 0, rules: [] }),
   unrestricted: false,
   rules: [...layer0Rules(actor), ...(policy?.rules ?? [])],

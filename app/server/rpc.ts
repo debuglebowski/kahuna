@@ -954,17 +954,23 @@ const HandlersLive = ServerRpcs.toLayer({
   // Not `admin`-gated, deliberately: this is how a client finds out whether it is an
   // admin, so gating it on being one makes it useless. It reveals only the caller's
   // own answer.
+  //
+  // `canConfigure` no longer short-circuits on `role === "owner"` — that was the
+  // pre-Layer-0 bypass, and it drove the Settings nav's admin affordances, so
+  // leaving it in would have shown an owner with no admin role a UI whose actual
+  // writes all 403. `scope.policy` already carries the Layer 0 floor for an owner
+  // (`sessionScope`), which does not cover `org` — same decision `requireAction`
+  // makes underneath every one of those routes.
   myAccess: () =>
     Effect.gen(function* () {
       const scope = yield* OrgContext
       return {
         isOwner: scope.role === "owner",
         canConfigure:
-          scope.role === "owner" ||
-          (scope.policy !== undefined &&
-            decide(scope.policy, "configure", { type: "org" }, false, {
-              unconditionalOnly: true,
-            })),
+          scope.policy !== undefined &&
+          decide(scope.policy, "configure", { type: "org" }, false, {
+            unconditionalOnly: true,
+          }),
       }
     }),
   roleHolders: ({ roleId }) =>

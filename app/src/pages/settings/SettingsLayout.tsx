@@ -125,9 +125,10 @@ export function useIsAdmin() {
   const q = useQuery({ queryKey: ["myAccess"], queryFn: () => api.myAccess() })
   return {
     admin: q.data?.canConfigure ?? false,
-    // Strictly narrower than `admin`, and a separate question: an owner bypasses
-    // every rule, so the acts that hand that out (making another owner, repointing
-    // the org at an IdP) are owner-only and not merely configure-gated.
+    // Strictly narrower than `admin`, and a separate question: owner is the one
+    // membership fact no rule can edit away (unlike `admin`, which is now an
+    // ordinary role), so the acts that hand it out (making another owner,
+    // repointing the org at an IdP) are owner-only and not merely configure-gated.
     isOwner: q.data?.isOwner ?? false,
     isPending: q.isPending,
   }

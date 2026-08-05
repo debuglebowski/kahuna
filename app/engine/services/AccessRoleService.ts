@@ -137,10 +137,12 @@ const everything = (
   ALL_RESOURCES.map((resourceType) => ({ effect: "allow" as const, actions, resourceType }))
 
 /**
- * There is deliberately NO `owner` role. Owner is a membership flag carrying an
- * unconditional bypass (`server/runtime.ts:sessionScope`) — a role of the same name
- * would be a second, EDITABLE source of truth for the one thing that must not be
- * editable, which is how an org locks itself out of itself.
+ * There is deliberately NO `owner` role. Owner is a membership flag carrying the
+ * Layer 0 recovery floor (`configure` on `role`/`member` only —
+ * `server/runtime.ts:sessionScope`, `engine/domain/access.ts:layer0Rules`), not a
+ * blanket bypass. A role of the same name would be a second, EDITABLE source of
+ * truth for the one thing that must not be editable, which is how an org locks
+ * itself out of itself.
  */
 export const BUILTIN_ROLES: ReadonlyArray<RoleSpec> = [
   {

@@ -6,6 +6,7 @@ import {
   LAYER_0_PRECEDENCE,
   unrestrictedPolicy,
 } from "#engine"
+import { decideConfigure } from "./policy"
 import { sessionScope } from "./runtime"
 
 /**
@@ -19,7 +20,9 @@ import { sessionScope } from "./runtime"
  *     open otherwise;
  *   - an admin passes on the strength of the Admin ROLE's rules, which is what lets
  *     an org grant org-configuration to a role of its own making;
- *   - an owner passes because their session is unrestricted, which no rule can undo.
+ *   - an owner passes `role`/`member`-configure on the strength of Layer 0, which no
+ *     rule can undo — but NOT `org`-configure, which is an ordinary decision for them
+ *     too now (see "THE OWNER RECOVERY FLOOR" below).
  *
  * If the first of these regresses to a tier check, the middle one silently stops
  * working and nobody finds out until an org tries it.
@@ -142,5 +145,42 @@ describe("THE OWNER RECOVERY FLOOR", () => {
     expect(owner.policy).not.toEqual(unrestrictedPolicy("u"))
     expect(owner.policy?.unrestricted).toBe(false)
     expect(owner.policy?.rules.every((r) => r.precedence === LAYER_0_PRECEDENCE)).toBe(true)
+  })
+})
+
+/**
+ * `decideConfigure` is the pure core of `canConfigure` — the auth-tier gate used by
+ * `resolveAdmin`, the annotation/attachment/bucket mutate guards, and the shared
+ * integration-settings `canEdit` check. It used to short-circuit `true` for
+ * `role === "owner"` on ANY resource — the exact bypass P3 removed from
+ * `sessionScope`. Left alone, that would have meant two contradictory answers for
+ * the same owner: `requireAction`/`decide()` (fed by `sessionScope`) correctly
+ * refusing `org`-configure with no admin role held, while these call sites kept
+ * waving it through. Same floor, same function (`withLayer0`), one answer either way.
+ */
+describe("canConfigure's pure core no longer bypasses for org-configure", () => {
+  it("an owner holding no other role is refused org-configure, same as sessionScope", () => {
+    expect(decideConfigure(emptyPolicy("u"), "owner", { type: "org" })).toBe(false)
+  })
+
+  it("an owner still always gets role/member configure — the Layer 0 floor", () => {
+    expect(decideConfigure(emptyPolicy("u"), "owner", { type: "role" })).toBe(true)
+    expect(decideConfigure(emptyPolicy("u"), "owner", { type: "member" })).toBe(true)
+  })
+
+  it("an owner holding a role that grants org-configure IS allowed, same as anyone", () => {
+    const withAdmin = { ...emptyPolicy("u"), rules: [rule(["*"])] }
+    expect(decideConfigure(withAdmin, "owner", { type: "org" })).toBe(true)
+  })
+
+  it("a plain member is decided purely by their rules — no floor at all", () => {
+    expect(decideConfigure(emptyPolicy("u"), "member", { type: "role" })).toBe(false)
+    expect(decideConfigure(emptyPolicy("u"), "member", { type: "member" })).toBe(false)
+    const withAdmin = { ...emptyPolicy("u"), rules: [rule(["*"])] }
+    expect(decideConfigure(withAdmin, "member", { type: "org" })).toBe(true)
+  })
+
+  it("no role at all (not a member) is refused outright", () => {
+    expect(decideConfigure(emptyPolicy("u"), null, { type: "org" })).toBe(false)
   })
 })

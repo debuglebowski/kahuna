@@ -35,8 +35,10 @@ import type { ConceptVisibility } from "./types"
  *
  * So the question is asked of the RULES: does this caller hold `configure` on the
  * org? That is the same thing "admin" meant, expressed in the model that now decides
- * it. `unrestricted` covers the engine itself and the owner bypass; `"system"` is
- * kept as a belt-and-braces check for a scope built without a policy.
+ * it. `unrestricted` covers only the engine itself (`systemScope`) — an owner with no
+ * role granting org-configure is NOT unrestricted and is decided the same way as
+ * anyone else; `"system"` is kept as a belt-and-braces check for a scope built
+ * without a policy.
  *
  * `unconditionalOnly`: a conditional grant of `configure` is not a claim on every
  * restricted field in the org.

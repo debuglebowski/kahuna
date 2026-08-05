@@ -400,10 +400,12 @@ export const handleApi = async (req: Request): Promise<Response | null> => {
   // Membership is `owner | member` and carries nothing else: what someone may DO is
   // the access roles they hold. So this route only makes and unmakes owners.
   //
-  // OWNER-ONLY, not configure-gated. An owner bypasses every rule and cannot be
-  // locked out — handing that out is the most privileged act in the app, and an
-  // administrator who could do it could promote themselves past the rules that
-  // define them. The same reasoning gates the SSO settings (see `resolveOwner`).
+  // OWNER-ONLY, not configure-gated. Owner is no longer an unconditional bypass
+  // (see the Layer 0 floor, `runtime.ts:sessionScope`) but it is still the one
+  // membership fact nothing can edit away — handing it out is the most privileged
+  // act in the app, and an administrator who holds `configure` on `org` through a
+  // role of their own making could otherwise promote themselves past the rules
+  // that define them. The same reasoning gates the SSO settings (see `resolveOwner`).
   //
   // The last-owner check is enforced HERE rather than in the UI that draws the menu:
   // a hand-rolled request could otherwise leave an org with no owner and nobody able

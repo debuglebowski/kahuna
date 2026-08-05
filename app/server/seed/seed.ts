@@ -4,6 +4,7 @@ import {
   ConceptService,
   DashboardService,
   FieldService,
+  OrgContext,
   TaskPriorityService,
   TaskStatusService,
 } from "#engine"
@@ -44,10 +45,25 @@ export const seedKingsmaker = Effect.gen(function* () {
   const dashboards = yield* DashboardService
   const accessRoles = yield* AccessRoleService
 
-  // Access control: seed the preset roles (Owner/Admin/Member + the automation
-  // one). Idempotent per role key, and the presets reproduce today's behaviour
-  // exactly — see BUILTIN_ROLES.
+  // Access control: seed the preset roles (Admin/Member + the automation one).
+  // Idempotent per role key, and the presets reproduce today's behaviour exactly
+  // — see BUILTIN_ROLES.
   yield* accessRoles.ensureBuiltins
+
+  // The founding owner gets Admin explicitly, here, once. Owner is Layer 0 now —
+  // `configure` on `role`/`member` only (see `layer0Rules`) — not the blanket
+  // access it used to be, so without this a brand-new org's only member would be
+  // unable to create a concept, connect an integration, or do anything past
+  // managing roles and people, with no UI path yet to grant themselves Admin
+  // (that arrives with the member access page). This is ONLY for creation: this
+  // effect has exactly one caller (`auth.ts`'s `afterCreateOrganization`, itself
+  // called with `systemScope(orgId, user.id)`), so `OrgContext.actor` is always
+  // the person who just created the org — never a later join or an owner
+  // *promotion*, which must NOT carry this bonus grant (see `syncMembershipRole`,
+  // which stays Member-only for everyone joining afterwards, owner or not).
+  const { actor } = yield* OrgContext
+  const admin = yield* accessRoles.getByKey("admin")
+  if (admin) yield* accessRoles.assign(admin.id, actor)
 
   // Annotation layer: seed the org's default task statuses + priorities (idempotent).
   yield* taskStatuses.ensureDefaults(defaultTaskStatuses)

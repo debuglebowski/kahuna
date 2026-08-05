@@ -1,5 +1,5 @@
-import { type AccessResource, decide } from "#engine"
-import { resolvePolicy } from "./runtime"
+import { type AccessResource, decide, type PolicySet } from "#engine"
+import { resolvePolicy, withLayer0 } from "./runtime"
 
 export type Role = "owner" | "member"
 
@@ -21,10 +21,12 @@ export type Role = "owner" | "member"
  * `{type:"role"}` for role/rule editing, so "may manage people" and "may manage
  * permissions" can be granted separately from org configuration and from each other.
  *
- * OWNER short-circuits, for EVERY resource. An owner's session resolves an
- * unrestricted policy anyway (see `sessionScope`), so this is only a shortcut past
- * the lookup — but it is also the statement that an owner can never be locked out of
- * any of these, which no rule may contradict.
+ * OWNER no longer short-circuits for every resource — that was the pre-Layer-0
+ * bypass, and leaving it here would have quietly reintroduced it at every call site
+ * below even though `sessionScope` no longer grants it. An owner gets the SAME
+ * Layer 0 floor a live session gets (`configure` on `role`/`member` only, added by
+ * `withLayer0`) and is decided by the cascade like anyone else for every other
+ * resource — including `org`, which Layer 0 deliberately does not cover.
  */
 export const canConfigure = async (
   orgId: string,
@@ -32,10 +34,24 @@ export const canConfigure = async (
   role: Role | string | null,
   resource: AccessResource = { type: "org" },
 ): Promise<boolean> => {
-  if (role === "owner") return true
   if (!role) return false
   const policy = await resolvePolicy(orgId, actor)
+  return decideConfigure(policy, role, resource)
+}
+
+/**
+ * The pure core of `canConfigure` — given an already-resolved policy, decide
+ * `configure` on `resource`. Split out so the Layer-0-vs-cascade behaviour is
+ * unit-testable without a database; `canConfigure` is just this plus the lookup.
+ */
+export const decideConfigure = (
+  policy: PolicySet,
+  role: Role | string | null,
+  resource: AccessResource = { type: "org" },
+): boolean => {
+  if (!role) return false
+  const effective = role === "owner" ? withLayer0(policy.actorId, policy) : policy
   // `unconditionalOnly`: a conditional grant ("configure records you created") is not
   // an answer to "may this person administer the org".
-  return decide(policy, "configure", resource, false, { unconditionalOnly: true })
+  return decide(effective, "configure", resource, false, { unconditionalOnly: true })
 }
