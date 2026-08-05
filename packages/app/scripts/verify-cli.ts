@@ -1,7 +1,7 @@
 import "../server/env"
 
 import { execFile } from "node:child_process"
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { promisify } from "node:util"
@@ -254,6 +254,104 @@ const main = async (): Promise<void> => {
   check(
     "concept delete --yes purges once it is empty",
     (await km("concept", "delete", slug, "--yes")).code === 0,
+  )
+
+  console.log("\nbulk in and out")
+  const bulkName = `CliBulk${stamp}`
+  const bulkSlug = bulkName.toLowerCase()
+  await km("concept", "create", bulkName)
+  await km("concept", "field", "add", bulkSlug, "--name", "code", "--kind", "text")
+  await km("concept", "field", "add", bulkSlug, "--name", "seats", "--kind", "number")
+  await km("concept", "update", bulkSlug, "--title-field", "code")
+
+  const csvPath = path.join(configHome, "import.csv")
+  // Deliberately awkward data: a comma, a doubled quote, an embedded newline
+  // and an empty cell — the cases a naive splitter gets wrong.
+  writeFileSync(
+    csvPath,
+    "code,seats\n" + "A-1,10\n" + '"B, the ""second""",20\n' + '"C\nmultiline",\n',
+  )
+
+  const dryImport = await km("record", "import", bulkSlug, csvPath, "--dry-run")
+  check(
+    "import --dry-run reports counts and writes nothing",
+    dryImport.code === 0 && dryImport.stderr.includes("3 created"),
+    dryImport.stderr,
+  )
+  const afterDry = await km("record", "list", bulkSlug, "--json")
+  check(
+    "nothing was written by the dry run",
+    JSON.parse(afterDry.stdout).length === 0,
+    afterDry.stdout,
+  )
+
+  const imported = await km("record", "import", bulkSlug, csvPath)
+  check("record import creates the rows", imported.code === 0, imported.stderr)
+  const listed = JSON.parse((await km("record", "list", bulkSlug, "--json")).stdout) as Array<
+    Record<string, unknown>
+  >
+  check("all three rows landed", listed.length === 3, JSON.stringify(listed).slice(0, 200))
+  check(
+    "a quoted comma survived the round trip",
+    listed.some((r) => r.code === 'B, the "second"'),
+    JSON.stringify(listed).slice(0, 300),
+  )
+  check(
+    "an embedded newline survived",
+    listed.some((r) => String(r.code).includes("\n")),
+    JSON.stringify(listed).slice(0, 300),
+  )
+  check(
+    "a numeric column is a NUMBER, not the string of one",
+    listed.some((r) => r.seats === 10),
+    JSON.stringify(listed).slice(0, 300),
+  )
+
+  // Re-importing with --key must UPDATE, not duplicate.
+  writeFileSync(csvPath, "code,seats\nA-1,99\n")
+  const reimported = await km("record", "import", bulkSlug, csvPath, "--key", "code")
+  check(
+    "re-import with --key updates instead of duplicating",
+    reimported.code === 0 && reimported.stderr.includes("1 updated"),
+    reimported.stderr,
+  )
+  const afterKey = JSON.parse((await km("record", "list", bulkSlug, "--json")).stdout) as Array<
+    Record<string, unknown>
+  >
+  check("still three records, not four", afterKey.length === 3, String(afterKey.length))
+  check(
+    "the value was updated",
+    afterKey.some((r) => r.seats === 99),
+    JSON.stringify(afterKey).slice(0, 200),
+  )
+
+  const badHeader = path.join(configHome, "bad.csv")
+  writeFileSync(badHeader, "code,nonexistent\nX,1\n")
+  const badImport = await km("record", "import", bulkSlug, badHeader)
+  check(
+    "an unknown column FAILS rather than importing without it",
+    badImport.code === 5 && badImport.stderr.includes("nonexistent"),
+    badImport.stderr,
+  )
+
+  const exported = await km("record", "export", bulkSlug, "--csv")
+  check(
+    "record export emits the field names as columns",
+    exported.code === 0 && exported.stdout.startsWith("id,code,seats"),
+    exported.stdout.slice(0, 120),
+  )
+
+  const exportAllCsv = await km("record", "export", "--all-concepts", "--csv")
+  check(
+    "--all-concepts with --csv is refused with a reason",
+    exportAllCsv.code === 2 && exportAllCsv.stderr.includes("different columns"),
+    exportAllCsv.stderr,
+  )
+  const exportAll = await km("record", "export", "--all-concepts", "--json")
+  check(
+    "--all-concepts --json bundles every concept",
+    exportAll.code === 0 && Object.keys(JSON.parse(exportAll.stdout)).length > 1,
+    exportAll.stdout.slice(0, 120),
   )
 
   console.log("\nerrors and exit codes")

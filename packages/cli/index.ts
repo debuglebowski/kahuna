@@ -2,6 +2,7 @@
 import { pathToFileURL } from "node:url"
 import { parseArgs } from "node:util"
 import { authCommands } from "./commands/auth.ts"
+import { bulkCommands } from "./commands/bulk.ts"
 import { conceptCommands } from "./commands/concept.ts"
 import { eventCommands } from "./commands/event.ts"
 import { labelCommands } from "./commands/label.ts"
@@ -28,6 +29,7 @@ export const registry = new Registry([
   ...authCommands,
   ...profileCommands,
   ...conceptCommands,
+  ...bulkCommands,
   ...labelCommands,
   ...recordCommands,
   ...relationCommands,
