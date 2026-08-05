@@ -1,7 +1,7 @@
 {
   "name": "@kingsmaker/contract",
   "version": "0.0.0",
-  "description": "The Kingsmaker RPC contract — the typed wire schema shared by the server, the SPA and the CLI.",
+  "description": "The Kingsmaker RPC contract \u2014 the typed wire schema shared by the server, the SPA and the CLI.",
   "type": "module",
   "exports": {
     ".": "./contract.ts"
@@ -12,5 +12,6 @@
   "peerDependencies": {
     "@effect/rpc": "0.75.1",
     "effect": "3.21.3"
-  }
+  },
+  "license": "MIT"
 }

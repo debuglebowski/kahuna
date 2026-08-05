@@ -25,9 +25,11 @@
     "vitest": "3.2.6"
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE"
   ],
-  "license": "UNLICENSED",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/debuglebowski/kingsmaker.git",
