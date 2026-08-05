@@ -867,7 +867,10 @@ const SECTIONS: ReadonlyArray<{
   {
     id: "managed",
     label: "Managed roles",
-    hint: "Seeded with the org. Editable and switchable, but not deletable — the seed would put one back.",
+    // Says what someone can DO with them, not where they came from. The old copy
+    // ("seeded with the org … the seed would put one back") explained our
+    // implementation to justify a restriction, which is not the reader's problem.
+    hint: "Come with the app. Edit or turn them off — they can't be deleted.",
     kind: "user",
     managed: true,
   },
@@ -881,7 +884,7 @@ const SECTIONS: ReadonlyArray<{
   {
     id: "automation",
     label: "Automation roles",
-    hint: "For automations, never people. A new automation starts on whichever of these is auto-assigned.",
+    hint: "For automations, never people. A new automation starts on whichever of these is the default.",
     kind: "automation",
     managed: false,
   },
@@ -948,120 +951,125 @@ export function Roles() {
         </Button>
       </Toolbar>
 
-      {SECTIONS.map((section) => {
-        const rows = shown.filter(
-          (r) =>
-            r.kind === section.kind &&
-            (section.kind === "automation" || r.managed === section.managed),
-        )
-        // An empty Custom section still renders its header — "you have none yet" is
-        // information. An empty section under an active filter is just noise.
-        if (rows.length === 0 && q) return null
-        return (
-          <div key={section.id} className="space-y-2">
-            <div>
-              <h3 className="font-medium text-sm">{section.label}</h3>
-              <p className="text-xs text-muted-foreground">{section.hint}</p>
-            </div>
-            <Card>
-              <div className="divide-y">
-                {rows.length === 0 ? (
-                  <p className="px-4 py-5 text-sm text-muted-foreground">
-                    {section.id === "automation"
-                      ? "No automation roles yet."
-                      : "No roles here yet."}
-                  </p>
-                ) : null}
-                {rows.map((r) => (
-                  <div
-                    key={r.id}
-                    className={`flex items-center gap-3 hover:bg-accent/50 ${r.active ? "" : "opacity-55"}`}
-                  >
-                    {/* The ROW opens the rules. A real <button> rather than a click
+      {/* Wrapped, so the gap BETWEEN groups is wider than the gap inside one. Left as
+          siblings of the toolbar they all shared its spacing, and three headings a
+          card's width apart read as one long list rather than three things. */}
+      <div className="space-y-9">
+        {SECTIONS.map((section) => {
+          const rows = shown.filter(
+            (r) =>
+              r.kind === section.kind &&
+              (section.kind === "automation" || r.managed === section.managed),
+          )
+          // An empty Custom section still renders its header — "you have none yet" is
+          // information. An empty section under an active filter is just noise.
+          if (rows.length === 0 && q) return null
+          return (
+            <div key={section.id} className="space-y-2">
+              <div>
+                <h3 className="font-medium text-sm">{section.label}</h3>
+                <p className="text-xs text-muted-foreground">{section.hint}</p>
+              </div>
+              <Card>
+                <div className="divide-y">
+                  {rows.length === 0 ? (
+                    <p className="px-4 py-5 text-sm text-muted-foreground">
+                      {section.id === "automation"
+                        ? "No automation roles yet."
+                        : "No roles here yet."}
+                    </p>
+                  ) : null}
+                  {rows.map((r) => (
+                    <div
+                      key={r.id}
+                      className={`flex items-center gap-3 hover:bg-accent/50 ${r.active ? "" : "opacity-55"}`}
+                    >
+                      {/* The ROW opens the rules. A real <button> rather than a click
                         handler on the div: this is the primary action, so it has to
                         be reachable by keyboard and announced as one. */}
-                    <button
-                      type="button"
-                      onClick={() => setEditing(r)}
-                      className="min-w-0 flex-1 px-4 py-3 text-left"
-                    >
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium">{r.name}</span>
-                        {r.active ? null : <Badge tone="gray">off</Badge>}
-                        {r.autoAssign ? <Badge tone="blue">Default</Badge> : null}
-                      </div>
-                      {r.description ? (
-                        <p className="truncate text-sm text-muted-foreground">{r.description}</p>
-                      ) : null}
-                    </button>
-                    <div className="shrink-0 pr-3">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon-sm"
-                            className="text-muted-foreground"
-                            aria-label={`Actions for ${r.name}`}
-                          >
-                            <MoreHorizontal size={15} />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          {/* A full-access role can't be "not allowed" anything, so
-                              making it the default is still a real choice. */}
-                          <DropdownMenuItem
-                            disabled={!r.active || patch.isPending}
-                            onSelect={() => patch.mutate({ id: r.id, autoAssign: !r.autoAssign })}
-                          >
-                            <Star size={15} />
-                            {r.autoAssign ? "Remove as default" : "Set as default"}
-                          </DropdownMenuItem>
-                          {r.active ? (
-                            <DropdownMenuItem onSelect={() => setTurningOff(r)}>
-                              <Power size={15} />
-                              Turn off
-                              {isLastLandingZone(r) ? (
-                                <span className="ml-auto pl-2 text-xs text-muted-foreground">
-                                  the only default
-                                </span>
-                              ) : null}
-                            </DropdownMenuItem>
-                          ) : (
-                            <DropdownMenuItem
-                              disabled={patch.isPending}
-                              onSelect={() => patch.mutate({ id: r.id, active: true })}
+                      <button
+                        type="button"
+                        onClick={() => setEditing(r)}
+                        className="min-w-0 flex-1 px-4 py-3 text-left"
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">{r.name}</span>
+                          {r.active ? null : <Badge tone="gray">off</Badge>}
+                          {r.autoAssign ? <Badge tone="blue">Default</Badge> : null}
+                        </div>
+                        {r.description ? (
+                          <p className="truncate text-sm text-muted-foreground">{r.description}</p>
+                        ) : null}
+                      </button>
+                      <div className="shrink-0 pr-3">
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-sm"
+                              className="text-muted-foreground"
+                              aria-label={`Actions for ${r.name}`}
                             >
-                              <Power size={15} />
-                              Turn on
+                              <MoreHorizontal size={15} />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            {/* A full-access role can't be "not allowed" anything, so
+                              making it the default is still a real choice. */}
+                            <DropdownMenuItem
+                              disabled={!r.active || patch.isPending}
+                              onSelect={() => patch.mutate({ id: r.id, autoAssign: !r.autoAssign })}
+                            >
+                              <Star size={15} />
+                              {r.autoAssign ? "Remove as default" : "Set as default"}
                             </DropdownMenuItem>
-                          )}
-                          {/* A managed role's rules stay editable — only deletion is
+                            {r.active ? (
+                              <DropdownMenuItem onSelect={() => setTurningOff(r)}>
+                                <Power size={15} />
+                                Turn off
+                                {isLastLandingZone(r) ? (
+                                  <span className="ml-auto pl-2 text-xs text-muted-foreground">
+                                    the only default
+                                  </span>
+                                ) : null}
+                              </DropdownMenuItem>
+                            ) : (
+                              <DropdownMenuItem
+                                disabled={patch.isPending}
+                                onSelect={() => patch.mutate({ id: r.id, active: true })}
+                              >
+                                <Power size={15} />
+                                Turn on
+                              </DropdownMenuItem>
+                            )}
+                            {/* A managed role's rules stay editable — only deletion is
                               refused, because the seed pins by key and would
                               re-create one. Turning it off is the reversible
                               equivalent, which is why it sits right above. */}
-                          {r.managed ? null : (
-                            <>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem
-                                variant="destructive"
-                                onSelect={() => setDeleting(r)}
-                              >
-                                <Trash2 size={15} />
-                                Delete
-                              </DropdownMenuItem>
-                            </>
-                          )}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
+                            {r.managed ? null : (
+                              <>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem
+                                  variant="destructive"
+                                  onSelect={() => setDeleting(r)}
+                                >
+                                  <Trash2 size={15} />
+                                  Delete
+                                </DropdownMenuItem>
+                              </>
+                            )}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
                     </div>
-                  </div>
-                ))}
-              </div>
-            </Card>
-          </div>
-        )
-      })}
+                  ))}
+                </div>
+              </Card>
+            </div>
+          )
+        })}
+      </div>
       <Feedback error={patch.error ? roleMsg(patch.error) : undefined} />
 
       {creating ? (
