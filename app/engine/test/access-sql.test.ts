@@ -418,11 +418,13 @@ describe("policy loading", () => {
   it.effect("ensureBuiltins is idempotent — a second run seeds nothing", () =>
     Effect.gen(function* () {
       const roles = yield* AccessRoleService
+      // Three: Admin, Member, and the automation role. There is deliberately no
+      // Owner — that is a membership flag with a bypass, not a role.
       const first = yield* roles.ensureBuiltins
-      expect(first).toBe(4)
+      expect(first).toBe(3)
       const second = yield* roles.ensureBuiltins
       expect(second).toBe(0)
-      expect((yield* roles.list()).length).toBe(4)
+      expect((yield* roles.list()).length).toBe(3)
     }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
 })

@@ -93,6 +93,18 @@ export class MemberService extends Effect.Service<MemberService>()("engine/Membe
             WHERE org_id = ${orgId} AND user_id = ${userId}`
           yield* sql`DELETE FROM member_deactivations
             WHERE org_id = ${orgId} AND user_id = ${userId}`
+          // Their ACCESS, which nothing else clears: `access_role_actors` has no FK
+          // to the auth tables and BetterAuth's own removeMember never knew about it.
+          // Leaving these behind means a purged person still appears in "who holds
+          // this role?", and — worse — silently gets their old access back if they
+          // are ever re-added.
+          yield* sql`DELETE FROM access_role_actors
+            WHERE org_id = ${orgId} AND actor_id = ${userId}`
+          // Shares are the same row shape with `actor_id` instead of `role_id`, so
+          // they need the same treatment; a share outlives the role that granted it
+          // by design, which is exactly why it has to be cleaned up explicitly.
+          yield* sql`DELETE FROM access_rules
+            WHERE org_id = ${orgId} AND actor_id = ${userId}`
         }),
       )
 

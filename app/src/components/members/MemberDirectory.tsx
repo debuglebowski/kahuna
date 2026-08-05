@@ -93,7 +93,7 @@ export function MemberDirectory({
   // to whichever is mounted, so a click can't throw the user out of settings.
   const base = useSectionBase("members")
   const { members, deactivatedSet, isPending, error } = useMembers()
-  const { admin } = useIsAdmin()
+  const { admin, isOwner } = useIsAdmin()
   const [filter, setFilter] = useState("")
   const [showDeactivated, setShowDeactivated] = useState(false)
   // Pending admin action; ConfirmDialog stays mounted while the mutation runs.
@@ -104,7 +104,6 @@ export function MemberDirectory({
   // Adding happens in a modal; false = closed.
   const [adding, setAdding] = useState(false)
   const [email, setEmail] = useState("")
-  const [role, setRole] = useState("member")
   // Role changes happen in a modal; null = closed.
   const [editing, setEditing] = useState<{ userId: string; label: string; role: string } | null>(
     null,
@@ -131,9 +130,19 @@ export function MemberDirectory({
   const accessRoles = new Map(
     [...(assignmentsQ.data ?? new Map()).entries()].map(([userId, held]) => [
       userId,
-      (held as ReadonlyArray<{ id: string; key: string | null; name: string }>).filter(
-        // `key === null` = a custom role. Presets mirror the membership badge.
-        (r) => r.key === null,
+      (
+        held as ReadonlyArray<{
+          id: string
+          key: string | null
+          name: string
+          autoAssign: boolean
+        }>
+      ).filter(
+        // Hide only what EVERYONE has: an auto-assigned role says nothing about
+        // this person. This used to filter on `key === null` — i.e. every seeded
+        // role — which made Admin invisible the moment it stopped being a
+        // membership badge, on the one screen where it matters most.
+        (r) => !r.autoAssign,
       ),
     ]),
   )
@@ -143,7 +152,7 @@ export function MemberDirectory({
   }
 
   const add = useMutation({
-    mutationFn: () => addMemberByEmail(email.trim(), role),
+    mutationFn: () => addMemberByEmail(email.trim()),
     onSuccess: async () => {
       setAdding(false)
       await invalidate()
@@ -239,7 +248,7 @@ export function MemberDirectory({
                 <span className="w-full truncate text-sm font-medium text-foreground">
                   {memberLabel(m, m.userId)}
                 </span>
-                {has("role") && <Badge tone={roleTone(m.role)}>{m.role}</Badge>}
+                {has("role") && m.role === "owner" && <Badge tone={roleTone(m.role)}>owner</Badge>}
                 {deactivatedSet.has(m.userId) && <Badge tone="red">deactivated</Badge>}
               </Link>
             ))}
@@ -263,7 +272,6 @@ export function MemberDirectory({
               onClick={() => {
                 add.reset()
                 setEmail("")
-                setRole("member")
                 setAdding(true)
               }}
             >
@@ -318,7 +326,9 @@ export function MemberDirectory({
                     </span>
                   )}
                   {deactivated && <Badge tone="red">deactivated</Badge>}
-                  {has("role") && <Badge tone={roleTone(m.role)}>{m.role}</Badge>}
+                  {has("role") && m.role === "owner" && (
+                    <Badge tone={roleTone(m.role)}>owner</Badge>
+                  )}
                   {/* CUSTOM access roles, beside the membership role. Names are org
                       vocabulary — any member may see who holds what; only the RULES
                       inside a role need `configure`. Presets are omitted: they mirror
@@ -344,14 +354,17 @@ export function MemberDirectory({
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
                           <DropdownMenuItem
-                            disabled={lockOwner}
+                            // Owner-only: `/api/org/members/:id/role` refuses anyone
+                            // else, so an admin seeing an enabled item would be an
+                            // affordance that 403s.
+                            disabled={lockOwner || !isOwner}
                             onSelect={() => {
                               setEditing({ userId: m.userId, label, role: m.role })
                               setDraftRole(m.role)
                             }}
                           >
                             <Pencil size={15} />
-                            Change role
+                            {m.role === "owner" ? "Remove owner" : "Make owner"}
                           </DropdownMenuItem>
                           <DropdownMenuSeparator />
                           {deactivated ? (
@@ -411,16 +424,10 @@ export function MemberDirectory({
                 placeholder="teammate@example.com"
                 className="flex-1"
               />
-              <Select value={role} onValueChange={setRole}>
-                <SelectTrigger className="w-32">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="member">Member</SelectItem>
-                  <SelectItem value="admin">Admin</SelectItem>
-                </SelectContent>
-              </Select>
             </div>
+            {/* No role picker. Membership carries only the owner flag; what someone
+                may DO is the access roles they hold, and those are granted after
+                they join — so offering a tier here would be offering a fiction. */}
             <div className="flex gap-2">
               <Button onClick={() => add.mutate()} disabled={add.isPending || !email.includes("@")}>
                 <Plus size={15} />
@@ -436,21 +443,25 @@ export function MemberDirectory({
       )}
 
       {editing && (
-        <Modal title="Change role" onClose={() => setEditing(null)}>
+        <Modal title="Owner" onClose={() => setEditing(null)}>
           <div className="space-y-4">
+            {/* Membership carries ONLY this flag now. What someone may do is the
+                access roles they hold, edited under Settings → Roles — so the one
+                thing that cannot be a role, because no rule may take it away, is
+                the one thing left here. */}
             <p className="text-sm text-muted-foreground">
-              Update the role for{" "}
-              <span className="font-medium text-foreground">{editing.label}</span>.
+              An owner can do anything in this organisation, and no permission rule can restrict
+              them — it is how you guarantee someone is never locked out. Everything else is decided
+              by the roles someone holds.
             </p>
-            <Field label="Role">
+            <Field label="Owner">
               <Select value={draftRole} onValueChange={setDraftRole}>
                 <SelectTrigger className="w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="member">member</SelectItem>
-                  <SelectItem value="admin">admin</SelectItem>
-                  <SelectItem value="owner">owner</SelectItem>
+                  <SelectItem value="member">No</SelectItem>
+                  <SelectItem value="owner">Yes — unrestricted access</SelectItem>
                 </SelectContent>
               </Select>
             </Field>

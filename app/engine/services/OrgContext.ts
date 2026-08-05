@@ -14,7 +14,7 @@ import type { Actor, OrgId } from "../domain/types"
  * HTTP. `Role` (server/policy.ts) is deliberately NOT assignable to `"system"` —
  * see `sessionScope` / `systemScope` in server/runtime.ts.
  */
-export type ScopeRole = "owner" | "admin" | "member" | "system"
+export type ScopeRole = "owner" | "member" | "system"
 
 /**
  * Request-scoped org scope. Provided per request via `Effect.provideService` /

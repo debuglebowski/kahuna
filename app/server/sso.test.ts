@@ -11,7 +11,7 @@ import {
   resolveSignInProvider,
   writeAuthMethods,
 } from "./authMethods"
-import { db } from "./db"
+import { db, pool } from "./db"
 import { createUserDirect } from "./provision"
 import { resolveOrg } from "./session"
 import { authConfigStatus, publicAuthMethods, updateAuthMethods } from "./sso"
@@ -49,8 +49,27 @@ const orgWithOwner = async () => {
   return { orgId: org.id, owner }
 }
 
-const addMember = async (orgId: string, userId: string, role: "member" | "admin" = "member") => {
-  await auth.api.addMember({ body: { userId, role, organizationId: orgId } })
+const addMember = async (orgId: string, userId: string) => {
+  await auth.api.addMember({ body: { userId, role: "member", organizationId: orgId } })
+}
+
+/** Give someone full org configuration — everything "admin" means now that it is an
+ *  ordinary access role rather than a membership tier. */
+const makeAdmin = async (orgId: string, userId: string) => {
+  const role = await pool.query<{ id: string }>(
+    "SELECT id FROM access_roles WHERE org_id = $1 AND key = 'admin' LIMIT 1",
+    [orgId],
+  )
+  await pool.query(
+    `INSERT INTO access_role_actors (org_id, role_id, actor_id) VALUES ($1, $2, $3)
+     ON CONFLICT (role_id, actor_id) DO NOTHING`,
+    [orgId, role.rows[0]!.id, userId],
+  )
+  await pool.query(
+    `INSERT INTO access_policy_versions (org_id, version) VALUES ($1, 1)
+     ON CONFLICT (org_id) DO UPDATE SET version = access_policy_versions.version + 1`,
+    [orgId],
+  )
 }
 
 /** Sign in and return the cookie header a request would carry. */
@@ -177,7 +196,8 @@ describe("auth config surface", () => {
   it("is readable by an admin but NOT writable — only the owner may write", async () => {
     const { orgId, owner } = await orgWithOwner()
     const admin = await signUp()
-    await addMember(orgId, admin.userId, "admin")
+    await addMember(orgId, admin.userId)
+    await makeAdmin(orgId, admin.userId)
 
     const adminHeaders = await signIn(admin.email)
     const read = await authConfigStatus(req("/api/auth-config/sso", adminHeaders))

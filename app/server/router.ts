@@ -1,5 +1,5 @@
 import { and, eq, sql } from "drizzle-orm"
-import { member, user } from "#db"
+import { member, organization, user } from "#db"
 import { MAX_UPLOAD_BYTES, type UploadOwner } from "#engine"
 import { queryAnalytics } from "./analytics"
 import {
@@ -56,7 +56,7 @@ import {
   syncPosthogForRequest,
 } from "./posthog"
 import type { UseCaseResult } from "./runtime"
-import { resolveAdmin, resolveOrg, roleOf, runScoped } from "./session"
+import { resolveOrg, resolveOwner, roleOf, runScoped } from "./session"
 import {
   disconnectSlack,
   disconnectSlackUser,
@@ -308,6 +308,38 @@ export const handleApi = async (req: Request): Promise<Response | null> => {
       shared: new URL(req.url).searchParams.get("shared") !== "false",
     })
 
+  // Org rename / logo. Ours rather than `authClient.organization.update`, for the
+  // same reason as the two member routes: BetterAuth decides that endpoint from the
+  // caller's MEMBERSHIP tier, and an administrator is a membership-`member` holding
+  // the Admin role now — it would refuse them. Gated on `configure`, like everything
+  // else an admin does.
+  if (seg[1] === "org" && !seg[2] && m === "POST") {
+    const org = await resolveOrg(req)
+    if (!org.ok) return Response.json({ error: org.code }, { status: org.status })
+    const role = await roleOf(org.actor, org.orgId)
+    if (!(await canConfigure(org.orgId, org.actor, role)))
+      return Response.json({ error: "FORBIDDEN" }, { status: 403 })
+
+    const body = (await req.json().catch(() => null)) as {
+      name?: string
+      logo?: string | null
+    } | null
+    const name = body?.name?.trim()
+    if (name !== undefined && name.length === 0)
+      return Response.json({ error: "NAME_REQUIRED" }, { status: 400 })
+
+    const [updated] = await db
+      .update(organization)
+      .set({
+        ...(name === undefined ? {} : { name }),
+        ...(body?.logo === undefined ? {} : { logo: body.logo || null }),
+      })
+      .where(eq(organization.id, org.orgId))
+      .returning({ id: organization.id, name: organization.name, logo: organization.logo })
+    if (!updated) return Response.json({ error: "NO_SUCH_ORG" }, { status: 404 })
+    return Response.json(updated)
+  }
+
   // Team management (admin-only): add an EXISTING user to the active org by email.
   // No invitation/email flow — the user must already have an account.
   if (seg[1] === "org" && seg[2] === "members" && !seg[3] && m === "POST") {
@@ -322,7 +354,8 @@ export const handleApi = async (req: Request): Promise<Response | null> => {
       role?: string
     } | null
     const email = body?.email?.trim()
-    const memberRole = body?.role === "admin" ? "admin" : "member"
+    // Everyone joins as a plain member. Membership carries only the owner flag now;
+    // what someone may DO is the access roles they hold, granted after they join.
     if (!email) return Response.json({ error: "EMAIL_REQUIRED" }, { status: 400 })
 
     // Case-insensitive EXACT match. `ilike` is a pattern match, so `%` and `_` in
@@ -339,38 +372,50 @@ export const handleApi = async (req: Request): Promise<Response | null> => {
       return Response.json({ error: "ALREADY_MEMBER" }, { status: 409 })
 
     try {
+      // NO `headers`. BetterAuth would otherwise check the CALLER's membership tier,
+      // and an administrator is a membership-`member` holding the Admin role now —
+      // it would refuse them. Authorization already happened above, on our rules;
+      // this call is the write. (`addMember` accepts a headerless "system action";
+      // `updateMemberRole` and `removeMember` do not, which is why those two write
+      // the table directly.)
       const member = await auth.api.addMember({
-        body: { userId: target.id, role: memberRole, organizationId: org.orgId },
-        headers: req.headers,
+        body: { userId: target.id, role: "member", organizationId: org.orgId },
       })
-      // Membership and ACCESS are two tables; a member who joins must hold the
-      // matching preset or every rule-based check sees them as role-less.
-      await syncMembershipRole(org.orgId, target.id, memberRole)
+      // `afterAddMember` in auth.ts already synced their access roles — belt and
+      // braces for the case where the hook is bypassed by a future BetterAuth change.
+      await syncMembershipRole(org.orgId, target.id, "member")
       return Response.json(member, { status: 201 })
     } catch (e) {
       return Response.json({ error: "ADD_FAILED", detail: String(e) }, { status: 500 })
     }
   }
 
-  // Role change (admin-only). The client used to call BetterAuth's
-  // updateMemberRole directly, which meant the "can't demote the last owner"
-  // rule existed only in the UI that drew the menu — a hand-rolled request could
-  // leave an org with no owner and nobody able to restore one. Enforce it here.
+  // ── THE OWNER TOGGLE ───────────────────────────────────────────────────────
+  //
+  // Membership is `owner | member` and carries nothing else: what someone may DO is
+  // the access roles they hold. So this route only makes and unmakes owners.
+  //
+  // OWNER-ONLY, not configure-gated. An owner bypasses every rule and cannot be
+  // locked out — handing that out is the most privileged act in the app, and an
+  // administrator who could do it could promote themselves past the rules that
+  // define them. The same reasoning gates the SSO settings (see `resolveOwner`).
+  //
+  // The last-owner check is enforced HERE rather than in the UI that draws the menu:
+  // a hand-rolled request could otherwise leave an org with no owner and nobody able
+  // to restore one.
   if (seg[1] === "org" && seg[2] === "members" && seg[3] && seg[4] === "role" && m === "POST") {
-    const org = await resolveAdmin(req)
+    const org = await resolveOwner(req)
     if (!org.ok) return Response.json({ error: org.code }, { status: org.status })
 
     const body = (await req.json().catch(() => null)) as { role?: string } | null
     const next = body?.role
-    if (next !== "owner" && next !== "admin" && next !== "member")
+    if (next !== "owner" && next !== "member")
       return Response.json({ error: "INVALID_ROLE" }, { status: 400 })
 
     const userId = seg[3]
     const current = await roleOf(userId, org.orgId)
     if (!current) return Response.json({ error: "NO_SUCH_MEMBER" }, { status: 404 })
 
-    // Demoting the last owner would strip the org of the only role that can
-    // administer it. Counted server-side, not trusted from the caller.
     if (current === "owner" && next !== "owner") {
       const owners = await db
         .select({ userId: member.userId })
@@ -389,10 +434,11 @@ export const handleApi = async (req: Request): Promise<Response | null> => {
     try {
       const updated = await auth.api.updateMemberRole({
         body: { memberId: target.id, role: next, organizationId: org.orgId },
+        // Headers ARE passed here, unlike addMember: this route is owner-only, so
+        // BetterAuth's own tier check is satisfied by the same caller our gate just
+        // approved. No bypass needed, and none invented.
         headers: req.headers,
       })
-      // Re-point the access preset too, or a demoted admin keeps admin RULES.
-      await syncMembershipRole(org.orgId, userId, next)
       return Response.json(updated)
     } catch (e) {
       return Response.json({ error: "ROLE_UPDATE_FAILED", detail: String(e) }, { status: 500 })
@@ -429,10 +475,21 @@ export const handleApi = async (req: Request): Promise<Response | null> => {
     if (!target) return Response.json({ error: "NO_SUCH_MEMBER" }, { status: 404 })
 
     try {
-      await auth.api.removeMember({
-        body: { memberIdOrEmail: target.id, organizationId: org.orgId },
-        headers: req.headers,
-      })
+      // A DIRECT DELETE, not `auth.api.removeMember`.
+      //
+      // That API insists on `headers` and then re-decides authorization from the
+      // caller's MEMBERSHIP tier — which an administrator no longer has, since Admin
+      // is an access role and membership carries only the owner flag. Passing the
+      // caller's headers would refuse the very people this route is gated for, and
+      // forging a session to satisfy it would be worse than owning the write.
+      //
+      // Authorization already happened above, against our rules. The row is the only
+      // thing BetterAuth is contributing, and `member` has no dependent rows on its
+      // side (sessions key on user, not membership). Access-role assignments are
+      // cleared by `purgeMemberData` below.
+      await db
+        .delete(member)
+        .where(and(eq(member.userId, userId), eq(member.organizationId, org.orgId)))
     } catch (e) {
       return Response.json({ error: "REMOVE_FAILED", detail: String(e) }, { status: 500 })
     }

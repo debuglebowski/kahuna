@@ -1,7 +1,7 @@
 import { decide } from "#engine"
 import { resolvePolicy } from "./runtime"
 
-export type Role = "owner" | "admin" | "member"
+export type Role = "owner" | "member"
 
 /**
  * Who may administer the org.

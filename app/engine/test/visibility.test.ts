@@ -134,7 +134,7 @@ describe("concept read visibility", () => {
           versions: (yield* instances.listVersions(seeded.instance.itemId)).length,
         }
       }).pipe(
-        Effect.provide(testLayer(orgId, "admin-user", "admin", unrestrictedPolicy("admin-user"))),
+        Effect.provide(testLayer(orgId, "admin-user", "member", unrestrictedPolicy("admin-user"))),
       ),
     )
     expect(asAdmin.listed).toContain(seeded.conceptId)
@@ -225,7 +225,7 @@ describe("concept read visibility", () => {
           toItemId: setup.toItemId,
         })
       }).pipe(
-        Effect.provide(testLayer(orgId, "admin-user", "admin", unrestrictedPolicy("admin-user"))),
+        Effect.provide(testLayer(orgId, "admin-user", "member", unrestrictedPolicy("admin-user"))),
       ),
     )
     expect(allowed.id).toBeTruthy()
@@ -589,7 +589,7 @@ describe("THE WRITE GATE: no writing what you cannot read", () => {
           expectedVersion: f.inst.version,
           patch: { [f.fieldId]: "legitimate" },
         }),
-      ).pipe(Effect.provide(testLayer(orgId, "boss", "admin", unrestrictedPolicy("boss")))),
+      ).pipe(Effect.provide(testLayer(orgId, "boss", "member", unrestrictedPolicy("boss")))),
     )
     expect(updated.state[f.fieldId]).toBe("legitimate")
   })

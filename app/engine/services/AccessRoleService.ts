@@ -135,16 +135,13 @@ const everything = (
 ): ReadonlyArray<RuleSpec> =>
   ALL_RESOURCES.map((resourceType) => ({ effect: "allow" as const, actions, resourceType }))
 
+/**
+ * There is deliberately NO `owner` role. Owner is a membership flag carrying an
+ * unconditional bypass (`server/runtime.ts:sessionScope`) — a role of the same name
+ * would be a second, EDITABLE source of truth for the one thing that must not be
+ * editable, which is how an org locks itself out of itself.
+ */
 export const BUILTIN_ROLES: ReadonlyArray<RoleSpec> = [
-  {
-    key: "owner",
-    name: "Owner",
-    description: "Full access, including org configuration.",
-    position: 0,
-    kind: "user",
-    autoAssign: false,
-    rules: everything([ACTION_ALL]),
-  },
   {
     key: "admin",
     name: "Admin",

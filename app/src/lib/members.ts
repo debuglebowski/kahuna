@@ -59,11 +59,11 @@ const ADD_MEMBER_ERRORS: Record<string, string> = {
 }
 
 /** Add an existing user to the org by email (admin-only; see router.ts). */
-export async function addMemberByEmail(email: string, role: string): Promise<void> {
+export async function addMemberByEmail(email: string): Promise<void> {
   const res = await fetch("/api/org/members", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ email, role }),
+    body: JSON.stringify({ email }),
   })
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string }

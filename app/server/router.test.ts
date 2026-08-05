@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto"
 import { describe, expect, it } from "vitest"
 import { auth } from "./auth"
+import { pool } from "./db"
 import { createUserDirect } from "./provision"
 import { handleApi, isBetterAuthPath } from "./router"
 import { runEngineOrThrow, systemScope } from "./runtime"
@@ -48,6 +49,76 @@ const postMember = (headers: Headers, body: unknown) => {
     }),
   )
 }
+
+/**
+ * THE TIER-FREE ADMIN PATH.
+ *
+ * `/api/org` exists because BetterAuth's own `organization.update` decides from the
+ * caller's MEMBERSHIP tier, and an administrator is a membership-`member` holding the
+ * Admin role now — that endpoint would refuse them. If this route ever regresses to a
+ * tier check, renaming the org silently becomes owner-only.
+ */
+describe("POST /api/org (rename)", () => {
+  const postOrg = (headers: Headers, body: unknown) =>
+    handleApi(
+      new Request("http://localhost/api/org", {
+        method: "POST",
+        headers: new Headers({
+          ...Object.fromEntries(headers),
+          "content-type": "application/json",
+        }),
+        body: JSON.stringify(body),
+      }),
+    )
+
+  it("an administrator who is NOT an owner can rename the org", async () => {
+    const owner = await signUpAndOrg()
+    const target = await signUp()
+    const added = await postMember(owner.headers, { email: target.email })
+    const { userId } = (await added?.json()) as { userId: string }
+    await auth.api.setActiveOrganization({
+      body: { organizationId: owner.orgId },
+      headers: target.headers,
+    })
+
+    // A plain member cannot.
+    expect((await postOrg(target.headers, { name: "Nope" }))?.status).toBe(403)
+
+    // Grant the Admin role — no membership change at all.
+    const adminRole = await pool.query<{ id: string }>(
+      "SELECT id FROM access_roles WHERE org_id = $1 AND key = 'admin' LIMIT 1",
+      [owner.orgId],
+    )
+    await pool.query(
+      `INSERT INTO access_role_actors (org_id, role_id, actor_id) VALUES ($1, $2, $3)
+       ON CONFLICT (role_id, actor_id) DO NOTHING`,
+      [owner.orgId, adminRole.rows[0]!.id, userId],
+    )
+    await pool.query(
+      `INSERT INTO access_policy_versions (org_id, version) VALUES ($1, 1)
+       ON CONFLICT (org_id) DO UPDATE SET version = access_policy_versions.version + 1`,
+      [owner.orgId],
+    )
+
+    const res = await postOrg(target.headers, { name: "Renamed by an admin" })
+    expect(res?.status).toBe(200)
+    expect(((await res?.json()) as { name: string }).name).toBe("Renamed by an admin")
+
+    // Still a plain member as far as BetterAuth is concerned — which is the point.
+    const [row] = await pool
+      .query<{ role: string }>(
+        "SELECT role FROM bauth_member WHERE organization_id = $1 AND user_id = $2",
+        [owner.orgId, userId],
+      )
+      .then((r) => r.rows)
+    expect(row?.role).toBe("member")
+  })
+
+  it("refuses an empty name", async () => {
+    const owner = await signUpAndOrg()
+    expect((await postOrg(owner.headers, { name: "   " }))?.status).toBe(400)
+  })
+})
 
 describe("POST /api/org/members (add member by email)", () => {
   it("admin adds an existing user; duplicates and unknowns are rejected", async () => {
@@ -113,45 +184,63 @@ describe("POST /api/org/members/:userId/role (change a member's role)", () => {
     )
   }
 
-  it("admin promotes/demotes; refuses to demote the LAST owner", async () => {
+  it("an owner makes and unmakes owners; refuses to unmake the LAST one", async () => {
     const owner = await signUpAndOrg()
     const target = await signUp()
-    const added = await postMember(owner.headers, { email: target.email, role: "member" })
+    const added = await postMember(owner.headers, { email: target.email })
     const { userId } = (await added?.json()) as { userId: string }
 
-    // Promote to admin, then back down.
-    expect((await postRole(owner.headers, userId, { role: "admin" }))?.status).toBe(200)
+    // Make them an owner, then take it back.
+    expect((await postRole(owner.headers, userId, { role: "owner" }))?.status).toBe(200)
     expect((await postRole(owner.headers, userId, { role: "member" }))?.status).toBe(200)
 
-    // The sole owner can't demote themselves — the rule that used to live only in
-    // the UI that drew the menu.
+    // The sole owner can't unmake themselves — the rule that used to live only in
+    // the UI that drew the menu. It matters MORE now: an owner is the one actor no
+    // rule can restrict, so an org with none can be locked out by editing a role.
     const ownerSession = await auth.api.getSession({ headers: owner.headers })
     const ownerId = ownerSession?.user.id
     if (!ownerId) throw new Error("missing owner session")
-    const lastOwner = await postRole(owner.headers, ownerId, { role: "admin" })
+    const lastOwner = await postRole(owner.headers, ownerId, { role: "member" })
     expect(lastOwner?.status).toBe(409)
     expect(((await lastOwner?.json()) as { error?: string }).error).toBe("LAST_OWNER")
 
-    // With a second owner present the demotion is allowed.
+    // With a second owner present it is allowed.
     expect((await postRole(owner.headers, userId, { role: "owner" }))?.status).toBe(200)
-    expect((await postRole(owner.headers, ownerId, { role: "admin" }))?.status).toBe(200)
+    expect((await postRole(owner.headers, ownerId, { role: "member" }))?.status).toBe(200)
   })
 
-  it("rejects non-admins, unknown members and bogus roles", async () => {
+  it("OWNER-ONLY: an administrator cannot hand out the bypass", async () => {
     const owner = await signUpAndOrg()
     const target = await signUp()
-    const added = await postMember(owner.headers, { email: target.email, role: "member" })
+    const added = await postMember(owner.headers, { email: target.email })
     const { userId } = (await added?.json()) as { userId: string }
     await auth.api.setActiveOrganization({
       body: { organizationId: owner.orgId },
       headers: target.headers,
     })
 
-    // A plain member may not change roles — least of all their own.
+    // Give the target full org configuration — everything an "admin" is now.
+    const adminRole = await pool.query<{ id: string }>(
+      "SELECT id FROM access_roles WHERE org_id = $1 AND key = 'admin' LIMIT 1",
+      [owner.orgId],
+    )
+    await pool.query(
+      `INSERT INTO access_role_actors (org_id, role_id, actor_id) VALUES ($1, $2, $3)
+       ON CONFLICT (role_id, actor_id) DO NOTHING`,
+      [owner.orgId, adminRole.rows[0]!.id, userId],
+    )
+    await pool.query(
+      `INSERT INTO access_policy_versions (org_id, version) VALUES ($1, 1)
+       ON CONFLICT (org_id) DO UPDATE SET version = access_policy_versions.version + 1`,
+      [owner.orgId],
+    )
+
+    // Still 403. Owner is the one thing `configure` does not buy: an administrator
+    // who could grant it could promote themselves past the rules that define them.
     expect((await postRole(target.headers, userId, { role: "owner" }))?.status).toBe(403)
-    expect((await postRole(new Headers(), userId, { role: "admin" }))?.status).toBe(401)
+    expect((await postRole(new Headers(), userId, { role: "owner" }))?.status).toBe(401)
     expect((await postRole(owner.headers, userId, { role: "superuser" }))?.status).toBe(400)
-    expect((await postRole(owner.headers, randomUUID(), { role: "admin" }))?.status).toBe(404)
+    expect((await postRole(owner.headers, randomUUID(), { role: "owner" }))?.status).toBe(404)
   })
 })
 

@@ -481,7 +481,7 @@ describe("per-automation access rules", () => {
           // is itself information.
           const err = yield* automations.getById(hidden).pipe(Effect.flip)
           expect(err._tag).toBe("AutomationNotFound")
-        }).pipe(Effect.provide(testLayer(ORG_A, ACTOR, "admin", denyOn(hidden, ["view"])))),
+        }).pipe(Effect.provide(testLayer(ORG_A, ACTOR, "member", denyOn(hidden, ["view"])))),
       ),
     ),
   )
@@ -507,7 +507,7 @@ describe("per-automation access rules", () => {
           expect(removed._tag).toBe("AutomationNotFound")
         }).pipe(
           Effect.provide(
-            testLayer(ORG_B, ACTOR, "admin", denyOn(id, ["edit", "archive", "delete"])),
+            testLayer(ORG_B, ACTOR, "member", denyOn(id, ["edit", "archive", "delete"])),
           ),
         ),
       ),

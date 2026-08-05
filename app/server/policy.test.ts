@@ -72,7 +72,6 @@ describe("THE OWNER BYPASS", () => {
   it("an owner's session is unrestricted; everyone else's is their resolved rules", () => {
     const resolved = emptyPolicy("u")
     expect(sessionScope("org", "u", "owner", resolved).policy?.unrestricted).toBe(true)
-    expect(sessionScope("org", "u", "admin", resolved).policy?.unrestricted).toBe(false)
     expect(sessionScope("org", "u", "member", resolved).policy?.unrestricted).toBe(false)
   })
 

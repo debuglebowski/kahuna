@@ -78,6 +78,13 @@
       "when": 1785882152325,
       "tag": "0010_many_mad_thinker",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1785882153325,
+      "tag": "0011_collapse_membership",
+      "breakpoints": true
     }
   ]
 }

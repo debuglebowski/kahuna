@@ -205,11 +205,12 @@ describe("the presets reproduce today's behaviour", () => {
     expect(actions.has("configure")).toBe(false)
   })
 
-  it("owner and admin hold the wildcard, so restricted reads still work for them", () => {
-    for (const key of ["owner", "admin"]) {
-      const actions = new Set(byKey(key).rules.flatMap((r) => r.actions))
-      expect(actions.has("*"), `${key} must hold the wildcard`).toBe(true)
-    }
+  it("Admin holds the wildcard, so restricted reads still work for it", () => {
+    // Only Admin, because there is no Owner ROLE: an owner is a membership flag
+    // whose session resolves unrestricted, which no rule can grant or take away.
+    const actions = new Set(byKey("admin").rules.flatMap((r) => r.actions))
+    expect(actions.has("*")).toBe(true)
+    expect(BUILTIN_ROLES.some((r) => r.key === "owner")).toBe(false)
   })
 
   it("a blanket view rule DOES override a closed default — which is why none is seeded", () => {

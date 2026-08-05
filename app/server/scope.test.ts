@@ -36,7 +36,6 @@ describe("org scope roles", () => {
     // out by editing one. Everyone else is exactly their resolved rules.
     expect(systemScope("org", "runner").policy?.unrestricted).toBe(true)
     expect(sessionScope("org", "user", "owner").policy?.unrestricted).toBe(true)
-    expect(sessionScope("org", "user", "admin").policy).toBeUndefined()
     expect(sessionScope("org", "user", "member").policy).toBeUndefined()
   })
 

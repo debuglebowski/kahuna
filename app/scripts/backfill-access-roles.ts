@@ -48,13 +48,6 @@ const RESOURCES = [
  *  `view` rule would outrank it and expose every admin-only concept. */
 const PRESETS = [
   {
-    key: "owner",
-    name: "Owner",
-    description: "Full access, including org configuration.",
-    position: 0,
-    actions: ["*"],
-  },
-  {
     key: "admin",
     name: "Admin",
     description: "Full access, including org configuration.",
@@ -137,14 +130,17 @@ const main = async () => {
       rolesSeeded++
     }
 
-    // Step 2 — memberships. An unrecognised membership role maps to `member`, the
-    // narrowest preset: fail closed rather than accidentally granting configure.
+    // Step 2 — memberships. Everyone gets `member`; an `admin` membership ALSO gets
+    // the Admin role. An OWNER gets neither on that account — owner is a membership
+    // flag whose session resolves unrestricted, so a role would add nothing and a
+    // role named "Owner" would be a second, editable source of truth for the one
+    // thing no rule may touch.
     const members = await pool.query<{ user_id: string; role: string }>(
       "SELECT user_id, role FROM bauth_member WHERE organization_id = $1",
       [org_id],
     )
     for (const m of members.rows) {
-      const key = m.role === "owner" || m.role === "admin" ? m.role : "member"
+      const key = m.role === "admin" ? "admin" : "member"
       const roleId = roleIdByKey.get(key)!
       const res = await pool.query(
         `INSERT INTO access_role_actors (org_id, role_id, actor_id)

@@ -114,7 +114,7 @@ describe("membership role ↔ access role stay in step", () => {
    * RULES: the irreducible-floor check counted zero `configure` holders and stopped
    * protecting the org. `verify-roles.ts` caught it; this keeps it caught.
    */
-  it("a member who joins lands on the auto-assigned roles, and the mirror follows", async () => {
+  it("a member who joins lands on the auto-assigned roles", async () => {
     const email = `sync-${randomUUID().slice(0, 8)}@example.test`
     const u = await createUserDirect({ email, password: "password12345", name: "Sync" })
     const orgId = randomUUID()
@@ -132,25 +132,21 @@ describe("membership role ↔ access role stay in step", () => {
     await syncMembershipRole(orgId, u.userId, "member")
     expect(await keysFor(u.userId)).toEqual(["member"])
 
-    // A promotion ADDS the mirrored role. `member` stays because it is auto-assigned
-    // — everybody holds it, and a policy is the union of its allows, so an admin
-    // holding both is exactly the admin role's rules.
-    await syncMembershipRole(orgId, u.userId, "admin")
-    expect(await keysFor(u.userId)).toEqual(["admin", "member"])
-
-    // A demotion must actually remove the admin rules.
-    await syncMembershipRole(orgId, u.userId, "member")
+    // Membership carries only the owner flag now, so nothing here branches on it —
+    // an owner lands on exactly the same roles and gets their power from the bypass,
+    // not from a role. The old mirror (owner/admin → the role of the same name) is
+    // gone with the collapse.
+    await syncMembershipRole(orgId, u.userId, "owner")
     expect(await keysFor(u.userId)).toEqual(["member"])
 
-    // An unrecognised membership role mirrors nothing — fail closed.
+    // Idempotent, and an unrecognised value changes nothing.
     await syncMembershipRole(orgId, u.userId, "wat")
     expect(await keysFor(u.userId)).toEqual(["member"])
   })
 
-  it("a CUSTOM role assignment survives a membership role change", async () => {
-    // The sync only ever adds auto-assigned roles and moves the mirrored ones.
-    // Clobbering a custom role would silently undo a deliberate grant on every
-    // promotion.
+  it("a CUSTOM role assignment survives a re-sync", async () => {
+    // The sync only ever ADDS auto-assigned roles. Clobbering a custom role would
+    // silently undo a deliberate grant every time someone rejoined or was touched.
     const email = `sync2-${randomUUID().slice(0, 8)}@example.test`
     const u = await createUserDirect({ email, password: "password12345", name: "Sync2" })
     const orgId = randomUUID()
@@ -166,14 +162,14 @@ describe("membership role ↔ access role stay in step", () => {
       [orgId, custom.rows[0]!.id, u.userId],
     )
 
-    await syncMembershipRole(orgId, u.userId, "admin")
+    await syncMembershipRole(orgId, u.userId, "owner")
     const held = await pool.query<{ name: string }>(
       `SELECT ro.name FROM access_role_actors a
        JOIN access_roles ro ON ro.id = a.role_id
        WHERE a.org_id = $1 AND a.actor_id = $2 ORDER BY ro.name`,
       [orgId, u.userId],
     )
-    expect(held.rows.map((r) => r.name)).toEqual(["Admin", "Member", "Sales"])
+    expect(held.rows.map((r) => r.name)).toEqual(["Member", "Sales"])
   })
 
   /**
@@ -191,7 +187,7 @@ describe("membership role ↔ access role stay in step", () => {
     const { orgId } = await orgWithOwner()
     const joiner = await signUp()
     await auth.api.addMember({
-      body: { userId: joiner.userId, role: "admin", organizationId: orgId },
+      body: { userId: joiner.userId, role: "member", organizationId: orgId },
     })
 
     const held = await pool.query<{ key: string | null }>(
@@ -200,7 +196,7 @@ describe("membership role ↔ access role stay in step", () => {
        WHERE a.org_id = $1 AND a.actor_id = $2 ORDER BY ro.key`,
       [orgId, joiner.userId],
     )
-    expect(held.rows.map((r) => r.key)).toEqual(["admin", "member"])
+    expect(held.rows.map((r) => r.key)).toEqual(["member"])
   })
 
   /**

@@ -1,4 +1,4 @@
-import type { OrgScope, ScopeRole } from "../services/OrgContext"
+import type { OrgScope } from "../services/OrgContext"
 import { decide, recordRulesForConcept, rulesFor } from "./access"
 import type { ConceptVisibility } from "./types"
 
@@ -56,8 +56,12 @@ export const canReadRestricted = (scope: OrgScope): boolean => {
  * ONLY so `scripts/backfill-access-values.ts` and its proof can compute what access
  * used to answer, which is how the migration proves it changed nothing. It goes when
  * the `visibility` column does.
+ *
+ * `role` is a bare `string`, not `ScopeRole`: the value it cares about most is
+ * `"admin"`, which membership no longer has. A historical answer has to keep
+ * accepting historical inputs.
  */
-export const canReadConcept = (visibility: ConceptVisibility, role: ScopeRole): boolean =>
+export const canReadConcept = (visibility: ConceptVisibility, role: string): boolean =>
   // The old ROLE predicate, inlined. It is not `canReadRestricted` any more: that one
   // moved onto the rules, and this function's only job is to reproduce what the
   // membership tier answered BEFORE it did. Sharing an implementation would mean the

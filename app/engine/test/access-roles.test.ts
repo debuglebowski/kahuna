@@ -24,20 +24,20 @@ describe("role reads", () => {
       const roles = yield* AccessRoleService
 
       yield* roles.ensureBuiltins
-      const owner = yield* roles.getByKey("owner")
+      const admin = yield* roles.getByKey("admin")
       const member = yield* roles.getByKey("member")
-      yield* roles.assign(owner!.id, ACTOR)
+      yield* roles.assign(admin!.id, ACTOR)
 
-      // The presets disagree on `full_access`, so a dropped column cannot pass by
-      // coincidentally matching the default.
-      expect(owner!.fullAccess).toBe(true)
+      // The managed roles disagree on `full_access`, so a dropped column cannot pass
+      // by coincidentally matching the default.
+      expect(admin!.fullAccess).toBe(true)
       expect(member!.fullAccess).toBe(false)
 
-      const listed = (yield* roles.list()).find((r) => r.id === owner!.id)
+      const listed = (yield* roles.list()).find((r) => r.id === admin!.id)
       const held = yield* roles.rolesOf(ACTOR)
-      expect(held.map((r) => r.id)).toEqual([owner!.id])
+      expect(held.map((r) => r.id)).toEqual([admin!.id])
       expect(held[0]).toEqual(listed)
-      expect(held[0]).toEqual(owner)
+      expect(held[0]).toEqual(admin)
     }).pipe(Effect.provide(testLayer(org, ACTOR)))
   })
 })

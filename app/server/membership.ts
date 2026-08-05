@@ -15,28 +15,22 @@ import { runEngineOrThrow, systemScope } from "./runtime"
  * check counts who holds `configure`, saw an org with zero holders, and stopped
  * protecting it. Found by `scripts/verify-roles.ts` failing on exactly that assertion.
  *
- * ── TWO HALVES, ONE OF THEM TEMPORARY ────────────────────────────────────────
+ * ── ONE MECHANISM: AUTO-ASSIGN ───────────────────────────────────────────────
  *
- * 1. AUTO-ASSIGN — every `user`-kind role flagged `auto_assign` and still `active`.
- *    This is the real mechanism: an org decides where new people land by flipping a
- *    flag on whichever roles it likes, including its own. Purely ADDITIVE — it never
- *    takes a role away, because "should everyone get this?" says nothing about what
- *    an individual was deliberately given.
+ * Every `user`-kind role flagged `auto_assign` and still `active`. An org decides
+ * where new people land by flipping a flag on whichever roles it likes, including
+ * its own.
  *
- * 2. THE MEMBERSHIP MIRROR — `owner`/`admin` membership still points at the managed
- *    role of the same name. This half goes away when membership collapses to
- *    `owner | member` and Admin becomes a role you assign like any other; until then,
- *    removing it would strip every admin of their rules.
+ * Purely ADDITIVE. It never takes a role away, because "should everyone get this?"
+ * says nothing about what an individual was deliberately given — and custom roles
+ * have no membership counterpart at all, so clobbering one would silently undo a
+ * deliberate grant.
  *
- * The mirror moves a member between `owner` and `admin` but never touches `member` —
- * that one is auto-assigned, so everybody holds it and a promotion ADDS rather than
- * replaces. Holding both is harmless: a policy is the union of its allows, and the
- * managed admin role is a superset.
- *
- * Custom roles are never touched by either half — they have no membership
- * counterpart, and clobbering one would silently undo a deliberate grant.
+ * The membership MIRROR that used to live here is gone with the collapse: membership
+ * is `owner | member`, owner is a bypass that needs no role, and Admin is an ordinary
+ * role you assign. `role` is still taken so callers read naturally and so an
+ * unrecognised value can be logged, but nothing branches on it any more.
  */
-const MIRRORED = ["owner", "admin"] as const
 
 /**
  * Runs as `systemScope` because it is provisioning, not a user action: it must work
@@ -60,15 +54,6 @@ export const syncMembershipRole = async (
 
       for (const auto of yield* roles.autoAssignFor("user")) {
         yield* roles.assign(auto.id, userId)
-      }
-
-      // An unrecognised membership role mirrors nothing and keeps only the
-      // auto-assigned roles — fail closed rather than guess at a promotion.
-      for (const key of MIRRORED) {
-        const mirror = yield* roles.getByKey(key)
-        if (!mirror) continue
-        if (key === role) yield* roles.assign(mirror.id, userId)
-        else yield* roles.unassign(mirror.id, userId)
       }
     }),
   ).catch((e) => {

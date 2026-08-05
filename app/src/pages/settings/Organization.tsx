@@ -3,7 +3,6 @@ import { ArrowUpCircle, Check } from "lucide-react"
 import { useEffect, useState } from "react"
 import { Badge, Button, Card, CardHeader, Field, Input, Spinner } from "../../components/ui"
 import { api } from "../../lib/api"
-import { authClient } from "../../lib/auth-client"
 import { Feedback } from "./parts"
 import { useFullOrg } from "./SettingsLayout"
 
@@ -81,11 +80,18 @@ export function Organization() {
   const save = useMutation({
     mutationFn: async () => {
       if (!org.data) return
-      const { error } = await authClient.organization.update({
-        organizationId: org.data.id,
-        data: { name: name.trim(), logo: logo.trim() || undefined },
+      // Our route, not `authClient.organization.update` — BetterAuth decides that
+      // endpoint from the caller's MEMBERSHIP tier, which an administrator no longer
+      // has. `/api/org` gates on `configure` like everything else they do.
+      const res = await fetch("/api/org", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: name.trim(), logo: logo.trim() || null }),
       })
-      if (error) throw new Error(error.message ?? "Failed to update organization")
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as { error?: string } | null
+        throw new Error(body?.error ?? "Failed to update organization")
+      }
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["fullOrg"] }),
   })
