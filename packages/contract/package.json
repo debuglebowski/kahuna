@@ -1,6 +1,6 @@
 {
   "name": "@kingsmaker/contract",
-  "version": "0.0.0",
+  "version": "0.0.6",
   "description": "The Kingsmaker RPC contract \u2014 the typed wire schema shared by the server, the SPA and the CLI.",
   "type": "module",
   "exports": {

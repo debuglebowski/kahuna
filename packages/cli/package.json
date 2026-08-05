@@ -1,6 +1,6 @@
 {
   "name": "@kingsmaker/cli",
-  "version": "0.0.0",
+  "version": "0.0.6",
   "description": "The Kingsmaker command line \u2014 km.",
   "type": "module",
   "bin": {
