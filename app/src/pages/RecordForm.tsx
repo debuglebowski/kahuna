@@ -1,3 +1,4 @@
+import { LABELS_KEY } from "@kingsmaker/contract"
 import { useQuery } from "@tanstack/react-query"
 import { Check, Plus, X } from "lucide-react"
 import { useMemo, useState } from "react"
@@ -11,7 +12,6 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
-import { LABELS_KEY } from "../../rpc/contract"
 import { DatePicker } from "../components/DatePicker"
 import { RichTextEditor } from "../components/editor/RichTextEditor"
 import { LabelMultiSelect } from "../components/LabelMultiSelect"

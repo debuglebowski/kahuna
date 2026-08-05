@@ -1,6 +1,3 @@
-import { createCollection } from "@tanstack/db"
-import { queryCollectionOptions } from "@tanstack/query-db-collection"
-import { useEffect } from "react"
 import type {
   AnnotationField,
   AnnotationType,
@@ -16,7 +13,10 @@ import type {
   Task,
   TaskPriority,
   TaskStatus,
-} from "../../rpc/contract"
+} from "@kingsmaker/contract"
+import { createCollection } from "@tanstack/db"
+import { queryCollectionOptions } from "@tanstack/query-db-collection"
+import { useEffect } from "react"
 import { api } from "./api"
 import { queryClient } from "./queryClient"
 

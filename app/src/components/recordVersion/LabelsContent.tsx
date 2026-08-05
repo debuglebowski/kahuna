@@ -1,7 +1,7 @@
+import { LABELS_KEY } from "@kingsmaker/contract"
 import { useMutation, useQuery } from "@tanstack/react-query"
 import { Check } from "lucide-react"
 import { useEffect, useState } from "react"
-import { LABELS_KEY } from "../../../rpc/contract"
 import { api } from "../../lib/api"
 import { LabelMultiSelect } from "../LabelMultiSelect"
 import { Button, LabelChip } from "../ui"

@@ -19,8 +19,8 @@
  */
 import { FetchHttpClient } from "@effect/platform"
 import { RpcClient, RpcSerialization } from "@effect/rpc"
+import { KingsmakerRpcs } from "@kingsmaker/contract"
 import { Context, Effect, Layer, ManagedRuntime } from "effect"
-import { KingsmakerRpcs } from "../rpc/contract"
 import { provisionVerifyIdentity } from "./verify-session"
 
 const API = process.env.API ?? "http://localhost:3199"

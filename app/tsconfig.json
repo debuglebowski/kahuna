@@ -16,7 +16,9 @@
   "include": [
     "src",
     "server",
-    "rpc",
+    // No "rpc" — the wire contract is its own package (`@kingsmaker/contract`,
+    // typechecked by `tsc -p packages/contract`), so that server, SPA and CLI
+    // all consume one owner by name instead of by relative path.
     "engine",
     "db",
     "test",

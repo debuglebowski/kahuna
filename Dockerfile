@@ -25,12 +25,16 @@ FROM oven/bun:1.3.6-alpine AS build
 
 WORKDIR /srv/kingsmaker
 
-# Manifest first so `bun install` caches independently of source edits.
+# Manifests first so `bun install` caches independently of source edits. EVERY
+# workspace member's manifest must be here: with `workspaces: ["packages/*"]`,
+# `--frozen-lockfile` resolves each member and fails if one is missing.
 COPY package.json bun.lock ./
+COPY packages/contract/package.json ./packages/contract/
 
 RUN bun install --frozen-lockfile
 
 COPY tsconfig.base.json tsconfig.json biome.json ./
+COPY packages ./packages
 COPY app ./app
 
 # Emits app/dist, which server/index.ts resolves as `../dist`.
@@ -42,6 +46,7 @@ FROM oven/bun:1.3.6-alpine AS prod-deps
 WORKDIR /srv/kingsmaker
 
 COPY package.json bun.lock ./
+COPY packages/contract/package.json ./packages/contract/
 
 RUN bun install --frozen-lockfile --production
 
@@ -89,11 +94,15 @@ RUN set -eux; \
     test -e node_modules/esbuild/package.json
 
 # `engine/` is the domain core (TS source, imported as `#engine`); `db/` holds the
-# drizzle schema AND the migrations that `migrate` applies; `rpc/` holds the RPC
-# contract that server/rpc.ts imports as `../rpc/contract`.
+# drizzle schema AND the migrations that `migrate` applies.
+#
+# `packages/contract` is the RPC contract, imported as `@kingsmaker/contract`. It
+# is resolved through a node_modules SYMLINK that `bun install` created in the
+# prod-deps stage pointing at `../../packages/contract` — so the directory must
+# land at exactly that path or every server module fails to import at boot.
+COPY --from=build /srv/kingsmaker/packages/contract ./packages/contract
 COPY --from=build /srv/kingsmaker/app/engine ./app/engine
 COPY --from=build /srv/kingsmaker/app/db ./app/db
-COPY --from=build /srv/kingsmaker/app/rpc ./app/rpc
 COPY --from=build /srv/kingsmaker/app/server ./app/server
 COPY --from=build /srv/kingsmaker/app/scripts ./app/scripts
 COPY --from=build /srv/kingsmaker/app/dist ./app/dist
@@ -101,8 +110,8 @@ COPY --from=build /srv/kingsmaker/app/dist ./app/dist
 # The automation runner evaluates conditions with the SAME matcher the client
 # filters with (`server/automations.ts` -> `../src/lib/conditions`), so these two
 # client modules are runtime server code despite living under src/. Both are pure
-# (no React/DOM) and `conditions`' only other runtime import is rpc/contract,
-# copied above — its `./api` import is type-only and erases.
+# (no React/DOM) and `conditions`' only other runtime import is
+# `@kingsmaker/contract`, copied above — its `./api` import is type-only and erases.
 #
 # Without them the server does not boot AT ALL: `Cannot find module
 # '../src/lib/conditions'`, thrown at import time before anything listens.

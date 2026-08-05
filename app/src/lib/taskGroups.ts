@@ -1,5 +1,5 @@
+import type { Task, TaskPriority, TaskStatus } from "@kingsmaker/contract"
 import { format } from "date-fns"
-import type { Task, TaskPriority, TaskStatus } from "../../rpc/contract"
 import { parseDateValue } from "./dates"
 
 /**

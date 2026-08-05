@@ -1,5 +1,5 @@
+import type { Concept, RecordViewLayout } from "@kingsmaker/contract"
 import { describe, expect, it } from "vitest"
-import type { Concept, RecordViewLayout } from "../../rpc/contract"
 import { conceptRecordView, DEFAULT_VIEW, RECORD_VIEWS, sanitizeTiles } from "./recordViews"
 
 const concept = (recordView: RecordViewLayout | null): Concept =>

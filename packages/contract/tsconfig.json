@@ -1,0 +1,8 @@
+{
+  // The contract is consumed as TypeScript source (no build step), exactly like
+  // `#engine` — so this project only typechecks it. `lib` stays ES2022 with no
+  // DOM: the contract imports only effect + @effect/rpc, and must keep doing so,
+  // because it is bundled into a Node CLI as well as the browser.
+  "extends": "../../tsconfig.base.json",
+  "include": ["contract.ts"]
+}

@@ -1,6 +1,6 @@
+import { DashboardBody } from "@kingsmaker/contract"
 import { Schema } from "effect"
 import { describe, expect, it } from "vitest"
-import { DashboardBody } from "../../rpc/contract"
 import {
   defaultVariantId,
   findVariant,

@@ -3,7 +3,7 @@
  *
  * WHY THIS EXISTS: `server/automations.ts` imports `../src/lib/conditions` —
  * client-tree code that is genuinely server runtime code — and the Dockerfile
- * copied `app/server`, `app/engine`, `app/db` and `app/rpc` but not `app/src`.
+ * copied `app/server`, `app/engine` and `app/db` but not `app/src`.
  * The image built clean, passed its per-file `test -f` assertions, and then
  * could not boot at all: `Cannot find module '../src/lib/conditions'`, thrown at
  * import time before anything listened. Per-file assertions only catch omissions
@@ -12,9 +12,11 @@
  * Run as a Docker build step, so it must not need a database, a network, or any
  * environment: it reads files and resolves paths, nothing more.
  *
- * Scope is deliberately FIRST-PARTY ONLY — relative specifiers and the `#engine`
- * / `#db` subpath imports. Bare specifiers (`effect`, `better-auth`) are the
- * package manager's problem, and `bun build` proved a poor proxy: it descends
+ * Scope is deliberately FIRST-PARTY ONLY — relative specifiers, the `#engine` /
+ * `#db` subpath imports, and `@kingsmaker/*` workspace packages (our own source
+ * behind a package name; see `resolveWorkspace`). Other bare specifiers
+ * (`effect`, `better-auth`) are the package manager's problem, and `bun build`
+ * proved a poor proxy for all of this: it descends
  * into node_modules and fails on a benign export mismatch inside
  * @better-auth/kysely-adapter, on a dialect Bun never loads.
  *
@@ -34,6 +36,41 @@ const rootPkg = JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")
   imports?: Record<string, string>
 }
 const IMPORT_MAP = rootPkg.imports ?? {}
+
+/**
+ * First-party workspace packages. These LOOK like third-party bare specifiers,
+ * so the "bare = the package manager's problem" rule below would skip them — but
+ * they are our own source, shipped by their own `COPY`, and a missing one breaks
+ * boot exactly like a missing relative import. `@kingsmaker/contract` is the
+ * case that matters: every server module imports it.
+ *
+ * Resolved through the workspace directory rather than the node_modules symlink,
+ * so this reports the real path when the link exists but its target was never
+ * copied into the image.
+ */
+const WORKSPACE_SCOPE = "@kingsmaker/"
+const resolveWorkspace = (spec: string): string | null => {
+  const rest = spec.slice(WORKSPACE_SCOPE.length) // "contract" | "contract/x"
+  const [pkg, ...sub] = rest.split("/")
+  if (!pkg) return null
+  const dir = path.join(ROOT, "packages", pkg)
+  if (sub.length > 0) return path.join(dir, ...sub)
+  // No subpath: read the member's own `exports`/`main` rather than assuming a
+  // filename, so renaming the entry file cannot silently pass this check.
+  try {
+    const pkgJson = JSON.parse(readFileSync(path.join(dir, "package.json"), "utf8")) as {
+      exports?: Record<string, string> | string
+      main?: string
+    }
+    const entry =
+      typeof pkgJson.exports === "string"
+        ? pkgJson.exports
+        : (pkgJson.exports?.["."] ?? pkgJson.main)
+    return entry ? path.join(dir, entry) : null
+  } catch {
+    return null
+  }
+}
 
 /** Resolve a `#`-prefixed specifier through the root `imports` map. */
 const resolveSubpath = (spec: string): string | null => {
@@ -74,7 +111,7 @@ const resolveFile = (base: string): string | null => {
  * reason this isn't a two-line regex: types are erased before the module is
  * loaded, so a type-only import of a file that isn't in the image is completely
  * fine. `src/lib/conditions.ts` does exactly that — `import type { Field,
- * Record version } from "./api"`, where api.ts is client code the image has no reason
+ * RecordVersion } from "./api"`, where api.ts is client code the image has no reason
  * to ship. Counting it as a dependency would demand we copy the entire client
  * tree to satisfy an import that doesn't exist at runtime.
  *
@@ -122,9 +159,14 @@ const walk = (file: string): void => {
   for (const spec of specifiersOf(src)) {
     const isRelative = spec.startsWith(".")
     const isSubpath = spec.startsWith("#")
-    if (!isRelative && !isSubpath) continue // bare package — not our concern
+    const isWorkspace = spec.startsWith(WORKSPACE_SCOPE)
+    if (!isRelative && !isSubpath && !isWorkspace) continue // bare package — not our concern
 
-    const base = isSubpath ? resolveSubpath(spec) : path.resolve(path.dirname(abs), spec)
+    const base = isWorkspace
+      ? resolveWorkspace(spec)
+      : isSubpath
+        ? resolveSubpath(spec)
+        : path.resolve(path.dirname(abs), spec)
     const resolved = base ? resolveFile(base) : null
     if (!resolved) {
       missing.push({ from: path.relative(ROOT, abs), spec })

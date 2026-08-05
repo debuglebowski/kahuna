@@ -1,19 +1,28 @@
 # Kingsmaker
 
-One Bun workspace. Everything lives in `app/`; the repo root holds only config,
-the Docker/deploy files, and `scripts/snapshot.sh`.
+The deployment lives in `app/`; the repo root holds config, the Docker/deploy
+files, and `scripts/snapshot.sh`. `packages/` holds the workspace packages —
+code with consumers that do NOT ship inside the deployment.
 
 ```
-app/engine    domain core (imported as #engine — TS source, no build step)
-app/db        drizzle schema + the ONE migration set (imported as #db)
-app/rpc       the typed RPC contract shared by server and client
-app/server    Bun HTTP server: auth, RPC, SSE, integrations
-app/src       React SPA
-app/scripts   one-off backfills + end-to-end verify drivers
+app/engine            domain core (imported as #engine — TS source, no build step)
+app/db                drizzle schema + the ONE migration set (imported as #db)
+app/server            Bun HTTP server: auth, RPC, SSE, integrations
+app/src               React SPA
+app/scripts           one-off backfills + end-to-end verify drivers
+
+packages/contract     the typed wire schema — @kingsmaker/contract
 ```
 
 `#engine` / `#db` resolve through the `imports` field in the root
 `package.json`, not tsconfig `paths`.
+
+**The contract is a package, not a folder.** Server, SPA and (soon) the CLI all
+import `@kingsmaker/contract`, so it has exactly one owner and the resolver — not
+convention — decides who may reach it. It is consumed as TypeScript source with
+no build step, like `#engine`. Typechecked on its own: `tsc -p packages/contract`
+runs first in `bun run typecheck`, so a contract error is reported against the
+contract rather than against whichever consumer tripped over it.
 
 ## Commands
 

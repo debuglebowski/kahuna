@@ -6,6 +6,9 @@
   "engines": {
     "bun": ">=1.3.0"
   },
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
     "dev": "cd app && vite",
     "build": "cd app && vite build",
@@ -13,7 +16,7 @@
     "health": "cd app && bun server/health.ts",
     "seed": "cd app && bun server/seed/run.ts",
     "bootstrap": "cd app && bun scripts/bootstrap.ts",
-    "typecheck": "tsc -p app",
+    "typecheck": "tsc -p packages/contract && tsc -p app",
     "check:imports": "cd app && bun scripts/check-image-imports.ts server/index.ts scripts/bootstrap.ts",
     "test": "cd app && vitest run",
     "lint": "biome lint .",
@@ -31,6 +34,7 @@
     "#db/*": "./app/db/*"
   },
   "dependencies": {
+    "@kingsmaker/contract": "workspace:*",
     "@azure/identity": "^4.13.1",
     "@azure/storage-blob": "^12.33.0",
     "@better-auth/sso": "1.6.14",
@@ -48,6 +52,7 @@
     "@tanstack/query-db-collection": "1.0.39",
     "@tanstack/react-db": "0.1.86",
     "@tanstack/react-query": "5.101.0",
+    "@tiptap/core": "3.26.0",
     "@tiptap/extensions": "^3.26.0",
     "@tiptap/pm": "^3.26.0",
     "@tiptap/react": "^3.26.0",

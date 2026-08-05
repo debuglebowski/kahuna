@@ -1,6 +1,5 @@
 import { FetchHttpClient } from "@effect/platform"
 import { RpcClient, RpcSerialization } from "@effect/rpc"
-import { Context, Effect, Layer, ManagedRuntime } from "effect"
 import {
   type AccessActionName,
   type AccessCondition,
@@ -20,7 +19,8 @@ import {
   type SidebarCondition,
   type SidebarViewBody,
   type TaskStatusCategory,
-} from "../../rpc/contract"
+} from "@kingsmaker/contract"
+import { Context, Effect, Layer, ManagedRuntime } from "effect"
 
 export type {
   AccessActionName,
@@ -81,7 +81,7 @@ export type {
   TaskStatusCategory,
   TaskSubjectRef,
   VersionStatus,
-} from "../../rpc/contract"
+} from "@kingsmaker/contract"
 
 /** Who a new upload belongs to: a record, or a Files widget's own bucket
  *  (`shared: false` hides it from org-scope widgets). Mirrors the engine's

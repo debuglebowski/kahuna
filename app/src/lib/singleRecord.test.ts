@@ -1,5 +1,5 @@
+import type { Concept } from "@kingsmaker/contract"
 import { describe, expect, it } from "vitest"
-import type { Concept } from "../../rpc/contract"
 import { conceptBySlug } from "./singleRecord"
 
 const concept = (patch: Partial<Concept> = {}): Concept =>

@@ -17,7 +17,7 @@
  *   dashboard  `dashboards.id`.
  *   file       `attachments.id`.
  *
- * DELIBERATELY NOT unified with `ShortcutItem` (`rpc/contract.ts`), which also
+ * DELIBERATELY NOT unified with `ShortcutItem` (`@kingsmaker/contract`), which also
  * models "a pointer to a thing" with a `{ kind, ref, label }` shape. Its
  * `"recordVersion"` kind stores a `record_versions.id` (see `ShortcutItemsEditor`,
  * which keeps `recordVersionId` and discards `recordId`) where a mention's

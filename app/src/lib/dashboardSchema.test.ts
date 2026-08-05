@@ -1,6 +1,6 @@
+import { DashboardBody, DashboardWidget } from "@kingsmaker/contract"
 import { Schema } from "effect"
 import { describe, expect, it } from "vitest"
-import { DashboardBody, DashboardWidget } from "../../rpc/contract"
 import {
   bucketIdsIn,
   bucketsIn,

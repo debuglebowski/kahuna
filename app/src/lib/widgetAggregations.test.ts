@@ -1,5 +1,5 @@
+import { LABELS_KEY } from "@kingsmaker/contract"
 import { describe, expect, it } from "vitest"
-import { LABELS_KEY } from "../../rpc/contract"
 import type { RecordVersion, SidebarCondition } from "./api"
 import {
   avgField,

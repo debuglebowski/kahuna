@@ -1,5 +1,5 @@
+import type { Field, RecordVersion } from "@kingsmaker/contract"
 import { describe, expect, it } from "vitest"
-import type { Field, RecordVersion } from "../../rpc/contract"
 import { recordLabel } from "./recordLabel"
 
 const inst = (state: Record<string, unknown>): RecordVersion =>

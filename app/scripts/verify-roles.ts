@@ -14,8 +14,8 @@
  */
 import { FetchHttpClient } from "@effect/platform"
 import { RpcClient, RpcSerialization } from "@effect/rpc"
+import { KingsmakerRpcs } from "@kingsmaker/contract"
 import { Context, Effect, Layer, ManagedRuntime } from "effect"
-import { KingsmakerRpcs } from "../rpc/contract"
 import { auth } from "../server/auth"
 import { pool } from "../server/db"
 import { createUserDirect } from "../server/provision"

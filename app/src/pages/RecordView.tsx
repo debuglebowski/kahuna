@@ -1,3 +1,4 @@
+import type { RecordDetail } from "@kingsmaker/contract"
 import { useLiveQuery } from "@tanstack/react-db"
 import { useMutation, useQuery } from "@tanstack/react-query"
 import {
@@ -16,7 +17,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import type { RecordDetail } from "../../rpc/contract"
 import { WidgetCanvas } from "../components/dashboard/WidgetCanvas"
 import { usePageChrome } from "../components/Layout"
 import { ManagedRecordVersionView } from "../components/recordVersion/ManagedRecordVersionView"

@@ -1,5 +1,5 @@
+import type { Task, TaskPriority, TaskStatus } from "@kingsmaker/contract"
 import { describe, expect, it } from "vitest"
-import type { Task, TaskPriority, TaskStatus } from "../../rpc/contract"
 import {
   daysOverdue,
   groupTasks,

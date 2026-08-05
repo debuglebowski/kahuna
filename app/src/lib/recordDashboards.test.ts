@@ -1,6 +1,6 @@
+import { DashboardBody as DashboardBodySchema } from "@kingsmaker/contract"
 import { Schema } from "effect"
 import { describe, expect, it } from "vitest"
-import { DashboardBody as DashboardBodySchema } from "../../rpc/contract"
 import type { Dashboard } from "./api"
 import { migrate } from "./dashboards"
 import { resolveRecordDashboard, tilesToBody, type ViewTileLike } from "./recordDashboards"
