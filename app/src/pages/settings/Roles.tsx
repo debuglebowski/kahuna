@@ -726,7 +726,7 @@ function RuleEditor({ role, onClose }: { role: AccessRole; onClose: () => void }
                 the default, which is why no preset carries one. */}
                     {actions.includes("view") ? (
                       <span className="text-xs text-muted-foreground">
-                        A View rule overrides the item's own default visibility.
+                        A View rule overrides the record's own default visibility.
                       </span>
                     ) : null}
                   </div>

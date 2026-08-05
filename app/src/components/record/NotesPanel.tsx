@@ -138,7 +138,7 @@ function NoteCard({
   )
 }
 
-/** Notes for an item (subjectId = record id). Any member may add; the
+/** Notes for a record (subjectId = record id). Any member may add; the
  *  author or an admin may edit/archive/delete. */
 export function NotesPanel({
   subjectId,

@@ -410,7 +410,7 @@ export class RecordService extends Effect.Service<RecordService>()("engine/Recor
       })
 
     /** Live (non-archived) `records` lineages of a concept. The single-record
-     *  invariant is defined on ITEMS, not `record_versions`: a versioned concept
+     *  invariant is defined on RECORDS, not `record_versions`: a versioned concept
      *  legitimately holds N version rows on one lineage, so counting record versions
      *  would refuse the second version of a perfectly valid single record. */
     const liveRecordCountOf = (conceptId: string) =>
@@ -833,7 +833,7 @@ export class RecordService extends Effect.Service<RecordService>()("engine/Recor
      * open. `matchesCondition` and `compileCondition` are held in step by
      * `access-sql.test.ts`; this function is what puts the by-id side on that path.
      *
-     * Keyed by ITEM id (the lineage), like every record rule: a share must survive
+     * Keyed by RECORD id (the lineage), like every record rule: a share must survive
      * publishing a new version.
      *
      * Fast path: no record rules ⇒ nothing to decide, and no query is issued. That is

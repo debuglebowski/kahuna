@@ -46,7 +46,7 @@ export interface GraphSeed {
 }
 
 export interface RecordGraphNode {
-  /** Item id, or `ghost:<relationId>` for dangling refs. */
+  /** Record id, or `ghost:<relationId>` for dangling refs. */
   readonly id: string
   /** Resolved record version for navigation/expansion; null on ghosts. */
   readonly recordVersionId: string | null

@@ -35,7 +35,7 @@ import { recordLabel } from "../lib/recordLabel"
 import { useFullOrg, useIsAdmin } from "./settings/SettingsLayout"
 
 /** Single-record version detail at `/records/:id` — reads the id from the route and
- *  renders {@link InstanceViewBody}. */
+ *  renders {@link RecordVersionViewBody}. */
 export function RecordView() {
   const { id = "" } = useParams()
   const collection = recordDetail(id)
@@ -77,7 +77,7 @@ export function RecordVersionViewBody({
 }) {
   usePageChrome({ fullWidth: true, fillHeight: true }) // tile grid fills the viewport
 
-  // A hard delete is admin-only; archive is an ordinary item write.
+  // A hard delete is admin-only; archive is an ordinary record write.
   const navigate = useNavigate()
   const { data: session } = useSession()
   const org = useFullOrg()
@@ -109,20 +109,20 @@ export function RecordVersionViewBody({
   const { instData, loaders } = useConceptData(referencedIds)
   const cIndex = useMemo(() => conceptIndex(allConcepts.data ?? []), [allConcepts.data])
 
-  // The item leaves the live view on success — land on the dashboards home
+  // The record leaves the live view on success — land on the dashboards home
   // (concepts have no page of their own).
   const backToConcept = () => {
     navigate("/dashboards")
   }
   const archive = useMutation({
-    mutationFn: (inst: { id: string; version: number }) =>
-      api.archiveRecordVersion(inst.id, inst.version),
+    mutationFn: (target: { id: string; version: number }) =>
+      api.archiveRecordVersion(target.id, target.version),
     onSuccess: () => {
       setDialog(null)
       backToConcept()
     },
   })
-  // For a versioned concept the header "Archive" hides the whole item (lineage);
+  // For a versioned concept the header "Archive" hides the whole record;
   // per-version archive lives in the Versions panel.
   const archiveRecord = useMutation({
     mutationFn: (recordId: string) => api.archiveRecord(recordId),
@@ -132,7 +132,7 @@ export function RecordVersionViewBody({
     },
   })
   const del = useMutation({
-    mutationFn: (instId: string) => api.deleteRecordVersion(instId),
+    mutationFn: (recordVersionId: string) => api.deleteRecordVersion(recordVersionId),
     onSuccess: () => {
       setDialog(null)
       backToConcept()
@@ -202,12 +202,17 @@ export function RecordVersionViewBody({
         <div className="flex items-center gap-2">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="icon" className="shrink-0" aria-label="Item actions">
+              <Button
+                variant="outline"
+                size="icon"
+                className="shrink-0"
+                aria-label="Record actions"
+              >
                 <EllipsisVertical size={15} />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              {/* Sharing is keyed on the ITEM lineage, not this version — a grant must
+              {/* Sharing is keyed on the RECORD, not this version — a grant must
                   survive publishing a new version. Gated server-side on `share` for
                   this record; the dialog says so rather than hiding itself, because
                   hiding it would leave "can I share this?" unanswerable. */}
@@ -297,7 +302,7 @@ export function RecordVersionViewBody({
 
       {dialog === "archive" && (
         <ConfirmDialog
-          title="Archive item"
+          title="Archive record"
           message={
             concept.versioningEnabled ? (
               <>
@@ -328,11 +333,11 @@ export function RecordVersionViewBody({
       )}
       {dialog === "delete" && (
         <ConfirmDialog
-          title="Delete item"
+          title="Delete record"
           message={
             <>
               Permanently delete <strong>{label}</strong>? This can't be undone, and is refused
-              while other items still link to it.
+              while other records still link to it.
             </>
           }
           confirmLabel="Delete"

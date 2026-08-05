@@ -52,7 +52,7 @@ export function MyAccess({ userId }: { userId?: string }) {
           <span className="text-sm font-medium">Rules that apply to you</span>
           {data.rules.length === 0 ? (
             <p className="text-sm text-muted-foreground">
-              None. Everything you can reach comes from each item's own default visibility.
+              None. Everything you can reach comes from each record's own default visibility.
             </p>
           ) : (
             <div className="divide-y rounded-md border">

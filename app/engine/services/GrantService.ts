@@ -48,7 +48,7 @@ const toGrant = (r: GrantRow): Grant => ({
 
 export interface CreateGrantInput {
   readonly resourceType: AccessResourceType
-  /** For a record this is the ITEM id, so the grant survives a new version. */
+  /** For a record this is the RECORD id, so the grant survives a new version. */
   readonly resourceId: string
   readonly userId?: string
   readonly roleId?: string

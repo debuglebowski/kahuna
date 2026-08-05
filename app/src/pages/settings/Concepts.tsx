@@ -147,7 +147,7 @@ export function Concepts() {
 
   if (concepts.isPending) return <Spinner />
 
-  // ?concept=<id> deep link (e.g. the item view's "Edit concept") → route form.
+  // ?concept=<id> deep link (e.g. the record view's "Edit concept") → route form.
   const deepLink = searchParams.get("concept")
   if (deepLink && !id) return <Navigate to={`/settings/concepts/${deepLink}`} replace />
 
@@ -184,7 +184,7 @@ export function Concepts() {
           title="Delete concept"
           message={
             // A single-record concept always holds its one record, so the ordinary
-            // "delete its items first" route is closed to it — the record can't be
+            // "delete its records first" route is closed to it — the record can't be
             // deleted while the flag is on. Deleting the concept takes the record
             // with it (one transaction), so the copy says so instead of refusing.
             target.singleRecord ? (
@@ -194,9 +194,9 @@ export function Concepts() {
               </>
             ) : target.recordCount ? (
               <>
-                <strong>{target.name}</strong> still has {target.recordCount} item
-                {target.recordCount === 1 ? "" : "s"}, so it can't be deleted. Archive it (its items
-                come back on restore), or delete its items first.
+                <strong>{target.name}</strong> still has {target.recordCount} record
+                {target.recordCount === 1 ? "" : "s"}, so it can't be deleted. Archive it (its
+                records come back on restore), or delete its records first.
               </>
             ) : (
               <>

@@ -253,7 +253,7 @@ export class FieldService extends Effect.Service<FieldService>()("engine/FieldSe
           yield* validateConfig({ conceptId: current.conceptId, name }, current.kind, config)
           // Flipping `unique` ON must not grandfather existing duplicates — the
           // write-time check would silently never fire for them. Versions of one
-          // record share values, so only cross-ITEM duplicates block the flip.
+          // record share values, so only cross-RECORD duplicates block the flip.
           // Archived rows count too: a value is only released by a purge.
           if (config.unique && !current.config.unique) {
             // Text dedupes case-insensitively (mirrors RecordService.checkUnique).

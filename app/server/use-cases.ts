@@ -2005,8 +2005,8 @@ export const listGrants = (resourceType: AccessResourceType, resourceId: string)
  * confederate) `delete` on a record they can only view. So every requested action is
  * re-checked against the sharer's own policy before the rule is written.
  *
- * For a record the resource id is the ITEM lineage, so the grant survives a new
- * version being published.
+ * For a record the resource id is the record's id, so the grant survives a
+ * new version being published.
  */
 export const share = (input: {
   readonly resourceType: AccessResourceType

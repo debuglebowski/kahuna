@@ -293,7 +293,7 @@ export class RelationService extends Effect.Service<RelationService>()("engine/R
         return rows.map(toRelation)
       })
 
-    /** Inbound edges referencing the given record version's ITEM in general, plus any
+    /** Inbound edges referencing the given record version's RECORD in general, plus any
      *  pinned to that specific version. Edges originating from an unpublished draft
      *  are excluded (a draft is private — never a public reference). */
     const listTo = (toId: Id, fieldId?: string) =>

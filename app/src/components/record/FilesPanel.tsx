@@ -4,7 +4,7 @@ import { filesBySubject, KEY, useRegisterCollection } from "../../lib/collection
 import { FileDropSurface, FileDropZone, FileList } from "../files/FileList"
 import type { OrgMember } from "./AssigneePicker"
 
-/** Files for an item (subjectId = record id). Any member may upload; the
+/** Files for a record (subjectId = record id). Any member may upload; the
  *  uploader or an admin may archive/restore/delete. Mirrors NotesPanel. */
 export function FilesPanel({
   subjectId,

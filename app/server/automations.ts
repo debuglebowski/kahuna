@@ -408,7 +408,7 @@ const runAction = (
           action.dueInDays == null
             ? null
             : new Date(Date.now() + action.dueInDays * 86_400_000).toISOString()
-        // Tasks hang off the ITEM lineage (they survive re-publishes), which is
+        // Tasks hang off the RECORD (they survive re-publishes), which is
         // why this is recordId and not the record version id.
         const onRecord = action.onRecord !== false
         const task = yield* annotations.createTask({

@@ -73,7 +73,7 @@ export function ActivityWidget({ widget }: { widget: Activity }) {
   // Field names resolve diff snippets only when the feed is concept-scoped.
   const fieldsQ = useFields(widget.conceptId ?? "")
   // Read-only: no SSE registration (TaskList owns that key while mounted;
-  // double-registration would drop it) — same caveat as the item ActivityFeed.
+  // double-registration would drop it) — same caveat as the record ActivityFeed.
   const statusesQ = useLiveQuery((qb) => qb.from({ s: taskStatusesCollection }))
 
   const byUser = new Map<string, OrgMember>(

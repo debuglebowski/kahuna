@@ -71,7 +71,7 @@ export const concepts = pgTable(
     editReach: text("edit_reach").notNull().default("draft"),
     // Opt-in "single record": when true this concept holds exactly ONE record —
     // always present (created in the same transaction that flips the flag) and
-    // neither archivable nor purgeable while the flag is on. Enforced at the ITEM
+    // neither archivable nor purgeable while the flag is on. Enforced at the RECORD
     // level (at most one live `records` lineage), which keeps it orthogonal to
     // `versioning_enabled`, where one lineage legitimately holds N version rows.
     // Makes the concept addressable without a uuid (routed at /c/<slug>).

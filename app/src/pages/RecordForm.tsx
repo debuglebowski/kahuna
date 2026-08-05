@@ -162,7 +162,7 @@ export function RecordForm({
   defaultLabelIds?: ReadonlyArray<string>
   /** Edit mode: the record version's current state (keyed by field id). Blank inputs
    *  are omitted from the patch (the engine can't clear typed fields), and the
-   *  labels section is hidden — labels are edited on the item page itself. */
+   *  labels section is hidden — labels are edited on the record page itself. */
   initial?: Record<string, unknown>
   onSubmit: (values: Record<string, unknown>) => void
   onCancel: () => void
@@ -252,7 +252,7 @@ export function RecordForm({
     // Per-record labels: send the (live-filtered) selection so a since-deleted
     // default id never reaches the server. While the vocab is still loading we
     // omit __labels, letting the server snapshot the concept's defaults.
-    // Edits never touch labels — the item page's labels card owns them.
+    // Edits never touch labels — the record page's labels card owns them.
     if (!editing && labelVocab.data) {
       const live = new Set(labelVocab.data.map((l) => l.id))
       out[LABELS_KEY] = labelIds.filter((id) => live.has(id))

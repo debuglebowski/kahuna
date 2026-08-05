@@ -100,7 +100,7 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
         const scope = yield* OrgContext
         const { orgId } = scope
         const liveOnly = opts.includeArchived ? sql`` : sql` AND archived_at IS NULL`
-        // Count ITEMS, not version rows: a versioned concept counts distinct
+        // Count RECORDS, not version rows: a versioned concept counts distinct
         // lineages (each record has ≥1 version); a non-versioned concept counts
         // record versions exactly as before (1:1, so the two coincide). Both still count
         // live + archived, so the count keeps blocking a concept purge correctly.

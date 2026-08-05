@@ -21,8 +21,8 @@ import { Feedback } from "./parts"
  * WHY TRI-STATE and not a checkbox. A checkbox conflates "no rule" with "denied", and
  * the difference is the whole model:
  *
- *   Inherit — no rule at all; the item's own default visibility decides.
- *   Allow   — an allow rule on this item.
+ *   Inherit — no rule at all; the record's own default visibility decides.
+ *   Allow   — an allow rule on this record.
  *   Deny    — a deny rule, which beats everything, including an allow elsewhere.
  *
  * So a ticked box could not represent a role that deliberately revokes access, and an

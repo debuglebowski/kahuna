@@ -122,7 +122,7 @@ export interface Concept {
   readonly editReach: EditReach
   /** Opt-in "single record": this concept holds exactly ONE record, which always
    *  exists and can be neither archived nor purged while the flag is on. Enforced
-   *  at the ITEM level (≤1 live lineage), so it composes with `versioningEnabled`
+   *  at the RECORD level (≤1 live lineage), so it composes with `versioningEnabled`
    *  — a versioned single record still holds N versions on its one lineage.
    *  Default false ⇒ an ordinary many-record concept. */
   readonly singleRecord: boolean
@@ -428,7 +428,7 @@ export type EventPayload =
   | { readonly _tag: "RecordRestored" }
   // ── annotation layer (notes/tasks) ──────────────────────────────────────────
   // subjectKind "note"/"task", subject_id = the annotation's id (its own stream,
-  // never folded). `subjectId` in the payload records the annotated ITEM lineage
+  // never folded). `subjectId` in the payload records the annotated RECORD
   // (records.id) or null (org-level) — distinct from the event's own subjectId — so
   // the per-record activity union + purge tombstones survive the row's deletion.
   | {

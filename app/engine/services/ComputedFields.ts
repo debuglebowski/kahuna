@@ -50,7 +50,7 @@ export class ComputedFields extends Effect.Service<ComputedFields>()("engine/Com
      * Fill in a concept's computed fields.
      *
      * `defs` is an optional pre-loaded field list. Without it this does one
-     * `listFields` PER INSTANCE, and `listRecords` decorates every row of a
+     * `listFields` PER RECORD VERSION, and `listRecords` decorates every row of a
      * concept (capped at 50 000) — a real N+1 on the hottest read in the app. Every
      * row of one `listRecords` call shares a concept, so the caller can load the
      * defs once and pass them here.

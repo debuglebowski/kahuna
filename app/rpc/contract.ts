@@ -2486,7 +2486,7 @@ export class KingsmakerRpcs extends RpcGroup.make(
   Rpc.make("share", {
     payload: {
       resourceType: AccessResourceType,
-      /** For a record this is the ITEM id (the lineage), so the grant survives a
+      /** For a record this is the RECORD id (the lineage), so the grant survives a
        *  new version being published. */
       resourceId: Schema.String,
       /** Exactly one of these. */

@@ -225,7 +225,7 @@ ok(
   JSON.stringify(seededRec?.recordVersion.state),
 )
 
-// ══ slice 3: composes with versioning (ITEM-level, not record version-level) ═════════
+// ══ slice 3: composes with versioning (RECORD-level, not record version-level) ═════════
 console.log("\n── versioned single record ──")
 const versioned = await newConcept(`Playbook ${Date.now()}`)
 await addField(versioned.id, "Body", "richtext")

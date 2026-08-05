@@ -334,7 +334,7 @@ export const nodeStyle = (
 }
 
 // ── Concept references (walk the tree) ────────────────────────────────────────
-/** Concept ids whose INSTANCES the dashboard needs loaded. Excludes trend/activity
+/** Concept ids whose RECORDS the dashboard needs loaded. Excludes trend/activity
  *  (event log), tasks (filter, not scope), files/document (own RPC); calendar
  *  scopes per source. */
 export const referencedConceptIds = (body: NormBody): string[] => {

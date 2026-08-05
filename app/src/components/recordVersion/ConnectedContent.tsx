@@ -182,7 +182,7 @@ function AddConnectionModal({
   // auto-selecting: which end owns the edge and whether it pins a version are still
   // real choices, and a silent selection would hide them.
   const soleTarget = searchConcept?.singleRecord ?? false
-  // Whether the REFERENCED side is versioned (out: the picked target; in: this item).
+  // Whether the REFERENCED side is versioned (out: the picked target; in: this record).
   const referencedVersioned =
     option?.dir === "out"
       ? (searchConcept?.versioningEnabled ?? false)
@@ -211,7 +211,7 @@ function AddConnectionModal({
             : { fieldId, fromId: ctx.recordVersion.id, toVersionId: versionChoice },
         )
       }
-      // Inbound: the picked record version owns the edge; the reference is this item.
+      // Inbound: the picked record version owns the edge; the reference is this record.
       return api.createRelation(
         versionChoice === "latest"
           ? { fieldId, fromId: pick!.recordVersionId, toRecordId: ctx.recordVersion.recordId }

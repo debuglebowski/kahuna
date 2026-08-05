@@ -82,7 +82,7 @@ import { DangerZone } from "./parts"
 export function msgOf(e: unknown): string {
   const err = e as { code?: string; message?: string }
   if (err?.code === "CONCEPT_IN_USE" || err?.message?.includes("ConceptInUse"))
-    return "Can't delete: this concept still has items. Archive or delete them first."
+    return "Can't delete: this concept still has records. Archive or delete them first."
   if (err?.code === "FIELD_IN_USE" || err?.message?.includes("FieldInUse"))
     return "Can't delete: this field is still used by relations. Archive it instead."
   if (err?.message?.includes("ConceptNameConflict"))
@@ -90,7 +90,7 @@ export function msgOf(e: unknown): string {
   if (err?.message?.includes("FieldNameConflict"))
     return "A field with that name already exists on this concept."
   if (err?.code === "SINGLE_RECORD_CONFLICT" || err?.message?.includes("SingleRecordConflict"))
-    return "Can't switch on single record: this concept has more than one item. Archive or delete all but the one you want to keep."
+    return "Can't switch on single record: this concept has more than one record. Archive or delete all but the one you want to keep."
   if (err?.code === "SINGLE_RECORD_PROTECTED" || err?.message?.includes("SingleRecordProtected"))
     return "This concept's record can't be archived or deleted while single-record mode is on. Switch the mode off first."
   if (err?.code === "FORBIDDEN" || err?.message?.includes("Admin only")) return "Admins only."
@@ -250,7 +250,7 @@ interface Draft {
 type ModalDialog =
   | { kind: "archiveField"; field: Field }
   | { kind: "deleteField"; field: Field }
-  | { kind: "deleteItem"; inst: RecordVersion }
+  | { kind: "deleteRecordVersion"; recordVersion: RecordVersion }
   | null
 
 /**
@@ -599,21 +599,21 @@ export function ConceptEditor({
     mutationFn: (i: RecordVersion) => api.restoreRecordVersion(i.id, i.version),
     onSuccess: refetchArchived,
   })
-  const delItem = useMutation({
+  const delRecordVersion = useMutation({
     mutationFn: (i: RecordVersion) => api.deleteRecordVersion(i.id),
     onSuccess: () => {
       setDialog(null)
       refetchArchived()
     },
   })
-  // A human-ish label for an item row: its first non-empty scalar value.
-  const itemLabel = (state: Record<string, unknown>) => {
+  // A human-ish label for a record row: its first non-empty scalar value.
+  const recordLabel = (state: Record<string, unknown>) => {
     for (const f of liveFields) {
       if (f.kind === "relation" || f.kind === "file") continue
       const v = state[f.id]
       if (v !== undefined && v !== null && v !== "") return showValue(v)
     }
-    return "this item"
+    return "this record"
   }
 
   /** Shared body of a field row — live rows offer edit/archive/delete; archived rows
@@ -879,7 +879,7 @@ export function ConceptEditor({
                     Enable versioning
                   </label>
                   <InfoHint
-                    text={`Items hold multiple draft → published versions. New items start as a draft and aren't shown or referenceable until published; lists show only the latest published version. Other items can reference "Latest" or pin a specific version.`}
+                    text={`Records hold multiple draft → published versions. New records start as a draft and aren't shown or referenceable until published; lists show only the latest published version. Other records can reference "Latest" or pin a specific version.`}
                     label="Enable versioning — more info"
                   />
                 </div>
@@ -988,9 +988,9 @@ export function ConceptEditor({
                   </div>
                   <div className="space-y-1.5 rounded-md border border-border p-3">
                     <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-                      Default on new items
+                      Default on new records
                       <InfoHint
-                        text="Pre-applied when an item is created; editable per item afterward."
+                        text="Pre-applied when a record is created; editable per record afterward."
                         label="Default labels — more info"
                       />
                     </span>
@@ -1229,10 +1229,10 @@ export function ConceptEditor({
                 {archivedItems.data!.map((r) => (
                   <li key={r.id} className="flex items-center gap-2 py-2 opacity-80">
                     <span className="flex-1 truncate text-sm text-foreground">
-                      {itemLabel(r.state)}
+                      {recordLabel(r.state)}
                     </span>
                     <IconButton
-                      aria-label={`Restore ${itemLabel(r.state)}`}
+                      aria-label={`Restore ${recordLabel(r.state)}`}
                       disabled={restoreRecord.isPending}
                       onClick={() => restoreRecord.mutate(r)}
                     >
@@ -1241,8 +1241,8 @@ export function ConceptEditor({
                     {admin && (
                       <IconButton
                         variant="danger"
-                        aria-label={`Delete ${itemLabel(r.state)}`}
-                        onClick={() => setDialog({ kind: "deleteItem", inst: r })}
+                        aria-label={`Delete ${recordLabel(r.state)}`}
+                        onClick={() => setDialog({ kind: "deleteRecordVersion", recordVersion: r })}
                       >
                         <Trash2 size={15} />
                       </IconButton>
@@ -1383,7 +1383,7 @@ export function ConceptEditor({
       {confirmDeleteView && (
         <ConfirmDialog
           title="Delete record view?"
-          message="This view and its layout will be permanently deleted. Items keep rendering with the remaining views (or the built-in default)."
+          message="This view and its layout will be permanently deleted. Records keep rendering with the remaining views (or the built-in default)."
           confirmLabel="Delete"
           confirmVariant="danger"
           pending={deleteRecordView.isPending}
@@ -1429,20 +1429,20 @@ export function ConceptEditor({
           onCancel={() => setDialog(null)}
         />
       )}
-      {dialog?.kind === "deleteItem" && (
+      {dialog?.kind === "deleteRecordVersion" && (
         <ConfirmDialog
           title="Delete item"
           message={
             <>
-              Permanently delete <strong>{itemLabel(dialog.inst.state)}</strong>? This can't be
-              undone, and is refused while other items still link to it.
+              Permanently delete <strong>{recordLabel(dialog.recordVersion.state)}</strong>? This
+              can't be undone, and is refused while other items still link to it.
             </>
           }
           confirmLabel="Delete"
           confirmVariant="danger"
-          pending={delItem.isPending}
-          error={delItem.error ? msgOf(delItem.error) : undefined}
-          onConfirm={() => delItem.mutate(dialog.inst)}
+          pending={delRecordVersion.isPending}
+          error={delRecordVersion.error ? msgOf(delRecordVersion.error) : undefined}
+          onConfirm={() => delRecordVersion.mutate(dialog.recordVersion)}
           onCancel={() => setDialog(null)}
         />
       )}

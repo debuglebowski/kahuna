@@ -6,15 +6,15 @@
 
 /** Human phrase for an event type. Falls back to a de-camel/snake-cased label. */
 const LABELS: Record<string, string> = {
-  RecordVersionCreated: "created this item",
+  RecordVersionCreated: "created this record",
   VersionCreated: "started a new version",
   RecordVersionUpdated: "edited fields",
   // An edit to an ALREADY-PUBLISHED version, distinct from an ordinary edit so the
   // feed reads as a correction to history (see the concept's "edit reach" setting).
   VersionAmended: "amended this version",
-  RecordVersionArchived: "archived this item",
-  RecordVersionRestored: "restored this item",
-  RecordVersionPurged: "deleted this item",
+  RecordVersionArchived: "archived this record",
+  RecordVersionRestored: "restored this record",
+  RecordVersionPurged: "deleted this record",
   ComputedBandChanged: "status drifted",
   RelationCreated: "added a connection",
   RelationDeleted: "removed a connection",
@@ -22,8 +22,8 @@ const LABELS: Record<string, string> = {
   AttachmentArchived: "archived a file",
   AttachmentRestored: "restored a file",
   AttachmentPurged: "deleted a file",
-  RecordArchived: "archived this item",
-  RecordRestored: "restored this item",
+  RecordArchived: "archived this record",
+  RecordRestored: "restored this record",
   NoteCreated: "added a note",
   NoteUpdated: "edited a note",
   NoteArchived: "archived a note",
@@ -57,7 +57,7 @@ export const KNOWN_EVENT_TYPES: ReadonlyArray<string> = Object.keys(LABELS)
  * Title-case an event type for display: "InstanceCreated" → "Record version created".
  *
  * The blunt sibling of `eventLabel` above: that one renders a *phrase* from the
- * curated `LABELS` map ("created this item"), this one just splits the camel
+ * curated `LABELS` map ("created this record"), this one just splits the camel
  * case. Used where the raw type is the label — the widget's filter list and the
  * dashboard timeline rows.
  */

@@ -528,7 +528,7 @@ export const WIDGET_CATALOG: ReadonlyArray<WidgetMeta> = [
   {
     type: "attention",
     label: "Attention",
-    description: "Items that need a look — stale or flagged.",
+    description: "Records that need a look — stale or flagged.",
     keywords: ["stale", "flagged", "review", "overdue", "alert", "warning", "follow up", "triage"],
     icon: TriangleAlert,
     category: "Lists & tables",
@@ -654,7 +654,7 @@ export const WIDGET_CATALOG: ReadonlyArray<WidgetMeta> = [
   {
     type: "calendar",
     label: "Calendar",
-    description: "Items placed on a month or week.",
+    description: "Records placed on a month or week.",
     keywords: ["month", "week", "dates", "schedule", "agenda", "events", "date"],
     icon: CalendarDays,
     category: "Boards & timelines",
@@ -663,7 +663,7 @@ export const WIDGET_CATALOG: ReadonlyArray<WidgetMeta> = [
   {
     type: "gantt",
     label: "Timeline / Gantt",
-    description: "Item date ranges on a timeline.",
+    description: "Record date ranges on a timeline.",
     keywords: [
       "timeline",
       "roadmap",

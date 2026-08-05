@@ -231,7 +231,7 @@ export function TaskItem({
   )
 }
 
-/** Tasks for an item (subjectId = record id). Any member may add; the
+/** Tasks for a record (subjectId = record id). Any member may add; the
  *  creator, assignee, or an admin may edit/complete/archive/delete. */
 export function TaskList({
   subjectId,

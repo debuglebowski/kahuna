@@ -36,7 +36,7 @@ export const ACCESS_ACTIONS: ReadonlyArray<AccessAction> = [
 /** Wildcard in a rule's `actions` array — matches every action, present and future. */
 export const ACTION_ALL = "*"
 
-/** What a rule can be about. `record` keys on an ITEM lineage — see `AccessResource`. */
+/** What a rule can be about — see `AccessResource`. */
 export type AccessResourceType =
   | "org"
   | "concept"

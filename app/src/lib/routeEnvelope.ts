@@ -11,16 +11,16 @@ export interface LiveEnvelope {
   readonly org: string
   readonly id: number
   readonly at: number
-  // "item" = whole-record archive/restore (carries conceptId → refetches the concept
+  // "record" = whole-record archive/restore (carries conceptId → refetches the concept
   // list + open details, like a record version event). "note"/"task"/"taskStatus"/
   // "annotationField" = the annotation layer (subjectId is the annotation/def id,
-  // NOT the host item — so we fan out to all mounted panels of that kind).
+  // NOT the host record — so we fan out to all mounted panels of that kind).
   readonly kind:
     | "recordVersion"
     | "relation"
     | "concept"
     | "field"
-    | "item"
+    | "record"
     | "note"
     | "task"
     | "taskStatus"
@@ -53,15 +53,15 @@ export const KEY = {
    *  refreshed on the caller's own mutations and by the safety-refetch sweep. */
   views: "views",
   // ── annotation layer (subjectId = the record id) ───────────────────────
-  /** Notes panel for an item. */
+  /** Notes panel for a record. */
   notes: (subjectId: string) => `notes:${subjectId}`,
-  /** Tasks panel for an item. */
+  /** Tasks panel for a record. */
   tasks: (subjectId: string) => `tasks:${subjectId}`,
   /** Per-record activity feed. */
   activity: (subjectId: string) => `activity:${subjectId}`,
   /** Global "My Tasks" view (cross-record). */
   tasksGlobal: "tasks:global",
-  /** Files panel for an item. */
+  /** Files panel for a record. */
   files: (subjectId: string) => `files:${subjectId}`,
   /** Dashboard Files widgets (any scope) — one shared nudge key. */
   filesGlobal: "files:global",
@@ -90,7 +90,7 @@ export const routeEnvelope = (env: LiveEnvelope, mounted: ReadonlyArray<string>)
   const details = mounted.filter((k) => k.startsWith("detail:"))
 
   // The annotation envelope's subjectId is the annotation/def id, not the host
-  // item, so fan out to every mounted panel of the relevant kind (a user usually
+  // record, so fan out to every mounted panel of the relevant kind (a user usually
   // has just one open). Always also nudge the per-record activity feeds.
   const byPrefix = (prefix: string) => mounted.filter((k) => k.startsWith(prefix))
 
@@ -125,14 +125,14 @@ export const routeEnvelope = (env: LiveEnvelope, mounted: ReadonlyArray<string>)
     candidates.add(KEY.automations)
     for (const k of byPrefix("automationRuns:")) candidates.add(k)
   } else {
-    // record version / item — nudge its concept's list and any open detail pages.
+    // record version / record — nudge its concept's list and any open detail pages.
     if (env.conceptId) candidates.add(KEY.recordVersions(env.conceptId))
     for (const k of details) candidates.add(k)
     // A single-record concept resolves concept id → its one record; publishing a
     // new version changes which record version id that is, so the resolution itself has
     // to re-run, not just the detail it points at.
     if (env.conceptId) candidates.add(KEY.singleRecord(env.conceptId))
-    // A record version edit also surfaces in its item's activity feed.
+    // A record version edit also surfaces in its record's activity feed.
     for (const k of byPrefix("activity:")) candidates.add(k)
     // An `AutomationRan` rides the acted-on RECORD's stream (so the record's feed
     // explains itself), but it is also new run history — nudge the open editor.
