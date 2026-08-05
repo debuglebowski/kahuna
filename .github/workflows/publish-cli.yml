@@ -1,0 +1,85 @@
+name: Publish CLI
+
+# Its OWN workflow, not a job in ci.yml, and that is a security decision: npm's
+# trusted publisher is bound to a workflow FILENAME. Anything in that file can
+# publish as this package. Keeping it small and single-purpose means a change to
+# the test pipeline can never become a change to the thing that publishes.
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: "Pack and verify, but do not publish"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  # The whole point: npm mints a short-lived credential from this OIDC token, so
+  # there is no npm token in the repository to leak or rotate.
+  id-token: write
+
+jobs:
+  publish:
+    name: publish @kingsmaker/cli
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.6
+
+      # Trusted publishing needs npm >= 11.5.1 on Node >= 22.14.0. Pinning the
+      # Node major and then upgrading npm explicitly, because the npm that ships
+      # with a Node release is frequently older than that floor — and the failure
+      # is a confusing auth error rather than a version complaint.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.x"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Ensure npm supports OIDC
+        run: |
+          set -eux
+          npm install -g npm@latest
+          npm --version
+          node --version
+
+      - run: bun install --frozen-lockfile
+
+      # The published version comes from the TAG, exactly as the image's
+      # KINGSMAKER_VERSION does. package.json stays at 0.0.0 in the repo, so a
+      # local build is always identifiably "not a release", and the artifact
+      # carries the same number the server reports at /api/version — which is
+      # what `km system version` compares to warn about skew.
+      - name: Stamp the version from the tag
+        if: github.ref_type == 'tag'
+        run: |
+          set -eux
+          VERSION="${GITHUB_REF_NAME#v}"
+          npm version "$VERSION" --no-git-tag-version --workspace @kingsmaker/cli
+          test "$(node -p "require('./packages/cli/package.json').version")" = "$VERSION"
+
+      - run: bun run cli:build
+
+      # The same two checks CI runs, repeated here because THIS is the artifact
+      # that reaches other people: it must run under plain Node, and it must work
+      # through the bin symlink an install creates.
+      - name: Verify the bundle
+        run: |
+          set -eux
+          node packages/cli/dist/index.js help | grep -q "Kingsmaker command line"
+          npm pack --workspace @kingsmaker/cli --pack-destination /tmp
+          mkdir -p /tmp/km-verify && cd /tmp/km-verify
+          npm init -y >/dev/null
+          npm install /tmp/kingsmaker-cli-*.tgz
+          ./node_modules/.bin/km help | grep -q "Kingsmaker command line"
+
+      - name: Publish
+        if: github.event_name == 'push' || inputs.dry-run == false
+        run: npm publish --workspace @kingsmaker/cli
+        # No NODE_AUTH_TOKEN: the OIDC token above IS the credential. Provenance
+        # is attached automatically for a public repository and public package.
