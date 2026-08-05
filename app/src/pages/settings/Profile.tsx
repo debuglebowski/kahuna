@@ -6,7 +6,6 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
 import { Button, Card, CardHeader, Field, Input } from "../../components/ui"
 import { authClient, useSession } from "../../lib/auth-client"
-import { MyAccess } from "./MyAccess"
 import { Feedback } from "./parts"
 
 function ProfileInfo() {
@@ -168,8 +167,6 @@ export function Profile() {
   return (
     <div className="space-y-5">
       <ProfileInfo />
-      {/* Self-serve: answers "why can't I see X?" without an admin in the loop. */}
-      <MyAccess />
       <AccountEmail />
       <ChangePassword />
       <DeleteAccount />

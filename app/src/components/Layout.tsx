@@ -36,7 +36,7 @@ import { DEFAULT_VIEW, type ResolvedSection, useResolvedView } from "../lib/side
 import { useLiveSync } from "../lib/useLiveSync"
 import { useSafetyRefetch } from "../lib/useSafetyRefetch"
 import { cn } from "../lib/utils"
-import { SETTINGS_NAV, useIsAdmin } from "../pages/settings/SettingsLayout"
+import { canSeeSettingsItem, SETTINGS_NAV, useIsAdmin } from "../pages/settings/SettingsLayout"
 import { IdentityMenu } from "./IdentityMenu"
 import { ViewNav } from "./sidebar/ViewNav"
 import { UpdateNotice } from "./UpdateNotice"
@@ -84,11 +84,12 @@ export function usePageChrome({ fullWidth = false, fillHeight = false }: PageChr
 }
 
 /** The settings nav as resolved sections, so {@link ViewNav} renders it like
- *  any other view. Admin-only entries are hidden for non-admin members (the
- *  route guard in SettingsLayout backs this up), and a group left with nothing
- *  a member may see is dropped rather than rendered as a bare heading. */
+ *  any other view. Gated entries are hidden for anyone `canSeeSettingsItem`
+ *  refuses (the route guard in SettingsLayout backs this up), and a group left
+ *  with nothing a member may see is dropped rather than rendered as a bare
+ *  heading. */
 function useSettingsSections(pathname: string): ResolvedSection[] {
-  const { admin } = useIsAdmin()
+  const { admin, canConfigureRoles } = useIsAdmin()
   return useMemo(
     () =>
       SETTINGS_NAV.map((group) => ({
@@ -97,7 +98,7 @@ function useSettingsSections(pathname: string): ResolvedSection[] {
         icon: null,
         collapsed: false,
         entries: group.items
-          .filter((t) => !t.admin || admin)
+          .filter((t) => canSeeSettingsItem(t, { admin, canConfigureRoles }))
           .map((t) => ({
             key: t.to,
             label: t.label,
@@ -106,7 +107,7 @@ function useSettingsSections(pathname: string): ResolvedSection[] {
             active: pathname.startsWith(`/settings/${t.to}`),
           })),
       })).filter((s) => s.entries.length > 0),
-    [admin, pathname],
+    [admin, canConfigureRoles, pathname],
   )
 }
 

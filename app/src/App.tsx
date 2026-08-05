@@ -18,6 +18,7 @@ import { Dashboards as DashboardsSettings } from "./pages/settings/Dashboards"
 import { Integrations } from "./pages/settings/Integrations"
 import { Labels } from "./pages/settings/Labels"
 import { Organization } from "./pages/settings/Organization"
+import { Permissions } from "./pages/settings/Permissions"
 import { Profile } from "./pages/settings/Profile"
 import { Roles } from "./pages/settings/Roles"
 import { SettingsLayout } from "./pages/settings/SettingsLayout"
@@ -61,6 +62,7 @@ export function App() {
           <Route index element={<Navigate to="profile" replace />} />
           <Route path="profile" element={<Profile />} />
           <Route path="appearance" element={<Appearance />} />
+          <Route path="permissions" element={<Permissions />} />
           <Route path="security" element={<Navigate to="/settings/profile" replace />} />
           <Route path="organization" element={<Organization />} />
           <Route path="authentication" element={<Authentication />} />

@@ -4,6 +4,7 @@ import {
   KeyRound,
   LayoutDashboard,
   ListTodo,
+  Lock,
   Palette,
   PanelLeft,
   Plug,
@@ -23,7 +24,13 @@ import { authClient } from "../../lib/auth-client"
 interface SettingsItem {
   readonly to: string
   readonly label: string
-  readonly admin: boolean
+  /** Which permission gates this section — absent means every member sees it.
+   *  "admin" is org-wide `configure`; "roles" is the narrower `configure` on
+   *  `role` (P5). Roles must use "roles", not "admin": Layer 0 (the owner
+   *  recovery floor) covers `role`/`member` configure only, never `org` — an
+   *  owner with no other role would have `canConfigureRoles` but not `admin`,
+   *  and gating this on "admin" would hide the one tool that recovers them. */
+  readonly gate?: "admin" | "roles"
   readonly icon: ReactNode
   /** Render this section as a full-height flex column (heading fixed, Outlet
    *  fills) so the page can pin a footer or own its scroll. The page must also
@@ -34,6 +41,18 @@ interface SettingsItem {
    *  route, its own chrome — so the layout renders it bare rather than wrapping
    *  it in the section `<h2>`. See `useSectionBase`. */
   readonly dual?: boolean
+}
+
+/** Whether the current caller may see this section — shared by the route guard
+ *  here and the sidebar filter in `Layout.tsx`, so the two can never disagree
+ *  about what's visible. */
+export function canSeeSettingsItem(
+  item: SettingsItem,
+  access: { readonly admin: boolean; readonly canConfigureRoles: boolean },
+): boolean {
+  if (item.gate === "admin") return access.admin
+  if (item.gate === "roles") return access.canConfigureRoles
+  return true
 }
 
 interface SettingsGroup {
@@ -47,50 +66,60 @@ export const SETTINGS_NAV: ReadonlyArray<SettingsGroup> = [
   {
     title: "Account",
     items: [
-      { to: "profile", label: "Profile", admin: false, icon: <UserRound size={16} /> },
+      { to: "profile", label: "Profile", icon: <UserRound size={16} /> },
       // Browser-local, not part of the account record — but it belongs to "me",
       // so it sits with the personal tabs rather than under Workspace.
-      { to: "appearance", label: "Appearance", admin: false, icon: <Palette size={16} /> },
+      { to: "appearance", label: "Appearance", icon: <Palette size={16} /> },
+      // Lifted out of Profile: the self-serve "why can/can't I see X?" report
+      // (`MyAccess`) is substantial enough to be its own destination, not a
+      // card buried partway down another page. No gate — readable by anyone
+      // about themselves.
+      { to: "permissions", label: "Permissions", icon: <Lock size={16} /> },
     ],
   },
   // Who gets into the org, what they may do, and what it is wired to.
   {
     title: "Organization",
     items: [
-      { to: "organization", label: "Organization", admin: true, icon: <Building2 size={16} /> },
+      { to: "organization", label: "Organization", gate: "admin", icon: <Building2 size={16} /> },
       // `admin` is the coarse route gate; the page itself narrows writes to the
       // OWNER, because this decides who can get into the org at all.
-      { to: "authentication", label: "Authentication", admin: true, icon: <KeyRound size={16} /> },
+      {
+        to: "authentication",
+        label: "Authentication",
+        gate: "admin",
+        icon: <KeyRound size={16} />,
+      },
       // Members renders at TWO urls from one implementation: here, and at its own
       // top-level GLOBAL_NAV slot. Both are real routes (see App.tsx) — not links
       // out — so entering through settings keeps the settings sidebar. `dual`
       // marks them for the route guard below. Automations is the other one.
-      { to: "members", label: "Members", admin: false, icon: <Users size={16} />, dual: true },
+      { to: "members", label: "Members", icon: <Users size={16} />, dual: true },
       // The rules inside a role are the sensitive half of the access model, so this
-      // tab is admin-only — unlike Members, where role NAMES are org vocabulary.
-      { to: "roles", label: "Roles", admin: true, icon: <ShieldCheck size={16} /> },
-      { to: "integrations", label: "Integrations", admin: false, icon: <Plug size={16} /> },
+      // tab is gated on `role`-configure — NOT `admin` (org-configure): those are
+      // separate permissions since P1/P5, and an owner with no other role holds
+      // only the former (Layer 0).
+      { to: "roles", label: "Roles", gate: "roles", icon: <ShieldCheck size={16} /> },
+      { to: "integrations", label: "Integrations", icon: <Plug size={16} /> },
     ],
   },
   // What the org's data, views and behaviour look like.
   {
     title: "Workspace",
     items: [
-      { to: "concepts", label: "Concepts", admin: false, icon: <Shapes size={16} /> },
-      { to: "labels", label: "Labels", admin: false, icon: <Tags size={16} /> },
-      { to: "tasks", label: "Tasks", admin: false, icon: <ListTodo size={16} /> },
+      { to: "concepts", label: "Concepts", icon: <Shapes size={16} /> },
+      { to: "labels", label: "Labels", icon: <Tags size={16} /> },
+      { to: "tasks", label: "Tasks", icon: <ListTodo size={16} /> },
       {
         to: "dashboards",
         label: "Dashboards",
-        admin: false,
         icon: <LayoutDashboard size={16} />,
         fillHeight: true,
       },
-      { to: "sidebar", label: "Sidebar", admin: false, icon: <PanelLeft size={16} /> },
+      { to: "sidebar", label: "Sidebar", icon: <PanelLeft size={16} /> },
       {
         to: "automations",
         label: "Automations",
-        admin: false,
         icon: <Workflow size={16} />,
         dual: true,
       },
@@ -146,15 +175,16 @@ export function useIsAdmin() {
 
 export function SettingsLayout() {
   const loc = useLocation()
-  const { admin, isPending } = useIsAdmin()
+  const { admin, canConfigureRoles, isPending } = useIsAdmin()
 
   if (isPending) return <Spinner />
 
-  // Soft-guard direct navigation to an admin section by a non-admin member.
+  // Soft-guard direct navigation to a gated section by someone who can't see it.
   const parts = loc.pathname.split("/")
   const seg = parts[2] ?? ""
   const item = ALL_ITEMS.find((t) => t.to === seg)
-  if (item?.admin && !admin) return <Navigate to="/settings/profile" replace />
+  if (item && !canSeeSettingsItem(item, { admin, canConfigureRoles }))
+    return <Navigate to="/settings/profile" replace />
 
   // Detail routes (e.g. /settings/dashboards/:id) are full-page editors that
   // own their chrome + breadcrumb — render the Outlet bare so it can fill the
