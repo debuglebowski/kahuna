@@ -175,6 +175,51 @@ export const emptyPolicy = (actorId: string, version = 0): PolicySet => ({
   version,
 })
 
+/**
+ * ── LAYER 0 — THE OWNER'S RECOVERY FLOOR ─────────────────────────────────────
+ *
+ * NOT a role. `access_roles` has no row for it: it cannot be listed, edited,
+ * assigned, reordered, or based on. `server/runtime.ts:sessionScope` prepends
+ * these two rules to an owner's resolved policy; nothing else ever sees them.
+ *
+ * `configure` on `role` and `member` is the SMALLEST grant from which every other
+ * mistake is repairable — it reaches the role editor and the member roster, and
+ * both reach everything else. Deliberately narrower than `configure` on `org`
+ * (`requireAdmin`'s gate for ~40 handlers: concepts, fields, labels,
+ * integrations) — an owner holding no other role lands on a mostly READ-ONLY app.
+ * That is intentional, not a gap: least privilege applies to the most powerful
+ * actor hardest, and the two grants here are exactly what is needed to fix any
+ * mistake, including one an owner made to themselves.
+ *
+ * `LAYER_0_PRECEDENCE` is `-1` — BELOW every role's precedence, which starts at
+ * 100 (`(position + 1) * 100`, `PolicyService.loadRules`) and Layer 1's personal
+ * overrides at 0. A role's deny on `role`- or `member`-configure must never be
+ * able to beat this, or an owner could brick the org by editing one — which is
+ * the exact hazard that made owner a flag instead of a role in the first place.
+ */
+export const LAYER_0_PRECEDENCE = -1
+
+const layer0Rule = (id: string, resourceType: AccessResourceType): AccessRule => ({
+  id,
+  roleId: null,
+  actorId: null,
+  effect: "allow",
+  actions: ["configure"],
+  resourceType,
+  resourceId: null,
+  conceptId: null,
+  condition: null,
+  precedence: LAYER_0_PRECEDENCE,
+})
+
+/** The two Layer 0 rules for one owner. `id` is stable per actor (not random) so
+ *  a caller diffing rule sets across two resolutions of the SAME owner sees the
+ *  same ids, not a new pair every time. */
+export const layer0Rules = (actorId: string): ReadonlyArray<AccessRule> => [
+  layer0Rule(`layer0-role-${actorId}`, "role"),
+  layer0Rule(`layer0-member-${actorId}`, "member"),
+]
+
 const coversAction = (rule: AccessRule, action: AccessAction): boolean =>
   rule.actions.includes(ACTION_ALL) || rule.actions.includes(action)
 

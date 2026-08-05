@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest"
-import { type AccessRule, decide, emptyPolicy, unrestrictedPolicy } from "#engine"
+import {
+  type AccessRule,
+  decide,
+  emptyPolicy,
+  LAYER_0_PRECEDENCE,
+  unrestrictedPolicy,
+} from "#engine"
 import { sessionScope } from "./runtime"
 
 /**
@@ -68,26 +74,73 @@ describe("the RPC fallback no longer consults the membership role", () => {
   })
 })
 
-describe("THE OWNER BYPASS", () => {
-  it("an owner's session is unrestricted; everyone else's is their resolved rules", () => {
-    const resolved = emptyPolicy("u")
-    expect(sessionScope("org", "u", "owner", resolved).policy?.unrestricted).toBe(true)
-    expect(sessionScope("org", "u", "member", resolved).policy?.unrestricted).toBe(false)
+/**
+ * ── THE OWNER RECOVERY FLOOR (LAYER 0) ────────────────────────────────────────
+ *
+ * This used to be "THE OWNER BYPASS": an owner's session resolved
+ * `unrestrictedPolicy` outright, the same mechanism `systemScope` uses for the
+ * engine itself. That is gone. An owner's session is now their ORDINARY resolved
+ * rules with two extra rules prepended — `configure` on `role` and `member`,
+ * nothing else — at a precedence below any role's. `unrestricted` is never true
+ * for a session; it means only `systemScope` now.
+ */
+describe("THE OWNER RECOVERY FLOOR", () => {
+  it("an owner's session is NEVER unrestricted — Layer 0 is added to their resolved rules, not swapped in for them", () => {
+    const resolved = { ...emptyPolicy("u"), rules: [rule(["*"])] }
+    const owner = sessionScope("org", "u", "owner", resolved)
+    const member = sessionScope("org", "u", "member", resolved)
+    expect(owner.policy?.unrestricted).toBe(false)
+    expect(member.policy?.unrestricted).toBe(false)
+    // The member's rules are untouched; the owner's carry the SAME rule PLUS
+    // Layer 0 — the recovery floor adds to whatever roles already granted, it
+    // doesn't replace it.
+    expect(member.policy?.rules).toEqual(resolved.rules)
+    expect(owner.policy?.rules).toEqual([...owner.policy!.rules.slice(0, 2), ...resolved.rules])
+    expect(owner.policy?.rules.length).toBe(resolved.rules.length + 2)
   })
 
-  it("no rule can take it away — that is the point", () => {
-    // A blanket DENY beats every allow for anyone else. An owner has to survive it,
-    // or the org can be locked out of itself by editing a role, which is exactly the
-    // hazard that made owner a flag rather than a role.
-    const deny: AccessRule = { ...rule(["*"]), effect: "deny" } as AccessRule
-    const scope = sessionScope("org", "u", "owner", { ...emptyPolicy("u"), rules: [deny] })
-    expect(allowed(scope.policy!, "configure")).toBe(true)
-    expect(allowed(scope.policy!, "delete")).toBe(true)
+  it("the floor covers ONLY role and member configure — org-configure is an ordinary rule decision for an owner too", () => {
+    // The property this replaces ("no rule can take configure away from an
+    // owner") no longer holds for `org` — only for `role`/`member`. An owner
+    // with no explicit role denied org-configure IS denied it; Layer 0 was never
+    // meant to reproduce blanket admin, only to guarantee a way to fix the org.
+    const scope = sessionScope("org", "u", "owner", emptyPolicy("u"))
+    const has = (type: "org" | "role" | "member") =>
+      decide(scope.policy!, "configure", { type }, false, { unconditionalOnly: true })
+    expect(has("role")).toBe(true)
+    expect(has("member")).toBe(true)
+    expect(has("org")).toBe(false)
   })
 
-  it("is the same mechanism the engine uses for itself, not a second one", () => {
-    // If these ever diverge, `decide()` grows a second short-circuit and the two
-    // will drift.
-    expect(sessionScope("org", "u", "owner").policy).toEqual(unrestrictedPolicy("u"))
+  it("no rule can take the floor away — a blanket deny on role/member loses to Layer 0", () => {
+    // A blanket DENY beats every allow for anyone else, at the SAME precedence.
+    // Layer 0 sits BELOW every role's precedence (`LAYER_0_PRECEDENCE`), so a
+    // role's deny is a lower-priority tier and is never even reached for these
+    // two resource types — which is what makes it a genuine floor rather than
+    // just another allow that a deny could still beat.
+    const denyRole: AccessRule = { ...rule(["configure"]), resourceType: "role", effect: "deny" }
+    const denyMember: AccessRule = {
+      ...rule(["configure"]),
+      resourceType: "member",
+      effect: "deny",
+    }
+    const scope = sessionScope("org", "u", "owner", {
+      ...emptyPolicy("u"),
+      rules: [denyRole, denyMember],
+    })
+    const has = (type: "role" | "member") =>
+      decide(scope.policy!, "configure", { type }, false, { unconditionalOnly: true })
+    expect(has("role")).toBe(true)
+    expect(has("member")).toBe(true)
+  })
+
+  it("is a DIFFERENT mechanism from systemScope's exemption, not the same one twice", () => {
+    // The inverse of what this test used to assert: they must NOT be the same
+    // object shape any more, or the owner has quietly become exempt from the
+    // model again. `systemScope` alone still returns the real `unrestrictedPolicy`.
+    const owner = sessionScope("org", "u", "owner")
+    expect(owner.policy).not.toEqual(unrestrictedPolicy("u"))
+    expect(owner.policy?.unrestricted).toBe(false)
+    expect(owner.policy?.rules.every((r) => r.precedence === LAYER_0_PRECEDENCE)).toBe(true)
   })
 })

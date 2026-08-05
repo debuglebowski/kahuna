@@ -870,15 +870,20 @@ describe("the org-wide event reads don't leak restricted subjects", () => {
     const scoped = await runEngine(asMember, uc.listEvents({ conceptId: f.sealedId }))
     expect(scoped.ok).toBe(false)
 
-    // An owner still sees the lot. In a live org that is the Owner role's blanket
-    // `*`; `unrestrictedPolicy` is the test stand-in for holding one.
-    const asOwner = await runEngine(
-      { orgId, actor: "boss", role: "owner", policy: unrestrictedPolicy("boss") },
+    // A privileged reader still sees the lot. In a live org that is Admin's
+    // blanket `*`; `unrestrictedPolicy` is the test stand-in for holding one. This
+    // hand-builds the `OrgScope` directly (`runEngine`, not `sessionScope`), so
+    // `role` here is inert decoration — kept as `"member"` deliberately: since P3
+    // `role: "owner"` only means anything when it passes through `sessionScope`
+    // (which prepends Layer 0 and forces `unrestricted: false`), and this fixture
+    // exists to test the OPPOSITE property, holding `unrestricted: true` directly.
+    const asPrivileged = await runEngine(
+      { orgId, actor: "boss", role: "member", policy: unrestrictedPolicy("boss") },
       uc.getChanged,
     )
-    const ownerIds = asOwner.ok
-      ? (asOwner.data as ReadonlyArray<{ subjectId: string }>).map((e) => e.subjectId)
+    const privilegedIds = asPrivileged.ok
+      ? (asPrivileged.data as ReadonlyArray<{ subjectId: string }>).map((e) => e.subjectId)
       : []
-    expect(ownerIds).toContain(f.hiddenId)
+    expect(privilegedIds).toContain(f.hiddenId)
   })
 })

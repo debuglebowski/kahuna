@@ -4,6 +4,7 @@ import {
   EngineLive,
   type EngineServices,
   LocalFsBlobStore,
+  layer0Rules,
   OrgContext,
   type OrgScope,
   PgLive,
@@ -138,27 +139,47 @@ export const toResult = <A, E>(exit: Exit.Exit<A, E>): UseCaseResult<A> => {
 type Runnable<A, E> = Effect.Effect<A, E, OrgContext | EngineServices | PgClient.PgClient>
 
 /**
+ * Prepend Layer 0 (the owner's recovery floor — see `layer0Rules`) to whatever the
+ * caller's ROLES already resolved to. Not a bypass: `unrestricted` is forced FALSE
+ * — an owner is a real resolved policy now, with two extra rules at the bottom of
+ * every precedence a role could ever occupy, not the engine's own exemption. See
+ * `sessionScope`'s doc for why that distinction is the whole point.
+ */
+const withLayer0 = (actor: string, policy: PolicySet | undefined): PolicySet => ({
+  ...(policy ?? { actorId: actor, unrestricted: false, version: 0, rules: [] }),
+  unrestricted: false,
+  rules: [...layer0Rules(actor), ...(policy?.rules ?? [])],
+})
+
+/**
  * Build a scope for a REAL request. `role` is typed as the server's `Role`, which
  * does not include `"system"` — so a user request cannot be given engine-level
  * privilege even by mistake. Session-resolved callers must use this.
  *
  * `policy` is the caller's resolved access rules (see `resolvePolicy`).
  *
- * ── THE OWNER BYPASS ─────────────────────────────────────────────────────────
+ * ── THE OWNER RECOVERY FLOOR, NOT A BYPASS ───────────────────────────────────
  *
- * An OWNER resolves `unrestricted`, ignoring the rules entirely.
+ * An owner's policy is their ordinary resolved rules (from whatever roles they
+ * separately hold, same as anyone) with Layer 0 prepended — `configure` on `role`
+ * and `member`, and NOTHING else. `unrestricted` is never true for an owner; that
+ * flag now means only `systemScope`. An owner holding no other role therefore sees
+ * a mostly READ-ONLY app: they can always reach the role editor and the member
+ * roster, and can always fix any mistake through those, but reading a restricted
+ * concept or seeing a personal dashboard is decided by rules like everyone else.
  *
  * Owner is not a role in the access model, and deliberately: a role is an editable
- * bag of rules, so whoever edits the owner's rules can lock the org out of itself.
- * That hazard is exactly why the irreducible-floor guard had to exist. Making the
- * bypass unconditional deletes the hazard rather than guarding it — an owner cannot
- * be denied by any rule, so there is nothing left to protect.
+ * bag of rules, so whoever edits the owner's rules could lock the org out of
+ * itself. Layer 0 sidesteps the hazard rather than guarding it: it has no row in
+ * `access_roles`, so there is nothing to edit, and it sits at a precedence
+ * (`LAYER_0_PRECEDENCE`, -1) below any role's, so no role's deny on `role`- or
+ * `member`-configure can ever beat it.
  *
- * It is NOT the same as `systemScope`, which also carries `role: "system"` and with
- * it the engine's own exemptions. An owner is a person: `DashboardService.maySee`
- * still requires `owner_id IS NULL` before consulting rules, so an owner cannot read
- * someone else's PERSONAL dashboard. Ownership is per-actor and beats everything,
- * including this.
+ * It is NOT the same as `systemScope`, which carries `role: "system"` and the
+ * engine's own exemptions. An owner is a person: `DashboardService.maySee` still
+ * requires `owner_id IS NULL` before consulting rules, so an owner cannot read
+ * someone else's PERSONAL dashboard. Ownership is per-actor and beats every rule,
+ * including Layer 0.
  */
 export const sessionScope = (
   orgId: string,
@@ -169,7 +190,7 @@ export const sessionScope = (
   orgId,
   actor,
   role,
-  policy: role === "owner" ? unrestrictedPolicy(actor) : policy,
+  policy: role === "owner" ? withLayer0(actor, policy) : policy,
 })
 
 /**

@@ -111,9 +111,21 @@ describe("activity feed field masking", () => {
     // The record's CONCEPT must be readable for the feed to resolve at all — that is
     // now a rule, not a column. Field masking (what this test is about) is a separate
     // mechanism layered on top, still driven by `fields.visibility`.
-    const feedFor = async (role: "member" | "owner") =>
+    //
+    // "privileged" stands in for an administrator (in a live org, Admin's blanket
+    // `*`) — NOT the owner flag. Since P3, owner is a recovery floor (`configure`
+    // on `role`/`member` only), not a bypass: an owner holding no other role would
+    // NOT automatically see this admin-only field, which is the correct new
+    // behaviour but not what this test is about, so it uses `unrestrictedPolicy`
+    // directly instead.
+    const feedFor = async (role: "member" | "privileged") =>
       (await runEngineOrThrow(
-        sessionScope(orgId, userId, role, seeing(userId, [schema.conceptId])),
+        sessionScope(
+          orgId,
+          userId,
+          "member",
+          role === "privileged" ? unrestrictedPolicy(userId) : seeing(userId, [schema.conceptId]),
+        ),
         getActivity(rec.recordId),
       )) as ReadonlyArray<FeedEntry>
 
@@ -137,25 +149,26 @@ describe("activity feed field masking", () => {
     )
     expect(openEdit?.previous?.[schema.openId]).toBe("Ada")
 
-    // ── as the OWNER, nothing is withheld ────────────────────────────────────
-    const asOwner = await feedFor("owner")
-    const ownerCreated = asOwner.find((e) => e.eventType === "RecordVersionCreated")
-    expect(ownerCreated?.payload?.fields).toEqual({
+    // ── as a PRIVILEGED reader (e.g. an admin), nothing is withheld ───────────
+    const asPrivileged = await feedFor("privileged")
+    const privilegedCreated = asPrivileged.find((e) => e.eventType === "RecordVersionCreated")
+    expect(privilegedCreated?.payload?.fields).toEqual({
       [schema.openId]: "Ada",
       [schema.secretId]: "100",
     })
-    const sawFinalHidden = asOwner
+    const sawFinalHidden = asPrivileged
       .filter((e) => e.eventType === "RecordVersionUpdated")
       .some((e) => ((e.payload?.patch ?? {}) as Record<string, unknown>)[schema.secretId] === "300")
     expect(sawFinalHidden).toBe(true)
-    // …and the owner's `previous` for the hidden field spans the real history. The
-    // feed is newest-first, so across the two edits the overwritten values are
-    // "200" then "100" — assert the set rather than an order-dependent single hit.
-    const ownerHiddenPrevs = asOwner
+    // …and the privileged reader's `previous` for the hidden field spans the real
+    // history. The feed is newest-first, so across the two edits the overwritten
+    // values are "200" then "100" — assert the set rather than an order-dependent
+    // single hit.
+    const privilegedHiddenPrevs = asPrivileged
       .filter((e) => e.eventType === "RecordVersionUpdated")
       .map((e) => e.previous?.[schema.secretId])
       .filter((v) => v !== undefined)
-    expect(ownerHiddenPrevs).toEqual(expect.arrayContaining(["100", "200"]))
+    expect(privilegedHiddenPrevs).toEqual(expect.arrayContaining(["100", "200"]))
   })
 })
 
@@ -188,7 +201,12 @@ describe("subject-keyed reads on a restricted concept", () => {
     // rule, which is the same before/after the old `setConceptVisibility` produced.
     const withAccess = sessionScope(orgId, userId, "member", seeing(userId, [concept.id]))
     const asMember = sessionScope(orgId, userId, "member", emptyPolicy(userId))
-    const asOwner = sessionScope(orgId, userId, "owner", unrestrictedPolicy(userId))
+    // `role: "member"`, not `"owner"` — an unrestricted POLICY is the stand-in for
+    // a privileged reader here (see the note in the previous test); since P3 the
+    // owner flag no longer implies unrestricted, so `role: "owner"` would silently
+    // discard this policy's `unrestricted: true` and this fixture would stop
+    // meaning what its name says.
+    const asPrivileged = sessionScope(orgId, userId, "member", unrestrictedPolicy(userId))
 
     // While readable, the member can read them — so the assertions below are about
     // the restriction, not about a fixture they never had access to.
@@ -208,10 +226,12 @@ describe("subject-keyed reads on a restricted concept", () => {
       await expect(run(), label).rejects.toThrow()
     }
 
-    // The owner still reads all of them.
-    expect(((await runEngineOrThrow(asOwner, listNotes(rec.recordId))) as unknown[]).length).toBe(1)
+    // A privileged reader still reads all of them.
     expect(
-      ((await runEngineOrThrow(asOwner, listTasks({ subjectId: rec.recordId }))) as unknown[])
+      ((await runEngineOrThrow(asPrivileged, listNotes(rec.recordId))) as unknown[]).length,
+    ).toBe(1)
+    expect(
+      ((await runEngineOrThrow(asPrivileged, listTasks({ subjectId: rec.recordId }))) as unknown[])
         .length,
     ).toBe(1)
   })

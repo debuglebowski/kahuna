@@ -29,24 +29,36 @@ describe("org scope roles", () => {
     expect(systemScope("org", "runner").role).toBe("system")
   })
 
-  it("ONLY an owner session is unrestricted", () => {
-    // This used to read "sessionScope is never unrestricted", and the change is
-    // deliberate: owner is a membership flag with an unconditional bypass, because a
-    // role is an editable bag of rules and an org must not be able to lock itself
-    // out by editing one. Everyone else is exactly their resolved rules.
+  it("no session is ever unrestricted — only systemScope is", () => {
+    // This used to read "ONLY an owner session is unrestricted": owner carried an
+    // unconditional bypass, because a role is an editable bag of rules and an org
+    // must not be able to lock itself out by editing one. Since P3 that bypass is
+    // gone — an owner's session is their resolved rules PLUS a Layer-0 recovery
+    // floor (`configure` on `role`/`member` only), not an exemption from the
+    // model. `unrestricted` now means only the engine itself.
     expect(systemScope("org", "runner").policy?.unrestricted).toBe(true)
-    expect(sessionScope("org", "user", "owner").policy?.unrestricted).toBe(true)
+    expect(sessionScope("org", "user", "owner").policy?.unrestricted).toBe(false)
     expect(sessionScope("org", "user", "member").policy).toBeUndefined()
   })
 
+  it("an owner session always carries the Layer-0 floor, even with no resolved policy", () => {
+    // Unlike a member, whose policy stays undefined until one is resolved, an
+    // owner's session always has a policy: `sessionScope` prepends the two
+    // Layer-0 rules whether or not a caller passed one in.
+    const owner = sessionScope("org", "user", "owner")
+    expect(owner.policy).toBeDefined()
+    expect(owner.policy?.rules).toHaveLength(2)
+  })
+
   /**
-   * An owner bypasses RULES. They do not become the engine, and they do not become
-   * every other user: `role` stays `"owner"`, so the `role === "system"` branches
-   * (which let the engine read anything) are not reachable, and ownership of a
-   * personal dashboard still wins — see `DashboardService.maySee`, which requires
-   * `owner_id IS NULL` before it ever consults a policy.
+   * An owner's Layer-0 floor grants extra RULES, not engine privilege. They do not
+   * become the engine, and they do not become every other user: `role` stays
+   * `"owner"`, so the `role === "system"` branches (which let the engine read
+   * anything) are not reachable, and ownership of a personal dashboard still wins
+   * — see `DashboardService.maySee`, which requires `owner_id IS NULL` before it
+   * ever consults a policy.
    */
-  it("the owner bypass does not smuggle in engine privilege", () => {
+  it("the owner recovery floor does not smuggle in engine privilege", () => {
     expect(sessionScope("org", "user", "owner").role).not.toBe("system")
   })
 

@@ -27,10 +27,13 @@ export {
   decide,
   decideRecord,
   emptyPolicy,
+  LAYER_0_PRECEDENCE,
+  layer0Rules,
   matchesCondition,
   type PolicySet,
   recordRulesForConcept,
   rulesFor,
+  tiersOf,
   unrestrictedPolicy,
 } from "./domain/access"
 export {
