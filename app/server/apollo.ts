@@ -10,18 +10,18 @@ import { sleepBeforeRetry } from "./integrations/http"
 import { connectionForOrgIn } from "./integrations/rows"
 import { resolvePolicy, runEngine, sessionScope } from "./runtime"
 import { resolveAdmin, resolveOrg } from "./session"
-import { createInstance, getInstance, updateInstance } from "./use-cases"
+import { createRecord, getRecord, updateRecord } from "./use-cases"
 
 /**
  * Apollo.io connector — a key-based integration built on the PostHog/Linear
  * template. Auth is an Apollo API key stored ENCRYPTED at the ORG level (one
  * connection per org). Unlike PostHog/Linear this connector does not mirror a
  * remote object set into a synced table; it is on-demand: enrich an existing KM
- * instance, run a people search, and bulk-import search results as new
- * instances. `apolloRequest` mirrors `posthogRequest` — 429/5xx retry+backoff
+ * record version, run a people search, and bulk-import search results as new
+ * record versions. `apolloRequest` mirrors `posthogRequest` — 429/5xx retry+backoff
  * honoring Apollo's `Retry-After`.
  *
- * GENERIC BY DESIGN: enrichment writes onto an instance's fields via a
+ * GENERIC BY DESIGN: enrichment writes onto a record version's fields via a
  * caller-supplied {apolloFieldKey → KM field id} mapping. There is NO hardcoded
  * concept ("Person"/"Company") or KM-field-name special-casing — the repo keys
  * everything by field id (see field-relation uid-keying), and this connector
@@ -32,10 +32,10 @@ import { createInstance, getInstance, updateInstance } from "./use-cases"
  * credits on repeat lookups). The cache is purged on disconnect and can be
  * disabled per org in Settings → Integrations (deployment default:
  * APOLLO_ENRICH_CACHE_ENABLED=0). Enrichment results otherwise live only on the
- * KM instance fields the operator explicitly mapped.
+ * KM record version fields the operator explicitly mapped.
  *
- * DEFERRED (follow-ups, not built here): auto-enrich on instance create, Apollo
- * sequence-action writes, and a per-instance "Enrich with Apollo" Details-tile
+ * DEFERRED (follow-ups, not built here): auto-enrich on record version create, Apollo
+ * sequence-action writes, and a per-record version "Enrich with Apollo" Details-tile
  * UI affordance (the enrich ROUTE + client method land here; the in-page button
  * + field-mapping picker is a later UI task).
  */
@@ -298,7 +298,7 @@ const fieldsFromMapping = (
 }
 
 /**
- * Create new KM instances from search results onto `conceptId`, mapping Apollo
+ * Create new KM record versions from search results onto `conceptId`, mapping Apollo
  * fields → KM field ids. Returns per-result outcomes. Each create runs through
  * the engine (field validation applies); a result that maps to no non-empty
  * fields is skipped.
@@ -322,7 +322,7 @@ export async function bulkImport(
       skipped += 1
       continue
     }
-    const res = await runEngine(scope, createInstance(conceptId, fields))
+    const res = await runEngine(scope, createRecord(conceptId, fields))
     if (res.ok) created.push(res.data.id)
     else errors.push({ index: i, code: res.code })
   }
@@ -503,44 +503,44 @@ const IDENTIFIER_KEYS: Record<string, keyof EnrichQuery> = {
 }
 
 /**
- * Enrich a single instance's empty (or all, when `overwrite`) fields from
- * Apollo. The caller supplies `instanceId`, a {apolloKey → fieldId} `mapping`,
+ * Enrich a single record version's empty (or all, when `overwrite`) fields from
+ * Apollo. The caller supplies `recordVersionId`, a {apolloKey → fieldId} `mapping`,
  * and optionally an explicit `query`. When no query is given, the lookup is
- * DERIVED from the instance's current field values via the mapping (e.g. the
+ * DERIVED from the record version's current field values via the mapping (e.g. the
  * field mapped to `email` provides the match email) — fully generic, no concept
  * or field-name assumptions.
  */
-export async function enrichInstanceForRequest(req: Request) {
+export async function enrichRecordForRequest(req: Request) {
   const org = await resolveOrg(req)
   if (!org.ok) return json({ error: org.code }, org.status)
   const connection = await connectionForOrg(org.orgId)
   if (connection?.status !== "connected") return json({ error: "NO_APOLLO_CONNECTION" }, 404)
 
   const body = (await req.json().catch(() => null)) as {
-    instanceId?: string
+    recordVersionId?: string
     mapping?: Record<string, string>
     query?: EnrichQuery
     overwrite?: boolean
   } | null
-  const instanceId = body?.instanceId?.trim()
+  const recordVersionId = body?.recordVersionId?.trim()
   const mapping = body?.mapping
-  if (!instanceId) return json({ error: "INSTANCE_ID_REQUIRED" }, 400)
+  if (!recordVersionId) return json({ error: "RECORD_VERSION_ID_REQUIRED" }, 400)
   if (!mapping || typeof mapping !== "object" || Object.keys(mapping).length === 0)
     return json({ error: "MAPPING_REQUIRED" }, 400)
 
   // The policy MUST be resolved: without it nothing on a templated type is granted,
-  // so every instance read here would 404. Same reason `runScoped` resolves one.
+  // so every record version read here would 404. Same reason `runScoped` resolves one.
   const scope = sessionScope(
     org.orgId,
     org.actor,
     org.role,
     await resolvePolicy(org.orgId, org.actor),
   )
-  const instRes = await runEngine(scope, getInstance(instanceId))
+  const instRes = await runEngine(scope, getRecord(recordVersionId))
   if (!instRes.ok) return json({ error: instRes.code, detail: instRes.detail }, instRes.status)
   const state = instRes.data.state as Record<string, unknown>
 
-  // Derive the lookup from instance state via the mapping, unless the caller
+  // Derive the lookup from record version state via the mapping, unless the caller
   // passed an explicit query (which takes precedence per key).
   const derived: EnrichQuery = {}
   for (const [apolloKey, fieldId] of Object.entries(mapping)) {
@@ -565,8 +565,8 @@ export async function enrichInstanceForRequest(req: Request) {
       connectionId: connection.id,
       action: "enrich",
       status: "error",
-      subjectKind: "instance",
-      subjectId: instanceId,
+      subjectKind: "recordVersion",
+      subjectId: recordVersionId,
       detail: { error: String(error) },
     })
     return json(
@@ -590,15 +590,15 @@ export async function enrichInstanceForRequest(req: Request) {
   if (fields.length === 0)
     return json({ ok: true, matched: true, updated: false, cached, fields: [], enrichment: person })
 
-  const updRes = await runEngine(scope, updateInstance(instanceId, instRes.data.version, patch))
+  const updRes = await runEngine(scope, updateRecord(recordVersionId, instRes.data.version, patch))
   if (!updRes.ok) return json({ error: updRes.code, detail: updRes.detail }, updRes.status)
   await audit({
     orgId: org.orgId,
     userId: org.actor,
     connectionId: connection.id,
     action: "enrich",
-    subjectKind: "instance",
-    subjectId: instanceId,
+    subjectKind: "recordVersion",
+    subjectId: recordVersionId,
     detail: { fields, cached },
   })
   return json({ ok: true, matched: true, updated: true, cached, fields, enrichment: person })

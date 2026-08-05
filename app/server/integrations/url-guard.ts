@@ -7,7 +7,7 @@ import { isIP } from "node:net"
  *
  * The threat: the runner fetches from inside the container, which in the prod
  * compose shares a network with Postgres and, on a cloud host, can reach the
- * instance metadata service (169.254.169.254 → IAM credentials). A scheme check
+ * record version metadata service (169.254.169.254 → IAM credentials). A scheme check
  * alone (`/^https?:/`) stops `file:` and nothing else.
  *
  * Two layers, because either alone is bypassable:
@@ -91,7 +91,7 @@ const isBlockedIPv6 = (raw: string): boolean => {
 }
 
 /**
- * The cloud instance metadata service: 169.254.169.254 on AWS, GCP, Azure and
+ * The cloud record version metadata service: 169.254.169.254 on AWS, GCP, Azure and
  * DigitalOcean, plus fd00:ec2::254 on IPv6-only EC2.
  *
  * Split out from `isBlockedIPv4`/`isBlockedIPv6` because this subset is refused

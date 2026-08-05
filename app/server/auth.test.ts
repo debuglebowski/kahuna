@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs"
 import path from "node:path"
 import { Effect } from "effect"
 import { describe, expect, it } from "vitest"
-import { ConceptService, FieldService, InstanceService } from "#engine"
+import { ConceptService, FieldService, RecordService } from "#engine"
 import { auth, ORG_SCOPED_TABLES } from "./auth"
 import { createUserDirect } from "./provision"
 import { runEngineOrThrow, systemScope } from "./runtime"
@@ -55,18 +55,18 @@ describe("tier 0 (BetterAuth) + scoping", () => {
     if (result.ok) expect(result.data.length).toBe(8)
   })
 
-  it("org A cannot see org B's instances (404 via session scope)", async () => {
+  it("org A cannot see org B's recordVersions (404 via session scope)", async () => {
     const a = await signUpAndOrg()
     const b = await signUpAndOrg()
     await runEngineOrThrow(systemScope(a.orgId, "system"), seedKingsmaker)
     const created = await runEngineOrThrow(
       systemScope(a.orgId, "system"),
-      Effect.flatMap(InstanceService, (i) => i.create({ conceptName: "Company", fields: {} })),
+      Effect.flatMap(RecordService, (i) => i.create({ conceptName: "Company", fields: {} })),
     )
     const reqB = new Request("http://localhost/x", { headers: b.headers })
     const res = await runScoped(
       reqB,
-      Effect.flatMap(InstanceService, (i) => i.get(created.id)),
+      Effect.flatMap(RecordService, (i) => i.get(created.id)),
     )
     expect(res.ok).toBe(false)
     if (!res.ok) expect(res.status).toBe(404)
@@ -77,7 +77,7 @@ describe("tier 0 (BetterAuth) + scoping", () => {
     await runEngineOrThrow(systemScope(orgId, "system"), seedKingsmaker)
     await runEngineOrThrow(
       systemScope(orgId, "system"),
-      Effect.flatMap(InstanceService, (i) => i.create({ conceptName: "Company", fields: {} })),
+      Effect.flatMap(RecordService, (i) => i.create({ conceptName: "Company", fields: {} })),
     )
     const before = await runEngineOrThrow(systemScope(orgId, "system"), listConcepts)
     expect(before.length).toBe(8)
@@ -92,28 +92,28 @@ describe("tier 0 (BetterAuth) + scoping", () => {
     const a = await signUpAndOrg()
     await runEngineOrThrow(systemScope(a.orgId, "system"), seedKingsmaker)
     // Resolve the seeded Agreement.status field id, then create a draft agreement.
-    const { instanceId, statusId } = await runEngineOrThrow(
+    const { recordVersionId, statusId } = await runEngineOrThrow(
       systemScope(a.orgId, "system"),
       Effect.gen(function* () {
         const concepts = yield* ConceptService
         const fieldSvc = yield* FieldService
-        const instances = yield* InstanceService
+        const recordVersions = yield* RecordService
         const agreement = yield* concepts.getByName("Agreement")
         const fs = yield* fieldSvc.listFields(agreement.id)
         const statusId = fs.find((f) => f.name === "status")!.id
-        const inst = yield* instances.create({
+        const inst = yield* recordVersions.create({
           conceptId: agreement.id,
           fields: { [statusId]: "draft" },
         })
-        return { instanceId: inst.id, statusId }
+        return { recordVersionId: inst.id, statusId }
       }),
     )
     const req = new Request("http://localhost/x", { headers: a.headers })
     // draft only allows -> active; jumping to "expired" is illegal.
     const res = await runScoped(
       req,
-      Effect.flatMap(InstanceService, (i) =>
-        i.transition({ instanceId, expectedVersion: 0, field: statusId, to: "expired" }),
+      Effect.flatMap(RecordService, (i) =>
+        i.transition({ recordVersionId, expectedVersion: 0, field: statusId, to: "expired" }),
       ),
     )
     expect(res.ok).toBe(false)

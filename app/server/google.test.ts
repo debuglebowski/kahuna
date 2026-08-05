@@ -50,7 +50,7 @@ const instanceStates = async (
   conceptId: string,
 ): Promise<Record<string, unknown>[]> => {
   const r = await pool.query<{ state: Record<string, unknown> }>(
-    `SELECT state FROM instances WHERE org_id = $1 AND concept_id = $2 AND archived_at IS NULL`,
+    `SELECT state FROM record_versions WHERE org_id = $1 AND concept_id = $2 AND archived_at IS NULL`,
     [orgId, conceptId],
   )
   return r.rows.map((row) => row.state)
@@ -144,7 +144,7 @@ describe("Google integration", () => {
       }
       if (url.includes("/calendar/v3/calendars/primary/events")) {
         return okJson({
-          items: [
+          records: [
             {
               id: "event-1",
               summary: "Planning",
@@ -203,7 +203,7 @@ describe("Google integration", () => {
       const url = String(input)
       if (url.includes("/calendar/v3/calendars/primary/events")) {
         return okJson({
-          items: [
+          records: [
             {
               id: "event-1",
               summary: title,
@@ -247,14 +247,14 @@ describe("Google integration", () => {
     const states1 = await instanceStates(actor.orgId, conceptId)
     expect(states1).toHaveLength(1)
     const ev = states1.find((s) => s[fId] === "event-1")
-    if (!ev) throw new Error("event-1 instance missing")
+    if (!ev) throw new Error("event-1 recordVersion missing")
     expect(ev[fTitle]).toBe("Planning")
     expect(ev[fLocation]).toBe("Room A")
     expect(ev[fStarts]).toBeTruthy()
-    // Raw payload / attendees are NOT written into instance fields (only typed columns).
+    // Raw payload / attendees are NOT written into record version fields (only typed columns).
     expect(Object.keys(ev).every((k) => Object.values(fieldMap).includes(k))).toBe(true)
 
-    // Second sync with a changed title: same instance count, updated in place.
+    // Second sync with a changed title: same record version count, updated in place.
     title = "Replanning"
     await syncGoogleConnection(connection.id)
     const states2 = await instanceStates(actor.orgId, conceptId)
@@ -326,13 +326,13 @@ describe("Google integration", () => {
     const states1 = await instanceStates(actor.orgId, conceptId)
     expect(states1).toHaveLength(1)
     const em = states1.find((s) => s[fId] === "t1")
-    if (!em) throw new Error("thread t1 instance missing")
+    if (!em) throw new Error("thread t1 recordVersion missing")
     expect(em[fSubject]).toBe("Welcome")
     expect(em[fFrom]).toBe("Ada <ada@test.dev>")
     // Metadata only — no body/snippet field is written (only mapped columns).
     expect(Object.keys(em).every((k) => Object.values(fieldMap).includes(k))).toBe(true)
 
-    // Second sync with a changed subject: same instance count, updated in place.
+    // Second sync with a changed subject: same record version count, updated in place.
     subject = "Re: Welcome"
     await syncGoogleConnection(connection.id)
     const states2 = await instanceStates(actor.orgId, conceptId)
@@ -371,7 +371,7 @@ describe("Google integration", () => {
       const url = String(input)
       if (url.includes("/calendar/v3/calendars/primary/events")) {
         calendarCalls += 1
-        return okJson({ items: [], nextSyncToken: "sync-push" })
+        return okJson({ records: [], nextSyncToken: "sync-push" })
       }
       return new Response("unexpected", { status: 500 })
     })

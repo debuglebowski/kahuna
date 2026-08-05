@@ -134,7 +134,7 @@ const sseFrame = (env: EventEnvelope): string =>
  * behind them are gated per request regardless, so this is a metadata-leak bound,
  * never an access decision.
  *
- * Instance envelopes carry `conceptId`, so a concept-level Set covers them. Envelopes
+ * Record version envelopes carry `conceptId`, so a concept-level Set covers them. Envelopes
  * with NO concept (labels, task statuses, org-level config) pass: they name no
  * restricted material. RECORD-level filtering is deliberately not attempted here —
  * that would need a per-envelope record read on the LISTEN fiber's hot path; the
@@ -165,7 +165,7 @@ const visibilityFor = async (
 /** How often a live subscriber's concept snapshot is rebuilt. */
 const VISIBILITY_REFRESH_MS = 30_000
 
-/** Replay missed events (id > since) for one org; conceptName resolved for instance events. */
+/** Replay missed events (id > since) for one org; conceptName resolved for record version events. */
 const replayEventsSince = (orgId: string, since: number) =>
   Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
@@ -182,8 +182,8 @@ const replayEventsSince = (orgId: string, since: number) =>
       SELECT e.id, e.occurred_at, e.subject_kind, e.subject_id, e.event_type, e.actor,
              c.id AS concept_id, c.name AS concept
       FROM events e
-      LEFT JOIN instances i
-        ON e.subject_kind = 'instance' AND i.id = e.subject_id AND i.org_id = e.org_id
+      LEFT JOIN record_versions i
+        ON e.subject_kind = 'recordVersion' AND i.id = e.subject_id AND i.org_id = e.org_id
       LEFT JOIN concepts c ON c.id = i.concept_id AND c.org_id = e.org_id
       WHERE e.org_id = ${orgId} AND e.id > ${since}
       ORDER BY e.id ASC

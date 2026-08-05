@@ -33,7 +33,7 @@ import { resolveAdmin, resolveOrg } from "./session"
  *
  * KM wiring is DEFERRED (same discipline as PostHog/Linear): no automation
  * "post to Slack" action, and slash commands ack generically rather than
- * creating/looking up instances against specific concepts.
+ * creating/looking up record versions against specific concepts.
  */
 
 const SLACK_AUTHORIZE_URL = "https://slack.com/oauth/v2/authorize"
@@ -952,7 +952,7 @@ type SlackEventBody = {
  * Events API receiver. Verifies the signature, answers the one-time
  * `url_verification` challenge, then dedups by `event_id` (Slack retries
  * un-acked deliveries) and ignores the bot's own messages so automations can't
- * loop. KM mapping (mention → activity/task on the matched instance) is
+ * loop. KM mapping (mention → activity/task on the matched record version) is
  * DEFERRED — events are recorded + audited only.
  */
 export async function handleSlackEvents(req: Request) {
@@ -1009,7 +1009,7 @@ export async function handleSlackEvents(req: Request) {
 /**
  * Slash-command receiver. Slack POSTs `application/x-www-form-urlencoded` and
  * expects a 200 within 3s. Verifies the signature, then acks with an ephemeral
- * reply. Verb→instance create/lookup against concepts is DEFERRED (kept generic).
+ * reply. Verb→record version create/lookup against concepts is DEFERRED (kept generic).
  */
 export async function handleSlashCommand(req: Request) {
   const rawText = await req.text().catch(() => "")

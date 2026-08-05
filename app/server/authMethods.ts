@@ -7,7 +7,7 @@ import { db } from "./db"
  * `auth.ts` need to enforce them.
  *
  * This lives apart from both `auth.ts` and `sso.ts` on purpose: `auth.ts` needs
- * it to build the BetterAuth instance, and `sso.ts` needs `auth.api` — so the
+ * it to build the BetterAuth record version, and `sso.ts` needs `auth.api` — so the
  * shared reads have to sit in a module that imports NEITHER, or the three form
  * a cycle. Nothing here reaches for a session; callers supply ids.
  */

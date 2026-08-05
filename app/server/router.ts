@@ -6,7 +6,7 @@ import {
   apolloStatus,
   connectApollo,
   disconnectApollo,
-  enrichInstanceForRequest,
+  enrichRecordForRequest,
   importForRequest,
   searchForRequest,
 } from "./apollo"
@@ -279,7 +279,7 @@ export const handleApi = async (req: Request): Promise<Response | null> => {
     if (seg[3] === "connect" && m === "POST") return connectApollo(req)
     if (seg[3] === "status" && m === "GET") return apolloStatus(req)
     if (seg[3] === "disconnect" && m === "POST") return disconnectApollo(req)
-    if (seg[3] === "enrich" && m === "POST") return enrichInstanceForRequest(req)
+    if (seg[3] === "enrich" && m === "POST") return enrichRecordForRequest(req)
     if (seg[3] === "search" && m === "POST") return searchForRequest(req)
     if (seg[3] === "import" && m === "POST") return importForRequest(req)
   }
@@ -288,7 +288,7 @@ export const handleApi = async (req: Request): Promise<Response | null> => {
     if (seg[3] === "connect" && m === "POST") return connectClay(req)
     if (seg[3] === "status" && m === "GET") return clayStatus(req)
     if (seg[3] === "disconnect" && m === "POST") return disconnectClay(req)
-    // Push an instance into the Clay table (async round-trip; enriched data
+    // Push a record version into the Clay table (async round-trip; enriched data
     // returns via the callback below).
     if (seg[3] === "enrich" && m === "POST") return enrichClayForRequest(req)
     // Clay → KM enriched callback. No session: routed by ?cid= and verified by
@@ -296,11 +296,11 @@ export const handleApi = async (req: Request): Promise<Response | null> => {
     if (seg[3] === "callback" && m === "POST") return handleClayCallback(req)
   }
 
-  // Multipart upload onto an item lineage, or into a Files widget's own bucket
+  // Multipart upload onto a record, or into a Files widget's own bucket
   // (reads/mutations of the metadata are typed RPCs — listFiles/archiveFile/
   // restoreFile/deleteFile/purgeBucket).
-  if (seg[1] === "items" && seg[2] && seg[3] === "attachments" && m === "POST")
-    return uploadRoute(req, { itemId: seg[2] })
+  if (seg[1] === "records" && seg[2] && seg[3] === "attachments" && m === "POST")
+    return uploadRoute(req, { recordId: seg[2] })
   if (seg[1] === "buckets" && seg[2] && seg[3] === "attachments" && m === "POST")
     return uploadRoute(req, {
       bucketId: seg[2],

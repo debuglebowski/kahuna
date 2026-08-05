@@ -14,14 +14,14 @@ import {
   type EngineEvent,
   type EventEnvelope,
   FieldService,
-  type Instance,
-  InstanceService,
   isAutomationActor,
   LABELS_KEY,
   nextRunAfter,
   OrgContext,
   QueryService,
   RATE_CAP_PER_MIN,
+  RecordService,
+  type RecordVersion,
 } from "#engine"
 import { matchInstance } from "../src/lib/conditions"
 import { publicConnectorError } from "./integrations/errors"
@@ -31,7 +31,7 @@ import {
   commentOnLinearIssue,
   createLinearIssue,
   linearConnectionForOrg,
-  linearIssueIdForInstance,
+  linearIssueIdForRecordVersion,
   linearUserIdForEmail,
   updateLinearIssue,
 } from "./linear"
@@ -60,11 +60,11 @@ import { tap } from "./stream"
 /** Which event types can start a run, per trigger kind. A trigger is a FILTER
  *  over the event log — this map is the whole of that filter's first stage. */
 const TRIGGER_EVENTS: Record<string, ReadonlyArray<string>> = {
-  "record.created": ["InstanceCreated"],
+  "record.created": ["RecordVersionCreated"],
   // An amendment to a published version folds exactly like an update, so both
   // tags mean "the record changed" to an automation.
-  "record.changed": ["InstanceUpdated", "VersionAmended"],
-  "record.archived": ["InstanceArchived", "InstanceDeleted"],
+  "record.changed": ["RecordVersionUpdated", "VersionAmended"],
+  "record.archived": ["RecordVersionArchived", "RecordVersionDeleted"],
   "version.published": ["VersionPublished"],
   "record.band.changed": ["ComputedBandChanged"],
   "task.created": ["TaskCreated"],
@@ -82,7 +82,7 @@ const actorFor = (automationId: string) => `${AUTOMATION_ACTOR_PREFIX}${automati
 // ── templates ──────────────────────────────────────────────────────────────────
 
 export interface TemplateCtx {
-  readonly record?: Instance | null
+  readonly record?: RecordVersion | null
   readonly title?: string | null
   readonly url?: string | null
   readonly actor?: string | null
@@ -235,10 +235,10 @@ export const resolveTransition = (input: {
 
 // ── action execution ───────────────────────────────────────────────────────────
 
-/** Which instance state a `setField`/label action should write to, plus the
+/** Which record version state a `setField`/label action should write to, plus the
  *  version to pass as the optimistic-concurrency check. */
 interface ActOn {
-  readonly instance: Instance
+  readonly recordVersion: RecordVersion
   readonly conceptId: string
 }
 
@@ -246,7 +246,7 @@ interface ActOn {
  * Turn an engine failure into a run-log note a human can act on.
  *
  * THE POINT: once an automation is a scoped actor, a write its role does not cover
- * fails as `InstanceNotFound` — the engine deliberately reports "not found" rather
+ * fails as `RecordVersionNotFound` — the engine deliberately reports "not found" rather
  * than "forbidden" so a caller cannot probe for existence. That is right for a user
  * request and useless in a run log, where it is indistinguishable from "the record was
  * deleted mid-run".
@@ -258,7 +258,7 @@ interface ActOn {
  */
 export const noteForFailure = (e: unknown, subject: ActOn | null): string => {
   const tag = (e as { _tag?: string })?._tag
-  if (subject && (tag === "InstanceNotFound" || tag === "ItemNotFound"))
+  if (subject && (tag === "RecordVersionNotFound" || tag === "RecordNotFound"))
     return "forbidden: this automation's role does not cover that record"
   return String(tag ?? e)
 }
@@ -321,9 +321,9 @@ const linearTarget = (orgId: string, subject: ActOn | null) =>
       if (!subject) return { ok: false, note: "no record" }
       const conn = await linearConnectionForOrg(orgId)
       if (!conn) return { ok: false, note: "Linear not connected" }
-      const issueId = await linearIssueIdForInstance(conn, {
+      const issueId = await linearIssueIdForRecordVersion(conn, {
         conceptId: subject.conceptId,
-        state: subject.instance.state as Record<string, unknown>,
+        state: subject.recordVersion.state as Record<string, unknown>,
       })
       if (!issueId) return { ok: false, note: "not a Linear ticket" }
       return { ok: true, conn, issueId }
@@ -362,19 +362,19 @@ const runAction = (
 ): Effect.Effect<
   ActionRun,
   never,
-  OrgContext | InstanceService | AnnotationService | PgClient.PgClient
+  OrgContext | RecordService | AnnotationService | PgClient.PgClient
 > =>
   Effect.gen(function* () {
-    const instances = yield* InstanceService
+    const recordVersions = yield* RecordService
     const annotations = yield* AnnotationService
     const subject = ctx.subject
     switch (action.kind) {
       case "setField": {
         if (!subject) return { kind: action.kind, ok: false, note: "no record" }
         const value = renderDeep(action.value, ctx.template)
-        yield* instances.update({
-          instanceId: subject.instance.id,
-          expectedVersion: subject.instance.version,
+        yield* recordVersions.update({
+          recordVersionId: subject.recordVersion.id,
+          expectedVersion: subject.recordVersion.version,
           patch: { [action.fieldId]: value },
         })
         return { kind: action.kind, ok: true, note: `set ${action.fieldId}` }
@@ -382,8 +382,8 @@ const runAction = (
       case "addLabel":
       case "removeLabel": {
         if (!subject) return { kind: action.kind, ok: false, note: "no record" }
-        const current = Array.isArray(subject.instance.state[LABELS_KEY])
-          ? (subject.instance.state[LABELS_KEY] as string[])
+        const current = Array.isArray(subject.recordVersion.state[LABELS_KEY])
+          ? (subject.recordVersion.state[LABELS_KEY] as string[])
           : []
         const next =
           action.kind === "addLabel"
@@ -395,9 +395,9 @@ const runAction = (
         if (next.length === current.length && action.kind === "addLabel") {
           return { kind: action.kind, ok: true, note: "already set" }
         }
-        yield* instances.update({
-          instanceId: subject.instance.id,
-          expectedVersion: subject.instance.version,
+        yield* recordVersions.update({
+          recordVersionId: subject.recordVersion.id,
+          expectedVersion: subject.recordVersion.version,
           patch: { [LABELS_KEY]: next },
         })
         return { kind: action.kind, ok: true }
@@ -409,10 +409,10 @@ const runAction = (
             ? null
             : new Date(Date.now() + action.dueInDays * 86_400_000).toISOString()
         // Tasks hang off the ITEM lineage (they survive re-publishes), which is
-        // why this is itemId and not the instance id.
+        // why this is recordId and not the record version id.
         const onRecord = action.onRecord !== false
         const task = yield* annotations.createTask({
-          subjectId: onRecord ? (subject?.instance.itemId ?? null) : null,
+          subjectId: onRecord ? (subject?.recordVersion.recordId ?? null) : null,
           title: title || "Untitled task",
           statusId: action.statusId ?? null,
           priorityId: action.priorityId ?? null,
@@ -424,14 +424,14 @@ const runAction = (
       }
       case "createRecord": {
         const fields = renderDeep(action.fields ?? {}, ctx.template) as Record<string, unknown>
-        const created = yield* instances.create({ conceptId: action.conceptId, fields })
+        const created = yield* recordVersions.create({ conceptId: action.conceptId, fields })
         return { kind: action.kind, ok: true, note: `record ${created.id.slice(0, 8)}` }
       }
       case "archiveRecord": {
         if (!subject) return { kind: action.kind, ok: false, note: "no record" }
-        yield* instances.archive({
-          instanceId: subject.instance.id,
-          expectedVersion: subject.instance.version,
+        yield* recordVersions.archive({
+          recordVersionId: subject.recordVersion.id,
+          expectedVersion: subject.recordVersion.version,
         })
         return { kind: action.kind, ok: true }
       }
@@ -451,7 +451,7 @@ const runAction = (
         const extra = renderDeep(action.body ?? {}, ctx.template) as Record<string, unknown>
         const payload = {
           automationId: ctx.automationId,
-          recordId: subject?.instance.id ?? null,
+          recordId: subject?.recordVersion.id ?? null,
           conceptId: subject?.conceptId ?? null,
           at: new Date().toISOString(),
           ...extra,
@@ -682,7 +682,7 @@ const executeRun = (input: {
     // for the transition ops. No subject (a schedule with no match, or an event we
     // couldn't resolve) and a non-empty condition set = skip.
     if (subject) {
-      const matched = matchInstance(subject.instance, automation.conditions, {
+      const matched = matchInstance(subject.recordVersion, automation.conditions, {
         match: automation.match,
         prev: input.prevState,
       })
@@ -719,25 +719,27 @@ const executeRun = (input: {
         .listFields(subject.conceptId)
         .pipe(Effect.catchAll(() => Effect.succeed([])))
       for (const f of defs) {
-        const v = subject.instance.state[f.id]
+        const v = subject.recordVersion.state[f.id]
         if (v != null) fieldValues[f.id] = v
       }
       const titleFieldId = concept?.titleFieldId ?? null
       if (titleFieldId) {
-        const v = subject.instance.state[titleFieldId]
+        const v = subject.recordVersion.state[titleFieldId]
         title = v == null ? null : String(v)
       }
       if (!title) {
         // Fall back to the first non-empty text-ish value, then the id — mirrors
         // the client's instanceLabel fallback closely enough for a message.
-        const first = defs.find((f) => subject.instance.state[f.id] != null)
-        title = first ? String(subject.instance.state[first.id]) : subject.instance.id.slice(0, 8)
+        const first = defs.find((f) => subject.recordVersion.state[f.id] != null)
+        title = first
+          ? String(subject.recordVersion.state[first.id])
+          : subject.recordVersion.id.slice(0, 8)
       }
     }
     const template: TemplateCtx = {
-      record: subject?.instance ?? null,
+      record: subject?.recordVersion ?? null,
       title,
-      url: subject ? `/records/${subject.instance.id}` : null,
+      url: subject ? `/records/${subject.recordVersion.id}` : null,
       actor: actorFor(automation.id),
       now: new Date(),
       from: input.triggerFrom,
@@ -789,7 +791,7 @@ const executeRun = (input: {
       .appendRanEvent({
         automationId: automation.id,
         name: automation.name,
-        subjectId: subject?.instance.id ?? null,
+        subjectId: subject?.recordVersion.id ?? null,
         conceptId: subject?.conceptId ?? null,
         status,
         actions: outcomes.map((o) => `${o.kind}${o.note ? `: ${o.note}` : ""}`),
@@ -848,7 +850,7 @@ export const handleEnvelope = (env: EventEnvelope) =>
       const run = yield* automations.claimRun({
         automationId: automation.id,
         eventId: env.id,
-        subjectId: env.kind === "instance" ? env.subjectId : null,
+        subjectId: env.kind === "recordVersion" ? env.subjectId : null,
       })
       if (!run) continue
 
@@ -876,7 +878,7 @@ export const handleEnvelope = (env: EventEnvelope) =>
         trigger: automation.trigger,
         payload,
         prevState: resolved?.prevState ?? null,
-        nextState: resolved?.subject.instance.state ?? null,
+        nextState: resolved?.subject.recordVersion.state ?? null,
       })
       yield* executeRun({
         automation,
@@ -918,14 +920,14 @@ export const handleEnvelope = (env: EventEnvelope) =>
 /** Load the acted-on record and its pre-event state (for the transition ops). */
 const resolveSubject = (env: EventEnvelope) =>
   Effect.gen(function* () {
-    if (env.kind !== "instance") return null
-    const instances = yield* InstanceService
-    const instance = yield* instances.get(env.subjectId)
-    const prev = yield* instances
+    if (env.kind !== "recordVersion") return null
+    const recordVersions = yield* RecordService
+    const recordVersion = yield* recordVersions.get(env.subjectId)
+    const prev = yield* recordVersions
       .getAsOf(env.subjectId, env.id - 1)
       .pipe(Effect.catchAll(() => Effect.succeed(null)))
     return {
-      subject: { instance, conceptId: instance.conceptId } satisfies ActOn,
+      subject: { recordVersion, conceptId: recordVersion.conceptId } satisfies ActOn,
       prevState: prev?.state ?? null,
     }
   })
@@ -973,7 +975,7 @@ export const startAutomationRunner = (): void => {
  * Claim every due schedule automation and run it. Modelled on `decay-tick.ts`.
  *
  * The claim is a single atomic `UPDATE … WHERE next_run_at <= now() RETURNING`,
- * so two server instances can never both take the same row: whoever's UPDATE
+ * so two server record versions can never both take the same row: whoever's UPDATE
  * lands first owns it, and the other sees no rows.
  */
 const scheduleTickOnce = Effect.gen(function* () {
@@ -1018,8 +1020,8 @@ const runScheduled = (orgId: string, automationId: string) =>
     // With no concept the rule has no population to sweep; run it once with no
     // subject so a "notify me weekly" automation still works.
     const rows = conceptId
-      ? yield* query.findInstances({ conceptId, limit: 1000 })
-      : ([] as ReadonlyArray<Instance>)
+      ? yield* query.findRecords({ conceptId, limit: 1000 })
+      : ([] as ReadonlyArray<RecordVersion>)
 
     if (!conceptId) {
       const run = yield* automations.claimRun({ automationId, eventId: null, subjectId: null })
@@ -1028,10 +1030,10 @@ const runScheduled = (orgId: string, automationId: string) =>
       return
     }
 
-    for (const instance of rows) {
+    for (const recordVersion of rows) {
       // A scheduled run has no "before" state — transition ops can't hold, which
       // is correct: nothing changed, the clock merely advanced.
-      const matched = matchInstance(instance, automation.conditions, {
+      const matched = matchInstance(recordVersion, automation.conditions, {
         match: automation.match,
         prev: null,
       })
@@ -1039,13 +1041,13 @@ const runScheduled = (orgId: string, automationId: string) =>
       const run = yield* automations.claimRun({
         automationId,
         eventId: null,
-        subjectId: instance.id,
+        subjectId: recordVersion.id,
       })
       if (!run) continue
       yield* executeRun({
         automation,
         runId: run.id,
-        subject: { instance, conceptId: instance.conceptId },
+        subject: { recordVersion, conceptId: recordVersion.conceptId },
         prevState: null,
       }).pipe(Effect.catchAllCause(() => Effect.void))
     }
@@ -1088,7 +1090,7 @@ export const dryRun = (input: { readonly automation: Automation; readonly limit?
         note: "This automation is not scoped to a concept, so there is nothing to preview.",
       }
     }
-    const rows = yield* query.findInstances({ conceptId, limit: input.limit ?? 100 })
+    const rows = yield* query.findRecords({ conceptId, limit: input.limit ?? 100 })
     // Transition ops need a before-state that a dry run doesn't have, so they
     // can't hold here. Say so rather than silently reporting 0 matches.
     const hasTransitionOp = automation.conditions.some(

@@ -1,15 +1,15 @@
 import { PgClient } from "@effect/sql-pg"
 import { Duration, Effect, Schedule } from "effect"
-import { InstanceService, OrgContext, QueryService } from "#engine"
+import { OrgContext, QueryService, RecordService } from "#engine"
 import { AppRuntime, systemScope } from "./runtime"
 
 /**
  * Server decay tick: periodically detect time-based decay band crossings and
- * turn them into real `ComputedBandChanged` events (via InstanceService.
+ * turn them into real `ComputedBandChanged` events (via RecordService.
  * recomputeBands), so they fan out over the SSE pipeline to every user and
  * become an automation hook. Single in-process scheduler, supervised.
  *
- * recomputeBands no-ops on instances whose concept has no decay field, so the
+ * recomputeBands no-ops on record versions whose concept has no decay field, so the
  * scan narrows to concepts that declare one — discovered generically from the
  * field defs (no hardcoded concept names). Bands are day-resolution, so an
  * hourly default is plenty.
@@ -21,16 +21,16 @@ const runForOrg = (orgId: string) =>
   Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
     const query = yield* QueryService
-    const instances = yield* InstanceService
+    const recordVersions = yield* RecordService
     // Every concept that declares a decay computed field, whatever it's named.
     const decayConcepts = yield* sql<{ readonly concept_id: string }>`
       SELECT DISTINCT concept_id FROM fields
       WHERE org_id = ${orgId} AND kind = 'computed' AND (config->>'computedKind') = 'decay'`
     for (const { concept_id } of decayConcepts) {
-      const rows = yield* query.findInstances({ conceptId: concept_id, limit: 1000 })
+      const rows = yield* query.findRecords({ conceptId: concept_id, limit: 1000 })
       const active = rows.filter((r) => r.state.status !== "won" && r.state.status !== "lost")
       for (const r of active) {
-        yield* instances.recomputeBands(r.id).pipe(Effect.catchAllCause(() => Effect.void))
+        yield* recordVersions.recomputeBands(r.id).pipe(Effect.catchAllCause(() => Effect.void))
       }
     }
   }).pipe(
@@ -42,7 +42,7 @@ const runForOrg = (orgId: string) =>
 const tickOnce = Effect.gen(function* () {
   const sql = yield* PgClient.PgClient
   const orgs = yield* sql<{ org_id: string }>`
-    SELECT DISTINCT org_id FROM instances WHERE archived_at IS NULL`
+    SELECT DISTINCT org_id FROM record_versions WHERE archived_at IS NULL`
   yield* Effect.forEach(orgs, (o) => runForOrg(o.org_id), { discard: true })
 })
 

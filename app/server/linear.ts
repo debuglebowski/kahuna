@@ -12,8 +12,8 @@ import {
   type ProvisionConceptSpec,
   type ProvisionedConcept,
   provisionConcept,
-  upsertInstanceByExternalId,
-} from "./integrations/instances"
+  upsertRecordVersionByExternalId,
+} from "./integrations/records"
 import { connectionForOrgIn } from "./integrations/rows"
 import { systemScope } from "./runtime"
 import { resolveAdmin, resolveOrg } from "./session"
@@ -455,7 +455,7 @@ async function ensureTicketConcept(
   return provisioned
 }
 
-/** Map a Linear issue node to a KM instance patch keyed by field id, via the
+/** Map a Linear issue node to a KM record version patch keyed by field id, via the
  *  stored field map. Only typed columns — never the raw payload. */
 const ticketFieldsFor = (
   node: LinearIssueNode,
@@ -480,7 +480,7 @@ const ticketFieldsFor = (
 
 /** Mirror one issue into the org's Ticket concept (idempotent, keyed by
  *  `identifier`). No-ops if the issue has no identifier to key on. */
-async function upsertTicketInstance(
+async function upsertTicketRecordVersion(
   conn: typeof linearConnection.$inferSelect,
   ticket: ProvisionedConcept,
   node: LinearIssueNode,
@@ -488,7 +488,7 @@ async function upsertTicketInstance(
   const identifierFieldId = ticket.fieldMap.identifier
   const identifier = node.identifier
   if (!identifierFieldId || !identifier) return
-  await upsertInstanceByExternalId(scopeOf(conn), {
+  await upsertRecordVersionByExternalId(scopeOf(conn), {
     conceptId: ticket.conceptId,
     externalFieldId: identifierFieldId,
     externalValue: identifier,
@@ -520,7 +520,7 @@ export async function syncLinearConnection(connectionId: string) {
   const token = tokenFor(connection)
   try {
     // Provision (or reuse) the org's Ticket concept BEFORE the first upsert, so
-    // synced issues land as instances the generic widgets can render.
+    // synced issues land as record versions the generic widgets can render.
     const ticket = await ensureTicketConcept(connection)
     let after: string | null = null
     let pages = 0
@@ -533,7 +533,7 @@ export async function syncLinearConnection(connectionId: string) {
       } = await linearGraphQL(token, ISSUES_QUERY, { after })
       for (const node of data.issues?.nodes ?? []) {
         await upsertIssue(connection, node)
-        await upsertTicketInstance(connection, ticket, node)
+        await upsertTicketRecordVersion(connection, ticket, node)
       }
       after = data.issues?.pageInfo?.hasNextPage ? (data.issues.pageInfo.endCursor ?? null) : null
       pages += 1
@@ -558,7 +558,7 @@ export async function syncLinearConnection(connectionId: string) {
   }
 }
 
-/** Synced issues for the active org — surfaceable on instances/widgets later. */
+/** Synced issues for the active org — surfaceable on record versions/widgets later. */
 export async function listLinearIssues(req: Request) {
   const org = await resolveOrg(req)
   if (!org.ok) return json({ error: org.code }, org.status)
@@ -801,20 +801,20 @@ export async function linearUserIdForEmail(
  * mirrored ticket.
  *
  * TWO HOPS, because the mirror and the API disagree about identity: the Ticket
- * concept keys instances on the human `identifier` ("ENG-123"), while every
+ * concept keys record versions on the human `identifier` ("ENG-123"), while every
  * GraphQL mutation wants the uuid. `linear_issue` is the only place both live
  * side by side, and `linear_issue_org_identifier_idx` covers the lookup.
  */
-export async function linearIssueIdForInstance(
+export async function linearIssueIdForRecordVersion(
   conn: typeof linearConnection.$inferSelect,
-  instance: { readonly conceptId: string; readonly state: Record<string, unknown> },
+  recordVersion: { readonly conceptId: string; readonly state: Record<string, unknown> },
 ): Promise<string | null> {
   // Guard first: an automation can be pointed at any concept, and a non-ticket
   // record must read as "not applicable", not as a failed lookup.
-  if (!conn.conceptId || instance.conceptId !== conn.conceptId) return null
+  if (!conn.conceptId || recordVersion.conceptId !== conn.conceptId) return null
   const identifierFieldId = conn.fieldMap.identifier
   if (!identifierFieldId) return null
-  const identifier = instance.state[identifierFieldId]
+  const identifier = recordVersion.state[identifierFieldId]
   if (typeof identifier !== "string" || !identifier) return null
   const { rows } = await pool.query<{ linear_id: string }>(
     `SELECT linear_id FROM linear_issue WHERE org_id = $1 AND identifier = $2 LIMIT 1`,

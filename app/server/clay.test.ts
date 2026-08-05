@@ -15,7 +15,7 @@ import { db } from "./db"
 import { decryptToken, encryptToken } from "./integrations/crypto"
 import { createUserDirect } from "./provision"
 import { runEngineOrThrow, systemScope } from "./runtime"
-import { addField, createConcept, createInstance, getInstance, listFields } from "./use-cases"
+import { addField, createConcept, createRecord, getRecord, listFields } from "./use-cases"
 
 const cookieHeader = (res: Response): string =>
   (res.headers.get("set-cookie") ?? "")
@@ -218,7 +218,7 @@ describe("Clay integration", () => {
     const companyF = fid("Company")
     const inst = (await runEngineOrThrow(
       scope,
-      createInstance(conceptId, { [emailF]: "jane@acme.com" }),
+      createRecord(conceptId, { [emailF]: "jane@acme.com" }),
     )) as { id: string }
 
     let sentBody: Record<string, unknown> | null = null
@@ -231,7 +231,7 @@ describe("Clay integration", () => {
 
     const res = await enrichForRequest(
       post("enrich", actor, {
-        instanceId: inst.id,
+        recordVersionId: inst.id,
         mapping: { email: emailF, title: titleF, company: companyF },
       }),
     )
@@ -251,11 +251,11 @@ describe("Clay integration", () => {
 
     const [job] = await db.select().from(clayJob).where(eq(clayJob.id, payload.jobId)).limit(1)
     expect(job?.status).toBe("pending")
-    expect(job?.instanceId).toBe(inst.id)
+    expect(job?.recordVersionId).toBe(inst.id)
     expect(job?.conceptId).toBe(conceptId)
   })
 
-  it("callback matches the job and writes enriched fields back to the instance", async () => {
+  it("callback matches the job and writes enriched fields back to the recordVersion", async () => {
     const actor = await signUpAndOrg()
     const { connection, secret } = await seedConnection(actor.orgId, actor.userId)
     const { scope, conceptId, fid } = await setupConcept(actor.orgId, actor.userId)
@@ -264,7 +264,7 @@ describe("Clay integration", () => {
     const companyF = fid("Company")
     const inst = (await runEngineOrThrow(
       scope,
-      createInstance(conceptId, { [emailF]: "jane@acme.com" }),
+      createRecord(conceptId, { [emailF]: "jane@acme.com" }),
     )) as { id: string }
 
     // Record a pending enrich job directly (as pushRow would).
@@ -273,7 +273,7 @@ describe("Clay integration", () => {
       .values({
         orgId: actor.orgId,
         connectionId: connection.id,
-        instanceId: inst.id,
+        recordVersionId: inst.id,
         conceptId,
         mapping: { email: emailF, title: titleF, company: companyF },
         direction: "enrich",
@@ -292,7 +292,7 @@ describe("Clay integration", () => {
     expect(payload.matched).toBe(true)
     expect(payload.updated).toBe(true)
 
-    const updated = (await runEngineOrThrow(scope, getInstance(inst.id))) as {
+    const updated = (await runEngineOrThrow(scope, getRecord(inst.id))) as {
       state: Record<string, unknown>
     }
     expect(updated.state[titleF]).toBe("VP Sales")
@@ -304,20 +304,20 @@ describe("Clay integration", () => {
     expect(done?.completedAt).toBeTruthy()
   })
 
-  it("callback rejects a forged secret and leaves the instance untouched", async () => {
+  it("callback rejects a forged secret and leaves the recordVersion untouched", async () => {
     const actor = await signUpAndOrg()
     const { connection } = await seedConnection(actor.orgId, actor.userId, {
       secret: "real-secret",
     })
     const { scope, conceptId, fid } = await setupConcept(actor.orgId, actor.userId)
     const titleF = fid("Title")
-    const inst = (await runEngineOrThrow(scope, createInstance(conceptId, {}))) as { id: string }
+    const inst = (await runEngineOrThrow(scope, createRecord(conceptId, {}))) as { id: string }
     const [job] = await db
       .insert(clayJob)
       .values({
         orgId: actor.orgId,
         connectionId: connection.id,
-        instanceId: inst.id,
+        recordVersionId: inst.id,
         conceptId,
         mapping: { title: titleF },
       })
@@ -333,13 +333,13 @@ describe("Clay integration", () => {
     const payload = (await res.json()) as { error?: string }
     expect(payload.error).toBe("INVALID_SECRET")
 
-    const after = (await runEngineOrThrow(scope, getInstance(inst.id))) as {
+    const after = (await runEngineOrThrow(scope, getRecord(inst.id))) as {
       state: Record<string, unknown>
     }
     expect(after.state[titleF]).toBeUndefined()
   })
 
-  it("creates a net-new instance for an unmatched callback when configured", async () => {
+  it("creates a net-new recordVersion for an unmatched callback when configured", async () => {
     const actor = await signUpAndOrg()
     const { scope, conceptId, fid } = await setupConcept(actor.orgId, actor.userId)
     const titleF = fid("Title")
@@ -356,12 +356,16 @@ describe("Clay integration", () => {
       }),
     )
     expect(res.status).toBe(200)
-    const payload = (await res.json()) as { matched: boolean; created: boolean; instanceId: string }
+    const payload = (await res.json()) as {
+      matched: boolean
+      created: boolean
+      recordVersionId: string
+    }
     expect(payload.matched).toBe(false)
     expect(payload.created).toBe(true)
-    expect(payload.instanceId).toBeTruthy()
+    expect(payload.recordVersionId).toBeTruthy()
 
-    const created = (await runEngineOrThrow(scope, getInstance(payload.instanceId))) as {
+    const created = (await runEngineOrThrow(scope, getRecord(payload.recordVersionId))) as {
       state: Record<string, unknown>
     }
     expect(created.state[titleF]).toBe("Founder")
@@ -386,13 +390,13 @@ describe("Clay integration", () => {
     const { connection, secret } = await seedConnection(actor.orgId, actor.userId)
     const { scope, conceptId, fid } = await setupConcept(actor.orgId, actor.userId)
     const titleF = fid("Title")
-    const inst = (await runEngineOrThrow(scope, createInstance(conceptId, {}))) as { id: string }
+    const inst = (await runEngineOrThrow(scope, createRecord(conceptId, {}))) as { id: string }
     const [job] = await db
       .insert(clayJob)
       .values({
         orgId: actor.orgId,
         connectionId: connection.id,
-        instanceId: inst.id,
+        recordVersionId: inst.id,
         conceptId,
         mapping: { title: titleF },
       })
@@ -413,7 +417,7 @@ describe("Clay integration", () => {
     const secondPayload = (await second.json()) as { deduped?: boolean }
     expect(secondPayload.deduped).toBe(true)
 
-    const after = (await runEngineOrThrow(scope, getInstance(inst.id))) as {
+    const after = (await runEngineOrThrow(scope, getRecord(inst.id))) as {
       state: Record<string, unknown>
     }
     expect(after.state[titleF]).toBe("First")

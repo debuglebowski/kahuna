@@ -51,7 +51,7 @@ export const publicConnectorError = (error: unknown): string => {
   if (status === 401 || status === 403) {
     return `${provider} rejected the credentials. Re-connect the integration.`
   }
-  if (status === 404) return `${provider} could not find that item.`
+  if (status === 404) return `${provider} could not find that record.`
   if (status === 429) return `${provider} is rate limiting us. Try again shortly.`
   if (status !== null && status >= 500) return `${provider} is unavailable right now.`
   if (status !== null && status >= 400) return `${provider} rejected the request.`

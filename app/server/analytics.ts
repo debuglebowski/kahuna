@@ -346,7 +346,7 @@ const oneOf = <T extends string>(v: unknown, allowed: readonly T[]): T | null =>
 /**
  * `POST /api/integrations/analytics/query` — the widget's data endpoint. The
  * client resolves its record value before calling, so this stays provider-facing
- * and never reads the instance table.
+ * and never reads the record version table.
  */
 export async function queryAnalytics(req: Request) {
   const org = await resolveOrg(req)

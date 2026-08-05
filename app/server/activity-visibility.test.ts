@@ -13,19 +13,19 @@ import { auth } from "./auth"
 import { createUserDirect } from "./provision"
 import { runEngineOrThrow, sessionScope, systemScope } from "./runtime"
 import {
-  createInstance,
   createNote,
+  createRecord,
   createTask,
   getActivity,
   listFiles,
   listNotes,
   listTasks,
   setFieldVisibility,
-  updateInstance,
+  updateRecord,
 } from "./use-cases"
 
 /**
- * `getActivity` is a SEPARATE leak channel from `instances.state`: it ships raw
+ * `getActivity` is a SEPARATE leak channel from `record versions.state`: it ships raw
  * event payloads plus a server-reconstructed `previous` map of overwritten values.
  * Field masking has to reach both — and ONLY at the final map, because the fold
  * that builds `previous` must see complete payloads or a later event would report a
@@ -99,13 +99,13 @@ describe("activity feed field masking", () => {
     // is exactly what a mis-placed mask would corrupt.
     const rec = (await runEngineOrThrow(
       sys,
-      createInstance(schema.conceptId, { [schema.openId]: "Ada", [schema.secretId]: "100" }),
-    )) as { id: string; itemId: string; version: number }
+      createRecord(schema.conceptId, { [schema.openId]: "Ada", [schema.secretId]: "100" }),
+    )) as { id: string; recordId: string; version: number }
     const v2 = (await runEngineOrThrow(
       sys,
-      updateInstance(rec.id, rec.version, { [schema.openId]: "Grace", [schema.secretId]: "200" }),
+      updateRecord(rec.id, rec.version, { [schema.openId]: "Grace", [schema.secretId]: "200" }),
     )) as { version: number }
-    await runEngineOrThrow(sys, updateInstance(rec.id, v2.version, { [schema.secretId]: "300" }))
+    await runEngineOrThrow(sys, updateRecord(rec.id, v2.version, { [schema.secretId]: "300" }))
     await runEngineOrThrow(sys, setFieldVisibility(schema.secretId, "admin"))
 
     // The record's CONCEPT must be readable for the feed to resolve at all — that is
@@ -114,15 +114,15 @@ describe("activity feed field masking", () => {
     const feedFor = async (role: "member" | "owner") =>
       (await runEngineOrThrow(
         sessionScope(orgId, userId, role, seeing(userId, [schema.conceptId])),
-        getActivity(rec.itemId),
+        getActivity(rec.recordId),
       )) as ReadonlyArray<FeedEntry>
 
     // ── as a MEMBER ──────────────────────────────────────────────────────────
     const asMember = await feedFor("member")
-    const created = asMember.find((e) => e.eventType === "InstanceCreated")
+    const created = asMember.find((e) => e.eventType === "RecordVersionCreated")
     expect(created?.payload?.fields).toEqual({ [schema.openId]: "Ada" })
 
-    for (const ev of asMember.filter((e) => e.eventType === "InstanceUpdated")) {
+    for (const ev of asMember.filter((e) => e.eventType === "RecordVersionUpdated")) {
       expect(Object.keys((ev.payload?.patch ?? {}) as object)).not.toContain(schema.secretId)
       expect(Object.keys(ev.previous ?? {})).not.toContain(schema.secretId)
     }
@@ -132,26 +132,27 @@ describe("activity feed field masking", () => {
     // mask applied inside it would have left this undefined or wrong.
     const openEdit = asMember.find(
       (e) =>
-        e.eventType === "InstanceUpdated" && schema.openId in ((e.payload?.patch ?? {}) as object),
+        e.eventType === "RecordVersionUpdated" &&
+        schema.openId in ((e.payload?.patch ?? {}) as object),
     )
     expect(openEdit?.previous?.[schema.openId]).toBe("Ada")
 
     // ── as the OWNER, nothing is withheld ────────────────────────────────────
     const asOwner = await feedFor("owner")
-    const ownerCreated = asOwner.find((e) => e.eventType === "InstanceCreated")
+    const ownerCreated = asOwner.find((e) => e.eventType === "RecordVersionCreated")
     expect(ownerCreated?.payload?.fields).toEqual({
       [schema.openId]: "Ada",
       [schema.secretId]: "100",
     })
     const sawFinalHidden = asOwner
-      .filter((e) => e.eventType === "InstanceUpdated")
+      .filter((e) => e.eventType === "RecordVersionUpdated")
       .some((e) => ((e.payload?.patch ?? {}) as Record<string, unknown>)[schema.secretId] === "300")
     expect(sawFinalHidden).toBe(true)
     // …and the owner's `previous` for the hidden field spans the real history. The
     // feed is newest-first, so across the two edits the overwritten values are
     // "200" then "100" — assert the set rather than an order-dependent single hit.
     const ownerHiddenPrevs = asOwner
-      .filter((e) => e.eventType === "InstanceUpdated")
+      .filter((e) => e.eventType === "RecordVersionUpdated")
       .map((e) => e.previous?.[schema.secretId])
       .filter((v) => v !== undefined)
     expect(ownerHiddenPrevs).toEqual(expect.arrayContaining(["100", "200"]))
@@ -176,11 +177,11 @@ describe("subject-keyed reads on a restricted concept", () => {
         return yield* concepts.create({ name: `Vault ${randomUUID().slice(0, 6)}` })
       }),
     )
-    const rec = (await runEngineOrThrow(sys, createInstance(concept.id, {}))) as {
-      itemId: string
+    const rec = (await runEngineOrThrow(sys, createRecord(concept.id, {}))) as {
+      recordId: string
     }
-    await runEngineOrThrow(sys, createNote({ subjectId: rec.itemId, body: "the combination" }))
-    await runEngineOrThrow(sys, createTask({ subjectId: rec.itemId, title: "rotate it" }))
+    await runEngineOrThrow(sys, createNote({ subjectId: rec.recordId, body: "the combination" }))
+    await runEngineOrThrow(sys, createTask({ subjectId: rec.recordId, title: "rotate it" }))
 
     // "Restricted" is now the ABSENCE of a rule naming the concept, not a column on
     // it — so the member is given access first and it is taken away by dropping the
@@ -191,26 +192,27 @@ describe("subject-keyed reads on a restricted concept", () => {
 
     // While readable, the member can read them — so the assertions below are about
     // the restriction, not about a fixture they never had access to.
-    expect(((await runEngineOrThrow(withAccess, listNotes(rec.itemId))) as unknown[]).length).toBe(
-      1,
-    )
+    expect(
+      ((await runEngineOrThrow(withAccess, listNotes(rec.recordId))) as unknown[]).length,
+    ).toBe(1)
 
     // Typed loosely on purpose: the four effects have different success types, and
     // what is under test is that each REJECTS.
     const denied: ReadonlyArray<readonly [string, () => Promise<unknown>]> = [
-      ["listNotes", () => runEngineOrThrow(asMember, listNotes(rec.itemId))],
-      ["listTasks", () => runEngineOrThrow(asMember, listTasks({ subjectId: rec.itemId }))],
-      ["listFiles", () => runEngineOrThrow(asMember, listFiles({ itemId: rec.itemId }))],
-      ["getActivity", () => runEngineOrThrow(asMember, getActivity(rec.itemId))],
+      ["listNotes", () => runEngineOrThrow(asMember, listNotes(rec.recordId))],
+      ["listTasks", () => runEngineOrThrow(asMember, listTasks({ subjectId: rec.recordId }))],
+      ["listFiles", () => runEngineOrThrow(asMember, listFiles({ recordId: rec.recordId }))],
+      ["getActivity", () => runEngineOrThrow(asMember, getActivity(rec.recordId))],
     ]
     for (const [label, run] of denied) {
       await expect(run(), label).rejects.toThrow()
     }
 
     // The owner still reads all of them.
-    expect(((await runEngineOrThrow(asOwner, listNotes(rec.itemId))) as unknown[]).length).toBe(1)
+    expect(((await runEngineOrThrow(asOwner, listNotes(rec.recordId))) as unknown[]).length).toBe(1)
     expect(
-      ((await runEngineOrThrow(asOwner, listTasks({ subjectId: rec.itemId }))) as unknown[]).length,
+      ((await runEngineOrThrow(asOwner, listTasks({ subjectId: rec.recordId }))) as unknown[])
+        .length,
     ).toBe(1)
   })
 

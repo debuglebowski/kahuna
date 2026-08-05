@@ -18,13 +18,13 @@ import { type AuditEntry, writeAuditLog } from "./integrations/audit"
 import { decryptToken, encryptToken, secretMatches } from "./integrations/crypto"
 import { publicConnectorError } from "./integrations/errors"
 import { sleepBeforeRetry } from "./integrations/http"
+import { redirect, safeReturnTo } from "./integrations/oauth"
 import {
   type ProvisionConceptSpec,
   type ProvisionedConcept,
   provisionConcept,
-  upsertInstanceByExternalId,
-} from "./integrations/instances"
-import { redirect, safeReturnTo } from "./integrations/oauth"
+  upsertRecordVersionByExternalId,
+} from "./integrations/records"
 import { systemScope } from "./runtime"
 import { resolveOrg } from "./session"
 
@@ -508,7 +508,7 @@ async function ensureEventConcept(
   return provisioned
 }
 
-/** Map a Google event to an instance patch keyed by field id — typed columns
+/** Map a Google event to a record version patch keyed by field id — typed columns
  *  only, never the raw payload or attendees (PII minimization). */
 const eventFieldsFor = (
   event: CalendarEvent,
@@ -534,8 +534,8 @@ const eventFieldsFor = (
  *  projection existed (or banked behind a `syncToken`) were never re-fetched, so
  *  the concept stayed empty. Mirroring from the stored table closes that gap.
  *  Skips cancelled/deleted events, and skips events whose projected fields already
- *  match the live instance so an unchanged event doesn't append a redundant
- *  `InstanceUpdated` every sync (the event log would otherwise bloat at scale). */
+ *  match the live record version so an unchanged event doesn't append a redundant
+ *  `RecordVersionUpdated` every sync (the event log would otherwise bloat at scale). */
 async function mirrorCalendarEvents(
   conn: typeof googleConnection.$inferSelect,
   eventConcept: ProvisionedConcept,
@@ -549,7 +549,7 @@ async function mirrorCalendarEvents(
   )
   // Current projected state keyed by external id, so an unchanged event is skipped.
   const live = await pool.query<{ ext: string; state: Record<string, unknown> }>(
-    `SELECT state->>$2 AS ext, state FROM instances
+    `SELECT state->>$2 AS ext, state FROM record_versions
        WHERE org_id = $1 AND concept_id = $3 AND archived_at IS NULL
          AND version_status = 'published'`,
     [conn.orgId, externalFieldId, eventConcept.conceptId],
@@ -560,7 +560,7 @@ async function mirrorCalendarEvents(
     const fields = eventFieldsFor(row.raw, eventConcept.fieldMap)
     const current = stateByExt.get(row.google_event_id)
     if (current && Object.entries(fields).every(([k, v]) => current[k] === v)) continue
-    await upsertInstanceByExternalId(googleScopeOf(conn), {
+    await upsertRecordVersionByExternalId(googleScopeOf(conn), {
       conceptId: eventConcept.conceptId,
       externalFieldId,
       externalValue: row.google_event_id,
@@ -600,7 +600,7 @@ async function syncCalendar(connectionId: string, calendarId = "primary") {
       u.searchParams.set("timeMin", new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString())
     if (pageToken) u.searchParams.set("pageToken", pageToken)
     return googleRequest<{
-      items?: CalendarEvent[]
+      records?: CalendarEvent[]
       nextPageToken?: string
       nextSyncToken?: string
     }>(connectionId, u.toString())
@@ -609,7 +609,7 @@ async function syncCalendar(connectionId: string, calendarId = "primary") {
   try {
     do {
       const page = await fetchPage(pageToken)
-      for (const event of page.items ?? []) {
+      for (const event of page.records ?? []) {
         await upsertCalendarEvent(connection, calendarId, event)
       }
       pageToken = page.nextPageToken
@@ -773,7 +773,7 @@ type GmailThreadRow = {
   last_message_at: Date | null
 }
 
-/** Map a thread's metadata to an instance patch keyed by field id — subject,
+/** Map a thread's metadata to a record version patch keyed by field id — subject,
  *  sender, and last-message time only; never bodies or snippets. */
 const emailFieldsFor = (
   t: GmailThreadRow,
@@ -806,7 +806,7 @@ async function mirrorGmailThreads(conn: typeof googleConnection.$inferSelect) {
   )
   for (const t of rows.rows) {
     if (!t.thread_id) continue
-    await upsertInstanceByExternalId(googleScopeOf(conn), {
+    await upsertRecordVersionByExternalId(googleScopeOf(conn), {
       conceptId: emailConcept.conceptId,
       externalFieldId,
       externalValue: t.thread_id,
@@ -863,8 +863,8 @@ async function fullSyncGmail(connection: typeof googleConnection.$inferSelect) {
       connection.id,
       u.toString(),
     )
-    for (const item of page.messages ?? []) {
-      const msg = await fetchGmailMessage(connection.id, item.id, "metadata")
+    for (const record of page.messages ?? []) {
+      const msg = await fetchGmailMessage(connection.id, record.id, "metadata")
       newestHistoryId = newestHistoryId ?? msg.historyId ?? null
       await upsertGmailMessage(connection, msg)
       fetched++

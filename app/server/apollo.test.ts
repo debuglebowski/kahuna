@@ -6,7 +6,7 @@ import {
   apolloRequest,
   apolloStatus,
   connectApollo,
-  enrichInstanceForRequest,
+  enrichRecordForRequest,
   importForRequest,
   searchForRequest,
   setApolloFetchForTest,
@@ -16,7 +16,7 @@ import { db } from "./db"
 import { decryptToken, encryptToken } from "./integrations/crypto"
 import { createUserDirect } from "./provision"
 import { runEngineOrThrow, systemScope } from "./runtime"
-import { addField, createConcept, createInstance, getInstance, listFields } from "./use-cases"
+import { addField, createConcept, createRecord, getRecord, listFields } from "./use-cases"
 
 const cookieHeader = (res: Response): string =>
   (res.headers.get("set-cookie") ?? "")
@@ -189,7 +189,7 @@ describe("Apollo integration", () => {
     const companyF = fid("Company")
     const inst = (await runEngineOrThrow(
       scope,
-      createInstance(conceptId, { [emailF]: "jane@acme.com" }),
+      createRecord(conceptId, { [emailF]: "jane@acme.com" }),
     )) as { id: string }
 
     setApolloFetchForTest(async (input, init) => {
@@ -197,7 +197,7 @@ describe("Apollo integration", () => {
       if (u.endsWith("/people/match")) {
         expect(new Headers(init?.headers).get("x-api-key")).toBe("apk_live")
         const body = JSON.parse(String(init?.body)) as Record<string, unknown>
-        // The lookup is DERIVED from the instance's mapped email field.
+        // The lookup is DERIVED from the record version's mapped email field.
         expect(body.email).toBe("jane@acme.com")
         return okJson({
           person: {
@@ -213,9 +213,9 @@ describe("Apollo integration", () => {
       return new Response("unexpected", { status: 500 })
     })
 
-    const res = await enrichInstanceForRequest(
+    const res = await enrichRecordForRequest(
       post("enrich", actor, {
-        instanceId: inst.id,
+        recordVersionId: inst.id,
         mapping: { email: emailF, title: titleF, organizationName: companyF },
       }),
     )
@@ -226,7 +226,7 @@ describe("Apollo integration", () => {
     expect(payload.fields).toContain(companyF)
     expect(payload.fields).not.toContain(emailF) // already populated → not overwritten
 
-    const updated = (await runEngineOrThrow(scope, getInstance(inst.id))) as {
+    const updated = (await runEngineOrThrow(scope, getRecord(inst.id))) as {
       state: Record<string, unknown>
     }
     expect(updated.state[titleF]).toBe("VP Sales")
@@ -242,22 +242,22 @@ describe("Apollo integration", () => {
     const titleF = fid("Title")
     const inst = (await runEngineOrThrow(
       scope,
-      createInstance(conceptId, { [emailF]: "bob@beta.com", [titleF]: "Old Title" }),
+      createRecord(conceptId, { [emailF]: "bob@beta.com", [titleF]: "Old Title" }),
     )) as { id: string }
 
     setApolloFetchForTest(async () =>
       okJson({ person: { title: "New Title", email: "bob@beta.com" } }),
     )
 
-    const res = await enrichInstanceForRequest(
+    const res = await enrichRecordForRequest(
       post("enrich", actor, {
-        instanceId: inst.id,
+        recordVersionId: inst.id,
         mapping: { email: emailF, title: titleF },
         overwrite: true,
       }),
     )
     expect(res.status).toBe(200)
-    const updated = (await runEngineOrThrow(scope, getInstance(inst.id))) as {
+    const updated = (await runEngineOrThrow(scope, getRecord(inst.id))) as {
       state: Record<string, unknown>
     }
     expect(updated.state[titleF]).toBe("New Title")
@@ -271,7 +271,7 @@ describe("Apollo integration", () => {
     const titleF = fid("Title")
     const mk = async () =>
       (
-        (await runEngineOrThrow(scope, createInstance(conceptId, { [emailF]: "dup@x.com" }))) as {
+        (await runEngineOrThrow(scope, createRecord(conceptId, { [emailF]: "dup@x.com" }))) as {
           id: string
         }
       ).id
@@ -287,11 +287,11 @@ describe("Apollo integration", () => {
       return new Response("unexpected", { status: 500 })
     })
 
-    await enrichInstanceForRequest(
-      post("enrich", actor, { instanceId: a, mapping: { email: emailF, title: titleF } }),
+    await enrichRecordForRequest(
+      post("enrich", actor, { recordVersionId: a, mapping: { email: emailF, title: titleF } }),
     )
-    const second = await enrichInstanceForRequest(
-      post("enrich", actor, { instanceId: b, mapping: { email: emailF, title: titleF } }),
+    const second = await enrichRecordForRequest(
+      post("enrich", actor, { recordVersionId: b, mapping: { email: emailF, title: titleF } }),
     )
     const payload = (await second.json()) as { cached?: boolean; updated: boolean }
     expect(matchCalls).toBe(1) // second lookup served from cache
@@ -336,7 +336,7 @@ describe("Apollo integration", () => {
     expect(payload.pagination?.totalEntries).toBe(1)
   })
 
-  it("imports normalized people as new instances via the mapping (skips unmapped)", async () => {
+  it("imports normalized people as new recordVersions via the mapping (skips unmapped)", async () => {
     const actor = await signUpAndOrg()
     await seedConnection(actor.orgId, actor.userId)
     const { scope, conceptId, fid } = await setupConcept(actor.orgId, actor.userId)
@@ -358,7 +358,7 @@ describe("Apollo integration", () => {
     expect(payload.created).toHaveLength(1)
     expect(payload.skipped).toBe(1)
 
-    const created = (await runEngineOrThrow(scope, getInstance(payload.created[0]!))) as {
+    const created = (await runEngineOrThrow(scope, getRecord(payload.created[0]!))) as {
       state: Record<string, unknown>
     }
     expect(created.state[titleF]).toBe("VP Sales")

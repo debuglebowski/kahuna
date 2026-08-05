@@ -7,36 +7,40 @@ const trig = (t: Partial<AutomationTrigger> & { kind: AutomationTrigger["kind"] 
 
 describe("triggerMatches — the event-log filter", () => {
   it("maps a trigger kind to its event types", () => {
-    expect(triggerMatches(trig({ kind: "record.created" }), { type: "InstanceCreated" })).toBe(true)
-    expect(triggerMatches(trig({ kind: "record.created" }), { type: "InstanceUpdated" })).toBe(
+    expect(triggerMatches(trig({ kind: "record.created" }), { type: "RecordVersionCreated" })).toBe(
+      true,
+    )
+    expect(triggerMatches(trig({ kind: "record.created" }), { type: "RecordVersionUpdated" })).toBe(
       false,
     )
     // An amendment folds like an update, so record.changed must accept both.
-    expect(triggerMatches(trig({ kind: "record.changed" }), { type: "InstanceUpdated" })).toBe(true)
-    expect(triggerMatches(trig({ kind: "record.changed" }), { type: "VersionAmended" })).toBe(true)
-    // Legacy archive tag still counts as archived.
-    expect(triggerMatches(trig({ kind: "record.archived" }), { type: "InstanceDeleted" })).toBe(
+    expect(triggerMatches(trig({ kind: "record.changed" }), { type: "RecordVersionUpdated" })).toBe(
       true,
     )
+    expect(triggerMatches(trig({ kind: "record.changed" }), { type: "VersionAmended" })).toBe(true)
+    // Legacy archive tag still counts as archived.
+    expect(
+      triggerMatches(trig({ kind: "record.archived" }), { type: "RecordVersionDeleted" }),
+    ).toBe(true)
   })
 
   it("a schedule trigger never matches an event", () => {
     expect(
-      triggerMatches(trig({ kind: "schedule", every: "day" }), { type: "InstanceCreated" }),
+      triggerMatches(trig({ kind: "schedule", every: "day" }), { type: "RecordVersionCreated" }),
     ).toBe(false)
   })
 
   it("scopes by concept id — and never fires on an unattributed event", () => {
     const t = trig({ kind: "record.created", conceptId: "deal" })
-    expect(triggerMatches(t, { type: "InstanceCreated", conceptId: "deal" })).toBe(true)
-    expect(triggerMatches(t, { type: "InstanceCreated", conceptId: "person" })).toBe(false)
+    expect(triggerMatches(t, { type: "RecordVersionCreated", conceptId: "deal" })).toBe(true)
+    expect(triggerMatches(t, { type: "RecordVersionCreated", conceptId: "person" })).toBe(false)
     // The important one: a concept-scoped rule must NOT fire when we couldn't
     // attribute the event to a concept — that would be a silent over-fire.
-    expect(triggerMatches(t, { type: "InstanceCreated", conceptId: null })).toBe(false)
+    expect(triggerMatches(t, { type: "RecordVersionCreated", conceptId: null })).toBe(false)
     // An unscoped trigger still accepts anything.
     expect(
       triggerMatches(trig({ kind: "record.created" }), {
-        type: "InstanceCreated",
+        type: "RecordVersionCreated",
         conceptId: null,
       }),
     ).toBe(true)
@@ -45,16 +49,16 @@ describe("triggerMatches — the event-log filter", () => {
   it("record.changed with a field id fires only when that field is in the patch", () => {
     const t = trig({ kind: "record.changed", fieldId: "f-stage" })
     expect(
-      triggerMatches(t, { type: "InstanceUpdated", payload: { patch: { "f-stage": "won" } } }),
+      triggerMatches(t, { type: "RecordVersionUpdated", payload: { patch: { "f-stage": "won" } } }),
     ).toBe(true)
     expect(
-      triggerMatches(t, { type: "InstanceUpdated", payload: { patch: { "f-value": 10 } } }),
+      triggerMatches(t, { type: "RecordVersionUpdated", payload: { patch: { "f-value": 10 } } }),
     ).toBe(false)
     // A field explicitly cleared to null IS in the patch, so it counts.
     expect(
-      triggerMatches(t, { type: "InstanceUpdated", payload: { patch: { "f-stage": null } } }),
+      triggerMatches(t, { type: "RecordVersionUpdated", payload: { patch: { "f-stage": null } } }),
     ).toBe(true)
-    expect(triggerMatches(t, { type: "InstanceUpdated", payload: {} })).toBe(false)
+    expect(triggerMatches(t, { type: "RecordVersionUpdated", payload: {} })).toBe(false)
   })
 
   it("band + task-status triggers narrow on their payload", () => {
@@ -87,7 +91,7 @@ describe("triggerMatches — the event-log filter", () => {
 
   it("an unknown trigger kind never matches (forward compatibility)", () => {
     expect(
-      triggerMatches(trig({ kind: "future.thing" as never }), { type: "InstanceCreated" }),
+      triggerMatches(trig({ kind: "future.thing" as never }), { type: "RecordVersionCreated" }),
     ).toBe(false)
   })
 })
@@ -296,20 +300,20 @@ describe("automations are governed actors (P4)", () => {
    * The behavioural contract of making an automation an actor:
    *   1. A fresh automation gets the full-access preset, so nothing breaks on rollout.
    *   2. A write outside its role fails with a note a human can act on — "forbidden",
-   *      never the bare `InstanceNotFound` the engine reports to avoid an existence
+   *      never the bare `RecordVersionNotFound` the engine reports to avoid an existence
    *      oracle (right for a user request, useless in a run log).
    */
   it("noteForFailure translates a policy block into prose, and passes other errors through", () => {
     // With a subject in hand, a missing record means THIS automation's access — the
     // runner resolved that record moments earlier, unrestricted.
-    const subject = { instance: { id: "i1" } as never, conceptId: "c1" }
-    expect(noteForFailure({ _tag: "InstanceNotFound" }, subject)).toContain("forbidden")
-    expect(noteForFailure({ _tag: "ItemNotFound" }, subject)).toContain("forbidden")
+    const subject = { recordVersion: { id: "i1" } as never, conceptId: "c1" }
+    expect(noteForFailure({ _tag: "RecordVersionNotFound" }, subject)).toContain("forbidden")
+    expect(noteForFailure({ _tag: "RecordNotFound" }, subject)).toContain("forbidden")
     // Everything else keeps its tag — a validation failure must not read as a
     // permission problem.
     expect(noteForFailure({ _tag: "FieldValidationError" }, subject)).toBe("FieldValidationError")
     expect(noteForFailure({ _tag: "VersionConflict" }, subject)).toBe("VersionConflict")
     // With NO subject there was nothing to be forbidden from.
-    expect(noteForFailure({ _tag: "InstanceNotFound" }, null)).toBe("InstanceNotFound")
+    expect(noteForFailure({ _tag: "RecordVersionNotFound" }, null)).toBe("RecordVersionNotFound")
   })
 })

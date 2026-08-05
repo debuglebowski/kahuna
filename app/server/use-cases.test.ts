@@ -20,40 +20,40 @@ import {
   addField,
   archiveConcept,
   archiveField,
-  archiveInstance,
   archiveLabel,
+  archiveRecordVersion,
   createConcept,
-  createInstance,
   createLabel,
+  createRecord,
   deleteConcept,
   deleteField,
-  deleteInstance,
   deleteLabel,
+  deleteRecordVersion,
   getChanged,
   getConceptGraph,
   getGraphLayout,
-  getInstanceDetail,
-  getInstanceGraphLayout,
-  getInstanceViewPrefs,
+  getRecordDetail,
+  getRecordGraphLayout,
+  getRecordViewPrefs,
   getSingleRecord,
   linkRelation,
   listConcepts,
   listFields,
-  listInstances,
   listLabels,
+  listRecords,
   listVersions,
   newVersion,
   publishVersion,
   restoreConcept,
   restoreField,
-  restoreInstance,
   restoreLabel,
+  restoreRecordVersion,
   saveGraphLayout,
-  saveInstanceGraphLayout,
+  saveRecordGraphLayout,
   setConceptSingleRecord,
   updateField,
-  updateInstance,
-  updateInstanceViewPrefs,
+  updateRecord,
+  updateRecordViewPrefs,
 } from "./use-cases"
 
 type WithId = { readonly id: string }
@@ -95,14 +95,14 @@ describe("use-cases (UI backbone)", () => {
     const contactFields = await fieldsOf(idOf("CompanyContact"))
     const worksAt = fieldId(contactFields, "works_at")
 
-    // Create instances with field-id-keyed state (names are just labels now).
+    // Create record versions with field-id-keyed state (names are just labels now).
     const company = await run(
       org,
-      createInstance(idOf("Company"), { [fieldId(companyFields, "name")]: "Acme" }),
+      createRecord(idOf("Company"), { [fieldId(companyFields, "name")]: "Acme" }),
     )
     const contact = await run(
       org,
-      createInstance(idOf("CompanyContact"), {
+      createRecord(idOf("CompanyContact"), {
         [fieldId(contactFields, "name")]: "Jane",
         [fieldId(contactFields, "email")]: "jane@acme.com",
       }),
@@ -113,7 +113,7 @@ describe("use-cases (UI backbone)", () => {
 
     // The contact's detail view resolves the connected Company, labelled by the
     // relation field's (renameable) name and the target's display label.
-    const detail = (await run(org, getInstanceDetail(contact.id))) as {
+    const detail = (await run(org, getRecordDetail(contact.id))) as {
       related: ReadonlyArray<{
         relationName: string
         label: string
@@ -157,7 +157,7 @@ describe("use-cases (UI backbone)", () => {
         },
       }),
     )
-    const companyDetail = (await run(org, getInstanceDetail(company.id))) as {
+    const companyDetail = (await run(org, getRecordDetail(company.id))) as {
       related: ReadonlyArray<{
         direction: "out" | "in"
         relationInverseName: string | null
@@ -189,9 +189,9 @@ describe("archive / restore / delete (end-to-end use-case wiring)", () => {
     expect(has(await run(org, listConcepts()), c.id)).toBe(true)
 
     const counted = (await run(org, listConcepts(true, true))) as ReadonlyArray<
-      WithId & { itemCount?: number }
+      WithId & { recordCount?: number }
     >
-    expect(counted.find((x) => x.id === c.id)?.itemCount).toBe(0)
+    expect(counted.find((x) => x.id === c.id)?.recordCount).toBe(0)
 
     await run(org, deleteConcept(c.id))
     expect(has(await run(org, listConcepts(true)), c.id)).toBe(false)
@@ -223,25 +223,25 @@ describe("archive / restore / delete (end-to-end use-case wiring)", () => {
     expect(has(await run(org, listLabels(true)), l.id)).toBe(false)
   })
 
-  it("instances: archive/restore round-trip, concept purge blocked until items cleared", async () => {
+  it("recordVersions: archive/restore round-trip, concept purge blocked until records cleared", async () => {
     const org = randomUUID()
     const c = (await run(org, createConcept("Lead"))) as WithId
-    const inst = (await run(org, createInstance(c.id, {}))) as Archivable
+    const inst = (await run(org, createRecord(c.id, {}))) as Archivable
 
-    const archived = (await run(org, archiveInstance(inst.id, inst.version))) as Archivable
+    const archived = (await run(org, archiveRecordVersion(inst.id, inst.version))) as Archivable
     expect(archived.archivedAt).not.toBeNull()
-    expect(has(await run(org, listInstances(c.id)), inst.id)).toBe(false)
-    expect(has(await run(org, listInstances(c.id, { includeArchived: true })), inst.id)).toBe(true)
+    expect(has(await run(org, listRecords(c.id)), inst.id)).toBe(false)
+    expect(has(await run(org, listRecords(c.id, { includeArchived: true })), inst.id)).toBe(true)
 
-    // A concept with any item (even archived) refuses a hard delete. The thrown
+    // A concept with any record (even archived) refuses a hard delete. The thrown
     // ConceptInUse serialises as its fields, so match the distinctive instanceCount.
     await expect(run(org, deleteConcept(c.id))).rejects.toThrow(/instanceCount/)
 
-    await run(org, restoreInstance(inst.id, archived.version))
-    expect(has(await run(org, listInstances(c.id)), inst.id)).toBe(true)
+    await run(org, restoreRecordVersion(inst.id, archived.version))
+    expect(has(await run(org, listRecords(c.id)), inst.id)).toBe(true)
 
-    await run(org, deleteInstance(inst.id))
-    expect(has(await run(org, listInstances(c.id, { includeArchived: true })), inst.id)).toBe(false)
+    await run(org, deleteRecordVersion(inst.id))
+    expect(has(await run(org, listRecords(c.id, { includeArchived: true })), inst.id)).toBe(false)
     // Now empty, the concept deletes cleanly.
     await run(org, deleteConcept(c.id))
     expect(has(await run(org, listConcepts(true)), c.id)).toBe(false)
@@ -292,44 +292,44 @@ describe("concept graph layout (shared canvas positions)", () => {
     expect(await run(orgB, getGraphLayout)).toEqual({})
   })
 
-  it("instance graph layouts: per-item rows, merge per node, ghost keys survive pruning", async () => {
+  it("recordVersion graph layouts: per-record rows, merge per node, ghost keys survive pruning", async () => {
     const org = randomUUID()
     const c = (await run(org, createConcept("Person"))) as WithId
-    const a = (await run(org, createInstance(c.id, {}))) as { itemId: string }
-    const b = (await run(org, createInstance(c.id, {}))) as { itemId: string }
+    const a = (await run(org, createRecord(c.id, {}))) as { recordId: string }
+    const b = (await run(org, createRecord(c.id, {}))) as { recordId: string }
 
-    // Empty before anything is saved; rows are keyed by the ROOT item.
-    expect(await run(org, getInstanceGraphLayout(a.itemId))).toEqual({})
+    // Empty before anything is saved; rows are keyed by the ROOT record.
+    expect(await run(org, getRecordGraphLayout(a.recordId))).toEqual({})
 
     // Patches merge per node; ghost keys (dangling refs) are kept, foreign ids pruned.
-    await run(org, saveInstanceGraphLayout(a.itemId, { [a.itemId]: { x: 1, y: 2 } }))
+    await run(org, saveRecordGraphLayout(a.recordId, { [a.recordId]: { x: 1, y: 2 } }))
     await run(
       org,
-      saveInstanceGraphLayout(a.itemId, {
-        [b.itemId]: { x: 3, y: 4 },
+      saveRecordGraphLayout(a.recordId, {
+        [b.recordId]: { x: 3, y: 4 },
         "ghost:some-relation": { x: 5, y: 6 },
         [randomUUID()]: { x: 9, y: 9 },
       }),
     )
-    expect(await run(org, getInstanceGraphLayout(a.itemId))).toEqual({
-      [a.itemId]: { x: 1, y: 2 },
-      [b.itemId]: { x: 3, y: 4 },
+    expect(await run(org, getRecordGraphLayout(a.recordId))).toEqual({
+      [a.recordId]: { x: 1, y: 2 },
+      [b.recordId]: { x: 3, y: 4 },
       "ghost:some-relation": { x: 5, y: 6 },
     })
 
-    // A different root item has its own independent layout.
-    expect(await run(org, getInstanceGraphLayout(b.itemId))).toEqual({})
+    // A different root record has its own independent layout.
+    expect(await run(org, getRecordGraphLayout(b.recordId))).toEqual({})
   })
 })
 
-describe("instance view prefs", () => {
+describe("recordVersion view prefs", () => {
   it("reads defaults for a fresh user, then upserts the caller's own row", async () => {
     const orgA = randomUUID()
     const orgB = randomUUID()
     const empty = { defaultView: null, byConcept: {}, customByConcept: {} }
 
     // Never saved: a well-formed empty body, no row created.
-    expect(await run(orgA, getInstanceViewPrefs)).toEqual({ userId: "system", body: empty })
+    expect(await run(orgA, getRecordViewPrefs)).toEqual({ userId: "system", body: empty })
 
     // Preset override + a custom tile layout + a graph config round-trip verbatim.
     const conceptId = randomUUID()
@@ -339,7 +339,7 @@ describe("instance view prefs", () => {
     const graphConfig = { fieldIds: null, depth: 3, layout: "dagre-tb" }
     const saved = await run(
       orgA,
-      updateInstanceViewPrefs({
+      updateRecordViewPrefs({
         defaultView: "document",
         byConcept: { [conceptId]: "custom" },
         customByConcept: { [conceptId]: layout },
@@ -358,14 +358,14 @@ describe("instance view prefs", () => {
 
     // Second write hits the same (org, user) row — an upsert, not a new row.
     // Stored rows read back with every section present (graphByConcept fills in).
-    await run(orgA, updateInstanceViewPrefs(empty))
-    expect(await run(orgA, getInstanceViewPrefs)).toEqual({
+    await run(orgA, updateRecordViewPrefs(empty))
+    expect(await run(orgA, getRecordViewPrefs)).toEqual({
       userId: "system",
       body: { ...empty, graphByConcept: {} },
     })
 
     // Prefs are org-scoped: the other org still reads defaults.
-    expect(await run(orgB, getInstanceViewPrefs)).toEqual({ userId: "system", body: empty })
+    expect(await run(orgB, getRecordViewPrefs)).toEqual({ userId: "system", body: empty })
   })
 })
 
@@ -429,17 +429,17 @@ describe("managed concepts: field-level read-only guard", () => {
 
     // Value writes: a member may set their own field, but not a synced one.
     expect(
-      (await runEngine(scope, updateInstance(inst.id, inst.version, { [userField.id]: "new" }))).ok,
+      (await runEngine(scope, updateRecord(inst.id, inst.version, { [userField.id]: "new" }))).ok,
     ).toBe(true)
     expect(
       codeOf(
-        await runEngine(scope, updateInstance(inst.id, inst.version, { [synced.id]: "tampered" })),
+        await runEngine(scope, updateRecord(inst.id, inst.version, { [synced.id]: "tampered" })),
       ),
     ).toBe("MANAGED_READONLY")
 
     // Record lifecycle stays integration-owned.
-    expect(codeOf(await runEngine(scope, createInstance(concept.id, {})))).toBe("MANAGED_READONLY")
-    expect(codeOf(await runEngine(scope, deleteInstance(inst.id)))).toBe("MANAGED_READONLY")
+    expect(codeOf(await runEngine(scope, createRecord(concept.id, {})))).toBe("MANAGED_READONLY")
+    expect(codeOf(await runEngine(scope, deleteRecordVersion(inst.id)))).toBe("MANAGED_READONLY")
   })
 
   it("leaves unmanaged concepts fully editable (no false positives)", async () => {
@@ -452,23 +452,23 @@ describe("managed concepts: field-level read-only guard", () => {
       org,
       addField({ conceptId: concept.id, name: "Note", kind: "text" }),
     )) as WithId
-    const inst = (await run(org, createInstance(concept.id, { [field.id]: "x" }))) as {
+    const inst = (await run(org, createRecord(concept.id, { [field.id]: "x" }))) as {
       id: string
       version: number
     }
 
     expect((await runEngine(scope, updateField({ id: field.id, name: "Notes" }))).ok).toBe(true)
     expect(
-      (await runEngine(scope, updateInstance(inst.id, inst.version, { [field.id]: "y" }))).ok,
+      (await runEngine(scope, updateRecord(inst.id, inst.version, { [field.id]: "y" }))).ok,
     ).toBe(true)
-    expect((await runEngine(scope, deleteInstance(inst.id))).ok).toBe(true)
+    expect((await runEngine(scope, deleteRecordVersion(inst.id))).ok).toBe(true)
   })
 })
 
 // The engine's own guards are covered in packages/engine's single-record suite;
 // these cover what only exists at THIS layer: the managed-concept gate, the
 // ERROR_MAP wiring, and `getSingleRecord` returning the shared
-// `getInstanceDetail` shape.
+// `getRecordDetail` shape.
 describe("single-record concepts (use-case layer)", () => {
   it("toggling single-record on creates the record and resolves it with full detail", async () => {
     const org = randomUUID()
@@ -489,11 +489,11 @@ describe("single-record concepts (use-case layer)", () => {
     )) as { singleRecord: boolean }
     expect(flipped.singleRecord).toBe(true)
 
-    // Resolves as the SAME shape getInstance returns (concept + field defs +
+    // Resolves as the SAME shape getRecord returns (concept + field defs +
     // related + labels), not a bespoke payload — that's what lets /c/<slug>
     // render through the ordinary record view.
     const detail = (await run(org, getSingleRecord(concept.id))) as {
-      instance: { id: string; state: Record<string, unknown> }
+      recordVersion: { id: string; state: Record<string, unknown> }
       concept: { id: string; singleRecord: boolean }
       fields: ReadonlyArray<FieldRow>
       related: ReadonlyArray<unknown>
@@ -502,24 +502,24 @@ describe("single-record concepts (use-case layer)", () => {
     }
     expect(detail.concept.id).toBe(concept.id)
     expect(detail.concept.singleRecord).toBe(true)
-    expect(detail.instance.state[field.id]).toBe("Ship it")
+    expect(detail.recordVersion.state[field.id]).toBe("Ship it")
     expect(ids(detail.fields)).toContain(field.id)
     expect(detail.related).toEqual([])
     expect(detail.staticLabels).toEqual([])
     expect(detail.labels).toEqual([])
 
     // Same id as the detail route would fetch directly.
-    const direct = (await run(org, getInstanceDetail(detail.instance.id))) as {
-      instance: { id: string }
+    const direct = (await run(org, getRecordDetail(detail.recordVersion.id))) as {
+      recordVersion: { id: string }
     }
-    expect(direct.instance.id).toBe(detail.instance.id)
+    expect(direct.recordVersion.id).toBe(detail.recordVersion.id)
 
     // Turning it back off leaves the record in place as an ordinary record.
     const off = (await run(org, setConceptSingleRecord(concept.id, false))) as {
       singleRecord: boolean
     }
     expect(off.singleRecord).toBe(false)
-    expect(ids(await run(org, listInstances(concept.id)))).toContain(detail.instance.id)
+    expect(ids(await run(org, listRecords(concept.id)))).toContain(detail.recordVersion.id)
   })
 
   it("resolves a VERSIONED concept's record while it is still an unpublished draft", async () => {
@@ -527,7 +527,7 @@ describe("single-record concepts (use-case layer)", () => {
     await run(org, seedKingsmaker)
 
     // The regression this guards: a draft is invisible to every head-only query,
-    // so a naive listInstances[0] resolution renders "no record" for the very
+    // so a naive listRecords[0] resolution renders "no record" for the very
     // first state of every versioned single-record concept.
     const concept = await run(
       org,
@@ -542,13 +542,13 @@ describe("single-record concepts (use-case layer)", () => {
     await run(org, setConceptSingleRecord(concept.id, true))
 
     // Head-only listing sees nothing...
-    expect(ids(await run(org, listInstances(concept.id)))).toEqual([])
+    expect(ids(await run(org, listRecords(concept.id)))).toEqual([])
     // ...but the record plainly exists and resolves.
     const detail = (await run(org, getSingleRecord(concept.id))) as {
-      instance: { versionStatus: string }
+      recordVersion: { versionStatus: string }
     } | null
     expect(detail).not.toBeNull()
-    expect(detail!.instance.versionStatus).toBe("draft")
+    expect(detail!.recordVersion.versionStatus).toBe("draft")
   })
 
   it("refuses the toggle on a managed concept (the integration owns its records)", async () => {
@@ -573,8 +573,8 @@ describe("single-record concepts (use-case layer)", () => {
     await run(org, seedKingsmaker)
 
     const concept = (await run(org, createConcept("Team"))) as WithId
-    await run(org, createInstance(concept.id, {}))
-    await run(org, createInstance(concept.id, {}))
+    await run(org, createRecord(concept.id, {}))
+    await run(org, createRecord(concept.id, {}))
 
     // Guards the ERROR_MAP wiring: an unmapped _tag degrades to 500 silently.
     expect(codeOf(await runEngine(scope, setConceptSingleRecord(concept.id, true)))).toBe(
@@ -625,9 +625,9 @@ describe("single-record concepts (use-case layer)", () => {
     ).toBe(true)
     expect(await flagOf()).toBe(true)
     const detail = (await run(org, getSingleRecord(concept.id))) as {
-      instance: { state: Record<string, unknown> }
+      recordVersion: { state: Record<string, unknown> }
     } | null
-    expect(detail!.instance.state[ownerId]).toBe("Kalle")
+    expect(detail!.recordVersion.state[ownerId]).toBe("Kalle")
   })
 
   // The cascade only exists here — `ConceptService.purge` still refuses on
@@ -640,14 +640,14 @@ describe("single-record concepts (use-case layer)", () => {
 
     const concept = (await run(org, createConcept("Org Profile"))) as WithId
     await run(org, setConceptSingleRecord(concept.id, true))
-    const detail = (await run(org, getSingleRecord(concept.id))) as { instance: WithId }
-    const recordId = detail.instance.id
+    const detail = (await run(org, getSingleRecord(concept.id))) as { recordVersion: WithId }
+    const recordId = detail.recordVersion.id
 
     await run(org, deleteConcept(concept.id))
     expect(has(await run(org, listConcepts(true)), concept.id)).toBe(false)
     // The record went with it — not left behind as an orphan pointing at a
     // concept that no longer exists.
-    await expect(run(org, getInstanceDetail(recordId))).rejects.toThrow()
+    await expect(run(org, getRecordDetail(recordId))).rejects.toThrow()
   })
 
   it("keeps the concept AND its record when a relation still points at the record", async () => {
@@ -655,11 +655,11 @@ describe("single-record concepts (use-case layer)", () => {
     await run(org, seedKingsmaker)
 
     // A relation into the sole record is exactly what block-never-cascade exists
-    // to protect: forcing the delete through would orphan the edge. `InstanceInUse`
+    // to protect: forcing the delete through would orphan the edge. `RecordVersionInUse`
     // surfaces from the record purge and rolls the whole transaction back.
     const target = (await run(org, createConcept("Org Profile"))) as WithId
     await run(org, setConceptSingleRecord(target.id, true))
-    const detail = (await run(org, getSingleRecord(target.id))) as { instance: WithId }
+    const detail = (await run(org, getSingleRecord(target.id))) as { recordVersion: WithId }
 
     const source = (await run(org, createConcept("Deal"))) as WithId
     const rel = (await run(
@@ -671,8 +671,8 @@ describe("single-record concepts (use-case layer)", () => {
         config: { target: target.id },
       }),
     )) as WithId
-    const deal = (await run(org, createInstance(source.id, {}))) as WithId
-    await run(org, linkRelation(rel.id, deal.id, detail.instance.id))
+    const deal = (await run(org, createRecord(source.id, {}))) as WithId
+    await run(org, linkRelation(rel.id, deal.id, detail.recordVersion.id))
 
     await expect(run(org, deleteConcept(target.id))).rejects.toThrow(/relationCount/)
 
@@ -691,7 +691,7 @@ describe("single-record concepts (use-case layer)", () => {
     const org = randomUUID()
     await run(org, seedKingsmaker)
 
-    // A versioned lineage holds N instance rows for ONE record. Purging only the
+    // A versioned lineage holds N record version rows for ONE record. Purging only the
     // resolved head would leave the others behind and `ConceptInUse` would refuse
     // — so the cascade walks the whole lineage.
     const concept = await run(
@@ -706,12 +706,12 @@ describe("single-record concepts (use-case layer)", () => {
     )
     await run(org, setConceptSingleRecord(concept.id, true))
     const detail = (await run(org, getSingleRecord(concept.id))) as {
-      instance: { id: string; itemId: string; version: number }
+      recordVersion: { id: string; recordId: string; version: number }
     }
-    // Publish, then open a second version — two instance rows on one lineage.
-    await run(org, publishVersion(detail.instance.id, detail.instance.version))
-    await run(org, newVersion(detail.instance.itemId))
-    expect((await run(org, listVersions(detail.instance.itemId))).length).toBe(2)
+    // Publish, then open a second version — two record version rows on one lineage.
+    await run(org, publishVersion(detail.recordVersion.id, detail.recordVersion.version))
+    await run(org, newVersion(detail.recordVersion.recordId))
+    expect((await run(org, listVersions(detail.recordVersion.recordId))).length).toBe(2)
 
     await run(org, deleteConcept(concept.id))
     expect(has(await run(org, listConcepts(true)), concept.id)).toBe(false)
@@ -729,7 +729,7 @@ describe("single-record concepts (use-case layer)", () => {
  * `uploadAttachment` — were not. A member could attach content to a record they
  * cannot see, and then be refused when reading it back.
  *
- * Found by probing after the instance-write hole, on the theory that "reads gated,
+ * Found by probing after the record version-write hole, on the theory that "reads gated,
  * writes not" would repeat. It did, in three more places.
  */
 /**
@@ -762,13 +762,16 @@ describe("writes cannot name a subject the caller may not read", () => {
     Effect.gen(function* () {
       const concepts = yield* ConceptService
       const fields = yield* FieldService
-      const instances = yield* RecordService
+      const recordVersions = yield* RecordService
       const sealed = yield* concepts.create({ name: `Sealed ${randomUUID().slice(0, 6)}` })
       const f = yield* fields.addField({ conceptId: sealed.id, name: "T", kind: "text" })
-      const rec = yield* instances.create({ conceptId: sealed.id, fields: { [f.id]: "secret" } })
+      const rec = yield* recordVersions.create({
+        conceptId: sealed.id,
+        fields: { [f.id]: "secret" },
+      })
       const open = yield* concepts.create({ name: `Open ${randomUUID().slice(0, 6)}` })
-      const openRec = yield* instances.create({ conceptId: open.id, fields: {} })
-      return { sealedItemId: rec.itemId, openItemId: openRec.itemId, openId: open.id }
+      const openRec = yield* recordVersions.create({ conceptId: open.id, fields: {} })
+      return { sealedRecordId: rec.recordId, openRecordId: openRec.recordId, openId: open.id }
     })
 
   it("refuses a note, task or upload on a restricted record — but allows them on a visible one", async () => {
@@ -781,15 +784,17 @@ describe("writes cannot name a subject the caller may not read", () => {
       runEngine({ orgId, actor: "intruder", role: "member", policy }, eff)
 
     // Restricted subject: all three writes refused.
-    expect((await asMember(uc.createNote({ subjectId: f.sealedItemId, body: "x" }))).ok).toBe(false)
-    expect((await asMember(uc.createTask({ subjectId: f.sealedItemId, title: "x" }))).ok).toBe(
+    expect((await asMember(uc.createNote({ subjectId: f.sealedRecordId, body: "x" }))).ok).toBe(
+      false,
+    )
+    expect((await asMember(uc.createTask({ subjectId: f.sealedRecordId, title: "x" }))).ok).toBe(
       false,
     )
     expect(
       (
         await asMember(
           uc.uploadAttachment(
-            { itemId: f.sealedItemId },
+            { recordId: f.sealedRecordId },
             "x.txt",
             "text/plain",
             new TextEncoder().encode("hi"),
@@ -799,13 +804,15 @@ describe("writes cannot name a subject the caller may not read", () => {
     ).toBe(false)
 
     // NOTHING was planted — a refusal that still wrote would pass the assertions above.
-    const notes = await runEngineOrThrow(systemScope(orgId, "seed"), uc.listNotes(f.sealedItemId))
+    const notes = await runEngineOrThrow(systemScope(orgId, "seed"), uc.listNotes(f.sealedRecordId))
     expect(notes).toHaveLength(0)
 
     // CONTROL: the same writes on a visible record must still succeed, or this fix
     // has broken ordinary note-taking for everyone.
-    expect((await asMember(uc.createNote({ subjectId: f.openItemId, body: "ok" }))).ok).toBe(true)
-    expect((await asMember(uc.createTask({ subjectId: f.openItemId, title: "ok" }))).ok).toBe(true)
+    expect((await asMember(uc.createNote({ subjectId: f.openRecordId, body: "ok" }))).ok).toBe(true)
+    expect((await asMember(uc.createTask({ subjectId: f.openRecordId, title: "ok" }))).ok).toBe(
+      true,
+    )
     // CONTROL: an org-level annotation names no record, so it is never gated (the
     // global Tasks page creates these).
     expect((await asMember(uc.createNote({ subjectId: null, body: "ok" }))).ok).toBe(true)
@@ -829,15 +836,15 @@ describe("the org-wide event reads don't leak restricted subjects", () => {
       Effect.gen(function* () {
         const concepts = yield* ConceptService
         const fields = yield* FieldService
-        const instances = yield* RecordService
+        const recordVersions = yield* RecordService
         const sealed = yield* concepts.create({ name: `Sealed ${randomUUID().slice(0, 6)}` })
         const sf = yield* fields.addField({ conceptId: sealed.id, name: "T", kind: "text" })
-        const hidden = yield* instances.create({
+        const hidden = yield* recordVersions.create({
           conceptId: sealed.id,
           fields: { [sf.id]: "secret" },
         })
         const open = yield* concepts.create({ name: `Open ${randomUUID().slice(0, 6)}` })
-        const shown = yield* instances.create({ conceptId: open.id, fields: {} })
+        const shown = yield* recordVersions.create({ conceptId: open.id, fields: {} })
         return { sealedId: sealed.id, hiddenId: hidden.id, shownId: shown.id, openId: open.id }
       }),
     )

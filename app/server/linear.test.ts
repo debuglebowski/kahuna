@@ -392,7 +392,7 @@ describe("Linear integration", () => {
             issue: {
               id: "issue-3",
               identifier: "ENG-3",
-              title: "Done item",
+              title: "Done record",
               state: { name: "Done", type: "completed" },
             },
           },
@@ -498,7 +498,7 @@ describe("Linear → Kingsmaker concept mirror (Phase 1)", () => {
   const instanceStates = (orgId: string, conceptId: string) =>
     pool
       .query<{ state: Record<string, unknown> }>(
-        `SELECT state FROM instances WHERE org_id = $1 AND concept_id = $2 AND archived_at IS NULL`,
+        `SELECT state FROM record_versions WHERE org_id = $1 AND concept_id = $2 AND archived_at IS NULL`,
         [orgId, conceptId],
       )
       .then((r) => r.rows.map((row) => row.state))
@@ -546,16 +546,16 @@ describe("Linear → Kingsmaker concept mirror (Phase 1)", () => {
     const states = await instanceStates(actor.orgId, conceptId)
     expect(states).toHaveLength(2)
     const eng1 = states.find((s) => s[fId] === "ENG-1")
-    if (!eng1) throw new Error("ENG-1 instance missing")
+    if (!eng1) throw new Error("ENG-1 recordVersion missing")
     expect(eng1[fTitle]).toBe("First title")
     expect(eng1[fStatus]).toBe("started") // mapped from Linear state.type
     expect(eng1[fAssignee]).toBe("Ada")
     expect(eng1[fTeam]).toBe("ENG")
     expect(eng1[fPriority]).toBe(2)
-    // Raw payload is NOT written into instance fields (only typed columns).
+    // Raw payload is NOT written into record version fields (only typed columns).
     expect(Object.keys(eng1).every((k) => Object.values(fieldMap).includes(k))).toBe(true)
 
-    // Second sync with a changed title: same instance count, updated in place.
+    // Second sync with a changed title: same record version count, updated in place.
     mockIssues("Renamed title")
     await syncLinearConnection(connection.id)
 

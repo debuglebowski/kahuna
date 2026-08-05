@@ -9,8 +9,8 @@ import { Schema } from "effect"
 
 // ── wire schemas ──────────────────────────────────────────────────────────────
 
-/** Synthetic instance-state key carrying an item's own label ids (mirrors the
- *  engine's `LABELS_KEY`). Sent inside `createInstance.fields` / `updateInstance.patch`. */
+/** Synthetic record version-state key carrying a record's own label ids (mirrors the
+ *  engine's `LABELS_KEY`). Sent inside `createRecord.fields` / `updateRecord.patch`. */
 export const LABELS_KEY = "__labels"
 
 const State = Schema.Record({ key: Schema.String, value: Schema.Unknown })
@@ -31,11 +31,11 @@ export const EditReach = Schema.Literal("draft", "any")
 export const ConceptVisibility = Schema.Literal("visible", "admin", "none")
 export type EditReach = typeof EditReach.Type
 
-const InstanceFields = {
+const RecordVersionFields = {
   id: Schema.String,
   conceptId: Schema.String,
   /** The lineage this version belongs to. For a non-versioned concept, 1:1 with id. */
-  itemId: Schema.String,
+  recordId: Schema.String,
   state: State,
   /** Optimistic-concurrency event counter (not the product version). */
   version: Schema.Number,
@@ -47,43 +47,43 @@ const InstanceFields = {
   createdAt: Schema.Date,
   archivedAt: Schema.NullOr(Schema.Date),
 }
-export const Instance = Schema.Struct(InstanceFields)
-export type Instance = typeof Instance.Type
+export const RecordVersion = Schema.Struct(RecordVersionFields)
+export type RecordVersion = typeof RecordVersion.Type
 
-/** A logical item (lineage) — referenced as "Latest"; whole-item archive lives here. */
-export const Item = Schema.Struct({
+/** A logical record (lineage) — referenced as "Latest"; whole-record archive lives here. */
+export const KmRecord = Schema.Struct({
   id: Schema.String,
   conceptId: Schema.String,
   archivedAt: Schema.NullOr(Schema.Date),
 })
-export type Item = typeof Item.Type
+export type KmRecord = typeof KmRecord.Type
 
 /** A relation edge in its new reference shape. `toVersionId` null = general ("Latest"). */
 export const Relation = Schema.Struct({
   id: Schema.String,
   fieldId: Schema.String,
   fromId: Schema.String,
-  toItemId: Schema.String,
+  toRecordId: Schema.String,
   toVersionId: Schema.NullOr(Schema.String),
   toId: Schema.String,
 })
 export type Relation = typeof Relation.Type
 
-/** A relation-picker candidate: the head (latest published) of a target item. */
-export const InstancePick = Schema.Struct({
-  itemId: Schema.String,
-  instanceId: Schema.String,
+/** A relation-picker candidate: the head (latest published) of a target record. */
+export const RecordPick = Schema.Struct({
+  recordId: Schema.String,
+  recordVersionId: Schema.String,
   label: Schema.String,
   versionSeq: Schema.Number,
   versionStatus: VersionStatus,
 })
-export type InstancePick = typeof InstancePick.Type
+export type RecordPick = typeof RecordPick.Type
 
-// A tile on the 12-col instance-detail grid: one or more content keys (rendered
+// A tile on the 12-col record version-detail grid: one or more content keys (rendered
 // as tabs when >1; opaque strings here — the client drops ones it doesn't know)
-// plus grid coords. Shared by a concept's default layout (`Concept.instanceView`)
+// plus grid coords. Shared by a concept's default layout (`Concept.recordView`)
 // and the per-user view-prefs custom layouts.
-export const InstanceViewTile = Schema.Struct({
+export const RecordViewTile = Schema.Struct({
   id: Schema.String,
   contents: Schema.Array(Schema.String),
   x: Schema.Number,
@@ -91,12 +91,12 @@ export const InstanceViewTile = Schema.Struct({
   w: Schema.Number,
   h: Schema.Number,
 })
-export type InstanceViewTile = typeof InstanceViewTile.Type
+export type RecordViewTile = typeof RecordViewTile.Type
 
-export const InstanceViewLayout = Schema.Struct({
-  tiles: Schema.Array(InstanceViewTile),
+export const RecordViewLayout = Schema.Struct({
+  tiles: Schema.Array(RecordViewTile),
 })
-export type InstanceViewLayout = typeof InstanceViewLayout.Type
+export type RecordViewLayout = typeof RecordViewLayout.Type
 
 export const Concept = Schema.Struct({
   id: Schema.String,
@@ -109,14 +109,14 @@ export const Concept = Schema.Struct({
    *  `lucide:` (e.g. `lucide:Building2`); null renders none. */
   icon: Schema.NullOr(Schema.String),
   /** Optional display color (hex, same pill palette as labels) used to tint the
-   *  concept wherever instances are visualised; null renders neutral. */
+   *  concept wherever record versions are visualised; null renders neutral. */
   color: Schema.NullOr(Schema.String),
   /** Connector-owned "managed concept" kind (e.g. `"linear"`, `"google.gmail"`)
-   *  when an integration sync owns this concept's schema + instances, else null.
-   *  Drives read-only guards + the opinionated instance detail view. */
+   *  when an integration sync owns this concept's schema + record versions, else null.
+   *  Drives read-only guards + the opinionated record version detail view. */
   managedBy: Schema.NullOr(Schema.String),
-  /** Label ids inherited by every instance (static); and snapshotted onto new
-   *  instances (default). Both drawn from the org-wide label vocabulary. */
+  /** Label ids inherited by every record version (static); and snapshotted onto new
+   *  record versions (default). Both drawn from the org-wide label vocabulary. */
   staticLabelIds: Schema.Array(Schema.String),
   defaultLabelIds: Schema.Array(Schema.String),
   /** Opt-in per-concept versioning (draft→published versions + pinned references). */
@@ -133,17 +133,17 @@ export const Concept = Schema.Struct({
    *  all — it is absent from this very list for them, so a member only ever
    *  receives `"visible"` here. Set via `setConceptVisibility` (admin-only). */
   visibility: ConceptVisibility,
-  /** Org-wide default instance-detail layout (a 12-col tile grid); null = the
+  /** Org-wide default record version-detail layout (a 12-col tile grid); null = the
    *  built-in default preset. Set in concept settings → Layout. */
-  instanceView: Schema.NullOr(InstanceViewLayout),
-  /** Field id whose value is this concept's instance display label ("title");
+  recordView: Schema.NullOr(RecordViewLayout),
+  /** Field id whose value is this concept's record version display label ("title");
    *  any scalar field. Null = unconfigured (fallback to first text field).
    *  Integration-set + UI-locked on a managed concept. */
   titleFieldId: Schema.NullOr(Schema.String),
   /** Archive marker: non-null = archived (hidden from the live list, restorable). */
   archivedAt: Schema.NullOr(Schema.Date),
-  /** Total items (live + archived) — present only on a `withCounts` list. */
-  itemCount: Schema.optional(Schema.Number),
+  /** Total records (live + archived) — present only on a `withCounts` list. */
+  recordCount: Schema.optional(Schema.Number),
 })
 export type Concept = typeof Concept.Type
 
@@ -203,7 +203,7 @@ export const FieldConfig = Schema.Struct({
    *  (and publish on versioned concepts); `flagged` only surfaces missing values
    *  in the UI. Absent = optional. */
   requirement: Schema.optional(Schema.Literal("required", "flagged", "optional")),
-  /** text/number/date/enum/user/money: no two items may hold the same value —
+  /** text/number/date/enum/user/money: no two records may hold the same value —
    *  archived included (only purge releases), text case-insensitive (never
    *  combined with `multiple`). */
   unique: Schema.optional(Schema.Boolean),
@@ -237,11 +237,11 @@ export type Field = typeof Field.Type
 
 /** A file (the binary side of the annotation substrate). Bytes move over plain
  *  HTTP (multipart up, binary down — see server/router.ts); this is the metadata
- *  the RPCs list and mutate. Exactly one owner: `itemId` = the host lineage of a
+ *  the RPCs list and mutate. Exactly one owner: `recordId` = the host lineage of a
  *  record, `bucketId` = a Files widget that owns its files outright. */
 export const Attachment = Schema.Struct({
   id: Schema.String,
-  itemId: Schema.NullOr(Schema.String),
+  recordId: Schema.NullOr(Schema.String),
   bucketId: Schema.NullOr(Schema.String),
   filename: Schema.String,
   mimeType: Schema.NullOr(Schema.String),
@@ -270,8 +270,8 @@ export const FeedItem = Schema.Struct({
 })
 export type FeedItem = typeof FeedItem.Type
 
-/** One instance connected to another via a relation, with its concept resolved. */
-export const RelatedInstance = Schema.Struct({
+/** One record version connected to another via a relation, with its concept resolved. */
+export const RelatedRecord = Schema.Struct({
   relationId: Schema.String,
   /** The relation field def this edge realises (identity); name is decorative. */
   fieldId: Schema.String,
@@ -280,10 +280,10 @@ export const RelatedInstance = Schema.Struct({
    *  server-side so `in` entries can be headed without the foreign field def. */
   relationInverseName: Schema.NullOr(Schema.String),
   relationInversePluralName: Schema.NullOr(Schema.String),
-  /** Server-resolved display label of the connected instance (its state is keyed
+  /** Server-resolved display label of the connected record version (its state is keyed
    *  by field id, which the client can't resolve without that concept's fields). */
   label: Schema.String,
-  /** `out` = this instance is the relation's `from`; `in` = it is the `to`. */
+  /** `out` = this record version is the relation's `from`; `in` = it is the `to`. */
   direction: Schema.Literal("out", "in"),
   conceptId: Schema.String,
   conceptName: Schema.String,
@@ -291,25 +291,25 @@ export const RelatedInstance = Schema.Struct({
   pinned: Schema.Boolean,
   /** The resolved target version (the pinned version, or the current Latest). May be
    *  null when a general ref currently has no published version (dangling). */
-  instance: Schema.NullOr(Instance),
+  recordVersion: Schema.NullOr(RecordVersion),
 })
-export type RelatedInstance = typeof RelatedInstance.Type
+export type RelatedRecord = typeof RelatedRecord.Type
 
-/** A single instance plus everything needed to render its detail view. */
-export const InstanceDetail = Schema.Struct({
-  instance: Instance,
+/** A single record version plus everything needed to render its detail view. */
+export const RecordDetail = Schema.Struct({
+  recordVersion: RecordVersion,
   concept: Concept,
   fields: Schema.Array(Field),
-  related: Schema.Array(RelatedInstance),
+  related: Schema.Array(RelatedRecord),
   /** Live relation fields on OTHER concepts targeting this one — the inbound
-   *  side of this instance's connections (drives inverse-side add/remove). */
+   *  side of this record version's connections (drives inverse-side add/remove). */
   inboundRelationFields: Schema.Array(Field),
   /** Inherited from the concept (static) — shown as locked chips. */
   staticLabels: Schema.Array(Label),
-  /** This instance's own labels (from `state.__labels`), resolved and editable. */
+  /** This record version's own labels (from `state.__labels`), resolved and editable. */
   labels: Schema.Array(Label),
 })
-export type InstanceDetail = typeof InstanceDetail.Type
+export type RecordDetail = typeof RecordDetail.Type
 
 /** A node in the concept graph — one concept. */
 export const ConceptGraphNode = Schema.Struct({
@@ -396,7 +396,7 @@ const ConditionMatch = { match: Schema.optional(Schema.Literal("all", "any")) }
 // ── sidebar views (configurable nav layouts) ───────────────────────────────────
 // A View is an ordered stack of sections, switched via the sidebar pager. The
 // whole layout is `SidebarViewBody`; the server only persists/serves the
-// document. The global nav items (Overview, Tasks, …) render in a fixed block
+// document. The global nav records (Overview, Tasks, …) render in a fixed block
 // above the sections unless placed into one (a `global:<key>` entry).
 
 export const SidebarSection = Schema.Struct({
@@ -405,7 +405,7 @@ export const SidebarSection = Schema.Struct({
   icon: Schema.NullOr(Schema.String),
   collapsed: Schema.optional(Schema.Boolean),
   /** Ordered, explicitly-placed entries: a dashboard uuid, or `global:<key>`
-   *  for a placed global nav item. Unknown/deleted ids are skipped at render
+   *  for a placed global nav record. Unknown/deleted ids are skipped at render
    *  time (kept in the body so nothing is silently pruned). */
   entryIds: Schema.Array(Schema.String),
 })
@@ -430,7 +430,7 @@ export type SidebarView = typeof SidebarView.Type
 
 // ── dashboards (configurable widget canvases) ──────────────────────────────────
 // A Dashboard is a grid canvas of widgets. The whole layout is `DashboardBody`
-// and is resolved CLIENT-SIDE against the live concept/instance/event collections
+// and is resolved CLIENT-SIDE against the live concept/record version/event collections
 // — the server only persists/serves the document. The widget union is APPEND-ONLY
 // (a closed union breaks old clients on reshape); add new widget types at the end.
 
@@ -483,16 +483,18 @@ const widgetBase = {
  *  render in per-concept context (implicit conceptId) later. */
 const ConceptScoped = { conceptId: Schema.optional(Schema.NullOr(Schema.String)) }
 /** On a RECORD dashboard, a concept-scoped widget may narrow its population to the
- *  CURRENT record's related instances via this relation field id (instead of the
+ *  CURRENT record's related record versions via this relation field id (instead of the
  *  whole concept). Ignored on a 'page' dashboard or when absent. */
 const RecordRelationScoped = { relationFieldId: Schema.optional(Schema.NullOr(Schema.String)) }
 
-/** One curated shortcut. `ref` is an instance id, dashboard id, or URL per `kind`;
- *  `label` is a display snapshot (dashboards re-resolve to the live name).
- *  Used by the Shortcuts widget and the Welcome widget's quick links. */
+/** One curated shortcut. `ref` is a record-version id, dashboard id, or URL per
+ *  `kind`; `label` is a display snapshot (dashboards re-resolve to the live name).
+ *  Used by the Shortcuts widget and the Welcome widget's quick links.
+ *  `"record version"` accepted for one release to decode rows saved before the
+ *  vocabulary rename; drop once `dashboards.body` has no more legacy rows. */
 const ShortcutItem = Schema.Struct({
   id: Schema.String,
-  kind: Schema.Literal("instance", "dashboard", "url"),
+  kind: Schema.Literal("recordVersion", "instance", "dashboard", "url"),
   ref: Schema.String,
   label: Schema.optional(Schema.NullOr(Schema.String)),
   icon: Schema.optional(Schema.NullOr(Schema.String)),
@@ -510,7 +512,7 @@ const MetricWidget = Schema.Struct({
   /** Caption under the hero number; absent/empty = auto ("Deals" / "sum of X"). */
   label: Schema.optional(Schema.NullOr(Schema.String)),
   format: Schema.optional(Schema.Literal("plain", "compact", "currency", "percent")),
-  /** Secondary stat: change vs the value N days ago (instance-createdAt based). */
+  /** Secondary stat: change vs the value N days ago (record version-createdAt based). */
   delta: Schema.optional(Schema.Literal("off", "7d", "30d")),
   includeArchived: Schema.optional(Schema.Boolean),
 })
@@ -564,7 +566,7 @@ const AttentionWidget = Schema.Struct({
   limit: Schema.optional(Schema.NullOr(Schema.Number)),
   /** "34d" quiet-duration per stale row (default on). */
   showDays: Schema.optional(Schema.Boolean),
-  /** Pre-filter the population before the rollup; absent = all instances. */
+  /** Pre-filter the population before the rollup; absent = all record versions. */
   conditions: Schema.optional(Schema.Array(SidebarCondition)),
   ...ConditionMatch,
 })
@@ -602,7 +604,7 @@ const AnalyticsRecordFilter = Schema.Struct({
 /**
  * Aggregated time-series from an external analytics provider (PostHog today).
  * The ONLY data-bound widget whose numbers come from a server-side aggregation
- * rather than client-side grouping over concept instances — so it carries a
+ * rather than client-side grouping over concept record versions — so it carries a
  * query config instead of a `conceptId`. The same type serves page dashboards
  * (org-wide) and record dashboards (via `recordFilter`), since the record case
  * is the identical query plus one filter.
@@ -633,7 +635,7 @@ const AnalyticsWidget = Schema.Struct({
   showDelta: Schema.optional(Schema.Boolean),
   recordFilter: Schema.optional(Schema.NullOr(AnalyticsRecordFilter)),
 })
-// The remaining widgets render org-global surfaces — no instance data scoping.
+// The remaining widgets render org-global surfaces — no record version data scoping.
 const TasksWidget = Schema.Struct({
   ...widgetBase,
   type: Schema.Literal("tasks"),
@@ -650,7 +652,7 @@ const TasksWidget = Schema.Struct({
   /** `week` = due within the next 7 days (incl. today). */
   due: Schema.optional(Schema.Literal("any", "overdue", "week")),
   /** FILTER, not data scoping: only tasks annotating that concept's records
-   *  (task → item → conceptId, resolved via `resolveTaskSubjects`). */
+   *  (task → record → conceptId, resolved via `resolveTaskSubjects`). */
   conceptId: Schema.optional(Schema.NullOr(Schema.String)),
 })
 const MembersWidget = Schema.Struct({
@@ -668,7 +670,7 @@ const WelcomeWidget = Schema.Struct({
   type: Schema.Literal("welcome"),
   /** "12 members · 87 events this week" line under the greeting. */
   showPulse: Schema.optional(Schema.Boolean),
-  /** Curated quick links (same shape as Shortcuts items); absent/empty = none. */
+  /** Curated quick links (same shape as Shortcuts records); absent/empty = none. */
   links: Schema.optional(Schema.Array(ShortcutItem)),
 })
 // Goal — a metric with a finish line: current value vs a manual target.
@@ -691,7 +693,7 @@ const GoalWidget = Schema.Struct({
 const ShortcutsWidget = Schema.Struct({
   ...widgetBase,
   type: Schema.Literal("shortcuts"),
-  items: Schema.Array(ShortcutItem),
+  records: Schema.Array(ShortcutItem),
   /** Open URL targets in a new tab (internal targets always navigate in-app). */
   newTab: Schema.optional(Schema.Boolean),
 })
@@ -710,7 +712,7 @@ const NoteWidget = Schema.Struct({
   appearance: Schema.optional(Schema.Literal("plain", "info", "warn", "success")),
   overflow: Schema.optional(Schema.Literal("clip", "scroll")),
 })
-// Kanban — instances as cards in columns keyed by an enum field (renderer: P2).
+// Kanban — record versions as cards in columns keyed by an enum field (renderer: P2).
 const KanbanWidget = Schema.Struct({
   ...widgetBase,
   ...ConceptScoped,
@@ -734,18 +736,18 @@ const KanbanWidget = Schema.Struct({
    *  concept); absent = that concept's default record view. */
   recordDashboardId: Schema.optional(Schema.NullOr(Schema.String)),
 })
-/** One calendar source: a concept's instances plotted by a date field. */
+/** One calendar source: a concept's record versions plotted by a date field. */
 const CalendarSource = Schema.Struct({
   conceptId: Schema.String,
-  /** Date field id supplying each instance's position on the grid. */
+  /** Date field id supplying each record version's position on the grid. */
   dateField: Schema.String,
   color: Schema.optional(Schema.NullOr(Schema.String)),
   conditions: Schema.optional(Schema.Array(SidebarCondition)),
   ...ConditionMatch,
-  /** Field id for the event label; absent = the instance's name/label. */
+  /** Field id for the event label; absent = the record version's name/label. */
   labelField: Schema.optional(Schema.NullOr(Schema.String)),
 })
-// Calendar — instances plotted by date, multi-concept overlay (renderer: P3).
+// Calendar — record versions plotted by date, multi-concept overlay (renderer: P3).
 const CalendarWidget = Schema.Struct({
   ...widgetBase,
   type: Schema.Literal("calendar"),
@@ -756,7 +758,7 @@ const CalendarWidget = Schema.Struct({
   /** Month-mode cell rendering: full event cells vs dots + count. */
   density: Schema.optional(Schema.Literal("full", "dots")),
 })
-// Timeline/Gantt — instances as bars between two date fields (renderer: P3).
+// Timeline/Gantt — record versions as bars between two date fields (renderer: P3).
 const GanttWidget = Schema.Struct({
   ...widgetBase,
   ...ConceptScoped,
@@ -764,7 +766,7 @@ const GanttWidget = Schema.Struct({
   conditions: Schema.Array(SidebarCondition),
   ...ConditionMatch,
   scale: Schema.Literal("day", "week", "month"),
-  /** Start date field id; an instance with no end renders a milestone. */
+  /** Start date field id; a record version with no end renders a milestone. */
   startField: Schema.String,
   endField: Schema.optional(Schema.NullOr(Schema.String)),
   /** Enum/user field id for swimlane rows; absent = flat. */
@@ -781,14 +783,17 @@ const FilesWidget = Schema.Struct({
   ...widgetBase,
   ...ConceptScoped,
   type: Schema.Literal("files"),
-  /** instance = one record's files; concept = recent across its instances; org =
-   *  all; widget = this widget's own `bucketId` files (no record involved). */
-  scope: Schema.Literal("instance", "concept", "org", "widget"),
-  /** Instance id for `scope: "instance"` on a dashboard (no implicit context). */
-  instanceId: Schema.optional(Schema.NullOr(Schema.String)),
-  /** `scope: "instance"` only — resolve the record from a single-record concept
-   *  instead of pinning one `instanceId`. A boolean, not a second concept id: the
-   *  concept is the one already in `conceptId`, so the two can't drift. */
+  /** recordVersion = one record's files; concept = recent across its records;
+   *  org = all; widget = this widget's own `bucketId` files (no record involved).
+   *  `"record version"` accepted for one release to decode pre-rename rows. */
+  scope: Schema.Literal("recordVersion", "instance", "concept", "org", "widget"),
+  /** Record-version id for `scope: "recordVersion"` on a dashboard (no implicit
+   *  context). */
+  recordVersionId: Schema.optional(Schema.NullOr(Schema.String)),
+  /** `scope: "recordVersion"` only — resolve the record from a single-record
+   *  concept instead of pinning one `recordVersionId`. A boolean, not a second
+   *  concept id: the concept is the one already in `conceptId`, so the two can't
+   *  drift. */
   bindToConceptRecord: Schema.optional(Schema.Boolean),
   /** `scope: "widget"` only — the bucket owning this widget's files. Minted on
    *  switching to that scope; must be a fresh uuid, never a widget `id` (those
@@ -805,17 +810,19 @@ const FilesWidget = Schema.Struct({
   fileType: Schema.optional(Schema.Literal("all", "image", "doc", "pdf", "other")),
 })
 // Document — one record's rich text field, edited inline on the canvas. Bound to
-// a specific record (`instanceId`) + a `richtext` field (`fieldId`); autosaves via
-// `updateInstance` (the server re-derives the envelope's `text`). `conceptId` is
-// the field-picker's scope (the chosen record's concept), not a data filter.
+// a specific record (`recordVersionId`) + a `richtext` field (`fieldId`);
+// autosaves via `updateRecordVersion` (the server re-derives the envelope's
+// `text`). `conceptId` is the field-picker's scope (the chosen record's
+// concept), not a data filter.
 const DocumentWidget = Schema.Struct({
   ...widgetBase,
   ...ConceptScoped,
   type: Schema.Literal("document"),
-  instanceId: Schema.optional(Schema.NullOr(Schema.String)),
+  recordVersionId: Schema.optional(Schema.NullOr(Schema.String)),
   /** Resolve the record from `conceptId`'s single record instead of pinning one
-   *  `instanceId`. `conceptId` is already the field picker's scope, so binding
-   *  reuses it — one id, no drift between the record and the field list. */
+   *  `recordVersionId`. `conceptId` is already the field picker's scope, so
+   *  binding reuses it — one id, no drift between the record and the field
+   *  list. */
   bindToConceptRecord: Schema.optional(Schema.Boolean),
   fieldId: Schema.optional(Schema.NullOr(Schema.String)),
   /** Hide the field-name header above the editor. */
@@ -824,11 +831,11 @@ const DocumentWidget = Schema.Struct({
 
 // ── record-scoped widgets ──────────────────────────────────────────────────────
 // These render ONE panel of the CURRENT record and only make sense on a 'record'
-// dashboard, where the instance is supplied by page context (not configured per
-// widget). Each reuses an existing instance-detail panel. They carry NO
-// `conceptId`/`instanceId` — the record is implicit; on a 'page' dashboard they
+// dashboard, where the record version is supplied by page context (not configured per
+// widget). Each reuses an existing record version-detail panel. They carry NO
+// `conceptId`/`recordVersionId` — the record is implicit; on a 'page' dashboard they
 // show an "only on a record dashboard" empty state. (Document + Files cover the
-// document/files panels already, auto-binding `instanceId` from record context.)
+// document/files panels already, auto-binding `recordVersionId` from record context.)
 const RecordDetailsWidget = Schema.Struct({
   ...widgetBase,
   type: Schema.Literal("record-details"),
@@ -964,7 +971,7 @@ export const Dashboard = Schema.Struct({
   hidden: Schema.Boolean,
   body: DashboardBody,
   /** "page" (default/legacy) = free-standing canvas; "record" = a per-concept
-   *  single-instance template. Optional for rollout: an older server omits it and
+   *  single-record version template. Optional for rollout: an older server omits it and
    *  the client treats it as "page". */
   kind: Schema.optional(Schema.Literal("page", "record")),
   /** The owning concept for a "record" dashboard; null for "page". Record
@@ -978,7 +985,7 @@ export const Dashboard = Schema.Struct({
 export type Dashboard = typeof Dashboard.Type
 
 // ── annotation layer (notes / tasks / statuses / custom-field defs) ────────────
-// Notes/tasks hang off an item lineage (`subjectId` = items.id) or off nothing
+// Notes/tasks hang off a record (`subjectId` = records.id) or off nothing
 // (org-level task). `customFields` is the open bag keyed by AnnotationField id.
 
 export const AnnotationType = Schema.Literal("note", "task")
@@ -990,7 +997,7 @@ export const TaskStatusCategory = Schema.Literal("todo", "active", "done", "canc
 export type TaskStatusCategory = typeof TaskStatusCategory.Type
 
 /** A rich-text value: ProseMirror doc + server-derived plain text (the same
- *  envelope instance `richtext` fields use; the server re-derives `text`). */
+ *  envelope record version `richtext` fields use; the server re-derives `text`). */
 export const RichTextEnvelope = Schema.Struct({
   doc: Schema.Record({ key: Schema.String, value: Schema.Unknown }),
   text: Schema.String,
@@ -1035,7 +1042,7 @@ export type AnnotationField = typeof AnnotationField.Type
 
 export const Note = Schema.Struct({
   id: Schema.String,
-  /** Annotated item lineage (items.id); null = org-level. */
+  /** Annotated record (records.id); null = org-level. */
   subjectId: Schema.NullOr(Schema.String),
   body: Schema.String,
   createdBy: Schema.NullOr(Schema.String),
@@ -1049,7 +1056,7 @@ export type Note = typeof Note.Type
 
 export const Task = Schema.Struct({
   id: Schema.String,
-  /** Annotated item lineage (items.id); null = org-level / standalone. */
+  /** Annotated record (records.id); null = org-level / standalone. */
   subjectId: Schema.NullOr(Schema.String),
   title: Schema.String,
   /** Rich-text description; null = none. */
@@ -1079,14 +1086,14 @@ export const Task = Schema.Struct({
 })
 export type Task = typeof Task.Type
 
-/** A task's annotated item resolved for display (global Tasks page): the item's
- *  head version to route to, plus a server-resolved label (instance state is
+/** A task's annotated record resolved for display (global Tasks page): the record's
+ *  head version to route to, plus a server-resolved label (record version state is
  *  keyed by field id, which the client can't resolve without that concept's
- *  field defs — same reasoning as `RelatedInstance.label`). */
+ *  field defs — same reasoning as `RelatedRecord.label`). */
 export const TaskSubjectRef = Schema.Struct({
   subjectId: Schema.String,
-  /** Routable head version (latest published, else newest version); null = item gone. */
-  instanceId: Schema.NullOr(Schema.String),
+  /** Routable head version (latest published, else newest version); null = record gone. */
+  recordVersionId: Schema.NullOr(Schema.String),
   label: Schema.String,
   conceptId: Schema.NullOr(Schema.String),
 })
@@ -1174,8 +1181,8 @@ export type BacklinkRef = typeof BacklinkRef.Type
 // Deactivation is the member analogue of archive — a restorable marker that
 // blocks org access and hides the user from pickers.
 
-// A member's instance-detail layout prefs (`InstanceViewTile`/`InstanceViewLayout`
-// are defined above, by `Concept.instanceView`): which preset view to render, as
+// A member's record version-detail layout prefs (`RecordViewTile`/`RecordViewLayout`
+// are defined above, by `Concept.recordView`): which preset view to render, as
 // a global default plus per-concept overrides keyed by concept id. View keys name
 // client-defined presets (resolved client-side; unknown keys fall back). A concept
 // override may also be "custom", backed by a user-edited tile layout in
@@ -1184,32 +1191,30 @@ export type BacklinkRef = typeof BacklinkRef.Type
 // Traversal + render settings for the relationship-graph tile content. Stored
 // opaquely like the rest of the prefs body; the client clamps/falls back on
 // values it doesn't recognise (e.g. an unknown layout key from a newer build).
-export const InstanceGraphConfig = Schema.Struct({
+export const RecordGraphConfig = Schema.Struct({
   /** Relation field ids the walk may follow; null = all. */
   fieldIds: Schema.NullOr(Schema.Array(Schema.String)),
-  /** Max hops from the viewed instance. */
+  /** Max hops from the viewed record version. */
   depth: Schema.Number,
   /** Client-defined layout key (e.g. "dagre-tb"). */
   layout: Schema.String,
 })
-export type InstanceGraphConfig = typeof InstanceGraphConfig.Type
+export type RecordGraphConfig = typeof RecordGraphConfig.Type
 
-export const InstanceViewPrefsBody = Schema.Struct({
+export const RecordViewPrefsBody = Schema.Struct({
   defaultView: Schema.NullOr(Schema.String),
   byConcept: Schema.Record({ key: Schema.String, value: Schema.String }),
-  customByConcept: Schema.Record({ key: Schema.String, value: InstanceViewLayout }),
+  customByConcept: Schema.Record({ key: Schema.String, value: RecordViewLayout }),
   /** Graph-tile settings keyed by concept id; optional — pre-existing rows lack it. */
-  graphByConcept: Schema.optional(
-    Schema.Record({ key: Schema.String, value: InstanceGraphConfig }),
-  ),
+  graphByConcept: Schema.optional(Schema.Record({ key: Schema.String, value: RecordGraphConfig })),
 })
-export type InstanceViewPrefsBody = typeof InstanceViewPrefsBody.Type
+export type RecordViewPrefsBody = typeof RecordViewPrefsBody.Type
 
-export const InstanceViewPrefs = Schema.Struct({
+export const RecordViewPrefs = Schema.Struct({
   userId: Schema.String,
-  body: InstanceViewPrefsBody,
+  body: RecordViewPrefsBody,
 })
-export type InstanceViewPrefs = typeof InstanceViewPrefs.Type
+export type RecordViewPrefs = typeof RecordViewPrefs.Type
 
 export const DeactivatedMember = Schema.Struct({
   userId: Schema.String,
@@ -1602,7 +1607,7 @@ export class KingsmakerRpcs extends RpcGroup.make(
       // Omitted → left unchanged (so the name/description save never wipes them).
       icon: Schema.optional(Schema.NullOr(Schema.String)),
       color: Schema.optional(Schema.NullOr(Schema.String)),
-      // Toggle per-concept versioning (admin). Disabling is rejected if any item
+      // Toggle per-concept versioning (admin). Disabling is rejected if any record
       // already has multiple versions or an open draft (VERSIONING_IN_USE).
       versioningEnabled: Schema.optional(Schema.Boolean),
       // Allow amending published versions (admin). Needs no guard either way:
@@ -1614,15 +1619,15 @@ export class KingsmakerRpcs extends RpcGroup.make(
     success: Concept,
     error: RpcError,
   }),
-  // Set (or clear with null) a concept's org-wide default instance-detail layout.
+  // Set (or clear with null) a concept's org-wide default record version-detail layout.
   // NOT admin-gated — any member may shape the layout (unlike the identity/
   // versioning edits in updateConcept).
-  Rpc.make("setConceptInstanceView", {
-    payload: { id: Schema.String, instanceView: Schema.NullOr(InstanceViewLayout) },
+  Rpc.make("setConceptRecordView", {
+    payload: { id: Schema.String, recordView: Schema.NullOr(RecordViewLayout) },
     success: Concept,
     error: RpcError,
   }),
-  // Set (or clear with null) the field used as a concept's instance display label
+  // Set (or clear with null) the field used as a concept's record version display label
   // ("title"). Admin-gated (a schema-shaping choice). Rejected for managed concepts
   // (the integration owns it).
   Rpc.make("setConceptTitleField", {
@@ -1730,15 +1735,15 @@ export class KingsmakerRpcs extends RpcGroup.make(
     success: GraphLayout,
     error: RpcError,
   }),
-  // Saved positions for one item's relationship graph (instance-page tile),
-  // keyed by the root item; same merge-patch contract as the concept canvas.
-  Rpc.make("getInstanceGraphLayout", {
-    payload: { itemId: Schema.String },
+  // Saved positions for one record's relationship graph (record version-page tile),
+  // keyed by the root record; same merge-patch contract as the concept canvas.
+  Rpc.make("getRecordGraphLayout", {
+    payload: { recordId: Schema.String },
     success: GraphLayout,
     error: RpcError,
   }),
-  Rpc.make("saveInstanceGraphLayout", {
-    payload: { itemId: Schema.String, positions: GraphLayout },
+  Rpc.make("saveRecordGraphLayout", {
+    payload: { recordId: Schema.String, positions: GraphLayout },
     success: GraphLayout,
     error: RpcError,
   }),
@@ -1790,29 +1795,29 @@ export class KingsmakerRpcs extends RpcGroup.make(
     success: Schema.Array(Field),
     error: RpcError,
   }),
-  Rpc.make("listInstances", {
+  Rpc.make("listRecords", {
     payload: { conceptId: Schema.String, includeArchived: Schema.optional(Schema.Boolean) },
-    success: Schema.Array(Instance),
+    success: Schema.Array(RecordVersion),
     error: RpcError,
   }),
-  Rpc.make("getInstance", {
+  Rpc.make("getRecord", {
     payload: { id: Schema.String },
-    success: InstanceDetail,
+    success: RecordDetail,
     error: RpcError,
   }),
-  // The sole record of a single-record concept, in the SAME shape as `getInstance`
+  // The sole record of a single-record concept, in the SAME shape as `getRecord`
   // so `/c/<slug>` renders through the ordinary record view. Null means the concept
   // has no record — impossible while the flag is on, so the client treats it as a
   // recoverable fault rather than an empty state.
   Rpc.make("getSingleRecord", {
     payload: { conceptId: Schema.String },
-    success: Schema.NullOr(InstanceDetail),
+    success: Schema.NullOr(RecordDetail),
     error: RpcError,
   }),
   Rpc.make("getChanged", { success: Schema.Array(FeedItem), error: RpcError }),
   // A larger/filterable recent-events window for the dashboard Trend + Activity
   // widgets. `since` = epoch ms lower bound; `conceptId` restricts to that
-  // concept's instance events.
+  // concept's record version events.
   Rpc.make("listEvents", {
     payload: {
       conceptId: Schema.optional(Schema.NullOr(Schema.String)),
@@ -1822,96 +1827,96 @@ export class KingsmakerRpcs extends RpcGroup.make(
     success: Schema.Array(FeedItem),
     error: RpcError,
   }),
-  Rpc.make("createInstance", {
+  Rpc.make("createRecord", {
     payload: { conceptId: Schema.String, fields: Fields },
-    success: Instance,
+    success: RecordVersion,
     error: RpcError,
   }),
-  Rpc.make("updateInstance", {
+  Rpc.make("updateRecord", {
     payload: { id: Schema.String, expectedVersion: Schema.Number, patch: Fields },
-    success: Instance,
+    success: RecordVersion,
     error: RpcError,
   }),
-  Rpc.make("transitionInstance", {
+  Rpc.make("transitionRecord", {
     payload: {
       id: Schema.String,
       expectedVersion: Schema.Number,
       field: Schema.String,
       to: Schema.String,
     },
-    success: Instance,
+    success: RecordVersion,
     error: RpcError,
   }),
-  Rpc.make("archiveInstance", {
+  Rpc.make("archiveRecordVersion", {
     payload: { id: Schema.String, expectedVersion: Schema.Number },
-    success: Instance,
+    success: RecordVersion,
     error: RpcError,
   }),
-  Rpc.make("restoreInstance", {
+  Rpc.make("restoreRecordVersion", {
     payload: { id: Schema.String, expectedVersion: Schema.Number },
-    success: Instance,
+    success: RecordVersion,
     error: RpcError,
   }),
-  // Hard delete — permanently removes the instance and its event stream.
-  Rpc.make("deleteInstance", {
+  // Hard delete — permanently removes the record version and its event stream.
+  Rpc.make("deleteRecordVersion", {
     payload: { id: Schema.String },
-    success: Instance,
+    success: RecordVersion,
     error: RpcError,
   }),
   // ── versioning ──────────────────────────────────────────────────────────────
-  // All versions of an item (draft + published), oldest first — the detail panel.
+  // All versions of a record (draft + published), oldest first — the detail panel.
   Rpc.make("listVersions", {
-    payload: { itemId: Schema.String },
-    success: Schema.Array(Instance),
+    payload: { recordId: Schema.String },
+    success: Schema.Array(RecordVersion),
     error: RpcError,
   }),
-  // Open a new editable draft cloned from the item's latest published version.
+  // Open a new editable draft cloned from the record's latest published version.
   Rpc.make("newVersion", {
-    payload: { itemId: Schema.String },
-    success: Instance,
+    payload: { recordId: Schema.String },
+    success: RecordVersion,
     error: RpcError,
   }),
   // Freeze a draft: draft → published (permanent). Bumps the event counter.
   Rpc.make("publishVersion", {
     payload: { id: Schema.String, expectedVersion: Schema.Number },
-    success: Instance,
+    success: RecordVersion,
     error: RpcError,
   }),
   // Discard an open draft (hard delete of the draft row + its cloned edges).
   Rpc.make("discardDraft", {
     payload: { id: Schema.String },
-    success: Instance,
+    success: RecordVersion,
     error: RpcError,
   }),
-  // Whole-item (lineage) archive / restore — hides or restores every version.
-  Rpc.make("archiveItem", {
-    payload: { itemId: Schema.String },
-    success: Item,
+  // Whole-record (lineage) archive / restore — hides or restores every version.
+  Rpc.make("archiveRecord", {
+    payload: { recordId: Schema.String },
+    success: KmRecord,
     error: RpcError,
   }),
-  Rpc.make("restoreItem", {
-    payload: { itemId: Schema.String },
-    success: Item,
+  Rpc.make("restoreRecord", {
+    payload: { recordId: Schema.String },
+    success: KmRecord,
     error: RpcError,
   }),
-  // Search target instances of a concept (head/latest per item) for the relation
-  // picker. Returns one candidate per item.
-  Rpc.make("searchInstances", {
+  // Search target record versions of a concept (head/latest per record) for the relation
+  // picker. Returns one candidate per record.
+  Rpc.make("searchRecords", {
     payload: {
       conceptId: Schema.String,
       query: Schema.optional(Schema.String),
       limit: Schema.optional(Schema.Number),
     },
-    success: Schema.Array(InstancePick),
+    success: Schema.Array(RecordPick),
     error: RpcError,
   }),
-  // Create a relation edge. Target is `toVersionId` (pinned) or `toItemId`
-  // (general / "Latest"); `toId` legacy instance id also accepted.
+  // Create a relation edge. Target is `toVersionId` (pinned) or `toRecordId`
+  // (general / "Latest"); `toId` legacy record version id also accepted.
   Rpc.make("createRelation", {
     payload: {
       fieldId: Schema.String,
       fromId: Schema.String,
-      toItemId: Schema.optional(Schema.String),
+      toRecordId: Schema.optional(Schema.String),
       toVersionId: Schema.optional(Schema.String),
       toId: Schema.optional(Schema.String),
       properties: Schema.optional(Fields),
@@ -2056,8 +2061,8 @@ export class KingsmakerRpcs extends RpcGroup.make(
     error: RpcError,
   }),
   // ── annotation layer: tasks ───────────────────────────────────────────────────
-  // Filter superset: per-item panel passes `subjectId`; global "My Tasks" passes
-  // assignee/status/due. Omit `subjectId` to query across all items.
+  // Filter superset: per-record panel passes `subjectId`; global "My Tasks" passes
+  // assignee/status/due. Omit `subjectId` to query across all records.
   Rpc.make("listTasks", {
     payload: {
       subjectId: Schema.optional(Schema.NullOr(Schema.String)),
@@ -2071,7 +2076,7 @@ export class KingsmakerRpcs extends RpcGroup.make(
     success: Schema.Array(Task),
     error: RpcError,
   }),
-  // Batch-resolve task subjects (item lineage ids) to routable instances +
+  // Batch-resolve task subjects (record ids) to routable record versions +
   // display labels — the global Tasks page's record chips.
   Rpc.make("resolveTaskSubjects", {
     payload: { subjectIds: Schema.Array(Schema.String) },
@@ -2086,15 +2091,15 @@ export class KingsmakerRpcs extends RpcGroup.make(
     success: Schema.Array(MentionRef),
     error: RpcError,
   }),
-  // Everything that mentions this record (an item lineage id). Sources the caller
+  // Everything that mentions this record (a record id). Sources the caller
   // may not read are dropped — see `BacklinkRef`.
   Rpc.make("listBacklinks", {
-    payload: { itemId: Schema.String },
+    payload: { recordId: Schema.String },
     success: Schema.Array(BacklinkRef),
     error: RpcError,
   }),
   // Records-only typeahead for the `@` menu, ACROSS every concept the caller may
-  // read (`searchInstances` is per-concept, which an `@` menu can't fan out over).
+  // read (`searchRecords` is per-concept, which an `@` menu can't fan out over).
   // Deliberately narrow so it doesn't become a dumping ground: people, concepts,
   // dashboards and pages are all already client-cached and composed there.
   Rpc.make("searchMentionableRecords", {
@@ -2185,24 +2190,24 @@ export class KingsmakerRpcs extends RpcGroup.make(
     success: Task,
     error: RpcError,
   }),
-  // Per-item activity: union of the lineage's instance/item events + its
-  // annotations' note/task/attachment events. `subjectId` = the item lineage id.
+  // Per-record activity: union of the lineage's record version/record events + its
+  // annotations' note/task/attachment events. `subjectId` = the record id.
   Rpc.make("getActivity", {
     payload: { subjectId: Schema.String, limit: Schema.optional(Schema.Number) },
     success: Schema.Array(FeedItem),
     error: RpcError,
   }),
   // ── annotation layer: files ───────────────────────────────────────────────────
-  // Metadata only — the bytes ride plain HTTP (multipart POST /api/items/:id/
+  // Metadata only — the bytes ride plain HTTP (multipart POST /api/records/:id/
   // attachments or /api/buckets/:id/attachments, binary GET /api/attachments/:id/
-  // download). Exactly one scope: itemId (or instanceId, resolved to its lineage
-  // server-side — the Files widget stores an instance ref) = one record;
-  // bucketId = one widget's own files; conceptId = recent across its items;
+  // download). Exactly one scope: recordId (or recordVersionId, resolved to its lineage
+  // server-side — the Files widget stores a record version ref) = one record;
+  // bucketId = one widget's own files; conceptId = recent across its records;
   // none = org-wide recent, which omits files in a non-shared bucket.
   Rpc.make("listFiles", {
     payload: {
-      itemId: Schema.optional(Schema.String),
-      instanceId: Schema.optional(Schema.String),
+      recordId: Schema.optional(Schema.String),
+      recordVersionId: Schema.optional(Schema.String),
       bucketId: Schema.optional(Schema.String),
       conceptId: Schema.optional(Schema.String),
       includeArchived: Schema.optional(Schema.Boolean),
@@ -2373,15 +2378,15 @@ export class KingsmakerRpcs extends RpcGroup.make(
     success: Schema.Array(AnnotationField),
     error: RpcError,
   }),
-  // Instance-view layout prefs: both calls target the CALLER's own row
+  // Record version-view layout prefs: both calls target the CALLER's own row
   // (owner-only by construction — no userId in the payload).
-  Rpc.make("getInstanceViewPrefs", {
-    success: InstanceViewPrefs,
+  Rpc.make("getRecordViewPrefs", {
+    success: RecordViewPrefs,
     error: RpcError,
   }),
-  Rpc.make("updateInstanceViewPrefs", {
-    payload: { body: InstanceViewPrefsBody },
-    success: InstanceViewPrefs,
+  Rpc.make("updateRecordViewPrefs", {
+    payload: { body: RecordViewPrefsBody },
+    success: RecordViewPrefs,
     error: RpcError,
   }),
   // Deactivation markers (admin-gated writes; the list is readable by any

@@ -432,7 +432,7 @@ async function upsertPersonMetric(
     })
 }
 
-/** Synced per-person metrics for the active org — surfaceable on instances/widgets. */
+/** Synced per-person metrics for the active org — surfaceable on record versions/widgets. */
 export async function listPosthogPersons(req: Request) {
   const org = await resolveOrg(req)
   if (!org.ok) return json({ error: org.code }, org.status)

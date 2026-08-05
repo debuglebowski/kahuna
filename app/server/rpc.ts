@@ -28,15 +28,15 @@ import {
   type EffectiveAccess,
   type Field,
   type GraphLayout,
-  type Instance,
-  type InstanceDetail,
-  type InstancePick,
-  type InstanceViewPrefs,
-  type Item,
   KingsmakerRpcs,
+  type KmRecord,
   type Label,
   type MentionRef,
   type Note,
+  type RecordDetail,
+  type RecordPick,
+  type RecordVersion,
+  type RecordViewPrefs,
   type Relation,
   RpcError,
   type SidebarView,
@@ -53,7 +53,7 @@ import { isDeactivated, roleOf } from "./session"
 import * as uc from "./use-cases"
 
 /**
- * `listInstances` cap. The engine's `findInstances` defaults to 100 — fine for a
+ * `listRecords` cap. The engine's `findRecords` defaults to 100 — fine for a
  * paged table, but every dashboard widget (metric/breakdown/calendar/gantt)
  * aggregates or plots over the WHOLE concept, so a 100-row cap silently drops
  * data: e.g. a Calendar over a synced source with thousands of events shows
@@ -61,7 +61,7 @@ import * as uc from "./use-cases"
  * Raise it to cover realistic concepts. NOTE: a true fix for unbounded concepts
  * is date-windowed loading for the date-plotting widgets — follow-up.
  */
-const LIST_INSTANCES_LIMIT = 50_000
+const LIST_RECORDS_LIMIT = 50_000
 
 /**
  * Per-request auth: derive OrgContext (org_id + actor) from the session cookie
@@ -131,7 +131,7 @@ const AuthMiddlewareLive = Layer.succeed(AuthMiddleware, (options) =>
 
 /** User-facing fallbacks for domain errors whose payload carries no human
  *  `message` field. Effect renders such an error's `.message` as a JSON dump of
- *  its props (e.g. `{"instanceId":"…"}`), which must never reach a user — these
+ *  its props (e.g. `{"recordVersionId":"…"}`), which must never reach a user — these
  *  override it with prose. Errors that DO carry a `message` (e.g.
  *  FieldValidationError) keep their own, more specific text. */
 const ERROR_MESSAGE: Record<string, string> = {
@@ -139,13 +139,13 @@ const ERROR_MESSAGE: Record<string, string> = {
   // depends on the concept's edit-reach setting.
   VersionFrozen: "This version is published and can't be edited.",
   VersionConflict: "This record was changed elsewhere. Reload and try again.",
-  InstanceNotFound: "This record no longer exists.",
+  RecordVersionNotFound: "This record no longer exists.",
   ConceptNotFound: "This concept no longer exists.",
   FieldNotFound: "This field no longer exists.",
   RelationNotFound: "That link no longer exists.",
   LabelNotFound: "That label no longer exists.",
-  ItemNotFound: "This record no longer exists.",
-  ItemNotPublished: "This record has no published version yet.",
+  RecordNotFound: "This record no longer exists.",
+  RecordNotPublished: "This record has no published version yet.",
 }
 
 /** Effect's default `.message` for a fieldless TaggedError is a JSON dump of its
@@ -240,7 +240,7 @@ const admin = <A>(eff: Effect.Effect<unknown, unknown, OrgContext | EngineServic
 /**
  * `admin`, but decided against ONE resource instead of the org.
  *
- * This is what makes a per-item permission grid mean anything. `admin` resolves
+ * This is what makes a per-record permission grid mean anything. `admin` resolves
  * `configure` on `{type:"org"}`, so a rule naming a single concept could only ever
  * be consulted AFTER the org-wide gate had already answered — a grid cell granting
  * a member `configure` on Deals would be dead, and one denying an admin would never
@@ -380,15 +380,15 @@ async function resolvePeopleMentions(
   return out
 }
 
-/** Resolve an instance's concept, then run the member check against the patch. */
-async function assertMembersForInstance(
+/** Resolve a record version's concept, then run the member check against the patch. */
+async function assertMembersForRecordVersion(
   orgId: string,
-  instanceId: string,
+  recordVersionId: string,
   patch: Record<string, unknown>,
 ): Promise<void> {
   const r = await pool.query<{ concept_id: string }>(
-    "SELECT concept_id FROM instances WHERE id = $1 AND org_id = $2 LIMIT 1",
-    [instanceId, orgId],
+    "SELECT concept_id FROM record_versions WHERE id = $1 AND org_id = $2 LIMIT 1",
+    [recordVersionId, orgId],
   )
   const conceptId = r.rows[0]?.concept_id
   if (conceptId) await assertMembers(orgId, conceptId, patch)
@@ -570,9 +570,9 @@ const HandlersLive = ServerRpcs.toLayer({
         defaultLabelIds,
       }),
     ),
-  // Not admin-gated: any member may shape a concept's default instance layout.
-  setConceptInstanceView: ({ id, instanceView }) =>
-    as<Concept>(uc.setConceptInstanceView(id, instanceView)),
+  // Not admin-gated: any member may shape a concept's default record version layout.
+  setConceptRecordView: ({ id, recordView }) =>
+    as<Concept>(uc.setConceptRecordView(id, recordView)),
   setFieldVisibility: ({ id, visibility }) =>
     adminOnFieldConcept<Field>("configure", id, uc.setFieldVisibility(id, visibility)),
   setConceptVisibility: ({ id, visibility }) =>
@@ -583,7 +583,7 @@ const HandlersLive = ServerRpcs.toLayer({
       { type: "concept", id },
       uc.setConceptTitleField(id, titleFieldId),
     ),
-  // Admin + the member check `createInstance` does: `fields` seeds a real record,
+  // Admin + the member check `createRecord` does: `fields` seeds a real record,
   // so any `user`-kind value in it must be an actual org member. Without this the
   // toggle would be a hole in a rule every other write path enforces.
   setConceptSingleRecord: ({ conceptId, singleRecord, fields }) =>
@@ -614,9 +614,9 @@ const HandlersLive = ServerRpcs.toLayer({
   getConceptGraph: () => as<ConceptGraph>(uc.getConceptGraph),
   getGraphLayout: () => as<GraphLayout>(uc.getGraphLayout),
   saveGraphLayout: ({ positions }) => as<GraphLayout>(uc.saveGraphLayout(positions)),
-  getInstanceGraphLayout: ({ itemId }) => as<GraphLayout>(uc.getInstanceGraphLayout(itemId)),
-  saveInstanceGraphLayout: ({ itemId, positions }) =>
-    as<GraphLayout>(uc.saveInstanceGraphLayout(itemId, positions)),
+  getRecordGraphLayout: ({ recordId }) => as<GraphLayout>(uc.getRecordGraphLayout(recordId)),
+  saveRecordGraphLayout: ({ recordId, positions }) =>
+    as<GraphLayout>(uc.saveRecordGraphLayout(recordId, positions)),
   addField: ({ conceptId, name, kind, config, formula, icon }) =>
     adminOn<Field>(
       "configure",
@@ -638,44 +638,46 @@ const HandlersLive = ServerRpcs.toLayer({
       { type: "concept", id: conceptId },
       uc.reorderFields(conceptId, orders),
     ),
-  listInstances: ({ conceptId, includeArchived }) =>
+  listRecords: ({ conceptId, includeArchived }) =>
     mapErr(
-      uc.listInstances(conceptId, { decorate: true, includeArchived, limit: LIST_INSTANCES_LIMIT }),
+      uc.listRecords(conceptId, { decorate: true, includeArchived, limit: LIST_RECORDS_LIMIT }),
     ),
-  getInstance: ({ id }) => as<InstanceDetail>(uc.getInstanceDetail(id)),
-  getSingleRecord: ({ conceptId }) => as<InstanceDetail | null>(uc.getSingleRecord(conceptId)),
+  getRecord: ({ id }) => as<RecordDetail>(uc.getRecordDetail(id)),
+  getSingleRecord: ({ conceptId }) => as<RecordDetail | null>(uc.getSingleRecord(conceptId)),
   getChanged: () => mapErr(uc.getChanged),
   listEvents: ({ conceptId, since, limit }) => mapErr(uc.listEvents({ conceptId, since, limit })),
-  createInstance: ({ conceptId, fields }) =>
+  createRecord: ({ conceptId, fields }) =>
     checkThen(
       (orgId) => assertMembers(orgId, conceptId, fields),
-      uc.createInstance(conceptId, fields),
+      uc.createRecord(conceptId, fields),
     ),
-  updateInstance: ({ id, expectedVersion, patch }) =>
+  updateRecord: ({ id, expectedVersion, patch }) =>
     checkThen(
-      (orgId) => assertMembersForInstance(orgId, id, patch),
-      uc.updateInstance(id, expectedVersion, patch),
+      (orgId) => assertMembersForRecordVersion(orgId, id, patch),
+      uc.updateRecord(id, expectedVersion, patch),
     ),
-  transitionInstance: ({ id, expectedVersion, field, to }) =>
-    mapErr(uc.transitionInstance(id, expectedVersion, field, to)),
-  // Archive/restore are ordinary item writes (any member); a hard delete is
+  transitionRecord: ({ id, expectedVersion, field, to }) =>
+    mapErr(uc.transitionRecord(id, expectedVersion, field, to)),
+  // Archive/restore are ordinary record writes (any member); a hard delete is
   // admin-only, mirroring the schema-mutating concept/field/label deletes.
-  archiveInstance: ({ id, expectedVersion }) => mapErr(uc.archiveInstance(id, expectedVersion)),
-  restoreInstance: ({ id, expectedVersion }) => mapErr(uc.restoreInstance(id, expectedVersion)),
-  deleteInstance: ({ id }) => admin<Instance>(uc.deleteInstance(id)),
+  archiveRecordVersion: ({ id, expectedVersion }) =>
+    mapErr(uc.archiveRecordVersion(id, expectedVersion)),
+  restoreRecordVersion: ({ id, expectedVersion }) =>
+    mapErr(uc.restoreRecordVersion(id, expectedVersion)),
+  deleteRecordVersion: ({ id }) => admin<RecordVersion>(uc.deleteRecordVersion(id)),
   // Versioning: lifecycle + relation editing are ordinary member writes (the
   // versioning *toggle* is admin, via updateConcept). Discarding a draft is a
   // member write (it only removes never-published work).
-  listVersions: ({ itemId }) => mapErr(uc.listVersions(itemId)),
-  newVersion: ({ itemId }) => mapErr(uc.newVersion(itemId)),
+  listVersions: ({ recordId }) => mapErr(uc.listVersions(recordId)),
+  newVersion: ({ recordId }) => mapErr(uc.newVersion(recordId)),
   publishVersion: ({ id, expectedVersion }) => mapErr(uc.publishVersion(id, expectedVersion)),
   discardDraft: ({ id }) => mapErr(uc.discardDraft(id)),
-  archiveItem: ({ itemId }) => as<Item>(uc.archiveItem(itemId)),
-  restoreItem: ({ itemId }) => as<Item>(uc.restoreItem(itemId)),
-  searchInstances: ({ conceptId, query, limit }) =>
-    as<ReadonlyArray<InstancePick>>(uc.searchInstances(conceptId, query, limit)),
-  createRelation: ({ fieldId, fromId, toItemId, toVersionId, toId, properties }) =>
-    as<Relation>(uc.createRelation({ fieldId, fromId, toItemId, toVersionId, toId, properties })),
+  archiveRecord: ({ recordId }) => as<KmRecord>(uc.archiveRecord(recordId)),
+  restoreRecord: ({ recordId }) => as<KmRecord>(uc.restoreRecord(recordId)),
+  searchRecords: ({ conceptId, query, limit }) =>
+    as<ReadonlyArray<RecordPick>>(uc.searchRecords(conceptId, query, limit)),
+  createRelation: ({ fieldId, fromId, toRecordId, toVersionId, toId, properties }) =>
+    as<Relation>(uc.createRelation({ fieldId, fromId, toRecordId, toVersionId, toId, properties })),
   removeRelation: ({ relationId }) => as<Relation>(uc.removeRelation(relationId)),
   // Views: any member may create/edit/reorder/toggle (no admin gate). The engine
   // service blocks touching another user's personal view via its owner scoping.
@@ -700,7 +702,7 @@ const HandlersLive = ServerRpcs.toLayer({
   reorderDashboards: ({ orders }) => as<ReadonlyArray<Dashboard>>(uc.reorderDashboards(orders)),
   // ── annotation layer: notes ───────────────────────────────────────────────────
   // Create + read are open to any member; edits/archive/purge are author/admin
-  // (the note has no assignee). The per-item activity feed is a plain read.
+  // (the note has no assignee). The per-record activity feed is a plain read.
   listNotes: ({ subjectId, includeArchived }) =>
     as<ReadonlyArray<Note>>(uc.listNotes(subjectId, includeArchived)),
   createNote: ({ subjectId, body, customFields }) =>
@@ -736,7 +738,7 @@ const HandlersLive = ServerRpcs.toLayer({
   // it is resolved client-side from the static nav table.
   searchMentionableRecords: ({ query, limit }) =>
     as<ReadonlyArray<MentionRef>>(uc.searchMentionableRecords(query, limit)),
-  listBacklinks: ({ itemId }) => as<ReadonlyArray<BacklinkRef>>(uc.listBacklinks(itemId)),
+  listBacklinks: ({ recordId }) => as<ReadonlyArray<BacklinkRef>>(uc.listBacklinks(recordId)),
   resolveMentions: ({ refs }) =>
     Effect.gen(function* () {
       const { orgId } = yield* OrgContext
@@ -840,9 +842,9 @@ const HandlersLive = ServerRpcs.toLayer({
   // ── annotation layer: files ─────────────────────────────────────────────────────
   // Reads are open to any member; archive/restore/purge gate on uploader/admin
   // (upload itself is the plain-HTTP multipart route, open like createNote).
-  listFiles: ({ itemId, instanceId, bucketId, conceptId, includeArchived, limit }) =>
+  listFiles: ({ recordId, recordVersionId, bucketId, conceptId, includeArchived, limit }) =>
     as<ReadonlyArray<Attachment>>(
-      uc.listFiles({ itemId, instanceId, bucketId, conceptId, includeArchived, limit }),
+      uc.listFiles({ recordId, recordVersionId, bucketId, conceptId, includeArchived, limit }),
     ),
   archiveFile: ({ id }) =>
     guarded<Attachment>(
@@ -902,9 +904,9 @@ const HandlersLive = ServerRpcs.toLayer({
   restoreAnnotationField: ({ id }) => admin<AnnotationField>(uc.restoreAnnotationField(id)),
   reorderAnnotationFields: ({ annotationType, orders }) =>
     admin<ReadonlyArray<AnnotationField>>(uc.reorderAnnotationFields(annotationType, orders)),
-  // Instance-view layout prefs: both target the caller's own row.
-  getInstanceViewPrefs: () => as<InstanceViewPrefs>(uc.getInstanceViewPrefs),
-  updateInstanceViewPrefs: ({ body }) => as<InstanceViewPrefs>(uc.updateInstanceViewPrefs(body)),
+  // Record version-view layout prefs: both target the caller's own row.
+  getRecordViewPrefs: () => as<RecordViewPrefs>(uc.getRecordViewPrefs),
+  updateRecordViewPrefs: ({ body }) => as<RecordViewPrefs>(uc.updateRecordViewPrefs(body)),
   // Deactivation: the list is member-readable (drives picker filtering + the
   // directory toggle); the writes are admin-only with auth-tier guards. A purge
   // is the plain-HTTP DELETE /api/org/members/:userId (see router.ts).

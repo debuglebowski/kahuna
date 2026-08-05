@@ -4,16 +4,16 @@ import {
   type FieldConfig,
   type FieldKind,
   FieldService,
-  type Instance,
-  InstanceService,
   type OrgScope,
+  RecordService,
+  type RecordVersion,
 } from "#engine"
 import { pool } from "../db"
 import { runEngineOrThrow } from "../runtime"
 
 /**
  * Reusable foundation for surfacing external (integration-synced) records inside
- * Kingsmaker as ordinary concept instances — so the EXISTING generic dashboard
+ * Kingsmaker as ordinary concept record versions — so the EXISTING generic dashboard
  * widgets (List/Kanban/Calendar) can render them with no widget changes.
  *
  * Connectors run as plain async/SQL code OUTSIDE an HTTP request, so engine
@@ -44,7 +44,7 @@ export interface ProvisionConceptSpec {
   /** Marks this as a connector-owned "managed concept" (e.g. "google.gmail").
    *  Locked from user edits + given an opinionated detail view. */
   readonly managedBy?: string
-  /** Logical `key` of the field to use as the instance display label ("title").
+  /** Logical `key` of the field to use as the record version display label ("title").
    *  Set as the concept's `titleFieldId` at provision time (overriding the
    *  auto-assigned first field), so e.g. an event shows its Title, not its id. */
   readonly titleFieldKey?: string
@@ -123,15 +123,15 @@ export const provisionConcept = (
     }),
   )
 
-/** Outcome of an upsert: the resulting instance and whether it was newly created. */
+/** Outcome of an upsert: the resulting record version and whether it was newly created. */
 export interface UpsertResult {
-  readonly instance: Instance
+  readonly recordVersion: RecordVersion
   readonly created: boolean
 }
 
 /**
- * Upsert one concept instance keyed by an external id held in one of its fields.
- * Looks up a live instance of `conceptId` whose `state[externalFieldId]` equals
+ * Upsert one concept record version keyed by an external id held in one of its fields.
+ * Looks up a live record version of `conceptId` whose `state[externalFieldId]` equals
  * `externalValue` (org + concept scoped) via the shared pool — the same way
  * other connectors read engine-projection tables — then runs the create/update
  * as an engine Effect (event-sourced) within the org's `OrgContext`. `fields` is
@@ -139,7 +139,7 @@ export interface UpsertResult {
  * across syncs; the external id field should be `config.unique` so a create race
  * still can't duplicate.
  */
-export const upsertInstanceByExternalId = async (
+export const upsertRecordVersionByExternalId = async (
   scope: OrgScope,
   input: {
     readonly conceptId: string
@@ -157,7 +157,7 @@ export const upsertInstanceByExternalId = async (
     versioning_enabled: boolean
   }>(
     `SELECT i.id, i.version, i.version_status, c.versioning_enabled
-       FROM instances i JOIN concepts c ON c.id = i.concept_id AND c.org_id = i.org_id
+       FROM record_versions i JOIN concepts c ON c.id = i.concept_id AND c.org_id = i.org_id
       WHERE i.org_id = $1 AND i.concept_id = $2 AND i.state->>$3 = $4 AND i.archived_at IS NULL
       ORDER BY i.version_seq DESC
       LIMIT 1`,
@@ -171,29 +171,29 @@ export const upsertInstanceByExternalId = async (
   // freeze gave before amendments existed, just no longer contingent on a setting.
   if (existing?.versioning_enabled && existing.version_status !== "draft") {
     throw new Error(
-      `refusing to sync into published version ${existing.id}: open a draft on this item first`,
+      `refusing to sync into published version ${existing.id}: open a draft on this record first`,
     )
   }
   if (!existing) {
-    const instance = await runEngineOrThrow(
+    const recordVersion = await runEngineOrThrow(
       scope,
       Effect.gen(function* () {
-        const instances = yield* InstanceService
-        return yield* instances.create({ conceptId: input.conceptId, fields: input.fields })
+        const recordVersions = yield* RecordService
+        return yield* recordVersions.create({ conceptId: input.conceptId, fields: input.fields })
       }),
     )
-    return { instance, created: true }
+    return { recordVersion, created: true }
   }
-  const instance = await runEngineOrThrow(
+  const recordVersion = await runEngineOrThrow(
     scope,
     Effect.gen(function* () {
-      const instances = yield* InstanceService
-      return yield* instances.update({
-        instanceId: existing.id,
+      const recordVersions = yield* RecordService
+      return yield* recordVersions.update({
+        recordVersionId: existing.id,
         expectedVersion: Number(existing.version),
         patch: input.fields,
       })
     }),
   )
-  return { instance, created: false }
+  return { recordVersion, created: false }
 }

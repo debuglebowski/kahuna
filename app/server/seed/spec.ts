@@ -43,7 +43,7 @@ export interface ConceptSpec {
   /** Display glyph: a literal emoji or `lucide:Name` (see engine `Concept.icon`). */
   readonly icon?: string
   /** Display color: a hex from the web app's pill palette (see `PILL_COLORS`);
-   *  tints the concept's items in the relationship graph. */
+   *  tints the concept's records in the relationship graph. */
   readonly color?: string
   readonly fields: ReadonlyArray<FieldSpec>
 }

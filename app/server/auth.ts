@@ -28,10 +28,10 @@ import { seedKingsmaker } from "./seed/seed"
  * dashboards accumulated before the assertion existed.
  */
 const ORG_SCOPED_TABLES: ReadonlyArray<string> = [
-  // the mention index, first: it references annotations, instances, fields AND
-  // items, so it has to go before any of them
+  // the mention index, first: it references annotations, record versions, fields AND
+  // records, so it has to go before any of them
   "mentions",
-  // annotation layer (references items/instances)
+  // annotation layer (references records/record versions)
   "annotations",
   "annotation_fields",
   "task_statuses",
@@ -47,17 +47,17 @@ const ORG_SCOPED_TABLES: ReadonlyArray<string> = [
   "access_roles",
   "access_policy_versions",
   // per-user sidecars
-  "instance_view_prefs",
+  "record_view_prefs",
   "member_deactivations",
   "concept_graph_layouts",
-  "instance_graph_layouts",
+  "record_graph_layouts",
   // views + dashboards
   "sidebar_views",
   "dashboards",
-  // the core graph (relations → instances → items → fields → concepts)
+  // the core graph (relations → record versions → records → fields → concepts)
   "relations",
-  "instances",
-  "items",
+  "record_versions",
+  "records",
   "fields",
   "labels",
   "events",

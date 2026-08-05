@@ -29,7 +29,7 @@ import { createOrgDirect, createUserDirect, makeOrgSlug } from "./provision"
  * user row survives and needs deleting separately if you want it gone.
  *
  * Callers: `scripts/bootstrap.ts`, which the container entrypoint runs as part of
- * `migrate`. That step is single-instance by contract, which is what keeps the
+ * `migrate`. That step is single-record version by contract, which is what keeps the
  * empty-deployment check below free of a TOCTOU race between replicas.
  */
 export interface InitialAdminConfig {

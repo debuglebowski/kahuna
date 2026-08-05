@@ -10,7 +10,7 @@ import { sleepBeforeRetry } from "./integrations/http"
 import { connectionForOrgIn } from "./integrations/rows"
 import { resolvePolicy, runEngine, sessionScope, systemScope } from "./runtime"
 import { resolveAdmin, resolveOrg } from "./session"
-import { createInstance, getInstance, updateInstance } from "./use-cases"
+import { createRecord, getRecord, updateRecord } from "./use-cases"
 
 /**
  * Clay connector — the ASYNC, webhook/table-centric integration (the distinctive
@@ -34,13 +34,13 @@ import { createInstance, getInstance, updateInstance } from "./use-cases"
  *      { _km_correlation_id?, _km_delivery_id?, fields?: {clayColumn: value} }
  *    Enriched columns may be nested under `fields` or sit at the top level
  *    (reserved `_km_*` keys excluded). `_km_delivery_id` (else a body hash) keys
- *    dedup. A matching job → write-back to its instance (or create on its
+ *    dedup. A matching job → write-back to its record version (or create on its
  *    concept); no match → net-new row (auto-create when configured, else logged).
  *
  * GENERIC BY DESIGN: every mapping is {clayColumn → KM field id}. There is NO
  * concept or field-name hardcoding (the repo keys everything by field id).
  *
- * DEFERRED (follow-ups, not built here): the per-instance "Send to Clay"
+ * DEFERRED (follow-ups, not built here): the per-record version "Send to Clay"
  * Details-tile button + mapping picker (the enrich ROUTE + client method land
  * here), auto-trigger-on-create flows, and Clay REST pull/list via `apiKey`.
  */
@@ -182,7 +182,7 @@ export async function disconnectClay(req: Request) {
   const connection = await connectionForOrg(org.orgId)
   if (!connection) return json({ ok: true })
   // Data minimization: drop the encrypted URL/key/secret on disconnect. Jobs are
-  // kept (they reference instance ids, not PII) for round-trip history.
+  // kept (they reference record version ids, not PII) for round-trip history.
   await db
     .update(clayConnection)
     .set({
@@ -240,8 +240,8 @@ const isEmpty = (v: unknown): boolean =>
   v == null || v === "" || (Array.isArray(v) && v.length === 0)
 
 /**
- * Project an instance's state onto a Clay row via {clayColumn → fieldId}: the
- * row is keyed by Clay column names carrying the instance's current field values.
+ * Project a record version's state onto a Clay row via {clayColumn → fieldId}: the
+ * row is keyed by Clay column names carrying the record version's current field values.
  * Empty values are omitted. Pure/generic — no field-name knowledge.
  */
 const rowFromMapping = (
@@ -258,7 +258,7 @@ const rowFromMapping = (
 }
 
 /**
- * Push an existing instance's mapped fields into the Clay table as a row, tagged
+ * Push an existing record version's mapped fields into the Clay table as a row, tagged
  * with a fresh correlation id, and record a pending `clayJob` for the eventual
  * enriched callback. Returns the job id (the correlation id). Generic: the caller
  * supplies the {clayColumn → fieldId} mapping; no concept assumptions.
@@ -266,14 +266,18 @@ const rowFromMapping = (
 export async function pushRow(
   scope: OrgScope,
   connection: typeof clayConnection.$inferSelect,
-  input: { instanceId: string; mapping: Record<string, string>; extra?: Record<string, unknown> },
+  input: {
+    recordVersionId: string
+    mapping: Record<string, string>
+    extra?: Record<string, unknown>
+  },
 ): Promise<
   { ok: true; jobId: string } | { ok: false; status: number; code: string; detail?: unknown }
 > {
   const webhookUrl = decryptToken(connection.tableWebhookUrl)
   if (!webhookUrl) return { ok: false, status: 400, code: "NO_TABLE_WEBHOOK" }
 
-  const instRes = await runEngine(scope, getInstance(input.instanceId))
+  const instRes = await runEngine(scope, getRecord(input.recordVersionId))
   if (!instRes.ok)
     return { ok: false, status: instRes.status, code: instRes.code, detail: instRes.detail }
   const state = instRes.data.state as Record<string, unknown>
@@ -285,7 +289,7 @@ export async function pushRow(
     .values({
       orgId: scope.orgId,
       connectionId: connection.id,
-      instanceId: input.instanceId,
+      recordVersionId: input.recordVersionId,
       conceptId: instRes.data.conceptId,
       mapping: input.mapping,
       direction: "enrich",
@@ -328,7 +332,7 @@ export async function pushRow(
   return { ok: true, jobId: job.id }
 }
 
-/** Route: push a single instance to Clay (`POST .../enrich`). */
+/** Route: push a single record version to Clay (`POST .../enrich`). */
 export async function enrichForRequest(req: Request) {
   const org = await resolveOrg(req)
   if (!org.ok) return json({ error: org.code }, org.status)
@@ -336,13 +340,13 @@ export async function enrichForRequest(req: Request) {
   if (connection?.status !== "connected") return json({ error: "NO_CLAY_CONNECTION" }, 404)
 
   const body = (await req.json().catch(() => null)) as {
-    instanceId?: string
+    recordVersionId?: string
     mapping?: Record<string, string>
     extra?: Record<string, unknown>
   } | null
-  const instanceId = body?.instanceId?.trim()
+  const recordVersionId = body?.recordVersionId?.trim()
   const mapping = body?.mapping
-  if (!instanceId) return json({ error: "INSTANCE_ID_REQUIRED" }, 400)
+  if (!recordVersionId) return json({ error: "RECORD_VERSION_ID_REQUIRED" }, 400)
   if (!mapping || typeof mapping !== "object" || Object.keys(mapping).length === 0)
     return json({ error: "MAPPING_REQUIRED" }, 400)
 
@@ -350,7 +354,7 @@ export async function enrichForRequest(req: Request) {
     sessionScope(org.orgId, org.actor, org.role, await resolvePolicy(org.orgId, org.actor)),
     connection,
     {
-      instanceId,
+      recordVersionId,
       mapping,
       extra: body?.extra,
     },
@@ -362,8 +366,8 @@ export async function enrichForRequest(req: Request) {
       connectionId: connection.id,
       action: "enrich",
       status: "error",
-      subjectKind: "instance",
-      subjectId: instanceId,
+      subjectKind: "recordVersion",
+      subjectId: recordVersionId,
       detail: { code: result.code, detail: result.detail },
     })
     return json({ error: result.code, detail: result.detail }, result.status)
@@ -373,8 +377,8 @@ export async function enrichForRequest(req: Request) {
     userId: org.actor,
     connectionId: connection.id,
     action: "enrich",
-    subjectKind: "instance",
-    subjectId: instanceId,
+    subjectKind: "recordVersion",
+    subjectId: recordVersionId,
     detail: { jobId: result.jobId },
   })
   return json({ ok: true, jobId: result.jobId })
@@ -412,7 +416,7 @@ const patchFromMapping = (
  * Receive an enriched row from Clay. Session-less: routed by `?cid=` and
  * authenticated by the shared callback secret (timing-safe). Dedups by delivery
  * id (or body hash), matches the correlation id to a `clayJob`, and writes the
- * enriched columns back onto the job's instance (or creates one on its concept).
+ * enriched columns back onto the job's record version (or creates one on its concept).
  * Unmatched rows are net-new: auto-created onto the connection's configured
  * `newRowConceptId`/`newRowMapping`, or logged for review when unconfigured.
  */
@@ -468,7 +472,7 @@ export async function handleClayCallback(req: Request) {
 
   const fields = fieldsFromBody(body)
 
-  // 1) Correlated callback → write back to the job's instance (or create on its concept).
+  // 1) Correlated callback → write back to the job's record version (or create on its concept).
   if (correlationId) {
     const [job] = await db
       .select()
@@ -494,8 +498,8 @@ export async function handleClayCallback(req: Request) {
         })
         return json({ ok: true, matched: true, updated: false })
       }
-      const outcome = job.instanceId
-        ? await writeBack(scope, job.instanceId, patch)
+      const outcome = job.recordVersionId
+        ? await writeBack(scope, job.recordVersionId, patch)
         : job.conceptId
           ? await createNew(scope, job.conceptId, patch)
           : { ok: false as const, status: 422, code: "JOB_HAS_NO_TARGET" }
@@ -513,19 +517,19 @@ export async function handleClayCallback(req: Request) {
         connectionId: connection.id,
         action: "callback",
         status: outcome.ok ? "ok" : "error",
-        subjectKind: "instance",
-        subjectId: outcome.ok ? outcome.instanceId : job.instanceId,
+        subjectKind: "recordVersion",
+        subjectId: outcome.ok ? outcome.recordVersionId : job.recordVersionId,
         detail: outcome.ok
-          ? { matched: true, created: !job.instanceId, fields: Object.keys(patch) }
+          ? { matched: true, created: !job.recordVersionId, fields: Object.keys(patch) }
           : { matched: true, code: outcome.code },
       })
       if (!outcome.ok) return json({ error: outcome.code }, outcome.status)
       return json({
         ok: true,
         matched: true,
-        updated: Boolean(job.instanceId),
-        created: !job.instanceId,
-        instanceId: outcome.instanceId,
+        updated: Boolean(job.recordVersionId),
+        created: !job.recordVersionId,
+        recordVersionId: outcome.recordVersionId,
       })
     }
     // correlationId present but no job (expired/foreign) → fall through to net-new.
@@ -549,7 +553,12 @@ export async function handleClayCallback(req: Request) {
       detail: outcome.ok ? { created: true, fields: Object.keys(patch) } : { code: outcome.code },
     })
     if (!outcome.ok) return json({ error: outcome.code }, outcome.status)
-    return json({ ok: true, matched: false, created: true, instanceId: outcome.instanceId })
+    return json({
+      ok: true,
+      matched: false,
+      created: true,
+      recordVersionId: outcome.recordVersionId,
+    })
   }
 
   // Unconfigured net-new → logged (in clay_notification) for review only.
@@ -564,28 +573,30 @@ export async function handleClayCallback(req: Request) {
   return json({ ok: true, matched: false, created: false, queued: true })
 }
 
-type WriteOutcome = { ok: true; instanceId: string } | { ok: false; status: number; code: string }
+type WriteOutcome =
+  | { ok: true; recordVersionId: string }
+  | { ok: false; status: number; code: string }
 
-/** Overwrite-write the enriched patch onto an existing instance via the engine. */
+/** Overwrite-write the enriched patch onto an existing record version via the engine. */
 async function writeBack(
   scope: OrgScope,
-  instanceId: string,
+  recordVersionId: string,
   patch: Record<string, unknown>,
 ): Promise<WriteOutcome> {
-  const instRes = await runEngine(scope, getInstance(instanceId))
+  const instRes = await runEngine(scope, getRecord(recordVersionId))
   if (!instRes.ok) return { ok: false, status: instRes.status, code: instRes.code }
-  const updRes = await runEngine(scope, updateInstance(instanceId, instRes.data.version, patch))
+  const updRes = await runEngine(scope, updateRecord(recordVersionId, instRes.data.version, patch))
   if (!updRes.ok) return { ok: false, status: updRes.status, code: updRes.code }
-  return { ok: true, instanceId }
+  return { ok: true, recordVersionId }
 }
 
-/** Create a net-new instance on `conceptId` from the enriched patch. */
+/** Create a net-new record version on `conceptId` from the enriched patch. */
 async function createNew(
   scope: OrgScope,
   conceptId: string,
   patch: Record<string, unknown>,
 ): Promise<WriteOutcome> {
-  const res = await runEngine(scope, createInstance(conceptId, patch))
+  const res = await runEngine(scope, createRecord(conceptId, patch))
   if (!res.ok) return { ok: false, status: res.status, code: res.code }
-  return { ok: true, instanceId: res.data.id }
+  return { ok: true, recordVersionId: res.data.id }
 }
