@@ -1510,10 +1510,9 @@ export const resolveMentions = (
     // with the request, and callers join on those two. Capped to match the
     // extractor's per-document ceiling; this is a per-document render, not a page
     // of rows.
-    const deduped = [...new Map(refs.map((r) => [`${r.kind} ${r.targetId}`, r])).values()].slice(
-      0,
-      MAX_MENTIONS_PER_DOC,
-    )
+    const deduped = [
+      ...new Map(refs.map((r) => [`${r.kind}\u0000${r.targetId}`, r])).values(),
+    ].slice(0, MAX_MENTIONS_PER_DOC)
     return yield* Effect.forEach(deduped, resolveOne)
   })
 
