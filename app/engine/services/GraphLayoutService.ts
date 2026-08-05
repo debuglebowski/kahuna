@@ -60,40 +60,40 @@ export class GraphLayoutService extends Effect.Service<GraphLayoutService>()(
           }),
         )
 
-      /** Saved positions for one item's relationship graph; `{}` when unsaved. */
-      const getForItem = (itemId: string) =>
+      /** Saved positions for one record's relationship graph; `{}` when unsaved. */
+      const getForItem = (recordId: string) =>
         Effect.gen(function* () {
           const { orgId } = yield* OrgContext
           const rows = yield* sql<LayoutRow>`
-            SELECT positions FROM instance_graph_layouts
-            WHERE org_id = ${orgId} AND item_id = ${itemId} LIMIT 1`
+            SELECT positions FROM record_graph_layouts
+            WHERE org_id = ${orgId} AND record_id = ${recordId} LIMIT 1`
           return rows[0]?.positions ?? {}
         })
 
       /**
-       * Merge a partial patch into one item graph's saved layout (same per-node
+       * Merge a partial patch into one record graph's saved layout (same per-node
        * last-write-wins contract as the concept canvas). Pruning keeps entries
-       * whose key is a live org item id, plus `ghost:`-prefixed keys (dangling
-       * refs have no item to validate against).
+       * whose key is a live org record id, plus `ghost:`-prefixed keys (dangling
+       * refs have no record to validate against).
        */
-      const saveForItem = (itemId: string, patch: GraphLayoutPositions) =>
+      const saveForItem = (recordId: string, patch: GraphLayoutPositions) =>
         sql.withTransaction(
           Effect.gen(function* () {
             const { orgId } = yield* OrgContext
             yield* sql`
-              INSERT INTO instance_graph_layouts (org_id, item_id, positions, updated_at)
-              VALUES (${orgId}, ${itemId}, ${JSON.stringify(patch)}::jsonb, now())
-              ON CONFLICT (org_id, item_id)
-              DO UPDATE SET positions = instance_graph_layouts.positions || EXCLUDED.positions,
+              INSERT INTO record_graph_layouts (org_id, record_id, positions, updated_at)
+              VALUES (${orgId}, ${recordId}, ${JSON.stringify(patch)}::jsonb, now())
+              ON CONFLICT (org_id, record_id)
+              DO UPDATE SET positions = record_graph_layouts.positions || EXCLUDED.positions,
                             updated_at = now()`
             const rows = yield* sql<LayoutRow>`
-              UPDATE instance_graph_layouts SET positions = (
+              UPDATE record_graph_layouts SET positions = (
                 SELECT COALESCE(jsonb_object_agg(e.key, e.value), '{}'::jsonb)
                 FROM jsonb_each(positions) AS e
                 WHERE e.key LIKE 'ghost:%'
-                   OR e.key IN (SELECT id::text FROM items WHERE org_id = ${orgId})
+                   OR e.key IN (SELECT id::text FROM records WHERE org_id = ${orgId})
               )
-              WHERE org_id = ${orgId} AND item_id = ${itemId}
+              WHERE org_id = ${orgId} AND record_id = ${recordId}
               RETURNING positions`
             return rows[0]?.positions ?? {}
           }),

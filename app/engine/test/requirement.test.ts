@@ -2,7 +2,7 @@ import { describe, expect, it } from "@effect/vitest"
 import { Effect } from "effect"
 import { ConceptService } from "../services/ConceptService"
 import { FieldService } from "../services/FieldService"
-import { InstanceService } from "../services/InstanceService"
+import { RecordService } from "../services/RecordService"
 import { newOrgId, testLayer } from "./harness"
 
 describe("field requirement (required / flagged / optional)", () => {
@@ -10,7 +10,7 @@ describe("field requirement (required / flagged / optional)", () => {
     Effect.gen(function* () {
       const concepts = yield* ConceptService
       const fields = yield* FieldService
-      const instances = yield* InstanceService
+      const recordVersions = yield* RecordService
       const c = yield* concepts.create({ name: "Deal" })
       yield* fields.addField({
         conceptId: c.id,
@@ -18,7 +18,7 @@ describe("field requirement (required / flagged / optional)", () => {
         kind: "text",
         config: { requirement: "required" },
       })
-      const err = yield* instances.create({ conceptId: c.id, fields: {} }).pipe(Effect.flip)
+      const err = yield* recordVersions.create({ conceptId: c.id, fields: {} }).pipe(Effect.flip)
       expect(err._tag).toBe("FieldValidationError")
       expect((err as { message: string }).message).toContain('"title" is required')
     }).pipe(Effect.provide(testLayer(newOrgId()))),
@@ -28,7 +28,7 @@ describe("field requirement (required / flagged / optional)", () => {
     Effect.gen(function* () {
       const concepts = yield* ConceptService
       const fields = yield* FieldService
-      const instances = yield* InstanceService
+      const recordVersions = yield* RecordService
       const c = yield* concepts.create({ name: "Deal" })
       const title = yield* fields.addField({
         conceptId: c.id,
@@ -36,9 +36,9 @@ describe("field requirement (required / flagged / optional)", () => {
         kind: "text",
         config: {},
       })
-      const inst = yield* instances.create({ conceptId: c.id, fields: { [title.id]: "Acme" } })
-      const cleared = yield* instances.update({
-        instanceId: inst.id,
+      const inst = yield* recordVersions.create({ conceptId: c.id, fields: { [title.id]: "Acme" } })
+      const cleared = yield* recordVersions.update({
+        recordVersionId: inst.id,
         expectedVersion: inst.version,
         patch: { [title.id]: null },
       })
@@ -51,7 +51,7 @@ describe("field requirement (required / flagged / optional)", () => {
     Effect.gen(function* () {
       const concepts = yield* ConceptService
       const fields = yield* FieldService
-      const instances = yield* InstanceService
+      const recordVersions = yield* RecordService
       const c = yield* concepts.create({ name: "Deal" })
       const title = yield* fields.addField({
         conceptId: c.id,
@@ -59,10 +59,10 @@ describe("field requirement (required / flagged / optional)", () => {
         kind: "text",
         config: { requirement: "required" },
       })
-      const inst = yield* instances.create({ conceptId: c.id, fields: { [title.id]: "Acme" } })
-      const err = yield* instances
+      const inst = yield* recordVersions.create({ conceptId: c.id, fields: { [title.id]: "Acme" } })
+      const err = yield* recordVersions
         .update({
-          instanceId: inst.id,
+          recordVersionId: inst.id,
           expectedVersion: inst.version,
           patch: { [title.id]: null },
         })
@@ -76,7 +76,7 @@ describe("field requirement (required / flagged / optional)", () => {
     Effect.gen(function* () {
       const concepts = yield* ConceptService
       const fields = yield* FieldService
-      const instances = yield* InstanceService
+      const recordVersions = yield* RecordService
       const c = yield* concepts.create({ name: "Deal" })
       const title = yield* fields.addField({
         conceptId: c.id,
@@ -90,15 +90,15 @@ describe("field requirement (required / flagged / optional)", () => {
         kind: "text",
         config: { requirement: "required", multiple: true },
       })
-      const blankTitle = yield* instances
+      const blankTitle = yield* recordVersions
         .create({ conceptId: c.id, fields: { [title.id]: "", [tags.id]: ["a"] } })
         .pipe(Effect.flip)
       expect(blankTitle._tag).toBe("FieldValidationError")
-      const emptyTags = yield* instances
+      const emptyTags = yield* recordVersions
         .create({ conceptId: c.id, fields: { [title.id]: "Acme", [tags.id]: [] } })
         .pipe(Effect.flip)
       expect(emptyTags._tag).toBe("FieldValidationError")
-      const ok = yield* instances.create({
+      const ok = yield* recordVersions.create({
         conceptId: c.id,
         fields: { [title.id]: "Acme", [tags.id]: ["a"] },
       })
@@ -110,31 +110,31 @@ describe("field requirement (required / flagged / optional)", () => {
     Effect.gen(function* () {
       const concepts = yield* ConceptService
       const fields = yield* FieldService
-      const instances = yield* InstanceService
+      const recordVersions = yield* RecordService
       const c = yield* concepts.create({ name: "Deal" })
       const title = yield* fields.addField({ conceptId: c.id, name: "title", kind: "text" })
       const notes = yield* fields.addField({ conceptId: c.id, name: "notes", kind: "text" })
       // Created BEFORE the rule — the row predates `required` and misses a value.
-      const inst = yield* instances.create({ conceptId: c.id, fields: {} })
+      const inst = yield* recordVersions.create({ conceptId: c.id, fields: {} })
       yield* fields.update({ id: title.id, config: { requirement: "required" } })
 
       // Editing an unrelated field on the incomplete row still works.
-      const patched = yield* instances.update({
-        instanceId: inst.id,
+      const patched = yield* recordVersions.update({
+        recordVersionId: inst.id,
         expectedVersion: inst.version,
         patch: { [notes.id]: "hello" },
       })
       expect(patched.state[notes.id]).toBe("hello")
 
       // Setting the required field works; clearing it back is rejected.
-      const filled = yield* instances.update({
-        instanceId: inst.id,
+      const filled = yield* recordVersions.update({
+        recordVersionId: inst.id,
         expectedVersion: patched.version,
         patch: { [title.id]: "Acme" },
       })
-      const err = yield* instances
+      const err = yield* recordVersions
         .update({
-          instanceId: inst.id,
+          recordVersionId: inst.id,
           expectedVersion: filled.version,
           patch: { [title.id]: "" },
         })
@@ -148,7 +148,7 @@ describe("field requirement (required / flagged / optional)", () => {
     Effect.gen(function* () {
       const concepts = yield* ConceptService
       const fields = yield* FieldService
-      const instances = yield* InstanceService
+      const recordVersions = yield* RecordService
       const c = yield* concepts.create({ name: "Deal" })
       const title = yield* fields.addField({
         conceptId: c.id,
@@ -156,9 +156,9 @@ describe("field requirement (required / flagged / optional)", () => {
         kind: "text",
         config: { requirement: "flagged" },
       })
-      const inst = yield* instances.create({ conceptId: c.id, fields: {} })
-      const cleared = yield* instances.update({
-        instanceId: inst.id,
+      const inst = yield* recordVersions.create({ conceptId: c.id, fields: {} })
+      const cleared = yield* recordVersions.update({
+        recordVersionId: inst.id,
         expectedVersion: inst.version,
         patch: { [title.id]: "" },
       })
@@ -187,26 +187,26 @@ describe("field requirement (required / flagged / optional)", () => {
     Effect.gen(function* () {
       const concepts = yield* ConceptService
       const fields = yield* FieldService
-      const instances = yield* InstanceService
+      const recordVersions = yield* RecordService
       const c = yield* concepts.create({ name: "Spec" })
       yield* concepts.update({ id: c.id, description: null, versioningEnabled: true })
       const title = yield* fields.addField({ conceptId: c.id, name: "title", kind: "text" })
       // Draft created while the field was optional, then the rule flips.
-      const draft = yield* instances.create({ conceptId: c.id, fields: {} })
+      const draft = yield* recordVersions.create({ conceptId: c.id, fields: {} })
       yield* fields.update({ id: title.id, config: { requirement: "required" } })
 
-      const err = yield* instances
-        .publishVersion({ instanceId: draft.id, expectedVersion: draft.version })
+      const err = yield* recordVersions
+        .publishVersion({ recordVersionId: draft.id, expectedVersion: draft.version })
         .pipe(Effect.flip)
       expect(err._tag).toBe("FieldValidationError")
 
-      const filled = yield* instances.update({
-        instanceId: draft.id,
+      const filled = yield* recordVersions.update({
+        recordVersionId: draft.id,
         expectedVersion: draft.version,
         patch: { [title.id]: "v1" },
       })
-      const published = yield* instances.publishVersion({
-        instanceId: draft.id,
+      const published = yield* recordVersions.publishVersion({
+        recordVersionId: draft.id,
         expectedVersion: filled.version,
       })
       expect(published.versionStatus).toBe("published")

@@ -2,7 +2,7 @@ import { describe, expect, it } from "@effect/vitest"
 import { Effect, TestClock } from "effect"
 import { ConceptService } from "../services/ConceptService"
 import { FieldService } from "../services/FieldService"
-import { InstanceService } from "../services/InstanceService"
+import { RecordService } from "../services/RecordService"
 import { RelationService } from "../services/RelationService"
 import { newOrgId, testLayer } from "./harness"
 
@@ -62,33 +62,33 @@ describe("decay tick (recomputeBands)", () => {
   it.effect("emits ComputedBandChanged on a crossing, no version bump, idempotent", () =>
     Effect.gen(function* () {
       const m = yield* setup
-      const instances = yield* InstanceService
+      const recordVersions = yield* RecordService
       const relations = yield* RelationService
       const base = new Date("2026-06-01T00:00:00Z").getTime()
       yield* TestClock.setTime(base)
 
-      const account = yield* instances.create({ conceptName: "Account", fields: {} })
-      const deal = yield* instances.create({
+      const account = yield* recordVersions.create({ conceptName: "Account", fields: {} })
+      const deal = yield* recordVersions.create({
         conceptName: "Deal",
         fields: { [m.f.status]: "lead" },
       })
       yield* relations.create({ fieldId: m.f.for, fromId: deal.id, toId: account.id })
       // Interaction 8 days before `base` -> warm (bands 7/14/30).
-      const inter = yield* instances.create({
+      const inter = yield* recordVersions.create({
         conceptName: "Interaction",
         fields: { [m.f.occurredOn]: new Date(base - 8 * DAY).toISOString() },
       })
       yield* relations.create({ fieldId: m.f.on, fromId: inter.id, toId: account.id })
 
       // First recompute: no stored marker yet -> materialises null -> warm.
-      const e1 = yield* instances.recomputeBands(deal.id)
+      const e1 = yield* recordVersions.recomputeBands(deal.id)
       expect(e1.length).toBe(1)
       const p1 = e1[0]!.payload
       if (p1._tag === "ComputedBandChanged") expect(p1.to).toBe("warm")
 
       // +8 days: interaction now 16 days old -> cooling.
       yield* TestClock.setTime(base + 8 * DAY)
-      const e2 = yield* instances.recomputeBands(deal.id)
+      const e2 = yield* recordVersions.recomputeBands(deal.id)
       expect(e2.length).toBe(1)
       const p2 = e2[0]!.payload
       if (p2._tag === "ComputedBandChanged") {
@@ -97,11 +97,11 @@ describe("decay tick (recomputeBands)", () => {
       }
 
       // No further time change -> no crossing -> no event (idempotent).
-      const e3 = yield* instances.recomputeBands(deal.id)
+      const e3 = yield* recordVersions.recomputeBands(deal.id)
       expect(e3.length).toBe(0)
 
       // Marker persisted (keyed by the decay field id); version NOT bumped.
-      const fresh = yield* instances.get(deal.id)
+      const fresh = yield* recordVersions.get(deal.id)
       expect((fresh.state.__bands as Record<string, string>)[m.f.decay]).toBe("cooling")
       expect(fresh.version).toBe(0)
     }).pipe(Effect.provide(testLayer(newOrgId()))),

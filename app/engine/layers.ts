@@ -12,12 +12,12 @@ import { EventStore } from "./services/EventStore"
 import { FieldService } from "./services/FieldService"
 import { GrantService } from "./services/GrantService"
 import { GraphLayoutService } from "./services/GraphLayoutService"
-import { InstanceService } from "./services/InstanceService"
 import { LabelService } from "./services/LabelService"
 import { MemberService } from "./services/MemberService"
 import { MentionService } from "./services/MentionService"
 import { PolicyService } from "./services/PolicyService"
 import { QueryService } from "./services/QueryService"
+import { RecordService } from "./services/RecordService"
 import { RelationService } from "./services/RelationService"
 import { SidebarViewService } from "./services/SidebarViewService"
 import { TaskPriorityService } from "./services/TaskPriorityService"
@@ -31,7 +31,7 @@ export const EngineLive = Layer.mergeAll(
   EventStore.Default,
   ConceptService.Default,
   FieldService.Default,
-  InstanceService.Default,
+  RecordService.Default,
   RelationService.Default,
   MentionService.Default,
   QueryService.Default,
@@ -58,7 +58,7 @@ export type EngineServices =
   | EventStore
   | ConceptService
   | FieldService
-  | InstanceService
+  | RecordService
   | RelationService
   | MentionService
   | QueryService

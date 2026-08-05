@@ -2,7 +2,7 @@ import { describe, expect, it } from "@effect/vitest"
 import { Effect } from "effect"
 import { ConceptService } from "../services/ConceptService"
 import { FieldService } from "../services/FieldService"
-import { InstanceService } from "../services/InstanceService"
+import { RecordService } from "../services/RecordService"
 import { newOrgId, testLayer } from "./harness"
 
 describe("field uniqueness (config.unique)", () => {
@@ -10,7 +10,7 @@ describe("field uniqueness (config.unique)", () => {
     Effect.gen(function* () {
       const concepts = yield* ConceptService
       const fields = yield* FieldService
-      const instances = yield* InstanceService
+      const recordVersions = yield* RecordService
       const c = yield* concepts.create({ name: "Person" })
       const email = yield* fields.addField({
         conceptId: c.id,
@@ -18,24 +18,24 @@ describe("field uniqueness (config.unique)", () => {
         kind: "text",
         config: { unique: true },
       })
-      yield* instances.create({ conceptId: c.id, fields: { [email.id]: "a@x.io" } })
-      const err = yield* instances
+      yield* recordVersions.create({ conceptId: c.id, fields: { [email.id]: "a@x.io" } })
+      const err = yield* recordVersions
         .create({ conceptId: c.id, fields: { [email.id]: "a@x.io" } })
         .pipe(Effect.flip)
       expect(err._tag).toBe("FieldValidationError")
       expect((err as { message: string }).message).toContain('"email" must be unique')
-      const ok = yield* instances.create({ conceptId: c.id, fields: { [email.id]: "b@x.io" } })
+      const ok = yield* recordVersions.create({ conceptId: c.id, fields: { [email.id]: "b@x.io" } })
       expect(ok.state[email.id]).toBe("b@x.io")
     }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
 
   it.effect(
-    "update to a value another item holds is rejected; re-saving one's own value is not",
+    "update to a value another record holds is rejected; re-saving one's own value is not",
     () =>
       Effect.gen(function* () {
         const concepts = yield* ConceptService
         const fields = yield* FieldService
-        const instances = yield* InstanceService
+        const recordVersions = yield* RecordService
         const c = yield* concepts.create({ name: "Person" })
         const handle = yield* fields.addField({
           conceptId: c.id,
@@ -43,19 +43,22 @@ describe("field uniqueness (config.unique)", () => {
           kind: "text",
           config: { unique: true },
         })
-        yield* instances.create({ conceptId: c.id, fields: { [handle.id]: "alice" } })
-        const bob = yield* instances.create({ conceptId: c.id, fields: { [handle.id]: "bob" } })
-        const err = yield* instances
+        yield* recordVersions.create({ conceptId: c.id, fields: { [handle.id]: "alice" } })
+        const bob = yield* recordVersions.create({
+          conceptId: c.id,
+          fields: { [handle.id]: "bob" },
+        })
+        const err = yield* recordVersions
           .update({
-            instanceId: bob.id,
+            recordVersionId: bob.id,
             expectedVersion: bob.version,
             patch: { [handle.id]: "alice" },
           })
           .pipe(Effect.flip)
         expect(err._tag).toBe("FieldValidationError")
         // An idempotent save of the row's own value must pass (autosave re-sends).
-        const same = yield* instances.update({
-          instanceId: bob.id,
+        const same = yield* recordVersions.update({
+          recordVersionId: bob.id,
           expectedVersion: bob.version,
           patch: { [handle.id]: "bob" },
         })
@@ -67,7 +70,7 @@ describe("field uniqueness (config.unique)", () => {
     Effect.gen(function* () {
       const concepts = yield* ConceptService
       const fields = yield* FieldService
-      const instances = yield* InstanceService
+      const recordVersions = yield* RecordService
       const c = yield* concepts.create({ name: "Person" })
       const email = yield* fields.addField({
         conceptId: c.id,
@@ -75,19 +78,19 @@ describe("field uniqueness (config.unique)", () => {
         kind: "text",
         config: { unique: true },
       })
-      yield* instances.create({ conceptId: c.id, fields: {} })
-      yield* instances.create({ conceptId: c.id, fields: {} })
-      yield* instances.create({ conceptId: c.id, fields: { [email.id]: "" } })
-      const ok = yield* instances.create({ conceptId: c.id, fields: { [email.id]: "" } })
+      yield* recordVersions.create({ conceptId: c.id, fields: {} })
+      yield* recordVersions.create({ conceptId: c.id, fields: {} })
+      yield* recordVersions.create({ conceptId: c.id, fields: { [email.id]: "" } })
+      const ok = yield* recordVersions.create({ conceptId: c.id, fields: { [email.id]: "" } })
       expect(ok.state[email.id]).toBe("")
     }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
 
-  it.effect("an archived item keeps its claim on a value — only a purge releases it", () =>
+  it.effect("an archived record keeps its claim on a value — only a purge releases it", () =>
     Effect.gen(function* () {
       const concepts = yield* ConceptService
       const fields = yield* FieldService
-      const instances = yield* InstanceService
+      const recordVersions = yield* RecordService
       const c = yield* concepts.create({ name: "Person" })
       const email = yield* fields.addField({
         conceptId: c.id,
@@ -95,14 +98,17 @@ describe("field uniqueness (config.unique)", () => {
         kind: "text",
         config: { unique: true },
       })
-      const gone = yield* instances.create({ conceptId: c.id, fields: { [email.id]: "a@x.io" } })
-      yield* instances.archive({ instanceId: gone.id, expectedVersion: gone.version })
-      const blocked = yield* instances
+      const gone = yield* recordVersions.create({
+        conceptId: c.id,
+        fields: { [email.id]: "a@x.io" },
+      })
+      yield* recordVersions.archive({ recordVersionId: gone.id, expectedVersion: gone.version })
+      const blocked = yield* recordVersions
         .create({ conceptId: c.id, fields: { [email.id]: "a@x.io" } })
         .pipe(Effect.flip)
       expect(blocked._tag).toBe("FieldValidationError")
-      yield* instances.purge({ instanceId: gone.id })
-      const ok = yield* instances.create({ conceptId: c.id, fields: { [email.id]: "a@x.io" } })
+      yield* recordVersions.purge({ recordVersionId: gone.id })
+      const ok = yield* recordVersions.create({ conceptId: c.id, fields: { [email.id]: "a@x.io" } })
       expect(ok.state[email.id]).toBe("a@x.io")
     }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
@@ -111,7 +117,7 @@ describe("field uniqueness (config.unique)", () => {
     Effect.gen(function* () {
       const concepts = yield* ConceptService
       const fields = yield* FieldService
-      const instances = yield* InstanceService
+      const recordVersions = yield* RecordService
       const c = yield* concepts.create({ name: "Person" })
       const email = yield* fields.addField({
         conceptId: c.id,
@@ -119,15 +125,15 @@ describe("field uniqueness (config.unique)", () => {
         kind: "text",
         config: { unique: true },
       })
-      yield* instances.create({ conceptId: c.id, fields: { [email.id]: "Bob@X.io" } })
-      const err = yield* instances
+      yield* recordVersions.create({ conceptId: c.id, fields: { [email.id]: "Bob@X.io" } })
+      const err = yield* recordVersions
         .create({ conceptId: c.id, fields: { [email.id]: "bob@x.io" } })
         .pipe(Effect.flip)
       expect(err._tag).toBe("FieldValidationError")
       // Case-variant duplicates on an existing field also block flipping unique ON.
       const handle = yield* fields.addField({ conceptId: c.id, name: "handle", kind: "text" })
-      yield* instances.create({ conceptId: c.id, fields: { [handle.id]: "Alice" } })
-      yield* instances.create({ conceptId: c.id, fields: { [handle.id]: "alice" } })
+      yield* recordVersions.create({ conceptId: c.id, fields: { [handle.id]: "Alice" } })
+      yield* recordVersions.create({ conceptId: c.id, fields: { [handle.id]: "alice" } })
       const flip = yield* fields
         .update({ id: handle.id, config: { unique: true } })
         .pipe(Effect.flip)
@@ -135,26 +141,29 @@ describe("field uniqueness (config.unique)", () => {
     }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
 
-  it.effect("enabling unique on a field with existing cross-item duplicates is rejected", () =>
+  it.effect("enabling unique on a field with existing cross-record duplicates is rejected", () =>
     Effect.gen(function* () {
       const concepts = yield* ConceptService
       const fields = yield* FieldService
-      const instances = yield* InstanceService
+      const recordVersions = yield* RecordService
       const c = yield* concepts.create({ name: "Person" })
       const email = yield* fields.addField({ conceptId: c.id, name: "email", kind: "text" })
-      yield* instances.create({ conceptId: c.id, fields: { [email.id]: "a@x.io" } })
-      const dup = yield* instances.create({ conceptId: c.id, fields: { [email.id]: "a@x.io" } })
+      yield* recordVersions.create({ conceptId: c.id, fields: { [email.id]: "a@x.io" } })
+      const dup = yield* recordVersions.create({
+        conceptId: c.id,
+        fields: { [email.id]: "a@x.io" },
+      })
       const err = yield* fields.update({ id: email.id, config: { unique: true } }).pipe(Effect.flip)
       expect(err._tag).toBe("FieldConfigInvalid")
-      expect((err as { reason: string }).reason).toContain("duplicated across items")
+      expect((err as { reason: string }).reason).toContain("duplicated across records")
       // Resolve the duplicate → the flip passes, and the rule enforces from then on.
-      yield* instances.update({
-        instanceId: dup.id,
+      yield* recordVersions.update({
+        recordVersionId: dup.id,
         expectedVersion: dup.version,
         patch: { [email.id]: "b@x.io" },
       })
       yield* fields.update({ id: email.id, config: { unique: true } })
-      const blocked = yield* instances
+      const blocked = yield* recordVersions
         .create({ conceptId: c.id, fields: { [email.id]: "a@x.io" } })
         .pipe(Effect.flip)
       expect(blocked._tag).toBe("FieldValidationError")
@@ -182,11 +191,11 @@ describe("field uniqueness (config.unique)", () => {
     }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
 
-  it.effect("versions of one item share a unique value; other items still can't take it", () =>
+  it.effect("versions of one record share a unique value; other records still can't take it", () =>
     Effect.gen(function* () {
       const concepts = yield* ConceptService
       const fields = yield* FieldService
-      const instances = yield* InstanceService
+      const recordVersions = yield* RecordService
       const c = yield* concepts.create({ name: "Spec" })
       yield* concepts.update({ id: c.id, description: null, versioningEnabled: true })
       const sku = yield* fields.addField({
@@ -195,15 +204,15 @@ describe("field uniqueness (config.unique)", () => {
         kind: "text",
         config: { unique: true },
       })
-      const draft = yield* instances.create({ conceptId: c.id, fields: { [sku.id]: "SKU-1" } })
-      const published = yield* instances.publishVersion({
-        instanceId: draft.id,
+      const draft = yield* recordVersions.create({ conceptId: c.id, fields: { [sku.id]: "SKU-1" } })
+      const published = yield* recordVersions.publishVersion({
+        recordVersionId: draft.id,
         expectedVersion: draft.version,
       })
       // A new draft clones the head's state — the shared value is legal in-lineage.
-      const v2 = yield* instances.newVersion({ itemId: published.itemId })
+      const v2 = yield* recordVersions.newVersion({ recordId: published.recordId })
       expect(v2.state[sku.id]).toBe("SKU-1")
-      const err = yield* instances
+      const err = yield* recordVersions
         .create({ conceptId: c.id, fields: { [sku.id]: "SKU-1" } })
         .pipe(Effect.flip)
       expect(err._tag).toBe("FieldValidationError")
@@ -214,7 +223,7 @@ describe("field uniqueness (config.unique)", () => {
     Effect.gen(function* () {
       const concepts = yield* ConceptService
       const fields = yield* FieldService
-      const instances = yield* InstanceService
+      const recordVersions = yield* RecordService
       const c = yield* concepts.create({ name: "Deal" })
       const price = yield* fields.addField({
         conceptId: c.id,
@@ -222,15 +231,15 @@ describe("field uniqueness (config.unique)", () => {
         kind: "money",
         config: { unique: true },
       })
-      yield* instances.create({
+      yield* recordVersions.create({
         conceptId: c.id,
         fields: { [price.id]: { amount: 100, currency: "EUR" } },
       })
-      const err = yield* instances
+      const err = yield* recordVersions
         .create({ conceptId: c.id, fields: { [price.id]: { amount: 100, currency: "EUR" } } })
         .pipe(Effect.flip)
       expect(err._tag).toBe("FieldValidationError")
-      const ok = yield* instances.create({
+      const ok = yield* recordVersions.create({
         conceptId: c.id,
         fields: { [price.id]: { amount: 100, currency: "USD" } },
       })

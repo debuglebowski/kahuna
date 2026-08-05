@@ -8,9 +8,9 @@ import {
   type ConceptRef,
   type EngineEvent,
   type Field,
-  type Instance,
-  type InstanceState,
   LABELS_KEY,
+  type RecordState,
+  type RecordVersion,
 } from "../domain/types"
 import { canEditVersion, isAmendment } from "../domain/versioning"
 import { scopeCanReadConcept, scopeConceptRead } from "../domain/visibility"
@@ -18,10 +18,10 @@ import {
   DraftAlreadyExists,
   FieldValidationError,
   IllegalTransition,
-  InstanceInUse,
-  InstanceNotFound,
-  ItemNotFound,
-  ItemNotPublished,
+  RecordNotFound,
+  RecordNotPublished,
+  RecordVersionInUse,
+  RecordVersionNotFound,
   SingleRecordConflict,
   SingleRecordProtected,
   VersionConflict,
@@ -35,7 +35,13 @@ import { EventStore } from "./EventStore"
 import { FieldService } from "./FieldService"
 import { LabelService } from "./LabelService"
 import { OrgContext } from "./OrgContext"
-import { type InstanceRow, type ItemRow, type RelationRow, toInstance, toItem } from "./rows"
+import {
+  type RecordRow,
+  type RecordVersionRow,
+  type RelationRow,
+  toRecord,
+  toRecordVersion,
+} from "./rows"
 
 /** Built-in `config.format` validators for text / number scalars. */
 const TEXT_FORMATS: Record<string, (v: string) => boolean> = {
@@ -163,7 +169,7 @@ const isMissing = (v: unknown): boolean =>
  *  requirement (FieldService rejects the config). `flagged` never blocks. */
 const checkRequired = (
   defs: ReadonlyArray<Field>,
-  state: InstanceState,
+  state: RecordState,
   keys: "all" | "present",
 ): Effect.Effect<void, FieldValidationError> =>
   Effect.gen(function* () {
@@ -184,7 +190,7 @@ const checkRequired = (
 const validateFields = (defs: ReadonlyArray<Field>, input: Record<string, unknown>) =>
   Effect.gen(function* () {
     const byId = new Map(defs.map((d) => [d.id, d]))
-    const out: InstanceState = {}
+    const out: RecordState = {}
     for (const [key, value] of Object.entries(input)) {
       const def = byId.get(key)
       if (!def)
@@ -218,11 +224,7 @@ const coerceLabelIds = (
   return Effect.succeed([...new Set(raw as string[])])
 }
 
-const checkTransitions = (
-  defs: ReadonlyArray<Field>,
-  current: InstanceState,
-  patch: InstanceState,
-) =>
+const checkTransitions = (defs: ReadonlyArray<Field>, current: RecordState, patch: RecordState) =>
   Effect.gen(function* () {
     for (const def of defs) {
       if (def.kind !== "enum" || !def.config.transitions) continue
@@ -244,9 +246,9 @@ const checkTransitions = (
     }
   })
 
-/** Seed the reducer from an already-loaded instance, so an incremental fold
+/** Seed the reducer from an already-loaded record version, so an incremental fold
  *  reproduces exactly what a full replay would (carrying the version lifecycle). */
-const seedFrom = (inst: Instance, archivedAt: Date | null): FoldState => ({
+const seedFrom = (inst: RecordVersion, archivedAt: Date | null): FoldState => ({
   state: inst.state,
   version: inst.version,
   archivedAt,
@@ -255,11 +257,11 @@ const seedFrom = (inst: Instance, archivedAt: Date | null): FoldState => ({
 })
 
 /**
- * The heart of the engine: instance writes. Every write runs inside one
+ * The heart of the engine: record version writes. Every write runs inside one
  * `sql.withTransaction` — validate → (lock + version check) → append event →
  * fold via the shared reducer → persist projection + bump version.
  */
-export class InstanceService extends Effect.Service<InstanceService>()("engine/InstanceService", {
+export class RecordService extends Effect.Service<RecordService>()("engine/RecordService", {
   effect: Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
     const events = yield* EventStore
@@ -270,23 +272,23 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
     const blob = yield* BlobStore
 
     /**
-     * Rebuild the `mentions` index for ONE instance version, from its richtext
+     * Rebuild the `mentions` index for ONE record version version, from its richtext
      * fields. Delete-then-insert rather than diff: the row count per document is
      * tiny and a rebuild cannot drift from the doc the way a diff can.
      *
      * MUST be handed the FOLDED state, never a patch. An update carries only the
      * fields being written, so re-indexing from a patch would delete every mention
-     * row for this instance and re-insert only the touched field's — silently
+     * row for this record version and re-insert only the touched field's — silently
      * dropping the other fields' backlinks.
      */
-    const reindexInstanceMentions = (
+    const reindexRecordVersionMentions = (
       orgId: string,
-      instanceId: string,
-      state: InstanceState,
+      recordVersionId: string,
+      state: RecordState,
       defs: ReadonlyArray<Field>,
     ) =>
       Effect.gen(function* () {
-        yield* sql`DELETE FROM mentions WHERE org_id = ${orgId} AND from_instance_id = ${instanceId}`
+        yield* sql`DELETE FROM mentions WHERE org_id = ${orgId} AND from_version_id = ${recordVersionId}`
         const rows: Array<{ fieldId: string; kind: string; targetId: string }> = []
         for (const def of defs) {
           if (def.kind !== "richtext") continue
@@ -297,7 +299,7 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
         }
         if (rows.length === 0) return
 
-        // `target_item_id` carries an FK, so a mention of a since-purged record
+        // `target_record_id` carries an FK, so a mention of a since-purged record
         // would fail the insert. Resolve which record targets actually exist and
         // null the column for the rest: the row still records what was meant, it
         // just stops producing a backlink — which is right, the target is gone.
@@ -309,30 +311,30 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
         const live = new Set<string>()
         if (candidates.length > 0) {
           const found = yield* sql<{ readonly id: string }>`
-            SELECT id FROM items WHERE org_id = ${orgId} AND ${sql.in("id", candidates)}`
+            SELECT id FROM records WHERE org_id = ${orgId} AND ${sql.in("id", candidates)}`
           for (const f of found) live.add(f.id)
         }
         for (const r of rows) {
-          const targetItemId = r.kind === "record" && live.has(r.targetId) ? r.targetId : null
+          const targetRecordId = r.kind === "record" && live.has(r.targetId) ? r.targetId : null
           yield* sql`
-            INSERT INTO mentions (org_id, from_instance_id, from_field_id, kind, target_id, target_item_id)
-            VALUES (${orgId}, ${instanceId}, ${r.fieldId}, ${r.kind}, ${r.targetId}, ${targetItemId})`
+            INSERT INTO mentions (org_id, from_version_id, from_field_id, kind, target_id, target_record_id)
+            VALUES (${orgId}, ${recordVersionId}, ${r.fieldId}, ${r.kind}, ${r.targetId}, ${targetRecordId})`
         }
       })
 
     /** Purge an emptied lineage: its files (rows now, blobs after commit — an
-     *  orphan blob is harmless; a dangling row would not be) then the item row
+     *  orphan blob is harmless; a dangling row would not be) then the record row
      *  itself. Returns the blob refs for the post-commit sweep. */
-    const purgeEmptiedItem = (orgId: string, itemId: string) =>
+    const purgeEmptiedRecord = (orgId: string, recordId: string) =>
       Effect.gen(function* () {
         const refs = yield* sql<{ readonly content_ref: string }>`
-          SELECT content_ref FROM attachments WHERE org_id = ${orgId} AND item_id = ${itemId}`
-        yield* sql`DELETE FROM attachments WHERE org_id = ${orgId} AND item_id = ${itemId}`
-        // INBOUND mentions of this lineage: the `target_item_id` FK would block the
-        // item delete below. (Outbound rows are keyed by instance id and are gone
-        // with the instance rows already.)
-        yield* sql`DELETE FROM mentions WHERE org_id = ${orgId} AND target_item_id = ${itemId}`
-        yield* sql`DELETE FROM items WHERE org_id = ${orgId} AND id = ${itemId}`
+          SELECT content_ref FROM attachments WHERE org_id = ${orgId} AND record_id = ${recordId}`
+        yield* sql`DELETE FROM attachments WHERE org_id = ${orgId} AND record_id = ${recordId}`
+        // INBOUND mentions of this lineage: the `target_record_id` FK would block the
+        // record delete below. (Outbound rows are keyed by record version id and are gone
+        // with the record version rows already.)
+        yield* sql`DELETE FROM mentions WHERE org_id = ${orgId} AND target_record_id = ${recordId}`
+        yield* sql`DELETE FROM records WHERE org_id = ${orgId} AND id = ${recordId}`
         return refs.map((r) => r.content_ref)
       })
 
@@ -340,17 +342,17 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
     const sweepBlobs = (refs: ReadonlyArray<string>) =>
       Effect.forEach(refs, (r) => blob.del(r).pipe(Effect.ignore), { discard: true })
 
-    /** Enforce `config.unique` over a validated payload: no other item of the
+    /** Enforce `config.unique` over a validated payload: no other record of the
      *  concept may hold the same value — archived rows included, so only a
      *  purge releases a value (a restore can never resurface a duplicate).
      *  Text compares case-insensitively; other kinds by jsonb equality on the
      *  validated, coerced value. `excludeItemId` skips the writer's own
-     *  lineage — versions of one item share values freely. Missing values
+     *  lineage — versions of one record share values freely. Missing values
      *  never conflict. Runs inside the write transaction; a concurrent
      *  same-value race is accepted (no DB index backs jsonb keys). */
     const checkUnique = (
       defs: ReadonlyArray<Field>,
-      patch: InstanceState,
+      patch: RecordState,
       conceptId: string,
       excludeItemId: string | null,
     ) =>
@@ -360,14 +362,14 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
           if (!def.config.unique || !(def.id in patch)) continue
           const value = patch[def.id]
           if (isMissing(value)) continue
-          const notSelf = excludeItemId === null ? sql`` : sql` AND item_id <> ${excludeItemId}`
+          const notSelf = excludeItemId === null ? sql`` : sql` AND record_id <> ${excludeItemId}`
           // Serialized + cast text→jsonb: `sql.json` mis-encodes bare scalars.
           const taken =
             def.kind === "text"
               ? sql`lower(state->>${def.id}) = lower(${value as string})`
               : sql`state->${def.id} = ${JSON.stringify(value)}::jsonb`
           const clash = yield* sql<{ readonly id: string }>`
-            SELECT id FROM instances
+            SELECT id FROM record_versions
             WHERE org_id = ${orgId} AND concept_id = ${conceptId}
               AND ${taken}${notSelf}
             LIMIT 1`
@@ -397,25 +399,25 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
           )
       })
 
-    const loadAny = (instanceId: string) =>
+    const loadAny = (recordVersionId: string) =>
       Effect.gen(function* () {
         const { orgId } = yield* OrgContext
-        const rows = yield* sql<InstanceRow>`
-          SELECT * FROM instances WHERE id = ${instanceId} AND org_id = ${orgId} LIMIT 1`
+        const rows = yield* sql<RecordVersionRow>`
+          SELECT * FROM record_versions WHERE id = ${recordVersionId} AND org_id = ${orgId} LIMIT 1`
         const row = rows[0]
-        if (!row) return yield* Effect.fail(new InstanceNotFound({ instanceId }))
-        return toInstance(row)
+        if (!row) return yield* Effect.fail(new RecordVersionNotFound({ recordVersionId }))
+        return toRecordVersion(row)
       })
 
-    /** Live (non-archived) `items` lineages of a concept. The single-record
-     *  invariant is defined on ITEMS, not `instances`: a versioned concept
-     *  legitimately holds N version rows on one lineage, so counting instances
+    /** Live (non-archived) `records` lineages of a concept. The single-record
+     *  invariant is defined on ITEMS, not `record_versions`: a versioned concept
+     *  legitimately holds N version rows on one lineage, so counting record versions
      *  would refuse the second version of a perfectly valid single record. */
-    const liveItemCountOf = (conceptId: string) =>
+    const liveRecordCountOf = (conceptId: string) =>
       Effect.gen(function* () {
         const { orgId } = yield* OrgContext
         const rows = yield* sql<{ readonly count: number | string }>`
-          SELECT COUNT(*)::int AS count FROM items
+          SELECT COUNT(*)::int AS count FROM records
           WHERE org_id = ${orgId} AND concept_id = ${conceptId} AND archived_at IS NULL`
         return Number(rows[0]?.count ?? 0)
       })
@@ -429,11 +431,11 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
      *  "is this the last thing standing" across four call paths (per-version
      *  archive, purge, lineage archive, draft discard) for a case the UI already
      *  hides. Turn the flag off to archive; delete the concept to delete both. */
-    const assertRecordUnprotected = (conceptId: string, instanceId: string) =>
+    const assertRecordUnprotected = (conceptId: string, recordVersionId: string) =>
       Effect.gen(function* () {
         const concept = yield* concepts.getById(conceptId)
         if (concept.singleRecord) {
-          return yield* Effect.fail(new SingleRecordProtected({ conceptId, instanceId }))
+          return yield* Effect.fail(new SingleRecordProtected({ conceptId, recordVersionId }))
         }
       })
 
@@ -449,7 +451,7 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
           // integrations hit too (they call the engine directly, bypassing the
           // use-case layer), which is why it lives here and not in a use-case.
           if (concept.singleRecord) {
-            const liveItems = yield* liveItemCountOf(concept.id)
+            const liveItems = yield* liveRecordCountOf(concept.id)
             if (liveItems > 0) {
               return yield* Effect.fail(
                 new SingleRecordConflict({ conceptId: concept.id, liveItemCount: liveItems }),
@@ -459,10 +461,10 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
           const defs = yield* fields.listFields(concept.id)
           const { rest, rawLabels } = splitLabels(input.fields)
           const validated = yield* validateFields(defs, rest)
-          // An item cannot exist without its required values — drafts included.
+          // A record cannot exist without its required values — drafts included.
           yield* checkRequired(defs, validated, "all")
           yield* checkUnique(defs, validated, concept.id, null)
-          // Per-item labels: use the caller's set if given, else snapshot the
+          // Per-record labels: use the caller's set if given, else snapshot the
           // concept's defaults (dropping any since soft-deleted). Static labels
           // are NOT written here — they're inherited at read time.
           let labelIds: ReadonlyArray<string>
@@ -473,34 +475,34 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
             labelIds = yield* coerceLabelIds(rawLabels)
             yield* assertLabelsExist(labelIds)
           }
-          const fieldsWithLabels: InstanceState =
+          const fieldsWithLabels: RecordState =
             labelIds.length > 0 ? { ...validated, [LABELS_KEY]: [...labelIds] } : validated
-          // Every instance belongs to an `items` lineage. A new item starts at
+          // Every record version belongs to an `records` lineage. A new record starts at
           // seq 1; on a versioned concept it's a `draft` (not referenceable until
           // published), otherwise a `published` row (the plain 1:1 model).
           const versionStatus = concept.versioningEnabled ? "draft" : "published"
           // `created_by` is stamped on the LINEAGE, once, at creation: publishing a
           // new version must never reassign who made the record. It is what the
           // `actorIs: "creator"` access condition filters on ("records I created").
-          const itemRows = yield* sql<ItemRow>`
-            INSERT INTO items (org_id, concept_id, created_by)
+          const recordRows = yield* sql<RecordRow>`
+            INSERT INTO records (org_id, concept_id, created_by)
             VALUES (${orgId}, ${concept.id}, ${actor})
             RETURNING *`
-          const item = toItem(itemRows[0]!)
-          const inserted = yield* sql<InstanceRow>`
-            INSERT INTO instances (org_id, concept_id, item_id, state, version, version_status, version_seq)
-            VALUES (${orgId}, ${concept.id}, ${item.id}, ${sql.json({})}, 0, ${versionStatus}, 1)
+          const record = toRecord(recordRows[0]!)
+          const inserted = yield* sql<RecordVersionRow>`
+            INSERT INTO record_versions (org_id, concept_id, record_id, state, version, version_status, version_seq)
+            VALUES (${orgId}, ${concept.id}, ${record.id}, ${sql.json({})}, 0, ${versionStatus}, 1)
             RETURNING *`
-          const created = toInstance(inserted[0]!)
+          const created = toRecordVersion(inserted[0]!)
           const event = yield* events.append({
-            subjectKind: "instance",
+            subjectKind: "recordVersion",
             subjectId: created.id,
-            eventType: "InstanceCreated",
+            eventType: "RecordVersionCreated",
             payload: {
-              _tag: "InstanceCreated",
+              _tag: "RecordVersionCreated",
               conceptId: concept.id,
               fields: fieldsWithLabels,
-              itemId: item.id,
+              recordId: record.id,
               versionSeq: 1,
               versionStatus,
             },
@@ -509,38 +511,45 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
           })
           const folded = applyEvent(null, event)
           if (Either.isLeft(folded)) return yield* Effect.fail(folded.left)
-          const updated = yield* sql<InstanceRow>`
-            UPDATE instances
+          const updated = yield* sql<RecordVersionRow>`
+            UPDATE record_versions
             SET state = ${sql.json(folded.right.state)}, version = ${folded.right.version},
                 version_status = ${folded.right.versionStatus}, published_at = ${folded.right.publishedAt}
             WHERE id = ${created.id} AND org_id = ${orgId} RETURNING *`
-          yield* reindexInstanceMentions(orgId, created.id, folded.right.state, defs)
-          return toInstance(updated[0]!)
+          yield* reindexRecordVersionMentions(orgId, created.id, folded.right.state, defs)
+          return toRecordVersion(updated[0]!)
         }),
       )
 
     const update = (input: {
-      readonly instanceId: string
+      readonly recordVersionId: string
       readonly expectedVersion: number
       readonly patch: Record<string, unknown>
     }) =>
       sql.withTransaction(
         Effect.gen(function* () {
           const { orgId } = yield* OrgContext
-          const rows = yield* sql<InstanceRow>`
-            SELECT * FROM instances
-            WHERE id = ${input.instanceId} AND org_id = ${orgId} AND archived_at IS NULL
+          const rows = yield* sql<RecordVersionRow>`
+            SELECT * FROM record_versions
+            WHERE id = ${input.recordVersionId} AND org_id = ${orgId} AND archived_at IS NULL
             FOR UPDATE`
           const row = rows[0]
           if (!row)
-            return yield* Effect.fail(new InstanceNotFound({ instanceId: input.instanceId }))
+            return yield* Effect.fail(
+              new RecordVersionNotFound({ recordVersionId: input.recordVersionId }),
+            )
           // See THE WRITE GATE: reads refusing this record must mean writes do too.
-          yield* assertRecordWritable(row.concept_id, row.item_id, input.instanceId, row.state)
-          const current = toInstance(row)
+          yield* assertRecordWritable(
+            row.concept_id,
+            row.record_id,
+            input.recordVersionId,
+            row.state,
+          )
+          const current = toRecordVersion(row)
           if (current.version !== input.expectedVersion) {
             return yield* Effect.fail(
               new VersionConflict({
-                instanceId: current.id,
+                recordVersionId: current.id,
                 expected: input.expectedVersion,
                 actual: current.version,
               }),
@@ -550,10 +559,10 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
           const concept = yield* concepts.getById(current.conceptId)
           // On a versioned concept a published version is frozen by default — edits
           // must go to a fresh draft (newVersion) — UNLESS the concept opts into
-          // amendments (`editReach: "any"`). Non-versioned instances are 'published'
+          // amendments (`editReach: "any"`). Non-versioned record versions are 'published'
           // too but always stay editable; `canEditVersion` folds all three cases.
           if (!canEditVersion(concept, current)) {
-            return yield* Effect.fail(new VersionFrozen({ instanceId: current.id }))
+            return yield* Effect.fail(new VersionFrozen({ recordVersionId: current.id }))
           }
           const { rest, rawLabels } = splitLabels(input.patch)
           const validated = yield* validateFields(defs, rest)
@@ -564,9 +573,9 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
           // would make a pre-existing gap (from a field made required after publish)
           // block the very edit that would fill it.
           yield* checkRequired(defs, validated, "present")
-          yield* checkUnique(defs, validated, current.conceptId, current.itemId)
+          yield* checkUnique(defs, validated, current.conceptId, current.recordId)
           yield* checkTransitions(defs, current.state, validated)
-          let patch: InstanceState = validated
+          let patch: RecordState = validated
           if (rawLabels !== undefined) {
             const labelIds = yield* coerceLabelIds(rawLabels)
             yield* assertLabelsExist(labelIds)
@@ -575,9 +584,9 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
           // An edit to an already-published version is an AMENDMENT: same fold, but
           // a distinct tag so the activity feed can say "amended" and amendments stay
           // filterable. `getAsOf` at the preceding event still yields the old state.
-          const tag = isAmendment(concept, current) ? "VersionAmended" : "InstanceUpdated"
+          const tag = isAmendment(concept, current) ? "VersionAmended" : "RecordVersionUpdated"
           const event = yield* events.append({
-            subjectKind: "instance",
+            subjectKind: "recordVersion",
             subjectId: current.id,
             eventType: tag,
             payload: { _tag: tag, patch },
@@ -590,49 +599,59 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
           })
           const folded = applyEvent(seedFrom(current, null), event)
           if (Either.isLeft(folded)) return yield* Effect.fail(folded.left)
-          const updated = yield* sql<InstanceRow>`
-            UPDATE instances SET state = ${sql.json(folded.right.state)}, version = ${folded.right.version}
+          const updated = yield* sql<RecordVersionRow>`
+            UPDATE record_versions SET state = ${sql.json(folded.right.state)}, version = ${folded.right.version}
             WHERE id = ${current.id} AND org_id = ${orgId} RETURNING *`
           // The FOLDED state, not `validated`: an update patches a subset of the
           // fields, and re-indexing from the patch would drop the other fields'
-          // mentions along with this instance's rows.
-          yield* reindexInstanceMentions(orgId, current.id, folded.right.state, defs)
-          return toInstance(updated[0]!)
+          // mentions along with this record version's rows.
+          yield* reindexRecordVersionMentions(orgId, current.id, folded.right.state, defs)
+          return toRecordVersion(updated[0]!)
         }),
       )
 
     const transition = (input: {
-      readonly instanceId: string
+      readonly recordVersionId: string
       readonly expectedVersion: number
       readonly field: string
       readonly to: string
     }) =>
       update({
-        instanceId: input.instanceId,
+        recordVersionId: input.recordVersionId,
         expectedVersion: input.expectedVersion,
         patch: { [input.field]: input.to },
       })
 
-    /** Archive an instance (soft, restorable) — event-sourced like every write:
-     *  appends `InstanceArchived`, which the reducer folds to a set `archivedAt`. */
-    const archive = (input: { readonly instanceId: string; readonly expectedVersion: number }) =>
+    /** Archive an record version (soft, restorable) — event-sourced like every write:
+     *  appends `RecordVersionArchived`, which the reducer folds to a set `archivedAt`. */
+    const archive = (input: {
+      readonly recordVersionId: string
+      readonly expectedVersion: number
+    }) =>
       sql.withTransaction(
         Effect.gen(function* () {
           const { orgId } = yield* OrgContext
-          const rows = yield* sql<InstanceRow>`
-            SELECT * FROM instances
-            WHERE id = ${input.instanceId} AND org_id = ${orgId} AND archived_at IS NULL
+          const rows = yield* sql<RecordVersionRow>`
+            SELECT * FROM record_versions
+            WHERE id = ${input.recordVersionId} AND org_id = ${orgId} AND archived_at IS NULL
             FOR UPDATE`
           const row = rows[0]
           if (!row)
-            return yield* Effect.fail(new InstanceNotFound({ instanceId: input.instanceId }))
+            return yield* Effect.fail(
+              new RecordVersionNotFound({ recordVersionId: input.recordVersionId }),
+            )
           // See THE WRITE GATE: reads refusing this record must mean writes do too.
-          yield* assertRecordWritable(row.concept_id, row.item_id, input.instanceId, row.state)
-          const current = toInstance(row)
+          yield* assertRecordWritable(
+            row.concept_id,
+            row.record_id,
+            input.recordVersionId,
+            row.state,
+          )
+          const current = toRecordVersion(row)
           if (current.version !== input.expectedVersion) {
             return yield* Effect.fail(
               new VersionConflict({
-                instanceId: current.id,
+                recordVersionId: current.id,
                 expected: input.expectedVersion,
                 actual: current.version,
               }),
@@ -641,46 +660,56 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
           const concept = yield* concepts.getById(current.conceptId)
           if (concept.singleRecord) {
             return yield* Effect.fail(
-              new SingleRecordProtected({ conceptId: concept.id, instanceId: current.id }),
+              new SingleRecordProtected({ conceptId: concept.id, recordVersionId: current.id }),
             )
           }
           const event = yield* events.append({
-            subjectKind: "instance",
+            subjectKind: "recordVersion",
             subjectId: current.id,
-            eventType: "InstanceArchived",
-            payload: { _tag: "InstanceArchived" },
+            eventType: "RecordVersionArchived",
+            payload: { _tag: "RecordVersionArchived" },
             conceptId: concept.id,
             conceptName: concept.name,
           })
           const folded = applyEvent(seedFrom(current, null), event)
           if (Either.isLeft(folded)) return yield* Effect.fail(folded.left)
-          const updated = yield* sql<InstanceRow>`
-            UPDATE instances SET version = ${folded.right.version}, archived_at = ${folded.right.archivedAt}
+          const updated = yield* sql<RecordVersionRow>`
+            UPDATE record_versions SET version = ${folded.right.version}, archived_at = ${folded.right.archivedAt}
             WHERE id = ${current.id} AND org_id = ${orgId} RETURNING *`
-          return toInstance(updated[0]!)
+          return toRecordVersion(updated[0]!)
         }),
       )
 
-    /** Restore an archived instance — appends `InstanceRestored`, which the
+    /** Restore an archived record version — appends `RecordVersionRestored`, which the
      *  reducer folds to clear `archivedAt`. Refuses if not currently archived. */
-    const restore = (input: { readonly instanceId: string; readonly expectedVersion: number }) =>
+    const restore = (input: {
+      readonly recordVersionId: string
+      readonly expectedVersion: number
+    }) =>
       sql.withTransaction(
         Effect.gen(function* () {
           const { orgId } = yield* OrgContext
-          const rows = yield* sql<InstanceRow>`
-            SELECT * FROM instances
-            WHERE id = ${input.instanceId} AND org_id = ${orgId} AND archived_at IS NOT NULL
+          const rows = yield* sql<RecordVersionRow>`
+            SELECT * FROM record_versions
+            WHERE id = ${input.recordVersionId} AND org_id = ${orgId} AND archived_at IS NOT NULL
             FOR UPDATE`
           const row = rows[0]
           if (!row)
-            return yield* Effect.fail(new InstanceNotFound({ instanceId: input.instanceId }))
+            return yield* Effect.fail(
+              new RecordVersionNotFound({ recordVersionId: input.recordVersionId }),
+            )
           // See THE WRITE GATE: reads refusing this record must mean writes do too.
-          yield* assertRecordWritable(row.concept_id, row.item_id, input.instanceId, row.state)
-          const current = toInstance(row)
+          yield* assertRecordWritable(
+            row.concept_id,
+            row.record_id,
+            input.recordVersionId,
+            row.state,
+          )
+          const current = toRecordVersion(row)
           if (current.version !== input.expectedVersion) {
             return yield* Effect.fail(
               new VersionConflict({
-                instanceId: current.id,
+                recordVersionId: current.id,
                 expected: input.expectedVersion,
                 actual: current.version,
               }),
@@ -688,89 +717,89 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
           }
           const concept = yield* concepts.getById(current.conceptId)
           const event = yield* events.append({
-            subjectKind: "instance",
+            subjectKind: "recordVersion",
             subjectId: current.id,
-            eventType: "InstanceRestored",
-            payload: { _tag: "InstanceRestored" },
+            eventType: "RecordVersionRestored",
+            payload: { _tag: "RecordVersionRestored" },
             conceptId: concept.id,
             conceptName: concept.name,
           })
           const folded = applyEvent(seedFrom(current, current.archivedAt), event)
           if (Either.isLeft(folded)) return yield* Effect.fail(folded.left)
-          const updated = yield* sql<InstanceRow>`
-            UPDATE instances SET version = ${folded.right.version}, archived_at = ${folded.right.archivedAt}
+          const updated = yield* sql<RecordVersionRow>`
+            UPDATE record_versions SET version = ${folded.right.version}, archived_at = ${folded.right.archivedAt}
             WHERE id = ${current.id} AND org_id = ${orgId} RETURNING *`
-          return toInstance(updated[0]!)
+          return toRecordVersion(updated[0]!)
         }),
       )
 
     /**
-     * Permanently delete an instance row + its attachments. Refused while relation
+     * Permanently delete an record version row + its attachments. Refused while relation
      * edges still reference it (archive instead).
      *
      * The event stream is deliberately KEPT as an immutable audit trail: in an
      * event-sourced engine the log is the system of record, so a hard delete drops
      * the live projection (the row) without rewriting history. The events become
      * orphans of a now-gone subject — safe here because nothing replays the whole
-     * log into instances (`rebuild` is per-id and never called for a purged id),
-     * and `events` has no FK to `instances`. A `InstancePurged` tombstone records
+     * log into record versions (`rebuild` is per-id and never called for a purged id),
+     * and `events` has no FK to `record_versions`. A `RecordVersionPurged` tombstone records
      * the deletion itself in the feed. (For true erasure / GDPR, add an explicit
      * payload-scrubbing redaction — never a blind `DELETE FROM events`.)
      */
-    const purge = (input: { readonly instanceId: string }) =>
+    const purge = (input: { readonly recordVersionId: string }) =>
       sql
         .withTransaction(
           Effect.gen(function* () {
             const { orgId } = yield* OrgContext
-            const instance = yield* loadAny(input.instanceId)
+            const recordVersion = yield* loadAny(input.recordVersionId)
             // `loadAny` is deliberately ungated (rebuild/replay need it), so the gate
             // goes here at the mutation.
             yield* assertRecordWritable(
-              instance.conceptId,
-              instance.itemId,
-              input.instanceId,
-              instance.state,
+              recordVersion.conceptId,
+              recordVersion.recordId,
+              input.recordVersionId,
+              recordVersion.state,
             )
             const counts = yield* sql<{ readonly count: number | string }>`
             SELECT COUNT(*)::int AS count FROM relations
             WHERE org_id = ${orgId} AND archived_at IS NULL
-              AND (from_id = ${instance.id} OR to_id = ${instance.id} OR to_version_id = ${instance.id})`
+              AND (from_id = ${recordVersion.id} OR to_id = ${recordVersion.id} OR to_version_id = ${recordVersion.id})`
             const relationCount = Number(counts[0]?.count ?? 0)
             if (relationCount > 0) {
               return yield* Effect.fail(
-                new InstanceInUse({ instanceId: instance.id, relationCount }),
+                new RecordVersionInUse({ recordVersionId: recordVersion.id, relationCount }),
               )
             }
-            yield* assertRecordUnprotected(instance.conceptId, instance.id)
-            const concept = yield* concepts.getById(instance.conceptId)
+            yield* assertRecordUnprotected(recordVersion.conceptId, recordVersion.id)
+            const concept = yield* concepts.getById(recordVersion.conceptId)
             // Outbound mention rows hang off this version and hold an FK to it.
-            yield* sql`DELETE FROM mentions WHERE org_id = ${orgId} AND from_instance_id = ${instance.id}`
-            yield* sql`DELETE FROM instances WHERE org_id = ${orgId} AND id = ${instance.id}`
+            yield* sql`DELETE FROM mentions WHERE org_id = ${orgId} AND from_version_id = ${recordVersion.id}`
+            yield* sql`DELETE FROM record_versions WHERE org_id = ${orgId} AND id = ${recordVersion.id}`
             // Remove the lineage row when this was its last version — otherwise an
-            // empty `items` row would linger and block the concept's purge via FK.
+            // empty `records` row would linger and block the concept's purge via FK.
             // Files hang off the lineage, so they purge with it (not per version).
             const remaining = yield* sql<{ readonly count: number | string }>`
-            SELECT COUNT(*)::int AS count FROM instances
-            WHERE org_id = ${orgId} AND item_id = ${instance.itemId}`
+            SELECT COUNT(*)::int AS count FROM record_versions
+            WHERE org_id = ${orgId} AND record_id = ${recordVersion.recordId}`
             const blobRefs =
               Number(remaining[0]?.count ?? 0) === 0
-                ? yield* purgeEmptiedItem(orgId, instance.itemId)
+                ? yield* purgeEmptiedRecord(orgId, recordVersion.recordId)
                 : []
             // Tombstone — recorded AFTER the row is gone so the feed shows the delete.
             yield* events.append({
-              subjectKind: "instance",
-              subjectId: instance.id,
-              eventType: "InstancePurged",
-              payload: { _tag: "InstancePurged" },
+              subjectKind: "recordVersion",
+              subjectId: recordVersion.id,
+              eventType: "RecordVersionPurged",
+              payload: { _tag: "RecordVersionPurged" },
               conceptId: concept.id,
               conceptName: concept.name,
             })
-            return { instance, blobRefs }
+            return { recordVersion, blobRefs }
           }),
         )
         .pipe(
           Effect.tap(({ blobRefs }) => sweepBlobs(blobRefs)),
-          Effect.map(({ instance }) => instance),
+          Effect.map(({ recordVersion }) => recordVersion),
         )
 
     /**
@@ -778,10 +807,10 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
      * read its concept. Applied to every BY-ID read entry point below — the list
      * path is already covered because `QueryService` resolves the concept first.
      *
-     * Fails `InstanceNotFound` (not a distinct 403) so a member cannot use the
+     * Fails `RecordVersionNotFound` (not a distinct 403) so a member cannot use the
      * error to confirm that a record exists in a concept they can't see.
      */
-    const assertConceptVisible = (conceptId: string, instanceId: string) =>
+    const assertConceptVisible = (conceptId: string, recordVersionId: string) =>
       Effect.gen(function* () {
         const scope = yield* OrgContext
         // NO early return for privileged roles: a DENY rule must be able to close a
@@ -792,7 +821,7 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
         // `concepts.visibility` on every by-id record read; that row is gone from the
         // hot path.
         if (!scopeCanReadConcept(scope, conceptId))
-          return yield* Effect.fail(new InstanceNotFound({ instanceId }))
+          return yield* Effect.fail(new RecordVersionNotFound({ recordVersionId }))
       })
 
     /**
@@ -813,7 +842,7 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
      */
     const assertRecordReadable = (
       conceptId: string,
-      itemId: string,
+      recordId: string,
       failId: string,
       // Passed when the caller already holds the row, to save a fetch.
       knownState?: Record<string, unknown>,
@@ -833,11 +862,11 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
           readonly state: Record<string, unknown> | null
         }>`
           SELECT i.created_by,
-                 (SELECT state FROM instances
-                  WHERE item_id = i.id AND version_status = 'published' AND archived_at IS NULL
+                 (SELECT state FROM record_versions
+                  WHERE record_id = i.id AND version_status = 'published' AND archived_at IS NULL
                   ORDER BY version_seq DESC LIMIT 1) AS state
-          FROM items i
-          WHERE i.id = ${itemId} LIMIT 1`
+          FROM records i
+          WHERE i.id = ${recordId} LIMIT 1`
         const record = {
           state: knownState ?? rows[0]?.state ?? {},
           createdBy: rows[0]?.created_by ?? null,
@@ -851,12 +880,12 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
           !decideRecord(
             scope.policy,
             "view",
-            { type: "record", id: itemId, conceptId },
+            { type: "record", id: recordId, conceptId },
             recordsByDefault,
             record,
           )
         )
-          return yield* Effect.fail(new InstanceNotFound({ instanceId: failId }))
+          return yield* Effect.fail(new RecordVersionNotFound({ recordVersionId: failId }))
       })
 
     /**
@@ -871,52 +900,52 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
      * rules at all, so on its own it lets an empty-policy member through.
      *
      * That combination was the hole: `update` and `archive` both SUCCEEDED against a
-     * record the very same caller got `InstanceNotFound` for on read. Verified before
+     * record the very same caller got `RecordVersionNotFound` for on read. Verified before
      * and after, and pinned by "THE WRITE GATE" in test/visibility.test.ts.
      *
-     * Fails `InstanceNotFound`, like the read gates — a write must not become an
+     * Fails `RecordVersionNotFound`, like the read gates — a write must not become an
      * existence oracle for a record reads refuse to confirm.
      */
     const assertRecordWritable = (
       conceptId: string,
-      itemId: string,
+      recordId: string,
       failId: string,
       knownState?: Record<string, unknown>,
     ) =>
       assertConceptVisible(conceptId, failId).pipe(
-        Effect.zipRight(assertRecordReadable(conceptId, itemId, failId, knownState)),
+        Effect.zipRight(assertRecordReadable(conceptId, recordId, failId, knownState)),
       )
 
-    const get = (instanceId: string) =>
+    const get = (recordVersionId: string) =>
       Effect.gen(function* () {
         const { orgId } = yield* OrgContext
-        const rows = yield* sql<InstanceRow>`
-          SELECT * FROM instances
-          WHERE id = ${instanceId} AND org_id = ${orgId} AND archived_at IS NULL LIMIT 1`
+        const rows = yield* sql<RecordVersionRow>`
+          SELECT * FROM record_versions
+          WHERE id = ${recordVersionId} AND org_id = ${orgId} AND archived_at IS NULL LIMIT 1`
         const row = rows[0]
-        if (!row) return yield* Effect.fail(new InstanceNotFound({ instanceId }))
-        yield* assertConceptVisible(row.concept_id, instanceId)
-        yield* assertRecordReadable(row.concept_id, row.item_id, instanceId, row.state)
-        return toInstance(row)
+        if (!row) return yield* Effect.fail(new RecordVersionNotFound({ recordVersionId }))
+        yield* assertConceptVisible(row.concept_id, recordVersionId)
+        yield* assertRecordReadable(row.concept_id, row.record_id, recordVersionId, row.state)
+        return toRecordVersion(row)
       })
 
-    const getAsOf = (instanceId: string, eventId: number) =>
+    const getAsOf = (recordVersionId: string, eventId: number) =>
       Effect.gen(function* () {
-        const meta = yield* loadAny(instanceId)
-        // This one hand-builds its result and so never passes through `toInstance`.
-        yield* assertConceptVisible(meta.conceptId, instanceId)
-        yield* assertRecordReadable(meta.conceptId, meta.itemId, instanceId)
-        const stream = yield* events.readStream(instanceId, { upToEventId: eventId })
+        const meta = yield* loadAny(recordVersionId)
+        // This one hand-builds its result and so never passes through `toRecordVersion`.
+        yield* assertConceptVisible(meta.conceptId, recordVersionId)
+        yield* assertRecordReadable(meta.conceptId, meta.recordId, recordVersionId)
+        const stream = yield* events.readStream(recordVersionId, { upToEventId: eventId })
         const folded = foldEvents(stream)
         if (Either.isLeft(folded)) return yield* Effect.fail(folded.left)
         const fs = folded.right
-        if (!fs) return yield* Effect.fail(new InstanceNotFound({ instanceId }))
+        if (!fs) return yield* Effect.fail(new RecordVersionNotFound({ recordVersionId }))
         return {
           id: meta.id,
           orgId: meta.orgId,
           conceptId: meta.conceptId,
           // Immutable lineage facts come from the row; the rest is folded.
-          itemId: meta.itemId,
+          recordId: meta.recordId,
           state: fs.state,
           version: fs.version,
           versionStatus: fs.versionStatus,
@@ -924,38 +953,38 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
           publishedAt: fs.publishedAt,
           createdAt: meta.createdAt,
           archivedAt: fs.archivedAt,
-        } satisfies Instance
+        } satisfies RecordVersion
       })
 
-    const rebuild = (instanceId: string) =>
+    const rebuild = (recordVersionId: string) =>
       sql.withTransaction(
         Effect.gen(function* () {
           const { orgId } = yield* OrgContext
-          const meta = yield* loadAny(instanceId)
-          const stream = yield* events.readStream(instanceId)
+          const meta = yield* loadAny(recordVersionId)
+          const stream = yield* events.readStream(recordVersionId)
           const folded = foldEvents(stream)
           if (Either.isLeft(folded)) return yield* Effect.fail(folded.left)
           const fs = folded.right
-          if (!fs) return yield* Effect.fail(new InstanceNotFound({ instanceId }))
-          const updated = yield* sql<InstanceRow>`
-            UPDATE instances
+          if (!fs) return yield* Effect.fail(new RecordVersionNotFound({ recordVersionId }))
+          const updated = yield* sql<RecordVersionRow>`
+            UPDATE record_versions
             SET state = ${sql.json(fs.state)}, version = ${fs.version}, archived_at = ${fs.archivedAt},
                 version_status = ${fs.versionStatus}, published_at = ${fs.publishedAt}
             WHERE id = ${meta.id} AND org_id = ${orgId} RETURNING *`
-          return toInstance(updated[0]!)
+          return toRecordVersion(updated[0]!)
         }),
       )
 
     /**
-     * Server decay tick: if this instance's decay band has crossed since the
+     * Server decay tick: if this record version's decay band has crossed since the
      * last marker, append a `ComputedBandChanged` event (which fans out over
      * SSE + is an automation hook). Read-then-conditionally-lock — the common
      * no-op path takes no lock and no write. Idempotent. Returns emitted events.
      */
-    const recomputeBands = (instanceId: string) =>
+    const recomputeBands = (recordVersionId: string) =>
       Effect.gen(function* () {
         const { orgId } = yield* OrgContext
-        const inst = yield* get(instanceId)
+        const inst = yield* get(recordVersionId)
         const defs = yield* fields.listFields(inst.conceptId)
         const decayField = defs.find(
           (d) => d.kind === "computed" && d.config.computedKind === "decay",
@@ -969,8 +998,8 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
         const gateConcept = yield* concepts.getById(inst.conceptId)
         if (gateConcept.versioningEnabled && inst.versionStatus === "published") {
           const newer = yield* sql<{ readonly count: number | string }>`
-            SELECT COUNT(*)::int AS count FROM instances
-            WHERE org_id = ${orgId} AND item_id = ${inst.itemId}
+            SELECT COUNT(*)::int AS count FROM record_versions
+            WHERE org_id = ${orgId} AND record_id = ${inst.recordId}
               AND version_status = 'published' AND archived_at IS NULL AND version_seq > ${inst.versionSeq}`
           if (Number(newer[0]?.count ?? 0) > 0) return [] as EngineEvent[]
         }
@@ -983,13 +1012,13 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
 
         return yield* sql.withTransaction(
           Effect.gen(function* () {
-            const rows = yield* sql<InstanceRow>`
-              SELECT * FROM instances
-              WHERE id = ${instanceId} AND org_id = ${orgId} AND archived_at IS NULL
+            const rows = yield* sql<RecordVersionRow>`
+              SELECT * FROM record_versions
+              WHERE id = ${recordVersionId} AND org_id = ${orgId} AND archived_at IS NULL
               FOR UPDATE`
             const row = rows[0]
             if (!row) return [] as EngineEvent[]
-            const current = toInstance(row)
+            const current = toRecordVersion(row)
             const recheck = yield* computed.decorate(current)
             const bandNow = (recheck.state[bandKey] as { band?: string } | undefined)?.band
             const storedNow = (current.state.__bands as Record<string, string> | undefined)?.[
@@ -998,7 +1027,7 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
             if (!bandNow || bandNow === storedNow) return [] as EngineEvent[]
             const concept = yield* concepts.getById(current.conceptId)
             const event = yield* events.append({
-              subjectKind: "instance",
+              subjectKind: "recordVersion",
               subjectId: current.id,
               eventType: "ComputedBandChanged",
               payload: {
@@ -1013,8 +1042,8 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
             })
             const folded = applyEvent(seedFrom(current, null), event)
             if (Either.isLeft(folded)) return yield* Effect.fail(folded.left)
-            yield* sql<InstanceRow>`
-              UPDATE instances SET state = ${sql.json(folded.right.state)}, version = ${folded.right.version}
+            yield* sql<RecordVersionRow>`
+              UPDATE record_versions SET state = ${sql.json(folded.right.state)}, version = ${folded.right.version}
               WHERE id = ${current.id} AND org_id = ${orgId}`
             return [event]
           }),
@@ -1022,35 +1051,42 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
       })
 
     /** Publish a draft version: draft → published (one-shot, permanent). After
-     *  this the version is frozen and becomes the item's "Latest". */
+     *  this the version is frozen and becomes the record's "Latest". */
     const publishVersion = (input: {
-      readonly instanceId: string
+      readonly recordVersionId: string
       readonly expectedVersion: number
     }) =>
       sql.withTransaction(
         Effect.gen(function* () {
           const { orgId } = yield* OrgContext
-          const rows = yield* sql<InstanceRow>`
-            SELECT * FROM instances
-            WHERE id = ${input.instanceId} AND org_id = ${orgId} AND archived_at IS NULL
+          const rows = yield* sql<RecordVersionRow>`
+            SELECT * FROM record_versions
+            WHERE id = ${input.recordVersionId} AND org_id = ${orgId} AND archived_at IS NULL
             FOR UPDATE`
           const row = rows[0]
           if (!row)
-            return yield* Effect.fail(new InstanceNotFound({ instanceId: input.instanceId }))
+            return yield* Effect.fail(
+              new RecordVersionNotFound({ recordVersionId: input.recordVersionId }),
+            )
           // See THE WRITE GATE: reads refusing this record must mean writes do too.
-          yield* assertRecordWritable(row.concept_id, row.item_id, input.instanceId, row.state)
-          const current = toInstance(row)
+          yield* assertRecordWritable(
+            row.concept_id,
+            row.record_id,
+            input.recordVersionId,
+            row.state,
+          )
+          const current = toRecordVersion(row)
           if (current.version !== input.expectedVersion) {
             return yield* Effect.fail(
               new VersionConflict({
-                instanceId: current.id,
+                recordVersionId: current.id,
                 expected: input.expectedVersion,
                 actual: current.version,
               }),
             )
           }
           if (current.versionStatus === "published") {
-            return yield* Effect.fail(new VersionFrozen({ instanceId: current.id }))
+            return yield* Effect.fail(new VersionFrozen({ recordVersionId: current.id }))
           }
           // Publish gate: a draft may predate a field's `required` rule (the rule
           // was added/flipped after creation) — it can't become "Latest" incomplete.
@@ -1058,7 +1094,7 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
           yield* checkRequired(defs, current.state, "all")
           const concept = yield* concepts.getById(current.conceptId)
           const event = yield* events.append({
-            subjectKind: "instance",
+            subjectKind: "recordVersion",
             subjectId: current.id,
             eventType: "VersionPublished",
             payload: { _tag: "VersionPublished" },
@@ -1067,68 +1103,69 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
           })
           const folded = applyEvent(seedFrom(current, null), event)
           if (Either.isLeft(folded)) return yield* Effect.fail(folded.left)
-          const updated = yield* sql<InstanceRow>`
-            UPDATE instances
+          const updated = yield* sql<RecordVersionRow>`
+            UPDATE record_versions
             SET version = ${folded.right.version}, version_status = ${folded.right.versionStatus},
                 published_at = ${folded.right.publishedAt}
             WHERE id = ${current.id} AND org_id = ${orgId} RETURNING *`
-          return toInstance(updated[0]!)
+          return toRecordVersion(updated[0]!)
         }),
       )
 
-    /** Open a new draft for an item by cloning its latest published version's
+    /** Open a new draft for an record by cloning its latest published version's
      *  state AND outbound relations. Fails if a draft is already open
-     *  (one-draft-at-a-time) or the item has no published version to branch from. */
-    const newVersion = (input: { readonly itemId: string }) =>
+     *  (one-draft-at-a-time) or the record has no published version to branch from. */
+    const newVersion = (input: { readonly recordId: string }) =>
       sql.withTransaction(
         Effect.gen(function* () {
           const { orgId } = yield* OrgContext
-          const itemRows = yield* sql<ItemRow>`
-            SELECT * FROM items WHERE id = ${input.itemId} AND org_id = ${orgId} FOR UPDATE`
-          const itemRow = itemRows[0]
-          if (!itemRow) return yield* Effect.fail(new ItemNotFound({ itemId: input.itemId }))
-          yield* assertRecordWritable(itemRow.concept_id, input.itemId, input.itemId)
-          const item = toItem(itemRow)
-          const drafts = yield* sql<InstanceRow>`
-            SELECT * FROM instances
-            WHERE org_id = ${orgId} AND item_id = ${item.id}
+          const recordRows = yield* sql<RecordRow>`
+            SELECT * FROM records WHERE id = ${input.recordId} AND org_id = ${orgId} FOR UPDATE`
+          const recordRow = recordRows[0]
+          if (!recordRow)
+            return yield* Effect.fail(new RecordNotFound({ recordId: input.recordId }))
+          yield* assertRecordWritable(recordRow.concept_id, input.recordId, input.recordId)
+          const record = toRecord(recordRow)
+          const drafts = yield* sql<RecordVersionRow>`
+            SELECT * FROM record_versions
+            WHERE org_id = ${orgId} AND record_id = ${record.id}
               AND version_status = 'draft' AND archived_at IS NULL LIMIT 1`
           if (drafts[0]) {
             return yield* Effect.fail(
-              new DraftAlreadyExists({ itemId: item.id, draftInstanceId: drafts[0].id }),
+              new DraftAlreadyExists({ recordId: record.id, draftInstanceId: drafts[0].id }),
             )
           }
-          const heads = yield* sql<InstanceRow>`
-            SELECT * FROM instances
-            WHERE org_id = ${orgId} AND item_id = ${item.id}
+          const heads = yield* sql<RecordVersionRow>`
+            SELECT * FROM record_versions
+            WHERE org_id = ${orgId} AND record_id = ${record.id}
               AND version_status = 'published' AND archived_at IS NULL
             ORDER BY version_seq DESC LIMIT 1`
           const head = heads[0]
-          if (!head) return yield* Effect.fail(new ItemNotPublished({ itemId: item.id }))
-          const source = toInstance(head)
+          if (!head) return yield* Effect.fail(new RecordNotPublished({ recordId: record.id }))
+          const source = toRecordVersion(head)
           const concept = yield* concepts.getById(source.conceptId)
           // Allocate over ALL lineage rows (archived included), not the head's seq:
           // archiving the head must never free its number, or an archive→new→
           // publish→restore sequence yields two live versions with the same seq
-          // (and an ambiguous "Latest"). Backstopped by instances_item_seq_uq.
+          // (and an ambiguous "Latest"). Backstopped by record_versions_record_seq_uq.
           const maxRows = yield* sql<{ readonly max: number | string | null }>`
-            SELECT MAX(version_seq) AS max FROM instances
-            WHERE org_id = ${orgId} AND item_id = ${item.id}`
+            SELECT MAX(version_seq) AS max FROM record_versions
+            WHERE org_id = ${orgId} AND record_id = ${record.id}`
           const nextSeq = Number(maxRows[0]?.max ?? 0) + 1
-          const inserted = yield* sql<InstanceRow>`
-            INSERT INTO instances (org_id, concept_id, item_id, state, version, version_status, version_seq)
-            VALUES (${orgId}, ${source.conceptId}, ${item.id}, ${sql.json({})}, 0, 'draft', ${nextSeq})
+          const inserted = yield* sql<RecordVersionRow>`
+            INSERT INTO record_versions (org_id, concept_id, record_id, state, version, version_status, version_seq)
+            VALUES (${orgId}, ${source.conceptId}, ${record.id}, ${sql.json({})}, 0, 'draft', ${nextSeq})
             RETURNING *`
-          const draft = toInstance(inserted[0]!)
+          const draft = toRecordVersion(inserted[0]!)
           const event = yield* events.append({
-            subjectKind: "instance",
+            subjectKind: "recordVersion",
             subjectId: draft.id,
-            eventType: "InstanceCreated",
+            eventType: "RecordVersionCreated",
             payload: {
-              _tag: "InstanceCreated",
+              _tag: "RecordVersionCreated",
               conceptId: source.conceptId,
               fields: source.state,
-              itemId: item.id,
+              recordId: record.id,
               versionSeq: nextSeq,
               versionStatus: "draft",
             },
@@ -1137,15 +1174,15 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
           })
           const folded = applyEvent(null, event)
           if (Either.isLeft(folded)) return yield* Effect.fail(folded.left)
-          const updated = yield* sql<InstanceRow>`
-            UPDATE instances
+          const updated = yield* sql<RecordVersionRow>`
+            UPDATE record_versions
             SET state = ${sql.json(folded.right.state)}, version = ${folded.right.version},
                 version_status = ${folded.right.versionStatus}, published_at = ${folded.right.publishedAt}
             WHERE id = ${draft.id} AND org_id = ${orgId} RETURNING *`
           // The draft carries the head's state verbatim, so it carries its mentions
           // too. Re-derived from that state rather than cloned from the head's rows:
           // one code path with `create`/`update` means the index cannot drift.
-          yield* reindexInstanceMentions(
+          yield* reindexRecordVersionMentions(
             orgId,
             draft.id,
             folded.right.state,
@@ -1158,8 +1195,8 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
             WHERE org_id = ${orgId} AND from_id = ${source.id} AND archived_at IS NULL`
           for (const r of headRels) {
             const ins = yield* sql<RelationRow>`
-              INSERT INTO relations (org_id, field_id, from_id, to_item_id, to_version_id, to_id, properties)
-              VALUES (${orgId}, ${r.field_id}, ${draft.id}, ${r.to_item_id}, ${r.to_version_id}, ${r.to_id}, ${sql.json(r.properties ?? {})})
+              INSERT INTO relations (org_id, field_id, from_id, to_record_id, to_version_id, to_id, properties)
+              VALUES (${orgId}, ${r.field_id}, ${draft.id}, ${r.to_record_id}, ${r.to_version_id}, ${r.to_id}, ${sql.json(r.properties ?? {})})
               RETURNING *`
             const rel = ins[0]!
             yield* events.append({
@@ -1171,72 +1208,72 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
                 fieldId: rel.field_id,
                 fromId: rel.from_id,
                 toId: rel.to_id,
-                toItemId: rel.to_item_id,
+                toRecordId: rel.to_record_id,
                 toVersionId: rel.to_version_id,
                 properties: rel.properties ?? {},
               },
             })
           }
-          return toInstance(updated[0]!)
+          return toRecordVersion(updated[0]!)
         }),
       )
 
     /** Discard an open draft: hard-delete the draft row + its (cloned/added)
      *  outbound edges. A draft is never referenceable, so nothing inbound can
      *  dangle. Files hang off the lineage and survive the discard — unless this
-     *  was the item's only version (never published), where the now-empty
+     *  was the record's only version (never published), where the now-empty
      *  lineage row purges with its files. */
-    const discardDraft = (input: { readonly instanceId: string }) =>
+    const discardDraft = (input: { readonly recordVersionId: string }) =>
       sql
         .withTransaction(
           Effect.gen(function* () {
             const { orgId } = yield* OrgContext
-            const instance = yield* loadAny(input.instanceId)
+            const recordVersion = yield* loadAny(input.recordVersionId)
             yield* assertRecordWritable(
-              instance.conceptId,
-              instance.itemId,
-              input.instanceId,
-              instance.state,
+              recordVersion.conceptId,
+              recordVersion.recordId,
+              input.recordVersionId,
+              recordVersion.state,
             )
-            if (instance.versionStatus !== "draft") {
-              return yield* Effect.fail(new VersionFrozen({ instanceId: instance.id }))
+            if (recordVersion.versionStatus !== "draft") {
+              return yield* Effect.fail(new VersionFrozen({ recordVersionId: recordVersion.id }))
             }
             // Discarding the only-ever draft purges the empty lineage below — which
             // on a single-record concept would delete the record the flag promises
             // exists. Freshly toggling a VERSIONED concept produces exactly that
             // state (its new record is a draft), so this is the common path, not a
             // corner: without this guard the record is one click from gone.
-            yield* assertRecordUnprotected(instance.conceptId, instance.id)
-            const concept = yield* concepts.getById(instance.conceptId)
-            yield* sql`DELETE FROM relations WHERE org_id = ${orgId} AND from_id = ${instance.id}`
-            yield* sql`DELETE FROM mentions WHERE org_id = ${orgId} AND from_instance_id = ${instance.id}`
-            yield* sql`DELETE FROM instances WHERE org_id = ${orgId} AND id = ${instance.id}`
+            yield* assertRecordUnprotected(recordVersion.conceptId, recordVersion.id)
+            const concept = yield* concepts.getById(recordVersion.conceptId)
+            yield* sql`DELETE FROM relations WHERE org_id = ${orgId} AND from_id = ${recordVersion.id}`
+            yield* sql`DELETE FROM mentions WHERE org_id = ${orgId} AND from_version_id = ${recordVersion.id}`
+            yield* sql`DELETE FROM record_versions WHERE org_id = ${orgId} AND id = ${recordVersion.id}`
             const remaining = yield* sql<{ readonly count: number | string }>`
-            SELECT COUNT(*)::int AS count FROM instances
-            WHERE org_id = ${orgId} AND item_id = ${instance.itemId}`
+            SELECT COUNT(*)::int AS count FROM record_versions
+            WHERE org_id = ${orgId} AND record_id = ${recordVersion.recordId}`
             const blobRefs =
               Number(remaining[0]?.count ?? 0) === 0
-                ? yield* purgeEmptiedItem(orgId, instance.itemId)
+                ? yield* purgeEmptiedRecord(orgId, recordVersion.recordId)
                 : []
             yield* events.append({
-              subjectKind: "instance",
-              subjectId: instance.id,
-              eventType: "InstancePurged",
-              payload: { _tag: "InstancePurged" },
+              subjectKind: "recordVersion",
+              subjectId: recordVersion.id,
+              eventType: "RecordVersionPurged",
+              payload: { _tag: "RecordVersionPurged" },
               conceptId: concept.id,
               conceptName: concept.name,
             })
-            return { instance, blobRefs }
+            return { recordVersion, blobRefs }
           }),
         )
         .pipe(
           Effect.tap(({ blobRefs }) => sweepBlobs(blobRefs)),
-          Effect.map(({ instance }) => instance),
+          Effect.map(({ recordVersion }) => recordVersion),
         )
 
-    /** Whole-item (lineage) archive: hides every version from head lists. Distinct
+    /** Whole-record (lineage) archive: hides every version from head lists. Distinct
      *  from per-version `archive` (which hides one version). */
-    const archiveItem = (input: { readonly itemId: string }) =>
+    const archiveRecord = (input: { readonly recordId: string }) =>
       sql.withTransaction(
         Effect.gen(function* () {
           const { orgId } = yield* OrgContext
@@ -1244,91 +1281,92 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
           // versioned single record (the header "Archive" archives the whole
           // lineage, not one version), and it's the one destructive path that
           // otherwise never loads the concept at all.
-          const existing = yield* sql<ItemRow>`
-            SELECT * FROM items WHERE org_id = ${orgId} AND id = ${input.itemId} LIMIT 1`
-          if (!existing[0]) return yield* Effect.fail(new ItemNotFound({ itemId: input.itemId }))
+          const existing = yield* sql<RecordRow>`
+            SELECT * FROM records WHERE org_id = ${orgId} AND id = ${input.recordId} LIMIT 1`
+          if (!existing[0])
+            return yield* Effect.fail(new RecordNotFound({ recordId: input.recordId }))
           const concept = yield* concepts.getById(existing[0].concept_id)
           if (concept.singleRecord) {
             return yield* Effect.fail(
-              new SingleRecordProtected({ conceptId: concept.id, instanceId: input.itemId }),
+              new SingleRecordProtected({ conceptId: concept.id, recordVersionId: input.recordId }),
             )
           }
-          const rows = yield* sql<ItemRow>`
-            UPDATE items SET archived_at = COALESCE(archived_at, now())
-            WHERE org_id = ${orgId} AND id = ${input.itemId} RETURNING *`
+          const rows = yield* sql<RecordRow>`
+            UPDATE records SET archived_at = COALESCE(archived_at, now())
+            WHERE org_id = ${orgId} AND id = ${input.recordId} RETURNING *`
           const row = rows[0]
-          if (!row) return yield* Effect.fail(new ItemNotFound({ itemId: input.itemId }))
-          const item = toItem(row)
+          if (!row) return yield* Effect.fail(new RecordNotFound({ recordId: input.recordId }))
+          const record = toRecord(row)
           yield* events.append({
-            subjectKind: "item",
-            subjectId: item.id,
-            eventType: "ItemArchived",
-            payload: { _tag: "ItemArchived" },
-            conceptId: item.conceptId,
+            subjectKind: "record",
+            subjectId: record.id,
+            eventType: "RecordArchived",
+            payload: { _tag: "RecordArchived" },
+            conceptId: record.conceptId,
           })
-          return item
+          return record
         }),
       )
 
-    const restoreItem = (input: { readonly itemId: string }) =>
+    const restoreRecord = (input: { readonly recordId: string }) =>
       sql.withTransaction(
         Effect.gen(function* () {
           const { orgId } = yield* OrgContext
-          const rows = yield* sql<ItemRow>`
-            UPDATE items SET archived_at = NULL
-            WHERE org_id = ${orgId} AND id = ${input.itemId} RETURNING *`
+          const rows = yield* sql<RecordRow>`
+            UPDATE records SET archived_at = NULL
+            WHERE org_id = ${orgId} AND id = ${input.recordId} RETURNING *`
           const row = rows[0]
-          if (!row) return yield* Effect.fail(new ItemNotFound({ itemId: input.itemId }))
-          const item = toItem(row)
+          if (!row) return yield* Effect.fail(new RecordNotFound({ recordId: input.recordId }))
+          const record = toRecord(row)
           yield* events.append({
-            subjectKind: "item",
-            subjectId: item.id,
-            eventType: "ItemRestored",
-            payload: { _tag: "ItemRestored" },
-            conceptId: item.conceptId,
+            subjectKind: "record",
+            subjectId: record.id,
+            eventType: "RecordRestored",
+            payload: { _tag: "RecordRestored" },
+            conceptId: record.conceptId,
           })
-          return item
+          return record
         }),
       )
 
-    const getItem = (itemId: string) =>
+    const getRecord = (recordId: string) =>
       Effect.gen(function* () {
         const { orgId } = yield* OrgContext
-        const rows = yield* sql<ItemRow>`
-          SELECT * FROM items WHERE id = ${itemId} AND org_id = ${orgId} LIMIT 1`
+        const rows = yield* sql<RecordRow>`
+          SELECT * FROM records WHERE id = ${recordId} AND org_id = ${orgId} LIMIT 1`
         const row = rows[0]
-        if (!row) return yield* Effect.fail(new ItemNotFound({ itemId }))
-        yield* assertConceptVisible(row.concept_id, itemId)
+        if (!row) return yield* Effect.fail(new RecordNotFound({ recordId }))
+        yield* assertConceptVisible(row.concept_id, recordId)
         // THE ANNOTATION CHOKEPOINT: notes, tasks, files and the activity feed all
         // resolve through here (`assertSubjectReadable` in use-cases.ts), because
-        // their tables carry no concept column. Without this a shared item id would
+        // their tables carry no concept column. Without this a shared record id would
         // leak a restricted record's whole annotation trail.
-        yield* assertRecordReadable(row.concept_id, itemId, itemId)
-        return toItem(row)
+        yield* assertRecordReadable(row.concept_id, recordId, recordId)
+        return toRecord(row)
       })
 
-    /** The item's current latest published, non-archived version — or null. Used to
+    /** The record's current latest published, non-archived version — or null. Used to
      *  resolve a general ("Latest") reference at read time. */
-    const headOf = (itemId: string) =>
+    const headOf = (recordId: string) =>
       Effect.gen(function* () {
         const { orgId } = yield* OrgContext
-        const rows = yield* sql<InstanceRow>`
-          SELECT * FROM instances
-          WHERE org_id = ${orgId} AND item_id = ${itemId}
+        const rows = yield* sql<RecordVersionRow>`
+          SELECT * FROM record_versions
+          WHERE org_id = ${orgId} AND record_id = ${recordId}
             AND version_status = 'published' AND archived_at IS NULL
           ORDER BY version_seq DESC LIMIT 1`
         const head = rows[0]
         if (!head) return null
         yield* assertConceptVisible(head.concept_id, head.id)
-        yield* assertRecordReadable(head.concept_id, head.item_id, head.id, head.state)
-        return toInstance(head)
+        yield* assertRecordReadable(head.concept_id, head.record_id, head.id, head.state)
+        return toRecordVersion(head)
       })
 
     /**
      * The sole record of a single-record concept — its live lineage's current
      * version — or null if the concept has none.
      *
-     * NOT `headOf` alone, and NOT `QueryService.findInstances(...)[0]`: both are
+     * NOT `headOf` alone, and NOT `QueryService.findRecords(...)[0]`: both are
      * head-only (`version_status = 'published'`), so a freshly toggled VERSIONED
      * concept — whose one record is still a draft — would resolve to null and the
      * route would render "record missing" for a record that plainly exists. Step 3
@@ -1341,31 +1379,31 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
     const singleRecordOf = (conceptId: string) =>
       Effect.gen(function* () {
         const { orgId } = yield* OrgContext
-        const itemRows = yield* sql<ItemRow>`
-          SELECT * FROM items
+        const recordRows = yield* sql<RecordRow>`
+          SELECT * FROM records
           WHERE org_id = ${orgId} AND concept_id = ${conceptId} AND archived_at IS NULL
           ORDER BY created_at ASC LIMIT 1`
-        const item = itemRows[0]
+        const record = recordRows[0]
         // Gate on the concept asked about, before any row is returned. A restricted
         // single-record concept reads as absent rather than erroring, matching the
         // `null` a member already gets for a concept with no record yet.
-        if (item) yield* assertConceptVisible(conceptId, item.id)
-        if (item) yield* assertRecordReadable(conceptId, item.id, item.id)
-        if (!item) return null
-        const head = yield* headOf(item.id)
+        if (record) yield* assertConceptVisible(conceptId, record.id)
+        if (record) yield* assertRecordReadable(conceptId, record.id, record.id)
+        if (!record) return null
+        const head = yield* headOf(record.id)
         if (head) return head
         // Fall back to the newest version of ANY status (the draft-only case).
-        const anyRows = yield* sql<InstanceRow>`
-          SELECT * FROM instances
-          WHERE org_id = ${orgId} AND item_id = ${item.id} AND archived_at IS NULL
+        const anyRows = yield* sql<RecordVersionRow>`
+          SELECT * FROM record_versions
+          WHERE org_id = ${orgId} AND record_id = ${record.id} AND archived_at IS NULL
           ORDER BY version_seq DESC LIMIT 1`
-        return anyRows[0] ? toInstance(anyRows[0]) : null
+        return anyRows[0] ? toRecordVersion(anyRows[0]) : null
       })
 
     /**
      * Flip a concept's `singleRecord` flag, creating its record when switching on.
      *
-     * Lives HERE, not on ConceptService (which can't call InstanceService — it's
+     * Lives HERE, not on ConceptService (which can't call RecordService — it's
      * already a dependency of this one) and not in a use-case (where composition
      * is NOT transactional: `UC`'s requirements exclude `PgClient`, so two service
      * calls are two independent transactions). One `withTransaction` here makes
@@ -1385,7 +1423,7 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
         Effect.gen(function* () {
           const { orgId } = yield* OrgContext
           // Lock the concept row first: two concurrent toggles-on would otherwise
-          // both read zero items and both create a record.
+          // both read zero records and both create a record.
           yield* sql`
             SELECT id FROM concepts
             WHERE org_id = ${orgId} AND id = ${input.conceptId} FOR UPDATE`
@@ -1397,7 +1435,7 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
           if (!input.singleRecord) {
             return yield* concepts.setSingleRecord(concept.id, false)
           }
-          const liveItems = yield* liveItemCountOf(concept.id)
+          const liveItems = yield* liveRecordCountOf(concept.id)
           // Which of several records would be "the" one isn't ours to guess.
           if (liveItems > 1) {
             return yield* Effect.fail(
@@ -1416,21 +1454,21 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
         }),
       )
 
-    /** All versions of an item (draft + published, including per-version archived),
-     *  oldest first — for the item-detail version history panel. */
-    const listVersions = (itemId: string) =>
+    /** All versions of an record (draft + published, including per-version archived),
+     *  oldest first — for the record-detail version history panel. */
+    const listVersions = (recordId: string) =>
       Effect.gen(function* () {
         const { orgId } = yield* OrgContext
-        const rows = yield* sql<InstanceRow>`
-          SELECT * FROM instances
-          WHERE org_id = ${orgId} AND item_id = ${itemId}
+        const rows = yield* sql<RecordVersionRow>`
+          SELECT * FROM record_versions
+          WHERE org_id = ${orgId} AND record_id = ${recordId}
           ORDER BY version_seq ASC`
-        // Every version of an item shares its concept, so one check covers them all.
+        // Every version of a record shares its concept, so one check covers them all.
         const first = rows[0]
         if (first) yield* assertConceptVisible(first.concept_id, first.id)
         // Every version shares the lineage, so one record check covers them all.
-        if (first) yield* assertRecordReadable(first.concept_id, first.item_id, first.id)
-        return rows.map(toInstance)
+        if (first) yield* assertRecordReadable(first.concept_id, first.record_id, first.id)
+        return rows.map(toRecordVersion)
       })
 
     return {
@@ -1447,9 +1485,9 @@ export class InstanceService extends Effect.Service<InstanceService>()("engine/I
       publishVersion,
       newVersion,
       discardDraft,
-      archiveItem,
-      restoreItem,
-      getItem,
+      archiveRecord,
+      restoreRecord,
+      getRecord,
       headOf,
       singleRecordOf,
       setConceptSingleRecord,

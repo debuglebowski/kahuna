@@ -2,7 +2,7 @@ import { describe, expect, it } from "@effect/vitest"
 import { Effect } from "effect"
 import { ConceptService } from "../services/ConceptService"
 import { FieldService } from "../services/FieldService"
-import { InstanceService } from "../services/InstanceService"
+import { RecordService } from "../services/RecordService"
 import { newOrgId, testLayer } from "./harness"
 
 /** A minimal TipTap/ProseMirror doc with one paragraph of text. */
@@ -22,17 +22,17 @@ describe("richtext field kind", () => {
     Effect.gen(function* () {
       const concepts = yield* ConceptService
       const fields = yield* FieldService
-      const instances = yield* InstanceService
+      const recordVersions = yield* RecordService
       const c = yield* concepts.create({ name: "Page" })
       const body = yield* fields.addField({ conceptId: c.id, name: "body", kind: "richtext" })
 
       const v1 = { doc: doc("hello"), text: "hello" }
-      const inst = yield* instances.create({ conceptId: c.id, fields: { [body.id]: v1 } })
+      const inst = yield* recordVersions.create({ conceptId: c.id, fields: { [body.id]: v1 } })
       expect(inst.state[body.id]).toEqual(v1)
 
       const v2 = { doc: doc("hello world"), text: "hello world" }
-      const updated = yield* instances.update({
-        instanceId: inst.id,
+      const updated = yield* recordVersions.update({
+        recordVersionId: inst.id,
         expectedVersion: inst.version,
         patch: { [body.id]: v2 },
       })
@@ -44,10 +44,10 @@ describe("richtext field kind", () => {
     Effect.gen(function* () {
       const concepts = yield* ConceptService
       const fields = yield* FieldService
-      const instances = yield* InstanceService
+      const recordVersions = yield* RecordService
       const c = yield* concepts.create({ name: "Page" })
       const body = yield* fields.addField({ conceptId: c.id, name: "body", kind: "richtext" })
-      const inst = yield* instances.create({
+      const inst = yield* recordVersions.create({
         conceptId: c.id,
         fields: { [body.id]: { doc: doc("hello"), text: "something else entirely" } },
       })
@@ -60,8 +60,8 @@ describe("richtext field kind", () => {
           { type: "paragraph", content: [{ type: "text", text: "two" }] },
         ],
       }
-      const updated = yield* instances.update({
-        instanceId: inst.id,
+      const updated = yield* recordVersions.update({
+        recordVersionId: inst.id,
         expectedVersion: inst.version,
         patch: { [body.id]: { doc: multi, text: "" } },
       })
@@ -73,10 +73,10 @@ describe("richtext field kind", () => {
     Effect.gen(function* () {
       const concepts = yield* ConceptService
       const fields = yield* FieldService
-      const instances = yield* InstanceService
+      const recordVersions = yield* RecordService
       const c = yield* concepts.create({ name: "Page" })
       const body = yield* fields.addField({ conceptId: c.id, name: "body", kind: "richtext" })
-      const inst = yield* instances.create({
+      const inst = yield* recordVersions.create({
         conceptId: c.id,
         fields: { [body.id]: { doc: doc("x"), text: "x", html: "<p>x</p>" } },
       })
@@ -88,11 +88,11 @@ describe("richtext field kind", () => {
     Effect.gen(function* () {
       const concepts = yield* ConceptService
       const fields = yield* FieldService
-      const instances = yield* InstanceService
+      const recordVersions = yield* RecordService
       const c = yield* concepts.create({ name: "Page" })
       const body = yield* fields.addField({ conceptId: c.id, name: "body", kind: "richtext" })
       const reject = (value: unknown) =>
-        instances.create({ conceptId: c.id, fields: { [body.id]: value } }).pipe(Effect.flip)
+        recordVersions.create({ conceptId: c.id, fields: { [body.id]: value } }).pipe(Effect.flip)
 
       const plainString = yield* reject("just text")
       expect(plainString._tag).toBe("FieldValidationError")
@@ -109,7 +109,7 @@ describe("richtext field kind", () => {
     Effect.gen(function* () {
       const concepts = yield* ConceptService
       const fields = yield* FieldService
-      const instances = yield* InstanceService
+      const recordVersions = yield* RecordService
       const c = yield* concepts.create({ name: "Page" })
       const body = yield* fields.addField({
         conceptId: c.id,
@@ -118,7 +118,7 @@ describe("richtext field kind", () => {
         config: { requirement: "required" },
       })
 
-      const empty = yield* instances
+      const empty = yield* recordVersions
         .create({
           conceptId: c.id,
           fields: { [body.id]: { doc: { type: "doc", content: [] }, text: "  " } },
@@ -127,7 +127,7 @@ describe("richtext field kind", () => {
       expect(empty._tag).toBe("FieldValidationError")
       expect((empty as { message: string }).message).toContain('"body" is required')
 
-      const ok = yield* instances.create({
+      const ok = yield* recordVersions.create({
         conceptId: c.id,
         fields: { [body.id]: { doc: doc("hi"), text: "hi" } },
       })
@@ -139,7 +139,7 @@ describe("richtext field kind", () => {
     Effect.gen(function* () {
       const concepts = yield* ConceptService
       const fields = yield* FieldService
-      const instances = yield* InstanceService
+      const recordVersions = yield* RecordService
       const c = yield* concepts.create({ name: "Page" })
       const body = yield* fields.addField({ conceptId: c.id, name: "body", kind: "richtext" })
 
@@ -156,7 +156,7 @@ describe("richtext field kind", () => {
           },
         ],
       }
-      const inst = yield* instances.create({
+      const inst = yield* recordVersions.create({
         conceptId: c.id,
         fields: { [body.id]: { doc: mixed, text: "" } },
       })
@@ -168,7 +168,7 @@ describe("richtext field kind", () => {
     Effect.gen(function* () {
       const concepts = yield* ConceptService
       const fields = yield* FieldService
-      const instances = yield* InstanceService
+      const recordVersions = yield* RecordService
       const c = yield* concepts.create({ name: "Page" })
       const body = yield* fields.addField({ conceptId: c.id, name: "body", kind: "richtext" })
 
@@ -176,7 +176,7 @@ describe("richtext field kind", () => {
       // targetId in it would publish the identity of a record they may not see.
       // An unlabelled mention must therefore contribute nothing at all.
       const secret = "11111111-2222-3333-4444-555555555555"
-      const inst = yield* instances.create({
+      const inst = yield* recordVersions.create({
         conceptId: c.id,
         fields: {
           [body.id]: { doc: mentionDoc({ kind: "record", targetId: secret }), text: "anything" },
@@ -187,7 +187,7 @@ describe("richtext field kind", () => {
       expect(stored.text.trim()).toBe("")
 
       // …and an empty-string label is the same case, not a literal "@".
-      const blank = yield* instances.create({
+      const blank = yield* recordVersions.create({
         conceptId: c.id,
         fields: {
           [body.id]: {
@@ -206,7 +206,7 @@ describe("richtext field kind", () => {
     Effect.gen(function* () {
       const concepts = yield* ConceptService
       const fields = yield* FieldService
-      const instances = yield* InstanceService
+      const recordVersions = yield* RecordService
       const c = yield* concepts.create({ name: "Page" })
       const body = yield* fields.addField({
         conceptId: c.id,
@@ -217,7 +217,7 @@ describe("richtext field kind", () => {
 
       // A mention is real content, so `isMissing` must not read a mention-only doc
       // as empty. This follows from the walk change rather than a separate rule.
-      const ok = yield* instances.create({
+      const ok = yield* recordVersions.create({
         conceptId: c.id,
         fields: {
           [body.id]: {
@@ -230,7 +230,7 @@ describe("richtext field kind", () => {
 
       // An UNLABELLED mention contributes no text, so it still counts as missing —
       // the anti-oracle rule wins over convenience here.
-      const bare = yield* instances
+      const bare = yield* recordVersions
         .create({
           conceptId: c.id,
           fields: { [body.id]: { doc: mentionDoc({ kind: "record", targetId: "abc" }), text: "" } },

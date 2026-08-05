@@ -37,7 +37,6 @@ import {
   type GraphLayoutPositions,
   GraphLayoutService,
   type Instance,
-  InstanceService,
   type InstanceViewLayout,
   type InstanceViewPrefsBody,
   LABELS_KEY,
@@ -53,6 +52,7 @@ import {
   PolicyService,
   projectState,
   QueryService,
+  RecordService,
   RelationService,
   type RichTextValue,
   type SidebarCondition,
@@ -96,7 +96,7 @@ const ensureUnmanagedConcept = (conceptId: string): UC<void> =>
   )
 
 const ensureUnmanagedInstance = (instanceId: string): UC<void> =>
-  Effect.flatMap(InstanceService, (i) => i.get(instanceId)).pipe(
+  Effect.flatMap(RecordService, (i) => i.get(instanceId)).pipe(
     Effect.flatMap((inst) => ensureUnmanagedConcept(inst.conceptId)),
     // get() is live-only; if the instance is archived/gone, skip the guard and let
     // the real mutation surface the proper InstanceNotFound. Live managed instances
@@ -133,7 +133,7 @@ const ensureUnmanagedField = (fieldId: string): UC<void> =>
 // missing/archived instance skips the guard (the real mutation surfaces the
 // proper InstanceNotFound). Keyed by field id; non-field keys (e.g. __labels) pass.
 const ensureWritablePatch = (instanceId: string, keys: ReadonlyArray<string>): UC<void> =>
-  Effect.flatMap(InstanceService, (i) => i.get(instanceId)).pipe(
+  Effect.flatMap(RecordService, (i) => i.get(instanceId)).pipe(
     Effect.flatMap((inst) =>
       Effect.flatMap(ConceptService, (c) => c.getById(inst.conceptId)).pipe(
         Effect.flatMap((concept) =>
@@ -276,7 +276,7 @@ const maskPayload = (payload: unknown, hidden: ReadonlySet<string>): unknown => 
  * The annotation + attachment tables (`annotations.subject_id`,
  * `attachments.item_id`) carry no concept column, so their queries cannot filter on
  * visibility themselves — a member holding a restricted record's item id could
- * otherwise read its notes, tasks, files and activity. `InstanceService.getItem`
+ * otherwise read its notes, tasks, files and activity. `RecordService.getItem`
  * carries the concept read gate, so resolving the lineage IS the check.
  *
  * A subject that is not an item lineage at all (annotations have their own ids)
@@ -285,7 +285,7 @@ const maskPayload = (payload: unknown, hidden: ReadonlySet<string>): unknown => 
  */
 const assertSubjectReadable = (subjectId: string): UC<void> =>
   Effect.gen(function* () {
-    const instances = yield* InstanceService
+    const instances = yield* RecordService
     yield* instances.getItem(subjectId).pipe(Effect.catchTag("ItemNotFound", () => Effect.void))
   })
 
@@ -293,7 +293,7 @@ const assertSubjectReadable = (subjectId: string): UC<void> =>
  * Gate a WRITE whose subject is an item lineage.
  *
  * The mirror of `assertSubjectReadable`, and needed for the same reason the instance
- * write gate is (see THE WRITE GATE in engine/services/InstanceService.ts): every READ
+ * write gate is (see THE WRITE GATE in engine/services/RecordService.ts): every READ
  * of an annotation was gated while `createNote` / `createTask` named the subject
  * directly and were not. A member could attach content to a record they cannot see.
  *
@@ -341,7 +341,7 @@ export const listInstances = (
 
 export const getInstance = (id: string, decorate = false): UC<Instance> =>
   Effect.gen(function* () {
-    const instances = yield* InstanceService
+    const instances = yield* RecordService
     const computed = yield* ComputedFields
     const inst = yield* instances.get(id)
     const out = decorate ? yield* computed.decorate(inst) : inst
@@ -355,7 +355,7 @@ export const getInstance = (id: string, decorate = false): UC<Instance> =>
  */
 export const getInstanceDetail = (id: string): UC<unknown> =>
   Effect.gen(function* () {
-    const instances = yield* InstanceService
+    const instances = yield* RecordService
     const relations = yield* RelationService
     const conceptsSvc = yield* ConceptService
     const fieldsSvc = yield* FieldService
@@ -603,7 +603,7 @@ export const setConceptSingleRecord = (
 ): UC<unknown> =>
   ensureUnmanagedConcept(conceptId).pipe(
     Effect.zipRight(
-      Effect.flatMap(InstanceService, (i) =>
+      Effect.flatMap(RecordService, (i) =>
         i.setConceptSingleRecord({ conceptId, singleRecord, fields }),
       ),
     ),
@@ -622,7 +622,7 @@ export const setConceptSingleRecord = (
  */
 export const getSingleRecord = (conceptId: string): UC<unknown> =>
   Effect.gen(function* () {
-    const instances = yield* InstanceService
+    const instances = yield* RecordService
     const record = yield* instances.singleRecordOf(conceptId)
     if (!record) return null
     return yield* getInstanceDetail(record.id)
@@ -668,7 +668,7 @@ export const deleteConcept = (
     if (!concept.singleRecord) return yield* concepts.purge(id)
 
     const sql = yield* PgClient.PgClient
-    const instances = yield* InstanceService
+    const instances = yield* RecordService
     return yield* sql.withTransaction(
       Effect.gen(function* () {
         const record = yield* instances.singleRecordOf(id)
@@ -939,7 +939,7 @@ export interface FeedItem {
  * class as the SSE envelope leak closed in `server/stream.ts` — metadata, not values
  * (both these use-cases already drop `payload`), but a leak either way.
  *
- * Resolved through `InstanceService.get`, which carries both the concept gate and the
+ * Resolved through `RecordService.get`, which carries both the concept gate and the
  * record gate — so this filter cannot disagree with what a detail read would allow.
  * Deduped by subject, so a page of edits to one record costs one lookup.
  *
@@ -956,8 +956,8 @@ const dropUnreadableSubjects = <
       ...new Set(events.filter((e) => e.subjectKind === "instance").map((e) => e.subjectId)),
     ]
     if (subjects.length === 0) return events
-    const instances = yield* InstanceService
-    // Resolved through `InstanceService.get`, which already carries BOTH read gates —
+    const instances = yield* RecordService
+    // Resolved through `RecordService.get`, which already carries BOTH read gates —
     // so this filter can never disagree with what a detail read would allow. Deduped by
     // subject, so a page of edits to one record costs one lookup.
     const readable = new Map<string, boolean>()
@@ -1015,7 +1015,7 @@ export const createInstance = (conceptId: string, fields: Record<string, unknown
   ensureUnmanagedConcept(conceptId).pipe(
     Effect.zipRight(ensureWritableVisibility(conceptId, Object.keys(fields))),
     Effect.zipRight(
-      maskEcho(Effect.flatMap(InstanceService, (i) => i.create({ conceptId, fields }))),
+      maskEcho(Effect.flatMap(RecordService, (i) => i.create({ conceptId, fields }))),
     ),
   )
 
@@ -1027,7 +1027,7 @@ export const updateInstance = (
   ensureWritablePatch(id, Object.keys(patch)).pipe(
     Effect.zipRight(
       Effect.gen(function* () {
-        const instances = yield* InstanceService
+        const instances = yield* RecordService
         const inst = yield* instances.get(id)
         yield* ensureWritableVisibility(inst.conceptId, Object.keys(patch))
         return yield* maskEcho(instances.update({ instanceId: id, expectedVersion, patch }))
@@ -1043,7 +1043,7 @@ export const transitionInstance = (
 ): UC<Instance> =>
   Effect.gen(function* () {
     yield* ensureWritablePatch(id, [field])
-    const instances = yield* InstanceService
+    const instances = yield* RecordService
     const inst = yield* instances.get(id)
     yield* ensureWritableVisibility(inst.conceptId, [field])
     return yield* maskEcho(instances.transition({ instanceId: id, expectedVersion, field, to }))
@@ -1053,7 +1053,7 @@ export const archiveInstance = (id: string, expectedVersion: number): UC<Instanc
   ensureUnmanagedInstance(id).pipe(
     Effect.zipRight(
       maskEcho(
-        Effect.flatMap(InstanceService, (i) => i.archive({ instanceId: id, expectedVersion })),
+        Effect.flatMap(RecordService, (i) => i.archive({ instanceId: id, expectedVersion })),
       ),
     ),
   )
@@ -1062,14 +1062,14 @@ export const restoreInstance = (id: string, expectedVersion: number): UC<Instanc
   ensureUnmanagedInstance(id).pipe(
     Effect.zipRight(
       maskEcho(
-        Effect.flatMap(InstanceService, (i) => i.restore({ instanceId: id, expectedVersion })),
+        Effect.flatMap(RecordService, (i) => i.restore({ instanceId: id, expectedVersion })),
       ),
     ),
   )
 
 export const deleteInstance = (id: string): UC<Instance> =>
   ensureUnmanagedInstance(id).pipe(
-    Effect.zipRight(maskEcho(Effect.flatMap(InstanceService, (i) => i.purge({ instanceId: id })))),
+    Effect.zipRight(maskEcho(Effect.flatMap(RecordService, (i) => i.purge({ instanceId: id })))),
   )
 
 export const linkRelation = (
@@ -1084,7 +1084,7 @@ export const linkRelation = (
 
 export const listVersions = (itemId: string): UC<ReadonlyArray<Instance>> =>
   Effect.gen(function* () {
-    const instances = yield* InstanceService
+    const instances = yield* RecordService
     const rows = yield* instances.listVersions(itemId)
     const first = rows[0]
     if (!first) return rows
@@ -1095,7 +1095,7 @@ export const listVersions = (itemId: string): UC<ReadonlyArray<Instance>> =>
 
 export const newVersion = (itemId: string): UC<Instance> =>
   Effect.gen(function* () {
-    const instances = yield* InstanceService
+    const instances = yield* RecordService
     const out = yield* instances.newVersion({ itemId })
     // A writer's response is projected exactly like a reader's.
     return maskInstance(out, yield* fieldMaskFor(out.conceptId))
@@ -1103,7 +1103,7 @@ export const newVersion = (itemId: string): UC<Instance> =>
 
 export const publishVersion = (id: string, expectedVersion: number): UC<Instance> =>
   Effect.gen(function* () {
-    const instances = yield* InstanceService
+    const instances = yield* RecordService
     const out = yield* instances.publishVersion({ instanceId: id, expectedVersion })
     // A writer's response is projected exactly like a reader's.
     return maskInstance(out, yield* fieldMaskFor(out.conceptId))
@@ -1111,17 +1111,17 @@ export const publishVersion = (id: string, expectedVersion: number): UC<Instance
 
 export const discardDraft = (id: string): UC<Instance> =>
   Effect.gen(function* () {
-    const instances = yield* InstanceService
+    const instances = yield* RecordService
     const out = yield* instances.discardDraft({ instanceId: id })
     // A writer's response is projected exactly like a reader's.
     return maskInstance(out, yield* fieldMaskFor(out.conceptId))
   })
 
 export const archiveItem = (itemId: string): UC<unknown> =>
-  Effect.flatMap(InstanceService, (i) => i.archiveItem({ itemId }))
+  Effect.flatMap(RecordService, (i) => i.archiveItem({ itemId }))
 
 export const restoreItem = (itemId: string): UC<unknown> =>
-  Effect.flatMap(InstanceService, (i) => i.restoreItem({ itemId }))
+  Effect.flatMap(RecordService, (i) => i.restoreItem({ itemId }))
 
 /** Relation-picker candidates: the head (latest published) of each item of a
  *  concept whose display label matches `query`. */
@@ -1283,7 +1283,7 @@ export const listTasks = (filter: ListTasksFilter = {}): UC<ReadonlyArray<Task>>
  */
 export const resolveTaskSubjects = (subjectIds: ReadonlyArray<string>): UC<unknown> =>
   Effect.gen(function* () {
-    const instances = yield* InstanceService
+    const instances = yield* RecordService
     const fieldsSvc = yield* FieldService
     const conceptsSvc = yield* ConceptService
     const fieldCache = new Map<string, ReadonlyArray<{ id: string; kind: string }>>()
@@ -1359,7 +1359,7 @@ export const resolveMentions = (
   refs: ReadonlyArray<{ readonly kind: string; readonly targetId: string }>,
 ): UC<unknown> =>
   Effect.gen(function* () {
-    const instances = yield* InstanceService
+    const instances = yield* RecordService
     const fieldsSvc = yield* FieldService
     const conceptsSvc = yield* ConceptService
     const dashboardsSvc = yield* DashboardService
@@ -1532,7 +1532,7 @@ export const listBacklinks = (itemId: string): UC<unknown> =>
     // Standing on a record you may not read must not reveal who points at it.
     yield* assertSubjectReadable(itemId)
     const mentionsSvc = yield* MentionService
-    const instances = yield* InstanceService
+    const instances = yield* RecordService
     const fieldsSvc = yield* FieldService
     const conceptsSvc = yield* ConceptService
     const annotations = yield* AnnotationService
@@ -1745,7 +1745,7 @@ export const getActivity = (subjectId: string, limit = 100): UC<ReadonlyArray<Fe
     const annotations = yield* AnnotationService
     const store = yield* EventStore
     yield* assertSubjectReadable(subjectId)
-    const instances = yield* InstanceService
+    const instances = yield* RecordService
     const events = yield* annotations.readActivityForSubject(subjectId, { limit })
     // An amendment (`VersionAmended`) is a field edit too, so it gets the same
     // before/after treatment — and its patch must join the running fold, or a later

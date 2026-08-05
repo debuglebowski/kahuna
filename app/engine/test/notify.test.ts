@@ -4,7 +4,7 @@ import { describe, expect, it } from "@effect/vitest"
 import { Effect, Fiber, Stream } from "effect"
 import { ConceptService } from "../services/ConceptService"
 import { EVENT_CHANNEL, type EventEnvelope, EventStore } from "../services/EventStore"
-import { InstanceService } from "../services/InstanceService"
+import { RecordService } from "../services/RecordService"
 import { newOrgId, testLayer } from "./harness"
 
 describe("EventStore NOTIFY (live-sync envelope)", () => {
@@ -18,7 +18,7 @@ describe("EventStore NOTIFY (live-sync envelope)", () => {
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
         const concepts = yield* ConceptService
-        const instances = yield* InstanceService
+        const recordVersions = yield* RecordService
         const events = yield* EventStore
 
         const listener = yield* sql.listen(EVENT_CHANNEL).pipe(
@@ -33,7 +33,7 @@ describe("EventStore NOTIFY (live-sync envelope)", () => {
         yield* Effect.sleep("250 millis") // let LISTEN register
 
         yield* concepts.create({ name: "Account" })
-        const acc = yield* instances.create({ conceptName: "Account", fields: {} })
+        const acc = yield* recordVersions.create({ conceptName: "Account", fields: {} })
 
         // Rolled-back transaction: append then fail -> the NOTIFY must be discarded,
         // which only holds if pg_notify rode the transaction connection.
@@ -41,10 +41,10 @@ describe("EventStore NOTIFY (live-sync envelope)", () => {
           .withTransaction(
             Effect.gen(function* () {
               yield* events.append({
-                subjectKind: "instance",
+                subjectKind: "recordVersion",
                 subjectId: rollbackId,
-                eventType: "InstanceUpdated",
-                payload: { _tag: "InstanceUpdated", patch: {} },
+                eventType: "RecordVersionUpdated",
+                payload: { _tag: "RecordVersionUpdated", patch: {} },
                 conceptName: "Account",
               })
               return yield* Effect.fail(new Error("boom"))
@@ -60,8 +60,8 @@ describe("EventStore NOTIFY (live-sync envelope)", () => {
 
     const instanceEnv = received.find((e) => e.subjectId === accId)
     expect(instanceEnv).toBeDefined()
-    expect(instanceEnv?.kind).toBe("instance")
-    expect(instanceEnv?.type).toBe("InstanceCreated")
+    expect(instanceEnv?.kind).toBe("recordVersion")
+    expect(instanceEnv?.type).toBe("RecordVersionCreated")
     expect(instanceEnv?.concept).toBe("Account")
 
     // The concept creation is delivered too (subjectKind "concept", no conceptName).

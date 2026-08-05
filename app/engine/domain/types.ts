@@ -64,22 +64,22 @@ export interface FieldConfig {
    *  `flagged` never blocks — missing values are surfaced in the UI.
    *  Absent = `optional`. */
   readonly requirement?: "required" | "flagged" | "optional"
-  /** No two items of the concept may hold the same value (text/number/date/
-   *  enum/user/money only; never with `multiple`). Archived items keep their
+  /** No two records of the concept may hold the same value (text/number/date/
+   *  enum/user/money only; never with `multiple`). Archived records keep their
    *  claim — only a purge releases a value, so a restore can never resurface a
-   *  duplicate. Text compares case-insensitively. Versions of one item share
+   *  duplicate. Text compares case-insensitively. Versions of one record share
    *  values freely; missing values never conflict. Enforced write-time —
-   *  enabling it on a field with existing cross-item duplicates is rejected. */
+   *  enabling it on a field with existing cross-record duplicates is rejected. */
   readonly unique?: boolean
 }
 
-/** Instance field values, keyed by field **id** (`fields.id`). Synthetic keys
+/** Record version field values, keyed by field **id** (`fields.id`). Synthetic keys
  *  prefixed with `__` (e.g. `__bands`, `__labels`) are engine markers, not fields.
- *  `__labels` holds this item's own label ids (an array of `labels.id`); it rides
- *  the normal InstanceCreated/InstanceUpdated payloads and folds like any state key. */
-export type InstanceState = Record<string, unknown>
+ *  `__labels` holds this record's own label ids (an array of `labels.id`); it rides
+ *  the normal RecordVersionCreated/RecordVersionUpdated payloads and folds like any state key. */
+export type RecordState = Record<string, unknown>
 
-/** Synthetic `InstanceState` key holding an instance's own label ids. */
+/** Synthetic `RecordState` key holding an record version's own label ids. */
 export const LABELS_KEY = "__labels"
 
 export interface Concept {
@@ -99,22 +99,22 @@ export interface Concept {
    *  prefixed `lucide:` (e.g. `lucide:Building2`); null renders none. */
   readonly icon: string | null
   /** Optional display color (hex, same pill palette as labels) used to tint the
-   *  concept wherever instances are visualised; null renders neutral. */
+   *  concept wherever record versions are visualised; null renders neutral. */
   readonly color: string | null
   /** Connector-owned "managed concept" marker: a typed integration kind (e.g.
    *  `"linear"`, `"google.gmail"`) when an integration sync owns this concept's
-   *  schema + instances, else null. Drives read-only guards + opinionated detail
+   *  schema + record versions, else null. Drives read-only guards + opinionated detail
    *  views. Keyed by kind, never by concept name. */
   readonly managedBy: string | null
-  /** Label ids inherited by every instance of this concept (read-time, never
-   *  written per item — so they can't be removed on an individual item). */
+  /** Label ids inherited by every record version of this concept (read-time, never
+   *  written per record — so they can't be removed on an individual record). */
   readonly staticLabelIds: ReadonlyArray<Id>
-  /** Label ids snapshotted onto each new instance's `__labels` at creation time;
-   *  editable per item afterward. */
+  /** Label ids snapshotted onto each new record version's `__labels` at creation time;
+   *  editable per record afterward. */
   readonly defaultLabelIds: ReadonlyArray<Id>
-  /** Opt-in versioning: when true, this concept's items hold multiple draft→
+  /** Opt-in versioning: when true, this concept's records hold multiple draft→
    *  published versions and references may pin a specific version. Default false
-   *  ⇒ the plain 1-instance-per-item model (every item is a published seq-1 row). */
+   *  ⇒ the plain 1-record version-per-record model (every record is a published seq-1 row). */
   readonly versioningEnabled: boolean
   /** How far back edits reach; only meaningful when `versioningEnabled`.
    *  'draft' (default) = a published version is frozen. 'any' = any published
@@ -127,25 +127,25 @@ export interface Concept {
    *  Default false ⇒ an ordinary many-record concept. */
   readonly singleRecord: boolean
   /** Who may READ this concept's records: 'visible' = any member, 'admin' =
-   *  owners/admins only. Enforced in ConceptService + InstanceService off
+   *  owners/admins only. Enforced in ConceptService + RecordService off
    *  `OrgContext.role`; unknown DB values coerce to 'admin' (fail closed). */
   readonly visibility: ConceptVisibility
-  /** Org-wide default instance-detail layout for this concept (a 12-col tile
+  /** Org-wide default record version-detail layout for this concept (a 12-col tile
    *  grid, same shape as a view-prefs custom layout); null = render the built-in
-   *  default preset. Set in concept settings; every instance renders it. */
-  readonly instanceView: InstanceViewLayout | null
-  /** Field id whose value is this concept's instance display label ("title");
+   *  default preset. Set in concept settings; every record version renders it. */
+  readonly recordView: RecordViewLayout | null
+  /** Field id whose value is this concept's record version display label ("title");
    *  any scalar field. Replaces the implicit "first text field" guess — null only
    *  for an unconfigured concept (then the fallback applies). Integration-set and
    *  UI-locked on a managed concept. */
   readonly titleFieldId: Id | null
   readonly createdAt: Date
-  /** Archive marker (mirrors `Field`/`Label`/`Instance`): non-null = archived
+  /** Archive marker (mirrors `Field`/`Label`/`Record version`): non-null = archived
    *  (hidden from the live list but restorable). A true delete removes the row. */
   readonly archivedAt: Date | null
-  /** Total instances (live + archived) — present only when listed `withCounts`.
-   *  Drives the settings "N items" hint + what blocks a concept purge. */
-  readonly itemCount?: number
+  /** Total record versions (live + archived) — present only when listed `withCounts`.
+   *  Drives the settings "N records" hint + what blocks a concept purge. */
+  readonly recordCount?: number
 }
 
 /** A label in the org-wide, flat vocabulary. Keyed by `id`; `name`/`color` are
@@ -195,14 +195,14 @@ export interface Field {
   readonly archivedAt: Date | null
 }
 
-/** The lineage row for a logical "item" — the stable identity across a concept's
- *  versions. References point at an `Item` ("Latest"); whole-item archive lives
- *  here. For a non-versioned concept the mapping to instances is 1:1. */
-export interface Item {
+/** The lineage row for a logical "record" — the stable identity across a concept's
+ *  versions. References point at an `Record` ("Latest"); whole-record archive lives
+ *  here. For a non-versioned concept the mapping to record versions is 1:1. */
+export interface KmRecord {
   readonly id: Id
   readonly orgId: OrgId
   readonly conceptId: Id
-  /** Whole-item (lineage-level) archive marker; hides every version from lists. */
+  /** Whole-record (lineage-level) archive marker; hides every version from lists. */
   readonly archivedAt: Date | null
   readonly createdAt: Date
 }
@@ -212,7 +212,7 @@ export interface Item {
 export type VersionStatus = "draft" | "published"
 
 /** How far back edits reach on a versioned concept (per-concept setting; ignored
- *  when versioning is off, where every instance is always editable).
+ *  when versioning is off, where every record version is always editable).
  *  - `draft`: only the open draft is editable — a published version is frozen and
  *    changes need a fresh draft. The default, and the historical behaviour.
  *  - `any`: any published version may be AMENDED in place. Pinned references point
@@ -236,14 +236,14 @@ export type EditReach = "draft" | "any"
  *  Engine-level callers (`role: "system"` — syncs, seeds) bypass it. */
 export type ConceptVisibility = "visible" | "admin" | "none"
 
-export interface Instance {
+export interface RecordVersion {
   readonly id: Id
   readonly orgId: OrgId
   readonly conceptId: Id
-  /** The lineage (`items.id`) this version belongs to. Immutable. For a
-   *  non-versioned concept or any legacy row, `itemId === id` (1:1). */
-  readonly itemId: Id
-  readonly state: InstanceState
+  /** The lineage (`records.id`) this version belongs to. Immutable. For a
+   *  non-versioned concept or any legacy row, `recordId === id` (1:1). */
+  readonly recordId: Id
+  readonly state: RecordState
   /** Optimistic-concurrency EVENT counter — NOT the product version (see
    *  `versionSeq`). Bumps on every mutating event including publish. */
   readonly version: number
@@ -264,11 +264,11 @@ export interface Relation {
   readonly fieldId: Id
   readonly fromId: Id
   /** The referenced lineage ("Latest" target) — always set. */
-  readonly toItemId: Id
-  /** Pinned published version, or null = resolve to the item's latest published. */
+  readonly toRecordId: Id
+  /** Pinned published version, or null = resolve to the record's latest published. */
   readonly toVersionId: Id | null
   /** Legacy resolved-target column (shadow during migration; superseded by
-   *  `toItemId`/`toVersionId`). Still populated on new edges. */
+   *  `toRecordId`/`toVersionId`). Still populated on new edges. */
   readonly toId: Id
   readonly properties: Record<string, unknown>
   readonly createdAt: Date
@@ -277,29 +277,29 @@ export interface Relation {
 
 export type EventPayload =
   | {
-      readonly _tag: "InstanceCreated"
+      readonly _tag: "RecordVersionCreated"
       readonly conceptId: Id
-      readonly fields: InstanceState
+      readonly fields: RecordState
       // Versioning lineage metadata, carried so a full replay reconstructs the
       // version status/lineage. Absent on legacy events ⇒ the reducer defaults to
-      // a published, seq-1, 1:1 lineage (`itemId` falls back to the instance id).
-      readonly itemId?: Id
+      // a published, seq-1, 1:1 lineage (`recordId` falls back to the record version id).
+      readonly recordId?: Id
       readonly versionSeq?: number
       readonly versionStatus?: VersionStatus
     }
-  | { readonly _tag: "InstanceUpdated"; readonly patch: InstanceState }
+  | { readonly _tag: "RecordVersionUpdated"; readonly patch: RecordState }
   // An edit to an ALREADY-PUBLISHED version (only reachable on a versioned concept
-  // with `editReach: "any"`). Folds exactly like `InstanceUpdated` — the distinct
+  // with `editReach: "any"`). Folds exactly like `RecordVersionUpdated` — the distinct
   // tag exists so the activity feed can say "amended" instead of "edited", and so
   // amendments are filterable. The pre-amendment state stays recoverable via
   // `getAsOf` at the preceding event.
-  | { readonly _tag: "VersionAmended"; readonly patch: InstanceState }
-  // Archive (soft, restorable). `InstanceDeleted` is the legacy archive tag kept
-  // for replay; new archives emit `InstanceArchived`. Both fold to a set
-  // `archivedAt`; `InstanceRestored` clears it again (see projection/reducer).
-  | { readonly _tag: "InstanceDeleted" }
-  | { readonly _tag: "InstanceArchived" }
-  | { readonly _tag: "InstanceRestored" }
+  | { readonly _tag: "VersionAmended"; readonly patch: RecordState }
+  // Archive (soft, restorable). `RecordVersionDeleted` is the legacy archive tag kept
+  // for replay; new archives emit `RecordVersionArchived`. Both fold to a set
+  // `archivedAt`; `RecordVersionRestored` clears it again (see projection/reducer).
+  | { readonly _tag: "RecordVersionDeleted" }
+  | { readonly _tag: "RecordVersionArchived" }
+  | { readonly _tag: "RecordVersionRestored" }
   // Draft → published transition (one-shot, immutable). Folds `versionStatus` to
   // 'published' + sets `publishedAt`, bumping the event counter. Only after this
   // does the version become referenceable ("Latest").
@@ -307,28 +307,28 @@ export type EventPayload =
   // Audit tombstone for a hard delete: the row + attachments are gone, but the
   // prior events stay as history. Never folded (the subject no longer loads), so
   // the reducer doesn't handle it — it only surfaces in the activity feed.
-  | { readonly _tag: "InstancePurged" }
+  | { readonly _tag: "RecordVersionPurged" }
   | {
       readonly _tag: "RelationCreated"
       readonly fieldId: Id
       readonly fromId: Id
       readonly toId: Id
-      // New reference shape (absent on legacy events). `toItemId` = referenced
+      // New reference shape (absent on legacy events). `toRecordId` = referenced
       // lineage; `toVersionId` null/absent = general ("Latest"), set = pinned.
-      readonly toItemId?: Id
+      readonly toRecordId?: Id
       readonly toVersionId?: Id | null
       readonly properties: Record<string, unknown>
     }
   | { readonly _tag: "RelationDeleted"; readonly relationId: Id }
   // Attachment events ride their own subject stream (subjectKind "attachment",
   // subject_id = the attachment id) like notes/tasks; `subjectId` carries the
-  // host item lineage so the per-item feed can match purge tombstones. Legacy
-  // AttachmentAdded events (pre-item era) sit on instance streams without
+  // host record so the per-record feed can match purge tombstones. Legacy
+  // AttachmentAdded events (pre-record era) sit on record version streams without
   // `subjectId` — the reducer folds them as a no-op.
   //
   // `subjectId` is optional on all four because a bucket-owned file has no host
-  // item; those carry `bucketId` instead (exactly one of the two is present).
-  // No per-item feed matches them — there is no widget feed today.
+  // record; those carry `bucketId` instead (exactly one of the two is present).
+  // No per-record feed matches them — there is no widget feed today.
   | {
       readonly _tag: "AttachmentAdded"
       readonly attachmentId: Id
@@ -376,8 +376,8 @@ export type EventPayload =
       readonly to: string
     }
   // Concept/field schema edits (settings → concept configuration). These are
-  // subjectKind "concept"/"field" events — they NEVER appear in an instance
-  // stream, so the instance reducer (projection/reducer.ts) ignores them.
+  // subjectKind "concept"/"field" events — they NEVER appear in an record version
+  // stream, so the record version reducer (projection/reducer.ts) ignores them.
   | {
       readonly _tag: "ConceptUpdated"
       readonly description: string | null
@@ -396,7 +396,7 @@ export type EventPayload =
   | { readonly _tag: "ConceptRestored" }
   | { readonly _tag: "ConceptDeleted" }
   // Label vocabulary edits (settings → Labels). subjectKind "label"; like
-  // concept/field schema events these never appear in an instance stream.
+  // concept/field schema events these never appear in an record version stream.
   | {
       readonly _tag: "LabelCreated"
       readonly name: string
@@ -422,15 +422,15 @@ export type EventPayload =
   | { readonly _tag: "FieldArchived"; readonly conceptId: Id; readonly name: string }
   | { readonly _tag: "FieldRestored"; readonly conceptId: Id; readonly name: string }
   | { readonly _tag: "FieldDeleted"; readonly conceptId: Id; readonly name: string }
-  // Whole-item (lineage) archive/restore. subjectKind "item"; like concept/field
-  // events these never appear in an instance stream (the reducer ignores them).
-  | { readonly _tag: "ItemArchived" }
-  | { readonly _tag: "ItemRestored" }
+  // Whole-record (lineage) archive/restore. subjectKind "record"; like concept/field
+  // events these never appear in an record version stream (the reducer ignores them).
+  | { readonly _tag: "RecordArchived" }
+  | { readonly _tag: "RecordRestored" }
   // ── annotation layer (notes/tasks) ──────────────────────────────────────────
   // subjectKind "note"/"task", subject_id = the annotation's id (its own stream,
   // never folded). `subjectId` in the payload records the annotated ITEM lineage
-  // (items.id) or null (org-level) — distinct from the event's own subjectId — so
-  // the per-item activity union + purge tombstones survive the row's deletion.
+  // (records.id) or null (org-level) — distinct from the event's own subjectId — so
+  // the per-record activity union + purge tombstones survive the row's deletion.
   | {
       readonly _tag: "NoteCreated"
       readonly subjectId: Id | null
@@ -512,7 +512,7 @@ export type EventPayload =
   | { readonly _tag: "AnnotationFieldReordered"; readonly annotationType: string }
   // ── automations ─────────────────────────────────────────────────────────────
   // Definition edits (settings → Automations). subjectKind "automation"; like
-  // concept/field/label schema events these never enter an instance stream.
+  // concept/field/label schema events these never enter an record version stream.
   | { readonly _tag: "AutomationCreated"; readonly name: string; readonly trigger: string }
   | { readonly _tag: "AutomationUpdated"; readonly name: string; readonly trigger: string }
   | { readonly _tag: "AutomationEnabled"; readonly name: string }
@@ -521,7 +521,7 @@ export type EventPayload =
   | { readonly _tag: "AutomationRestored" }
   | { readonly _tag: "AutomationDeleted" }
   // A completed RUN, appended on the acted-on record's own stream (subjectKind
-  // "instance", subject_id = the record) so the record's activity feed explains
+  // "record version", subject_id = the record) so the record's activity feed explains
   // itself: "Automation 'Won deals → #wins' created task 'Send contract'".
   // Folds like `ComputedBandChanged` — a marker that never bumps `version`, so it
   // can't collide with a user's optimistic-concurrency check. For a run with no
@@ -538,9 +538,9 @@ export type EventPayload =
 export interface Attachment {
   readonly id: Id
   readonly orgId: OrgId
-  /** Host item lineage (items.id) — files survive re-publishes, like notes.
+  /** Host record (records.id) — files survive re-publishes, like notes.
    *  null ⇔ `bucketId` is set (the DB CHECK enforces exactly one owner). */
-  readonly itemId: Id | null
+  readonly recordId: Id | null
   /** Owning dashboard-widget bucket, for files that belong to no record. */
   readonly bucketId: Id | null
   /** Bucket files only: may an org-scope Files widget list this row? Gates
@@ -603,7 +603,7 @@ export type ConditionMatch = "all" | "any"
 // ── sidebar views (configurable nav layouts) ───────────────────────────────────
 // The whole layout is the serializable `SidebarViewBody` below. It is OPAQUE to
 // the engine (never read or filtered server-side); the web client resolves it.
-// The global nav items (Overview, Tasks, …) render in a fixed block above the
+// The global nav records (Overview, Tasks, …) render in a fixed block above the
 // sections unless placed into one (a `global:<key>` entry).
 
 export interface SidebarSection {
@@ -612,7 +612,7 @@ export interface SidebarSection {
   readonly icon: string | null
   readonly collapsed?: boolean
   /** Ordered, explicitly-placed entries: a dashboard uuid, or `global:<key>`
-   *  for a placed global nav item. Unknown/deleted ids are skipped at render
+   *  for a placed global nav record. Unknown/deleted ids are skipped at render
    *  time (kept in the body so nothing is silently pruned). */
   readonly entryIds: ReadonlyArray<string>
 }
@@ -636,7 +636,7 @@ export interface SidebarView {
 // ── dashboards (configurable widget canvases) ──────────────────────────────────
 // Same contract as SidebarView: the `DashboardBody` is OPAQUE to the engine
 // (never read or filtered server-side); the web client resolves each widget
-// against the live concept/instance/event collections. Reuses `SidebarCondition`
+// against the live concept/record version/event collections. Reuses `SidebarCondition`
 // for filters. These mirror the contract's `Dashboard*` schemas (kept separate so
 // the contract stays engine-free). The widget union is APPEND-ONLY — never reshape
 // an existing widget; add new types at the end.
@@ -675,12 +675,12 @@ interface WidgetBase {
    *  chrome (border/background), for a widget that frames itself. */
   readonly padding?: number
 }
-/** Metric — one number: count of matching instances, or sum/avg of a field. */
+/** Metric — one number: count of matching record versions, or sum/avg of a field. */
 export interface MetricWidget extends WidgetBase {
   readonly type: "metric"
   readonly conceptId?: string | null
   /** Record dashboards: narrow the population to the current record's related
-   *  instances via this relation field id (instead of the whole concept). */
+   *  record versions via this relation field id (instead of the whole concept). */
   readonly relationFieldId?: string | null
   readonly conditions: ReadonlyArray<SidebarCondition>
   readonly match?: ConditionMatch
@@ -690,15 +690,15 @@ export interface MetricWidget extends WidgetBase {
   /** Caption under the hero number; absent/empty = auto ("Deals" / "sum of X"). */
   readonly label?: string | null
   readonly format?: "plain" | "compact" | "currency" | "percent"
-  /** Secondary stat: change vs the value N days ago (instance-createdAt based). */
+  /** Secondary stat: change vs the value N days ago (record version-createdAt based). */
   readonly delta?: "off" | "7d" | "30d"
   readonly includeArchived?: boolean
 }
-/** List/Table — instances of a concept matching a filter, rendered as a table. */
+/** List/Table — record versions of a concept matching a filter, rendered as a table. */
 export interface ListWidget extends WidgetBase {
   readonly type: "list"
   readonly conceptId?: string | null
-  /** Record dashboards: narrow to the current record's related instances. */
+  /** Record dashboards: narrow to the current record's related record_versions. */
   readonly relationFieldId?: string | null
   readonly conditions: ReadonlyArray<SidebarCondition>
   readonly match?: ConditionMatch
@@ -716,12 +716,12 @@ export interface ListWidget extends WidgetBase {
   /** Open rows with this record-dashboard id; absent = the concept's default. */
   readonly recordDashboardId?: string | null
 }
-/** Breakdown — group instances by an enum field or by label, rendered as bars,
+/** Breakdown — group record versions by an enum field or by label, rendered as bars,
  *  pie, ranked horizontal bars, donut, a stacked composition bar, or a table. */
 export interface BreakdownWidget extends WidgetBase {
   readonly type: "breakdown"
   readonly conceptId?: string | null
-  /** Record dashboards: narrow to the current record's related instances. */
+  /** Record dashboards: narrow to the current record's related record_versions. */
   readonly relationFieldId?: string | null
   readonly conditions: ReadonlyArray<SidebarCondition>
   readonly match?: ConditionMatch
@@ -748,7 +748,7 @@ export interface AttentionWidget extends WidgetBase {
   readonly limit?: number | null
   /** "34d" quiet-duration per stale row (default on). */
   readonly showDays?: boolean
-  /** Pre-filter the population before the rollup; absent = all instances. */
+  /** Pre-filter the population before the rollup; absent = all record_versions. */
   readonly conditions?: ReadonlyArray<SidebarCondition>
   readonly match?: ConditionMatch
 }
@@ -772,7 +772,7 @@ export interface AnalyticsRecordFilter {
   readonly property: string
 }
 /** Analytics — aggregated time-series from an external provider (PostHog). The
- *  only data-bound widget not backed by concept instances: it carries a query
+ *  only data-bound widget not backed by concept record versions: it carries a query
  *  config the server translates and runs, instead of a `conceptId`. */
 export interface AnalyticsWidget extends WidgetBase {
   readonly type: "analytics"
@@ -818,7 +818,7 @@ export interface TasksWidget extends WidgetBase {
   /** `week` = due within the next 7 days (incl. today). */
   readonly due?: "any" | "overdue" | "week"
   /** FILTER, not data scoping: only tasks annotating that concept's records
-   *  (task → item → conceptId, resolved via `resolveTaskSubjects`). */
+   *  (task → record → conceptId, resolved via `resolveTaskSubjects`). */
   readonly conceptId?: string | null
 }
 /** Members — the org directory (incl. admin management), not concept-scoped. */
@@ -836,7 +836,7 @@ export interface WelcomeWidget extends WidgetBase {
   readonly type: "welcome"
   /** "12 members · 87 events this week" line under the greeting. */
   readonly showPulse?: boolean
-  /** Curated quick links (same shape as Shortcuts items); absent/empty = none. */
+  /** Curated quick links (same shape as Shortcuts records); absent/empty = none. */
   readonly links?: ReadonlyArray<ShortcutItem>
 }
 /** Goal — a metric with a finish line: current value vs a manual target. */
@@ -853,10 +853,10 @@ export interface GoalWidget extends WidgetBase {
   readonly direction?: "reach" | "stay"
   readonly showPercent?: boolean
 }
-/** One curated shortcut. `ref` is an instance id, dashboard id, or URL per `kind`. */
+/** One curated shortcut. `ref` is an record version id, dashboard id, or URL per `kind`. */
 export interface ShortcutItem {
   readonly id: string
-  readonly kind: "instance" | "dashboard" | "url"
+  readonly kind: "recordVersion" | "dashboard" | "url"
   readonly ref: string
   readonly label?: string | null
   readonly icon?: string | null
@@ -864,7 +864,7 @@ export interface ShortcutItem {
 /** Shortcuts — hand-picked jump-off points; fully manual by design (no filters). */
 export interface ShortcutsWidget extends WidgetBase {
   readonly type: "shortcuts"
-  readonly items: ReadonlyArray<ShortcutItem>
+  readonly records: ReadonlyArray<ShortcutItem>
   /** Open URL targets in a new tab (internal targets always navigate in-app). */
   readonly newTab?: boolean
 }
@@ -875,11 +875,11 @@ export interface NoteWidget extends WidgetBase {
   readonly appearance?: "plain" | "info" | "warn" | "success"
   readonly overflow?: "clip" | "scroll"
 }
-/** Kanban — instances as cards in columns keyed by an enum field. */
+/** Kanban — record versions as cards in columns keyed by an enum field. */
 export interface KanbanWidget extends WidgetBase {
   readonly type: "kanban"
   readonly conceptId?: string | null
-  /** Record dashboards: narrow to the current record's related instances. */
+  /** Record dashboards: narrow to the current record's related record_versions. */
   readonly relationFieldId?: string | null
   readonly conditions: ReadonlyArray<SidebarCondition>
   readonly match?: ConditionMatch
@@ -894,7 +894,7 @@ export interface KanbanWidget extends WidgetBase {
   /** Open cards with this record-dashboard id; absent = the concept's default. */
   readonly recordDashboardId?: string | null
 }
-/** One calendar source: a concept's instances plotted by a date field. */
+/** One calendar source: a concept's record versions plotted by a date field. */
 export interface CalendarSource {
   readonly conceptId: string
   readonly dateField: string
@@ -903,7 +903,7 @@ export interface CalendarSource {
   readonly match?: ConditionMatch
   readonly labelField?: string | null
 }
-/** Calendar — instances plotted by date, multi-concept overlay. */
+/** Calendar — record versions plotted by date, multi-concept overlay. */
 export interface CalendarWidget extends WidgetBase {
   readonly type: "calendar"
   readonly mode: "month" | "week" | "agenda"
@@ -911,14 +911,14 @@ export interface CalendarWidget extends WidgetBase {
   readonly includeTasks?: boolean
   readonly density?: "full" | "dots"
 }
-/** Timeline/Gantt — instances as bars between two date fields. */
+/** Timeline/Gantt — record versions as bars between two date fields. */
 export interface GanttWidget extends WidgetBase {
   readonly type: "gantt"
   readonly conceptId?: string | null
   readonly conditions: ReadonlyArray<SidebarCondition>
   readonly match?: ConditionMatch
   readonly scale: "day" | "week" | "month"
-  /** Start date field id; an instance with no end renders a milestone. */
+  /** Start date field id; an record version with no end renders a milestone. */
   readonly startField: string
   readonly endField?: string | null
   readonly groupBy?: string | null
@@ -932,10 +932,10 @@ export interface GanttWidget extends WidgetBase {
 export interface FilesWidget extends WidgetBase {
   readonly type: "files"
   readonly conceptId?: string | null
-  readonly scope: "instance" | "concept" | "org" | "widget"
-  readonly instanceId?: string | null
-  /** `scope: "instance"` only — take the record from `conceptId`'s single record
-   *  rather than a pinned `instanceId` (resolved client-side). */
+  readonly scope: "recordVersion" | "concept" | "org" | "widget"
+  readonly recordVersionId?: string | null
+  /** `scope: "record version"` only — take the record from `conceptId`'s single record
+   *  rather than a pinned `recordVersionId` (resolved client-side). */
   readonly bindToConceptRecord?: boolean
   /** `scope: "widget"` only — the bucket owning this widget's files. */
   readonly bucketId?: string | null
@@ -950,16 +950,16 @@ export interface FilesWidget extends WidgetBase {
 export interface DocumentWidget extends WidgetBase {
   readonly type: "document"
   readonly conceptId?: string | null
-  readonly instanceId?: string | null
+  readonly recordVersionId?: string | null
   /** Take the record from `conceptId`'s single record rather than a pinned
-   *  `instanceId` (resolved client-side). */
+   *  `recordVersionId` (resolved client-side). */
   readonly bindToConceptRecord?: boolean
   readonly fieldId?: string | null
   readonly hideLabel?: boolean
 }
 /** Record-scoped widgets — one panel of the CURRENT record on a 'record' dashboard
- *  (instance supplied by page context; no per-widget conceptId/instanceId). Each
- *  reuses an existing instance-detail panel. Opaque to the engine like the rest. */
+ *  (record version supplied by page context; no per-widget conceptId/recordVersionId). Each
+ *  reuses an existing record version-detail panel. Opaque to the engine like the rest. */
 export interface RecordDetailsWidget extends WidgetBase {
   readonly type: "record-details"
 }
@@ -1052,7 +1052,7 @@ export interface Dashboard {
   readonly position: number
   readonly hidden: boolean
   /** "page" (default/legacy) = free-standing canvas; "record" = per-concept
-   *  single-instance template. */
+   *  single-record version template. */
   readonly kind: "page" | "record"
   /** Owning concept for a "record" dashboard; null for "page". Record dashboards
    *  order by `position` — the first is what a bare reference opens. */
@@ -1068,12 +1068,12 @@ export interface Dashboard {
 // It references bauth users logically (like `actor`) — the auth tables are
 // never touched.
 
-// A member's instance-detail layout prefs: which preset view to render, as a
+// A member's record version-detail layout prefs: which preset view to render, as a
 // global default plus per-concept overrides keyed by concept id. View keys
 // name client-defined presets — opaque to the engine, like a dashboard body.
 // An override may be "custom", backed by a user-edited tile layout in
 // `customByConcept` (12-col grid coords; content keys are client-defined).
-export interface InstanceViewTile {
+export interface RecordViewTile {
   readonly id: string
   readonly contents: ReadonlyArray<string>
   readonly x: number
@@ -1082,30 +1082,30 @@ export interface InstanceViewTile {
   readonly h: number
 }
 
-export interface InstanceViewLayout {
-  readonly tiles: ReadonlyArray<InstanceViewTile>
+export interface RecordViewLayout {
+  readonly tiles: ReadonlyArray<RecordViewTile>
 }
 
 /** Relationship-graph tile settings — traversal + render knobs, keyed by
  *  concept id. Layout keys are client-defined (opaque here, like view keys). */
-export interface InstanceGraphConfig {
+export interface RecordGraphConfig {
   /** Relation field ids the walk may follow; null = all. */
   readonly fieldIds: ReadonlyArray<string> | null
   readonly depth: number
   readonly layout: string
 }
 
-export interface InstanceViewPrefsBody {
+export interface RecordViewPrefsBody {
   readonly defaultView: string | null
   readonly byConcept: Readonly<Record<string, string>>
-  readonly customByConcept: Readonly<Record<string, InstanceViewLayout>>
+  readonly customByConcept: Readonly<Record<string, RecordViewLayout>>
   /** Optional — rows written before the graph tile existed lack it. */
-  readonly graphByConcept?: Readonly<Record<string, InstanceGraphConfig>>
+  readonly graphByConcept?: Readonly<Record<string, RecordGraphConfig>>
 }
 
-export interface InstanceViewPrefs {
+export interface RecordViewPrefs {
   readonly userId: string
-  readonly body: InstanceViewPrefsBody
+  readonly body: RecordViewPrefsBody
 }
 
 export interface MemberDeactivation {
@@ -1114,12 +1114,12 @@ export interface MemberDeactivation {
 }
 
 export type SubjectKind =
-  | "instance"
+  | "recordVersion"
   | "relation"
   | "concept"
   | "field"
   | "label"
-  | "item"
+  | "record"
   | "note"
   | "task"
   | "taskStatus"
@@ -1180,11 +1180,11 @@ export interface AnnotationField {
   readonly archivedAt: Date | null
 }
 
-/** A note — markdown body + author — hung off an item lineage (or org-level). */
+/** A note — markdown body + author — hung off an record (or org-level). */
 export interface Note {
   readonly id: Id
   readonly orgId: OrgId
-  /** The annotated item lineage (`items.id`); null = org-level. */
+  /** The annotated record (`records.id`); null = org-level. */
   readonly subjectId: Id | null
   readonly body: string
   /** Author (bauth_user.id). */
@@ -1197,11 +1197,11 @@ export interface Note {
 }
 
 /** A task — first-class, org-scoped, assignable, globally queryable — hung off
- *  an item lineage (or org-level when `subjectId` is null). */
+ *  an record (or org-level when `subjectId` is null). */
 export interface Task {
   readonly id: Id
   readonly orgId: OrgId
-  /** The annotated item lineage (`items.id`); null = org-level / standalone. */
+  /** The annotated record (`records.id`); null = org-level / standalone. */
   readonly subjectId: Id | null
   readonly title: string
   /** Rich-text description (`{ doc, text }` envelope); null = none. */
@@ -1457,7 +1457,7 @@ export interface AutomationRun {
   readonly automationId: Id
   /** The triggering `events.id`; null for a scheduled run. */
   readonly eventId: number | null
-  /** The record acted on (`instances.id`); null when there is none. */
+  /** The record acted on (`record_versions.id`); null when there is none. */
   readonly subjectId: Id | null
   readonly status: AutomationRunStatus
   readonly detail: AutomationRunDetail

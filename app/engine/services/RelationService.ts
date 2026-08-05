@@ -6,9 +6,9 @@ import { scopeCanReadConcept } from "../domain/visibility"
 import {
   FieldNotFound,
   FieldValidationError,
-  InstanceNotFound,
-  ItemNotFound,
-  ItemNotPublished,
+  RecordNotFound,
+  RecordNotPublished,
+  RecordVersionNotFound,
   RelationNotFound,
   RelationPinToDraft,
   RelationTargetMismatch,
@@ -25,15 +25,15 @@ export interface CreateRelationInput {
   readonly fromId: Id
   /** Target — supply exactly one shape:
    *  - `toVersionId`: pin a specific PUBLISHED version.
-   *  - `toItemId`: reference the item in general ("Latest" published).
-   *  - `toId` (legacy): an instance id, treated as a general ref to its item. */
-  readonly toItemId?: Id
+   *  - `toRecordId`: reference the record in general ("Latest" published).
+   *  - `toId` (legacy): an record version id, treated as a general ref to its record. */
+  readonly toRecordId?: Id
   readonly toVersionId?: Id
   readonly toId?: Id
   readonly properties?: Record<string, unknown>
 }
 
-/** Typed graph edges between instances. Event-sourced like instances. */
+/** Typed graph edges between record_versions. Event-sourced like record_versions. */
 export class RelationService extends Effect.Service<RelationService>()("engine/RelationService", {
   effect: Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
@@ -49,7 +49,7 @@ export class RelationService extends Effect.Service<RelationService>()("engine/R
      * Joined here in raw SQL rather than taking a `ConceptService` dep: it matches
      * this service's existing style and keeps it to one round-trip.
      */
-    const sourceOf = (orgId: string, instanceId: string) =>
+    const sourceOf = (orgId: string, recordVersionId: string) =>
       Effect.gen(function* () {
         const rows = yield* sql<{
           readonly concept_id: string
@@ -58,10 +58,10 @@ export class RelationService extends Effect.Service<RelationService>()("engine/R
           readonly edit_reach: string | null
         }>`
           SELECT i.concept_id, i.version_status, c.versioning_enabled, c.edit_reach
-          FROM instances i JOIN concepts c ON c.id = i.concept_id AND c.org_id = i.org_id
-          WHERE i.id = ${instanceId} AND i.org_id = ${orgId} AND i.archived_at IS NULL LIMIT 1`
+          FROM record_versions i JOIN concepts c ON c.id = i.concept_id AND c.org_id = i.org_id
+          WHERE i.id = ${recordVersionId} AND i.org_id = ${orgId} AND i.archived_at IS NULL LIMIT 1`
         const row = rows[0]
-        if (!row) return yield* Effect.fail(new InstanceNotFound({ instanceId }))
+        if (!row) return yield* Effect.fail(new RecordVersionNotFound({ recordVersionId }))
         return {
           conceptId: row.concept_id,
           editable: canEditVersion(
@@ -75,9 +75,9 @@ export class RelationService extends Effect.Service<RelationService>()("engine/R
       })
 
     /** Fail unless the source version's links may be rewritten. */
-    const assertSourceEditable = (orgId: string, instanceId: string) =>
-      Effect.flatMap(sourceOf(orgId, instanceId), (src) =>
-        src.editable ? Effect.succeed(src) : Effect.fail(new VersionFrozen({ instanceId })),
+    const assertSourceEditable = (orgId: string, recordVersionId: string) =>
+      Effect.flatMap(sourceOf(orgId, recordVersionId), (src) =>
+        src.editable ? Effect.succeed(src) : Effect.fail(new VersionFrozen({ recordVersionId })),
       )
 
     const nameOfConcept = (orgId: string, conceptId: string) =>
@@ -86,15 +86,15 @@ export class RelationService extends Effect.Service<RelationService>()("engine/R
         Effect.map((rows) => rows[0]?.name ?? conceptId),
       )
 
-    /** The id of an item's latest published, non-archived version (null if none). */
-    const latestPublished = (orgId: string, itemId: string) =>
+    /** The id of an record's latest published, non-archived version (null if none). */
+    const latestPublished = (orgId: string, recordId: string) =>
       sql<{ readonly id: string }>`
-        SELECT id FROM instances
-        WHERE org_id = ${orgId} AND item_id = ${itemId}
+        SELECT id FROM record_versions
+        WHERE org_id = ${orgId} AND record_id = ${recordId}
           AND version_status = 'published' AND archived_at IS NULL
         ORDER BY version_seq DESC LIMIT 1`.pipe(Effect.map((r) => r[0]?.id ?? null))
 
-    /** Normalise a target into (itemId, versionId|null, conceptId, shadow toId). */
+    /** Normalise a target into (recordId, versionId|null, conceptId, shadow toId). */
     /** Fail unless the caller may read `conceptId`. Without this a member could
      *  LINK into a restricted concept and then read the target's id (and its
      *  concept) straight back out of `listFrom`. Errors as if the target does not
@@ -103,7 +103,7 @@ export class RelationService extends Effect.Service<RelationService>()("engine/R
       Effect.gen(function* () {
         const scope = yield* OrgContext
         if (!scopeCanReadConcept(scope, conceptId))
-          return yield* Effect.fail(new InstanceNotFound({ instanceId: targetId }))
+          return yield* Effect.fail(new RecordVersionNotFound({ recordVersionId: targetId }))
       })
 
     const resolveTargetRaw = (orgId: string, input: CreateRelationInput) =>
@@ -112,51 +112,55 @@ export class RelationService extends Effect.Service<RelationService>()("engine/R
         if (input.toVersionId) {
           const rows = yield* sql<{
             readonly concept_id: string
-            readonly item_id: string
+            readonly record_id: string
             readonly version_status: string
             readonly archived_at: Date | null
           }>`
-            SELECT concept_id, item_id, version_status, archived_at FROM instances
+            SELECT concept_id, record_id, version_status, archived_at FROM record_versions
             WHERE id = ${input.toVersionId} AND org_id = ${orgId} LIMIT 1`
           const row = rows[0]
           if (!row)
-            return yield* Effect.fail(new InstanceNotFound({ instanceId: input.toVersionId }))
+            return yield* Effect.fail(
+              new RecordVersionNotFound({ recordVersionId: input.toVersionId }),
+            )
           if (row.version_status !== "published" || row.archived_at !== null) {
             return yield* Effect.fail(new RelationPinToDraft({ versionId: input.toVersionId }))
           }
           return {
-            itemId: row.item_id,
+            recordId: row.record_id,
             versionId: input.toVersionId as string | null,
             conceptId: row.concept_id,
             shadowToId: input.toVersionId,
           }
         }
-        // General: reference the item; resolve to its latest published head.
-        if (input.toItemId) {
-          const itemRows = yield* sql<{ readonly concept_id: string }>`
-            SELECT concept_id FROM items WHERE id = ${input.toItemId} AND org_id = ${orgId} LIMIT 1`
-          const it = itemRows[0]
-          if (!it) return yield* Effect.fail(new ItemNotFound({ itemId: input.toItemId }))
-          const head = yield* latestPublished(orgId, input.toItemId)
-          if (!head) return yield* Effect.fail(new ItemNotPublished({ itemId: input.toItemId }))
+        // General: reference the record; resolve to its latest published head.
+        if (input.toRecordId) {
+          const recordRows = yield* sql<{ readonly concept_id: string }>`
+            SELECT concept_id FROM records WHERE id = ${input.toRecordId} AND org_id = ${orgId} LIMIT 1`
+          const it = recordRows[0]
+          if (!it) return yield* Effect.fail(new RecordNotFound({ recordId: input.toRecordId }))
+          const head = yield* latestPublished(orgId, input.toRecordId)
+          if (!head)
+            return yield* Effect.fail(new RecordNotPublished({ recordId: input.toRecordId }))
           return {
-            itemId: input.toItemId,
+            recordId: input.toRecordId,
             versionId: null,
             conceptId: it.concept_id,
             shadowToId: head,
           }
         }
-        // Legacy: an instance id ⇒ general ref to that instance's item.
+        // Legacy: an record version id ⇒ general ref to that record version's record.
         if (input.toId) {
-          const rows = yield* sql<{ readonly concept_id: string; readonly item_id: string }>`
-            SELECT concept_id, item_id FROM instances
+          const rows = yield* sql<{ readonly concept_id: string; readonly record_id: string }>`
+            SELECT concept_id, record_id FROM record_versions
             WHERE id = ${input.toId} AND org_id = ${orgId} AND archived_at IS NULL LIMIT 1`
           const row = rows[0]
-          if (!row) return yield* Effect.fail(new InstanceNotFound({ instanceId: input.toId }))
-          const head = yield* latestPublished(orgId, row.item_id)
-          if (!head) return yield* Effect.fail(new ItemNotPublished({ itemId: row.item_id }))
+          if (!row)
+            return yield* Effect.fail(new RecordVersionNotFound({ recordVersionId: input.toId }))
+          const head = yield* latestPublished(orgId, row.record_id)
+          if (!head) return yield* Effect.fail(new RecordNotPublished({ recordId: row.record_id }))
           return {
-            itemId: row.item_id,
+            recordId: row.record_id,
             versionId: null,
             conceptId: row.concept_id,
             shadowToId: head,
@@ -164,7 +168,7 @@ export class RelationService extends Effect.Service<RelationService>()("engine/R
         }
         return yield* Effect.fail(
           new FieldValidationError({
-            message: "relation target required (toItemId, toVersionId, or toId)",
+            message: "relation target required (toRecordId, toVersionId, or toId)",
             field: "toId",
           }),
         )
@@ -174,7 +178,7 @@ export class RelationService extends Effect.Service<RelationService>()("engine/R
     const resolveTarget = (orgId: string, input: CreateRelationInput) =>
       Effect.gen(function* () {
         const target = yield* resolveTargetRaw(orgId, input)
-        yield* assertTargetReadable(target.conceptId, target.itemId)
+        yield* assertTargetReadable(target.conceptId, target.recordId)
         return target
       })
 
@@ -197,7 +201,7 @@ export class RelationService extends Effect.Service<RelationService>()("engine/R
           const { conceptId: fromConceptId } = yield* assertSourceEditable(orgId, input.fromId)
           const target = yield* resolveTarget(orgId, input)
 
-          // `from` must be an instance of the concept that declares this field.
+          // `from` must be an record version of the concept that declares this field.
           if (fromConceptId !== field.conceptId) {
             const [expectedName, actualName] = yield* Effect.all([
               nameOfConcept(orgId, field.conceptId),
@@ -228,8 +232,8 @@ export class RelationService extends Effect.Service<RelationService>()("engine/R
           }
 
           const rows = yield* sql<RelationRow>`
-            INSERT INTO relations (org_id, field_id, from_id, to_item_id, to_version_id, to_id, properties)
-            VALUES (${orgId}, ${input.fieldId}, ${input.fromId}, ${target.itemId}, ${target.versionId}, ${target.shadowToId}, ${sql.json(input.properties ?? {})})
+            INSERT INTO relations (org_id, field_id, from_id, to_record_id, to_version_id, to_id, properties)
+            VALUES (${orgId}, ${input.fieldId}, ${input.fromId}, ${target.recordId}, ${target.versionId}, ${target.shadowToId}, ${sql.json(input.properties ?? {})})
             RETURNING *`
           const relation = toRelation(rows[0]!)
           yield* events.append({
@@ -241,7 +245,7 @@ export class RelationService extends Effect.Service<RelationService>()("engine/R
               fieldId: relation.fieldId,
               fromId: relation.fromId,
               toId: relation.toId,
-              toItemId: relation.toItemId,
+              toRecordId: relation.toRecordId,
               toVersionId: relation.toVersionId,
               properties: relation.properties,
             },
@@ -289,22 +293,22 @@ export class RelationService extends Effect.Service<RelationService>()("engine/R
         return rows.map(toRelation)
       })
 
-    /** Inbound edges referencing the given instance's ITEM in general, plus any
+    /** Inbound edges referencing the given record version's ITEM in general, plus any
      *  pinned to that specific version. Edges originating from an unpublished draft
      *  are excluded (a draft is private — never a public reference). */
     const listTo = (toId: Id, fieldId?: string) =>
       Effect.gen(function* () {
         const { orgId } = yield* OrgContext
-        const inst = yield* sql<{ readonly item_id: string }>`
-          SELECT item_id FROM instances WHERE id = ${toId} AND org_id = ${orgId} LIMIT 1`
-        const itemId = inst[0]?.item_id ?? toId
+        const inst = yield* sql<{ readonly record_id: string }>`
+          SELECT record_id FROM record_versions WHERE id = ${toId} AND org_id = ${orgId} LIMIT 1`
+        const recordId = inst[0]?.record_id ?? toId
         const fieldFilter = fieldId ? sql` AND r.field_id = ${fieldId}` : sql``
         const rows = yield* sql<RelationRow>`
           SELECT r.* FROM relations r
-          JOIN instances src ON src.id = r.from_id
+          JOIN record_versions src ON src.id = r.from_id
             AND src.version_status = 'published' AND src.archived_at IS NULL
           WHERE r.org_id = ${orgId} AND r.archived_at IS NULL${fieldFilter}
-            AND (r.to_item_id = ${itemId} OR r.to_version_id = ${toId})
+            AND (r.to_record_id = ${recordId} OR r.to_version_id = ${toId})
           ORDER BY r.created_at ASC`
         return rows.map(toRelation)
       })

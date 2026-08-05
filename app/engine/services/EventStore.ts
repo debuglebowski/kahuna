@@ -19,9 +19,9 @@ export interface EventEnvelope {
   readonly kind: SubjectKind
   readonly subjectId: Id
   readonly type: string
-  /** Concept id for instance events (routes to the id-keyed collection); null otherwise. */
+  /** Concept id for record version events (routes to the id-keyed collection); null otherwise. */
   readonly conceptId: string | null
-  /** Concept name for instance events (used by the by-name dashboard routing); null otherwise. */
+  /** Concept name for record version events (used by the by-name dashboard routing); null otherwise. */
   readonly concept: string | null
   /**
    * Who caused the event (= the `events.actor` column): a user id, or a
@@ -41,9 +41,9 @@ export interface AppendInput {
   readonly subjectId: Id
   readonly eventType: string
   readonly payload: EventPayload
-  /** Concept id carried into the NOTIFY envelope for instance events. */
+  /** Concept id carried into the NOTIFY envelope for record version events. */
   readonly conceptId?: string
-  /** Concept name carried into the NOTIFY envelope for instance events. */
+  /** Concept name carried into the NOTIFY envelope for record version events. */
   readonly conceptName?: string
 }
 
@@ -123,8 +123,8 @@ export class EventStore extends Effect.Service<EventStore>()("engine/EventStore"
     /**
      * A larger/filterable recent-events window (powers the dashboard Trend +
      * Activity widgets). Optional `since` lower-bounds occurred_at; optional
-     * `conceptId` restricts to that concept's instance events (joined via
-     * `instances.concept_id`). Newest first, server-clamped to ≤2000.
+     * `conceptId` restricts to that concept's record version events (joined via
+     * `record_versions.concept_id`). Newest first, server-clamped to ≤2000.
      */
     const listEvents = (opts?: {
       readonly since?: Date
@@ -138,8 +138,8 @@ export class EventStore extends Effect.Service<EventStore>()("engine/EventStore"
         const rows = opts?.conceptId
           ? yield* sql<EventRow>`
               SELECT e.* FROM events e
-              JOIN instances i ON i.id = e.subject_id
-              WHERE e.org_id = ${orgId} AND e.subject_kind = 'instance'
+              JOIN record_versions i ON i.id = e.subject_id
+              WHERE e.org_id = ${orgId} AND e.subject_kind = 'recordVersion'
                 AND i.concept_id = ${opts.conceptId}
                 AND (${since}::timestamptz IS NULL OR e.occurred_at >= ${since})
               ORDER BY e.id DESC LIMIT ${limit}`

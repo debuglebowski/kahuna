@@ -3,7 +3,7 @@ import { PgClient } from "@effect/sql-pg"
 import { Effect } from "effect"
 import { BlobStore } from "../blob/BlobStore"
 import type { Attachment, Id } from "../domain/types"
-import { AttachmentNotFound, AttachmentTooLarge, ItemNotFound } from "../errors"
+import { AttachmentNotFound, AttachmentTooLarge, RecordNotFound } from "../errors"
 import { EventStore } from "./EventStore"
 import { OrgContext } from "./OrgContext"
 import { type AttachmentRow, toAttachment } from "./rows"
@@ -13,10 +13,10 @@ import { type AttachmentRow, toAttachment } from "./rows"
 export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 
 /** Who owns the new file — exactly one, mirroring the `attachments_one_owner`
- *  CHECK. `itemId` = a record's file; `bucketId` = a dashboard widget's own file
+ *  CHECK. `recordId` = a record's file; `bucketId` = a dashboard widget's own file
  *  (`shared` decides whether org-scope lists may see it). */
 export type UploadOwner =
-  | { readonly itemId: Id }
+  | { readonly recordId: Id }
   | { readonly bucketId: Id; readonly shared?: boolean }
 
 export interface UploadInput {
@@ -26,12 +26,12 @@ export interface UploadInput {
   readonly data: Uint8Array
 }
 
-/** Exactly one scope: `itemId` (or `instanceId`, resolved to its lineage) = one
+/** Exactly one scope: `recordId` (or `recordVersionId`, resolved to its lineage) = one
  *  record's files; `bucketId` = one widget's own files; `conceptId` = recent
- *  across its items; none = org-wide (which excludes private bucket files). */
+ *  across its records; none = org-wide (which excludes private bucket files). */
 export interface ListFilesFilter {
-  readonly itemId?: string
-  readonly instanceId?: string
+  readonly recordId?: string
+  readonly recordVersionId?: string
   readonly bucketId?: string
   readonly conceptId?: string
   readonly includeArchived?: boolean
@@ -40,12 +40,12 @@ export interface ListFilesFilter {
 
 /**
  * Files (the binary side of the annotation substrate). Bytes go to the
- * BlobStore; metadata is an org-scoped `attachments` row owned by EITHER an item
+ * BlobStore; metadata is an org-scoped `attachments` row owned by EITHER a record
  * lineage (like `annotations.subject_id`, so files survive re-publishes) OR a
  * dashboard-widget bucket (a file belonging to no record at all).
  * CRUD-with-audit-events (the AnnotationService pattern): each mutation appends
  * an `events` row on the attachment's own stream (subjectKind "attachment",
- * payload carrying the host item or bucket) for the activity feed / live-sync.
+ * payload carrying the host record or bucket) for the activity feed / live-sync.
  */
 export class AttachmentService extends Effect.Service<AttachmentService>()(
   "engine/AttachmentService",
@@ -66,24 +66,24 @@ export class AttachmentService extends Effect.Service<AttachmentService>()(
                   maxBytes: MAX_UPLOAD_BYTES,
                 }),
               )
-            const itemId = "itemId" in input.owner ? input.owner.itemId : null
+            const recordId = "recordId" in input.owner ? input.owner.recordId : null
             const bucketId = "bucketId" in input.owner ? input.owner.bucketId : null
             // A bucket is a client-minted uuid living in a dashboard body — there
-            // is no row to validate. An item must exist and be live: whole-item
+            // is no row to validate. A record must exist and be live: whole-record
             // archive blocks new uploads (block-not-cascade).
-            if (itemId) {
+            if (recordId) {
               const owner = yield* sql<{ readonly id: string }>`
-              SELECT id FROM items
-              WHERE id = ${itemId} AND org_id = ${orgId} AND archived_at IS NULL LIMIT 1`
-              if (!owner[0]) return yield* Effect.fail(new ItemNotFound({ itemId }))
+              SELECT id FROM records
+              WHERE id = ${recordId} AND org_id = ${orgId} AND archived_at IS NULL LIMIT 1`
+              if (!owner[0]) return yield* Effect.fail(new RecordNotFound({ recordId }))
             }
             const shared = "bucketId" in input.owner ? (input.owner.shared ?? true) : true
 
             const key = `${orgId}/${randomUUID()}`
             yield* blob.put(key, input.data, input.mimeType)
             const rows = yield* sql<AttachmentRow>`
-            INSERT INTO attachments (org_id, item_id, bucket_id, bucket_shared, filename, content_ref, mime_type, size_bytes, created_by)
-            VALUES (${orgId}, ${itemId}, ${bucketId}, ${shared}, ${input.filename}, ${key}, ${input.mimeType ?? null}, ${input.data.length}, ${actor})
+            INSERT INTO attachments (org_id, record_id, bucket_id, bucket_shared, filename, content_ref, mime_type, size_bytes, created_by)
+            VALUES (${orgId}, ${recordId}, ${bucketId}, ${shared}, ${input.filename}, ${key}, ${input.mimeType ?? null}, ${input.data.length}, ${actor})
             RETURNING *`
             const attachment = toAttachment(rows[0]!)
             yield* events.append({
@@ -94,7 +94,7 @@ export class AttachmentService extends Effect.Service<AttachmentService>()(
                 _tag: "AttachmentAdded",
                 attachmentId: attachment.id,
                 filename: attachment.filename,
-                ...(itemId ? { subjectId: itemId } : { bucketId: bucketId! }),
+                ...(recordId ? { subjectId: recordId } : { bucketId: bucketId! }),
               },
             })
             return attachment
@@ -104,21 +104,21 @@ export class AttachmentService extends Effect.Service<AttachmentService>()(
       const list = (filter: ListFilesFilter = {}) =>
         Effect.gen(function* () {
           const { orgId } = yield* OrgContext
-          // A widget may key by an instance row — resolve it to the lineage. A
+          // A widget may key by an record version row — resolve it to the lineage. A
           // dangling id reads as empty, not an error (the host may be purged).
-          let itemId = filter.itemId
-          if (!itemId && filter.instanceId) {
-            const rows = yield* sql<{ readonly item_id: string }>`
-            SELECT item_id FROM instances WHERE id = ${filter.instanceId} AND org_id = ${orgId} LIMIT 1`
+          let recordId = filter.recordId
+          if (!recordId && filter.recordVersionId) {
+            const rows = yield* sql<{ readonly record_id: string }>`
+            SELECT record_id FROM record_versions WHERE id = ${filter.recordVersionId} AND org_id = ${orgId} LIMIT 1`
             if (!rows[0]) return [] as Attachment[]
-            itemId = rows[0].item_id
+            recordId = rows[0].record_id
           }
           const liveOnly = filter.includeArchived ? sql`` : sql` AND a.archived_at IS NULL`
           const limit = Math.min(filter.limit ?? 500, 2000)
-          const rows = itemId
+          const rows = recordId
             ? yield* sql<AttachmentRow>`
               SELECT a.* FROM attachments a
-              WHERE a.org_id = ${orgId} AND a.item_id = ${itemId}${liveOnly}
+              WHERE a.org_id = ${orgId} AND a.record_id = ${recordId}${liveOnly}
               ORDER BY a.id DESC LIMIT ${limit}`
             : filter.bucketId
               ? // A widget's own bucket — the only scope that lists private files.
@@ -127,10 +127,10 @@ export class AttachmentService extends Effect.Service<AttachmentService>()(
                 WHERE a.org_id = ${orgId} AND a.bucket_id = ${filter.bucketId}${liveOnly}
                 ORDER BY a.id DESC LIMIT ${limit}`
               : filter.conceptId
-                ? // The items JOIN excludes bucket files for free (item_id IS NULL).
+                ? // The records JOIN excludes bucket files for free (record_id IS NULL).
                   yield* sql<AttachmentRow>`
                   SELECT a.* FROM attachments a
-                  JOIN items it ON it.id = a.item_id
+                  JOIN records it ON it.id = a.record_id
                   WHERE a.org_id = ${orgId} AND it.concept_id = ${filter.conceptId}${liveOnly}
                   ORDER BY a.id DESC LIMIT ${limit}`
                 : // Org-wide: every record file, plus only the SHARED bucket files.
@@ -188,10 +188,10 @@ export class AttachmentService extends Effect.Service<AttachmentService>()(
           return toAttachment(row)
         })
 
-      /** The owner half of an event payload — `subjectId` (host item, so the
-       *  per-item feed matches) or `bucketId`, never both. */
+      /** The owner half of an event payload — `subjectId` (host record, so the
+       *  per-record feed matches) or `bucketId`, never both. */
       const ownerPayload = (a: Attachment) =>
-        a.itemId ? { subjectId: a.itemId } : { bucketId: a.bucketId! }
+        a.recordId ? { subjectId: a.recordId } : { bucketId: a.bucketId! }
 
       const flipArchive = (attachmentId: Id, archived: boolean, eventType: string) =>
         sql.withTransaction(

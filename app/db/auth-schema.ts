@@ -264,7 +264,7 @@ export const googleConnection = pgTable(
     status: text("status").notNull().default("connected"),
     lastSyncAt: timestamp("last_sync_at", { withTimezone: true }),
     lastError: text("last_error"),
-    // Display-widget concept mappings (synced data → instances). `concept_id`/
+    // Display-widget concept mappings (synced data → record versions). `concept_id`/
     // `field_map` hold the Calendar→Event mapping; `gmail_*` hold the Gmail→Email
     // mapping. Each stores `{ logicalKey -> field id }`; provisioned once on first
     // sync and reused (so concept/field renames never re-trigger creation).
@@ -452,7 +452,7 @@ export const googleObjectLink = pgTable(
     userId: text("user_id").notNull(),
     providerKind: text("provider_kind").notNull(),
     providerId: text("provider_id").notNull(),
-    itemId: text("item_id").notNull(),
+    recordId: text("record_id").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
@@ -461,9 +461,9 @@ export const googleObjectLink = pgTable(
       table.userId,
       table.providerKind,
       table.providerId,
-      table.itemId,
+      table.recordId,
     ),
-    index("google_object_link_item_idx").on(table.orgId, table.itemId),
+    index("google_object_link_item_idx").on(table.orgId, table.recordId),
   ],
 )
 
@@ -593,7 +593,7 @@ export const posthogConnection = pgTable(
 /**
  * Synced per-person product-usage metrics, keyed by (org, distinct_id). One row
  * per PostHog person; `email` is denormalized so callers can match a person to
- * a Kingsmaker instance by email OR distinct_id without re-parsing properties.
+ * a Kingsmaker record version by email OR distinct_id without re-parsing properties.
  */
 export const posthogPersonMetric = pgTable(
   "posthog_person_metric",
@@ -793,7 +793,7 @@ export const linearAuditLog = pgTable(
  * workspace per org), with `team_id` recorded so inbound Events API / slash /
  * interactivity POSTs (which carry a team id, not an org) route back here. The
  * OAuth handshake mirrors `google_oauth_state`. Tables follow the
- * `posthog_*`/`linear_*` conventions. KM automation/instance wiring is DEFERRED.
+ * `posthog_*`/`linear_*` conventions. KM automation/record version wiring is DEFERRED.
  */
 export const slackConnection = pgTable(
   "slack_connection",
@@ -968,7 +968,7 @@ export const slackAuditLog = pgTable(
  * Apollo.io integration — a key-based connector on the PostHog/Linear template.
  * Auth is an Apollo API key stored ENCRYPTED at the ORG level (one connection
  * per org). Unlike PostHog/Linear there is no synced object mirror: Apollo is
- * used on-demand (enrich an instance, search people, bulk-import results). Only
+ * used on-demand (enrich an record version, search people, bulk-import results). Only
  * the encrypted key + an optional, purgeable enrichment cache are persisted —
  * see the compliance note in `apollo.ts`. Tables follow the `posthog_*`/
  * `linear_*` conventions.
@@ -1056,7 +1056,7 @@ export const apolloAuditLog = pgTable(
  *     verified timing-safe → stored ENCRYPTED, surfaced (decrypted) in the
  *     callback URL the operator pastes into Clay.
  * Net-new rows (Clay rows with no matching KM job) optionally auto-create
- * instances onto `newRowConceptId` via `newRowMapping` ({clayColumn → fieldId});
+ * record versions onto `newRowConceptId` via `newRowMapping` ({clayColumn → fieldId});
  * when unconfigured they are logged for review (see the open question in
  * `clay.ts`). Tables follow the `apollo_*`/`linear_*` conventions. GENERIC: all
  * mapping is by field id — no concept/field-name hardcoding.
@@ -1102,9 +1102,9 @@ export const clayConnection = pgTable(
 /**
  * Correlation table for the async round-trip. `pushRow` inserts one row per
  * outbound write; its `id` is the correlation id KM embeds in the Clay row and
- * Clay echoes back on callback. `instanceId` is the KM instance being enriched
+ * Clay echoes back on callback. `recordVersionId` is the KM record version being enriched
  * (null for create-jobs); `mapping` is {clayColumn → fieldId} used to project
- * the callback's enriched columns back onto instance fields.
+ * the callback's enriched columns back onto record version fields.
  */
 export const clayJob = pgTable(
   "clay_job",
@@ -1116,9 +1116,9 @@ export const clayJob = pgTable(
     connectionId: uuid("connection_id")
       .notNull()
       .references(() => clayConnection.id, { onDelete: "cascade" }),
-    // KM instance being enriched (null for a net-new create job).
-    instanceId: text("instance_id"),
-    // Target concept (the instance's concept for enrich; the create target otherwise).
+    // KM record version being enriched (null for a net-new create job).
+    recordVersionId: text("instance_id"),
+    // Target concept (the record version's concept for enrich; the create target otherwise).
     conceptId: text("concept_id"),
     mapping: jsonb("mapping").notNull().default({}),
     direction: text("direction").notNull().default("enrich"),
@@ -1130,7 +1130,7 @@ export const clayJob = pgTable(
   (table) => [
     index("clay_job_org_idx").on(table.orgId, table.pushedAt),
     index("clay_job_status_idx").on(table.status),
-    index("clay_job_instance_idx").on(table.instanceId),
+    index("clay_job_instance_idx").on(table.recordVersionId),
   ],
 )
 

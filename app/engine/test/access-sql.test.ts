@@ -13,11 +13,11 @@ import { compileRecordFilter, filterFragment } from "../domain/accessSql"
 import { AccessRoleService } from "../services/AccessRoleService"
 import { ConceptService } from "../services/ConceptService"
 import { FieldService } from "../services/FieldService"
-import { InstanceService } from "../services/InstanceService"
 import { OrgContext } from "../services/OrgContext"
 import { PolicyService } from "../services/PolicyService"
 import { QueryService } from "../services/QueryService"
-import type { InstanceRow } from "../services/rows"
+import { RecordService } from "../services/RecordService"
+import type { RecordVersionRow } from "../services/rows"
 import { newOrgId, testLayer } from "./harness"
 
 /**
@@ -58,30 +58,30 @@ const seed = () =>
   Effect.gen(function* () {
     const concepts = yield* ConceptService
     const fields = yield* FieldService
-    const instances = yield* InstanceService
+    const recordVersions = yield* RecordService
     const sql = yield* PgClient.PgClient
 
     const concept = yield* concepts.create({ name: `Deal ${randomUUID().slice(0, 8)}` })
     const owner = yield* fields.addField({ conceptId: concept.id, name: "Owner", kind: "text" })
     const stage = yield* fields.addField({ conceptId: concept.id, name: "Stage", kind: "text" })
 
-    const mine = yield* instances.create({
+    const mine = yield* recordVersions.create({
       conceptId: concept.id,
       fields: { [stage.id]: "active" },
     })
-    const ownedByMe = yield* instances.create({
+    const ownedByMe = yield* recordVersions.create({
       conceptId: concept.id,
       fields: { [owner.id]: ACTOR, [stage.id]: "won" },
     })
-    const theirs = yield* instances.create({
+    const theirs = yield* recordVersions.create({
       conceptId: concept.id,
       fields: { [owner.id]: OTHER, [stage.id]: "active" },
     })
 
     // `created_by` is set by the write path in a later phase; for now stamp the
     // lineage directly so the `actorIs` predicate has something to match.
-    yield* sql`UPDATE items SET created_by = ${ACTOR} WHERE id = ${mine.itemId}`
-    yield* sql`UPDATE items SET created_by = ${OTHER} WHERE id = ${ownedByMe.itemId}`
+    yield* sql`UPDATE records SET created_by = ${ACTOR} WHERE id = ${mine.recordId}`
+    yield* sql`UPDATE records SET created_by = ${OTHER} WHERE id = ${ownedByMe.recordId}`
 
     return {
       conceptId: concept.id,
@@ -93,27 +93,27 @@ const seed = () =>
     }
   })
 
-/** Run a compiled filter as a real query; returns the matching item ids. */
+/** Run a compiled filter as a real query; returns the matching record ids. */
 const idsMatching = (conceptId: string, policy: PolicySet, fallback: boolean) =>
   Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
     const filter = compileRecordFilter(sql, policy, conceptId, fallback)
     const frag = filterFragment(sql, filter)
-    const rows = yield* sql<InstanceRow>`
-      SELECT * FROM instances
+    const rows = yield* sql<RecordVersionRow>`
+      SELECT * FROM record_versions
       WHERE concept_id = ${conceptId} AND archived_at IS NULL${frag}`
-    return new Set(rows.map((r) => r.item_id))
+    return new Set(rows.map((r) => r.record_id))
   })
 
 /** The same decision in memory, for the drift check. */
 const idsMatchingInMemory = (
   records: ReadonlyArray<{
-    itemId: string
+    recordId: string
     state: Record<string, unknown>
     createdBy: string | null
   }>,
   condition: AccessCondition | null,
-) => new Set(records.filter((r) => matchesCondition(condition, ACTOR, r)).map((r) => r.itemId))
+) => new Set(records.filter((r) => matchesCondition(condition, ACTOR, r)).map((r) => r.recordId))
 
 describe("record filter compiles to SQL", () => {
   it.effect("an unrestricted policy and an open default do not touch the query", () =>
@@ -135,9 +135,9 @@ describe("record filter compiles to SQL", () => {
   it.effect("a share of one record yields exactly that record", () =>
     Effect.gen(function* () {
       const f = yield* seed()
-      const p = policyOf([rule({ resourceId: f.theirs.itemId, conceptId: f.conceptId })])
+      const p = policyOf([rule({ resourceId: f.theirs.recordId, conceptId: f.conceptId })])
       const got = yield* idsMatching(f.conceptId, p, false)
-      expect([...got]).toEqual([f.theirs.itemId])
+      expect([...got]).toEqual([f.theirs.recordId])
     }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
 
@@ -149,14 +149,14 @@ describe("record filter compiles to SQL", () => {
       const fromSql = yield* idsMatching(f.conceptId, p, false)
       const inMemory = idsMatchingInMemory(
         [
-          { itemId: f.mine.itemId, state: f.mine.state, createdBy: ACTOR },
-          { itemId: f.ownedByMe.itemId, state: f.ownedByMe.state, createdBy: OTHER },
-          { itemId: f.theirs.itemId, state: f.theirs.state, createdBy: null },
+          { recordId: f.mine.recordId, state: f.mine.state, createdBy: ACTOR },
+          { recordId: f.ownedByMe.recordId, state: f.ownedByMe.state, createdBy: OTHER },
+          { recordId: f.theirs.recordId, state: f.theirs.state, createdBy: null },
         ],
         condition,
       )
       expect(fromSql).toEqual(inMemory)
-      expect([...fromSql]).toEqual([f.mine.itemId])
+      expect([...fromSql]).toEqual([f.mine.recordId])
     }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
 
@@ -167,20 +167,20 @@ describe("record filter compiles to SQL", () => {
       const p = policyOf([rule({ conceptId: f.conceptId, condition })])
       const fromSql = yield* idsMatching(f.conceptId, p, false)
       const records = [
-        { itemId: f.mine.itemId, state: f.mine.state, createdBy: null },
-        { itemId: f.ownedByMe.itemId, state: f.ownedByMe.state, createdBy: null },
-        { itemId: f.theirs.itemId, state: f.theirs.state, createdBy: null },
+        { recordId: f.mine.recordId, state: f.mine.state, createdBy: null },
+        { recordId: f.ownedByMe.recordId, state: f.ownedByMe.state, createdBy: null },
+        { recordId: f.theirs.recordId, state: f.theirs.state, createdBy: null },
       ]
       expect(fromSql).toEqual(idsMatchingInMemory(records, condition))
-      expect([...fromSql]).toEqual([f.ownedByMe.itemId])
+      expect([...fromSql]).toEqual([f.ownedByMe.recordId])
 
       // The array shape — a `multiple` user field storing several ids. Written
       // straight to state so the predicate's `@>` branch is exercised.
       const sql = yield* PgClient.PgClient
-      yield* sql`UPDATE instances SET state = jsonb_set(state, ${[f.ownerFieldId]}, ${JSON.stringify([OTHER, ACTOR])}::jsonb)
+      yield* sql`UPDATE record_versions SET state = jsonb_set(state, ${[f.ownerFieldId]}, ${JSON.stringify([OTHER, ACTOR])}::jsonb)
                  WHERE id = ${f.theirs.id}`
       const afterArray = yield* idsMatching(f.conceptId, p, false)
-      expect(afterArray.has(f.theirs.itemId)).toBe(true)
+      expect(afterArray.has(f.theirs.recordId)).toBe(true)
       expect(
         matchesCondition(condition, ACTOR, {
           state: { [f.ownerFieldId]: [OTHER, ACTOR] },
@@ -197,9 +197,9 @@ describe("record filter compiles to SQL", () => {
       const p = policyOf([rule({ conceptId: f.conceptId, condition })])
       const fromSql = yield* idsMatching(f.conceptId, p, false)
       const records = [
-        { itemId: f.mine.itemId, state: f.mine.state, createdBy: null },
-        { itemId: f.ownedByMe.itemId, state: f.ownedByMe.state, createdBy: null },
-        { itemId: f.theirs.itemId, state: f.theirs.state, createdBy: null },
+        { recordId: f.mine.recordId, state: f.mine.state, createdBy: null },
+        { recordId: f.ownedByMe.recordId, state: f.ownedByMe.state, createdBy: null },
+        { recordId: f.theirs.recordId, state: f.theirs.state, createdBy: null },
       ]
       expect(fromSql).toEqual(idsMatchingInMemory(records, condition))
       expect(fromSql.size).toBe(2)
@@ -210,11 +210,11 @@ describe("record filter compiles to SQL", () => {
     Effect.gen(function* () {
       const f = yield* seed()
       const p = policyOf([
-        rule({ effect: "deny", resourceId: f.theirs.itemId, conceptId: f.conceptId }),
+        rule({ effect: "deny", resourceId: f.theirs.recordId, conceptId: f.conceptId }),
       ])
       const got = yield* idsMatching(f.conceptId, p, true)
       expect(got.size).toBe(2)
-      expect(got.has(f.theirs.itemId)).toBe(false)
+      expect(got.has(f.theirs.recordId)).toBe(false)
     }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
 
@@ -223,7 +223,7 @@ describe("record filter compiles to SQL", () => {
       const f = yield* seed()
       const p = policyOf([
         rule({ effect: "deny", conceptId: f.conceptId }),
-        rule({ effect: "allow", resourceId: f.mine.itemId, conceptId: f.conceptId }),
+        rule({ effect: "allow", resourceId: f.mine.recordId, conceptId: f.conceptId }),
       ])
       const got = yield* idsMatching(f.conceptId, p, true)
       expect(got.size).toBe(0)
@@ -435,7 +435,7 @@ describe("policy loading", () => {
  * The whole point of record-level access: "you see only the rows shared with you".
  *
  * Two halves have to agree — `QueryService` compiles rules into SQL for lists,
- * `InstanceService.assertRecordReadable` decides by id. A disagreement means a member
+ * `RecordService.assertRecordReadable` decides by id. A disagreement means a member
  * opens a record their list hid, or sees a row they cannot open. These tests assert
  * BOTH for the same fixtures, which is why they live together.
  */
@@ -443,7 +443,7 @@ describe("record-level access, end to end", () => {
   const SHAREE = "user-carol"
 
   /** A share of one record: the rule shape the Share dialog will write. */
-  const shareOf = (itemId: string, conceptId: string): PolicySet => ({
+  const shareOf = (recordId: string, conceptId: string): PolicySet => ({
     ...emptyPolicy(SHAREE),
     rules: [
       {
@@ -453,7 +453,7 @@ describe("record-level access, end to end", () => {
         effect: "allow",
         actions: ["view"],
         resourceType: "record",
-        resourceId: itemId,
+        resourceId: recordId,
         conceptId,
         condition: null,
       },
@@ -466,31 +466,31 @@ describe("record-level access, end to end", () => {
       const concepts = yield* ConceptService
       // 'admin' default: a member sees no records of this concept at all…
       yield* concepts.setVisibility(f.conceptId, "admin")
-      const policy = shareOf(f.theirs.itemId, f.conceptId)
+      const policy = shareOf(f.theirs.recordId, f.conceptId)
 
       // …except the one shared with them. THE LIST half.
       const listed = yield* Effect.provideService(
-        Effect.flatMap(QueryService, (q) => q.findInstances({ conceptId: f.conceptId })),
+        Effect.flatMap(QueryService, (q) => q.findRecords({ conceptId: f.conceptId })),
         OrgContext,
         { orgId: ORG, actor: SHAREE, role: "member", policy },
       )
-      expect(listed.map((r) => r.itemId)).toEqual([f.theirs.itemId])
+      expect(listed.map((r) => r.recordId)).toEqual([f.theirs.recordId])
 
       // THE BY-ID half must agree — same record readable…
       const opened = yield* Effect.provideService(
-        Effect.flatMap(InstanceService, (i) => i.get(f.theirs.id)),
+        Effect.flatMap(RecordService, (i) => i.get(f.theirs.id)),
         OrgContext,
         { orgId: ORG, actor: SHAREE, role: "member", policy },
       )
-      expect(opened.itemId).toBe(f.theirs.itemId)
+      expect(opened.recordId).toBe(f.theirs.recordId)
 
       // …and a NON-shared record of the same concept must NOT open. This is the
       // failure a naive `fallback = true` would introduce: the list is right while
       // every record opens by id.
       const other = yield* Effect.provideService(
-        Effect.flatMap(InstanceService, (i) => i.get(f.mine.id)).pipe(
+        Effect.flatMap(RecordService, (i) => i.get(f.mine.id)).pipe(
           Effect.map(() => "opened"),
-          Effect.catchTag("InstanceNotFound", () => Effect.succeed("not-found")),
+          Effect.catchTag("RecordVersionNotFound", () => Effect.succeed("not-found")),
         ),
         OrgContext,
         { orgId: ORG, actor: SHAREE, role: "member", policy },
@@ -516,20 +516,20 @@ describe("record-level access, end to end", () => {
           effect: "allow" as const,
           actions: ["view" as const],
           resourceType: "record" as const,
-          resourceId: r.itemId,
+          resourceId: r.recordId,
           conceptId: f.conceptId,
           condition: null,
         })),
       }
       const all = yield* Effect.provideService(
-        Effect.flatMap(QueryService, (q) => q.findInstances({ conceptId: f.conceptId })),
+        Effect.flatMap(QueryService, (q) => q.findRecords({ conceptId: f.conceptId })),
         OrgContext,
         { orgId: ORG, actor: SHAREE, role: "member", policy },
       )
       expect(all.length).toBe(3)
       // A limit of 2 must return 2 VISIBLE rows — not 2 fetched then filtered.
       const limited = yield* Effect.provideService(
-        Effect.flatMap(QueryService, (q) => q.findInstances({ conceptId: f.conceptId, limit: 2 })),
+        Effect.flatMap(QueryService, (q) => q.findRecords({ conceptId: f.conceptId, limit: 2 })),
         OrgContext,
         { orgId: ORG, actor: SHAREE, role: "member", policy },
       )
@@ -539,35 +539,35 @@ describe("record-level access, end to end", () => {
 
   it.effect("a share survives publishing a new version (rules key on the lineage)", () =>
     Effect.gen(function* () {
-      // Why record rules key on items.id, never instances.id: a versioned concept has
+      // Why record rules key on records.id, never recordVersions.id: a versioned concept has
       // N version rows per record, and a new version must not silently revoke a share.
       const f = yield* seed()
       const concepts = yield* ConceptService
-      const instances = yield* InstanceService
+      const recordVersions = yield* RecordService
       yield* concepts.update({ id: f.conceptId, description: null, versioningEnabled: true })
       yield* concepts.setVisibility(f.conceptId, "admin")
-      const policy = shareOf(f.theirs.itemId, f.conceptId)
+      const policy = shareOf(f.theirs.recordId, f.conceptId)
 
       const before = yield* Effect.provideService(
-        Effect.flatMap(QueryService, (q) => q.findInstances({ conceptId: f.conceptId })),
+        Effect.flatMap(QueryService, (q) => q.findRecords({ conceptId: f.conceptId })),
         OrgContext,
         { orgId: ORG, actor: SHAREE, role: "member", policy },
       )
-      expect(before.map((r) => r.itemId)).toEqual([f.theirs.itemId])
+      expect(before.map((r) => r.recordId)).toEqual([f.theirs.recordId])
 
       // Publish a fresh version of the shared record, as the owner.
-      const draft = yield* instances.newVersion({ itemId: f.theirs.itemId })
-      yield* instances.publishVersion({
-        instanceId: draft.id,
+      const draft = yield* recordVersions.newVersion({ recordId: f.theirs.recordId })
+      yield* recordVersions.publishVersion({
+        recordVersionId: draft.id,
         expectedVersion: draft.version,
       })
 
       const after = yield* Effect.provideService(
-        Effect.flatMap(QueryService, (q) => q.findInstances({ conceptId: f.conceptId })),
+        Effect.flatMap(QueryService, (q) => q.findRecords({ conceptId: f.conceptId })),
         OrgContext,
         { orgId: ORG, actor: SHAREE, role: "member", policy },
       )
-      expect(after.map((r) => r.itemId)).toEqual([f.theirs.itemId])
+      expect(after.map((r) => r.recordId)).toEqual([f.theirs.recordId])
       // …and it is the NEW head, not the superseded row.
       expect(after[0]!.versionSeq).toBeGreaterThan(1)
     }).pipe(Effect.provide(testLayer(ORG))),

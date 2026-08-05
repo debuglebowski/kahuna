@@ -2,7 +2,7 @@
  * `@` mentions: the inline references a rich-text document can carry.
  *
  * The DOCUMENT is the source of truth. A mention lives as a `mention` node inside
- * the ProseMirror doc (`instances.state[fieldId].doc`, `annotations.description.doc`),
+ * the ProseMirror doc (`record_versions.state[fieldId].doc`, `annotations.description.doc`),
  * carrying `{ kind, targetId, label }` and nothing else. The `mentions` TABLE is a
  * derived index, rebuilt from the doc on every write of it — it exists only so
  * "what mentions this record?" is an indexed query instead of a scan of every
@@ -81,6 +81,6 @@ export const extractMentions = (doc: unknown): ReadonlyArray<MentionRef> => {
 
 /** Postgres will error rather than return no rows if a non-uuid string reaches a
  *  `uuid[]` comparison, so a `targetId` is shape-checked before it is used as one.
- *  Only `record` mentions ever are — see `mentions.target_item_id`. */
+ *  Only `record` mentions ever are — see `mentions.target_record_id`. */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 export const isUuid = (v: string): boolean => UUID_RE.test(v)

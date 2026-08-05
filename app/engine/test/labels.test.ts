@@ -3,8 +3,8 @@ import { describe, expect, it } from "@effect/vitest"
 import { Effect } from "effect"
 import { LABELS_KEY } from "../domain/types"
 import { ConceptService } from "../services/ConceptService"
-import { InstanceService } from "../services/InstanceService"
 import { LabelService } from "../services/LabelService"
+import { RecordService } from "../services/RecordService"
 import { newOrgId, testLayer } from "./harness"
 
 const labelsOf = (state: Record<string, unknown>): ReadonlyArray<string> =>
@@ -131,17 +131,17 @@ describe("concept static / default labels", () => {
   )
 })
 
-describe("per-item labels (InstanceService)", () => {
+describe("per-record labels (RecordService)", () => {
   it.effect("create snapshots the concept's default labels onto __labels", () =>
     Effect.gen(function* () {
       const concepts = yield* ConceptService
       const labels = yield* LabelService
-      const instances = yield* InstanceService
+      const recordVersions = yield* RecordService
       const d = yield* labels.create({ name: "Default" })
       const c = yield* concepts.create({ name: "Account" })
       yield* concepts.update({ id: c.id, description: null, defaultLabelIds: [d.id] })
 
-      const inst = yield* instances.create({ conceptId: c.id, fields: {} })
+      const inst = yield* recordVersions.create({ conceptId: c.id, fields: {} })
       expect(labelsOf(inst.state)).toEqual([d.id])
     }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
@@ -150,13 +150,16 @@ describe("per-item labels (InstanceService)", () => {
     Effect.gen(function* () {
       const concepts = yield* ConceptService
       const labels = yield* LabelService
-      const instances = yield* InstanceService
+      const recordVersions = yield* RecordService
       const d = yield* labels.create({ name: "Default" })
       const x = yield* labels.create({ name: "Chosen" })
       const c = yield* concepts.create({ name: "Account" })
       yield* concepts.update({ id: c.id, description: null, defaultLabelIds: [d.id] })
 
-      const inst = yield* instances.create({ conceptId: c.id, fields: { [LABELS_KEY]: [x.id] } })
+      const inst = yield* recordVersions.create({
+        conceptId: c.id,
+        fields: { [LABELS_KEY]: [x.id] },
+      })
       expect(labelsOf(inst.state)).toEqual([x.id])
     }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
@@ -165,14 +168,14 @@ describe("per-item labels (InstanceService)", () => {
     Effect.gen(function* () {
       const concepts = yield* ConceptService
       const labels = yield* LabelService
-      const instances = yield* InstanceService
+      const recordVersions = yield* RecordService
       const live = yield* labels.create({ name: "Live" })
       const gone = yield* labels.create({ name: "Gone" })
       const c = yield* concepts.create({ name: "Account" })
       yield* concepts.update({ id: c.id, description: null, defaultLabelIds: [live.id, gone.id] })
       yield* labels.archive(gone.id)
 
-      const inst = yield* instances.create({ conceptId: c.id, fields: {} })
+      const inst = yield* recordVersions.create({ conceptId: c.id, fields: {} })
       expect(labelsOf(inst.state)).toEqual([live.id])
     }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
@@ -181,15 +184,18 @@ describe("per-item labels (InstanceService)", () => {
     Effect.gen(function* () {
       const concepts = yield* ConceptService
       const labels = yield* LabelService
-      const instances = yield* InstanceService
+      const recordVersions = yield* RecordService
       const a = yield* labels.create({ name: "A" })
       const b = yield* labels.create({ name: "B" })
       const c = yield* concepts.create({ name: "Account" })
 
-      const inst = yield* instances.create({ conceptId: c.id, fields: { [LABELS_KEY]: [a.id] } })
+      const inst = yield* recordVersions.create({
+        conceptId: c.id,
+        fields: { [LABELS_KEY]: [a.id] },
+      })
       expect(inst.version).toBe(0)
-      const updated = yield* instances.update({
-        instanceId: inst.id,
+      const updated = yield* recordVersions.update({
+        recordVersionId: inst.id,
         expectedVersion: 0,
         patch: { [LABELS_KEY]: [a.id, b.id] },
       })
@@ -197,7 +203,7 @@ describe("per-item labels (InstanceService)", () => {
       expect(labelsOf(updated.state)).toEqual([a.id, b.id])
 
       // Event-sourcing correctness: rebuilding from the stream reproduces __labels.
-      const rebuilt = yield* instances.rebuild(inst.id)
+      const rebuilt = yield* recordVersions.rebuild(inst.id)
       expect(labelsOf(rebuilt.state)).toEqual([a.id, b.id])
       expect(rebuilt.version).toBe(1)
     }).pipe(Effect.provide(testLayer(newOrgId()))),
@@ -206,12 +212,12 @@ describe("per-item labels (InstanceService)", () => {
   it.effect("update rejects an unknown label id (FieldValidationError)", () =>
     Effect.gen(function* () {
       const concepts = yield* ConceptService
-      const instances = yield* InstanceService
+      const recordVersions = yield* RecordService
       const c = yield* concepts.create({ name: "Account" })
-      const inst = yield* instances.create({ conceptId: c.id, fields: {} })
-      const err = yield* instances
+      const inst = yield* recordVersions.create({ conceptId: c.id, fields: {} })
+      const err = yield* recordVersions
         .update({
-          instanceId: inst.id,
+          recordVersionId: inst.id,
           expectedVersion: 0,
           patch: { [LABELS_KEY]: [randomUUID()] },
         })

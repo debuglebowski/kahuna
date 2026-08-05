@@ -135,7 +135,7 @@ export const scopeCanReadConcept = (scope: OrgScope, conceptId: string): boolean
  * Concept visibility is a FAILURE, so it is safe anywhere. Field visibility is a
  * PROJECTION, and two tempting placements silently corrupt data:
  *
- *  1. NOT in `toInstance` (services/rows.ts). `InstanceService.update` reads the
+ *  1. NOT in `toRecordVersion` (services/rows.ts). `RecordService.update` reads the
  *     current row through it, folds the patch onto that state, and writes the
  *     result back with `SET state = …`. Filtering there means a member's ordinary
  *     edit PERMANENTLY DELETES every hidden field's value.
@@ -195,7 +195,7 @@ export const scopeHiddenFieldIds = (
 }
 
 /**
- * Drop hidden keys from an instance's state. Returns the SAME object when nothing
+ * Drop hidden keys from an record version's state. Returns the SAME object when nothing
  * is hidden, so the common (privileged, or no restricted fields) path allocates
  * nothing and the identity is preserved for React memo comparisons.
  */

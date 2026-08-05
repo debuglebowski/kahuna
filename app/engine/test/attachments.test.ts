@@ -5,68 +5,71 @@ import { Effect } from "effect"
 import { AttachmentService, MAX_UPLOAD_BYTES } from "../services/AttachmentService"
 import { ConceptService } from "../services/ConceptService"
 import { EventStore } from "../services/EventStore"
-import { InstanceService } from "../services/InstanceService"
+import { RecordService } from "../services/RecordService"
 import { newOrgId, testLayer } from "./harness"
 
-/** A concept + one instance; returns the head row (carries `itemId`). */
+/** A concept + one record version; returns the head row (carries `recordId`). */
 const seedItem = Effect.gen(function* () {
   const concepts = yield* ConceptService
-  const instances = yield* InstanceService
+  const recordVersions = yield* RecordService
   yield* concepts.create({ name: "Artifact" })
-  return yield* instances.create({ conceptName: "Artifact", fields: {} })
+  return yield* recordVersions.create({ conceptName: "Artifact", fields: {} })
 })
 
 describe("attachments", () => {
-  it.effect("uploads to the item lineage, lists by scope, downloads intact, records an event", () =>
-    Effect.gen(function* () {
-      const instance = yield* seedItem
-      const attachments = yield* AttachmentService
-      const events = yield* EventStore
-      const instances = yield* InstanceService
+  it.effect(
+    "uploads to the record lineage, lists by scope, downloads intact, records an event",
+    () =>
+      Effect.gen(function* () {
+        const recordVersion = yield* seedItem
+        const attachments = yield* AttachmentService
+        const events = yield* EventStore
+        const recordVersions = yield* RecordService
 
-      const bytes = new TextEncoder().encode("DPA contract — binding text  ÿ")
-      const att = yield* attachments.upload({
-        owner: { itemId: instance.itemId },
-        filename: "dpa.txt",
-        mimeType: "text/plain",
-        data: bytes,
-      })
-      expect(att.itemId).toBe(instance.itemId)
-      expect(att.sizeBytes).toBe(bytes.length)
-      expect(att.createdBy).toBe("tester")
-      expect(att.archivedAt).toBeNull()
+        const bytes = new TextEncoder().encode("DPA contract — binding text  ÿ")
+        const att = yield* attachments.upload({
+          owner: { recordId: recordVersion.recordId },
+          filename: "dpa.txt",
+          mimeType: "text/plain",
+          data: bytes,
+        })
+        expect(att.recordId).toBe(recordVersion.recordId)
+        expect(att.sizeBytes).toBe(bytes.length)
+        expect(att.createdBy).toBe("tester")
+        expect(att.archivedAt).toBeNull()
 
-      // Item scope, instance-id resolution, concept scope, org scope.
-      expect((yield* attachments.list({ itemId: instance.itemId })).length).toBe(1)
-      expect((yield* attachments.list({ instanceId: instance.id }))[0]?.id).toBe(att.id)
-      expect((yield* attachments.list({ conceptId: instance.conceptId })).length).toBe(1)
-      expect((yield* attachments.list()).length).toBe(1)
-      // A dangling instance id reads as empty, not an error.
-      expect(
-        (yield* attachments.list({ instanceId: "00000000-0000-0000-0000-000000000000" })).length,
-      ).toBe(0)
+        // Record scope, record version-id resolution, concept scope, org scope.
+        expect((yield* attachments.list({ recordId: recordVersion.recordId })).length).toBe(1)
+        expect((yield* attachments.list({ recordVersionId: recordVersion.id }))[0]?.id).toBe(att.id)
+        expect((yield* attachments.list({ conceptId: recordVersion.conceptId })).length).toBe(1)
+        expect((yield* attachments.list()).length).toBe(1)
+        // A dangling record version id reads as empty, not an error.
+        expect(
+          (yield* attachments.list({ recordVersionId: "00000000-0000-0000-0000-000000000000" }))
+            .length,
+        ).toBe(0)
 
-      const { data } = yield* attachments.download(att.id)
-      expect(Array.from(data)).toEqual(Array.from(bytes))
+        const { data } = yield* attachments.download(att.id)
+        expect(Array.from(data)).toEqual(Array.from(bytes))
 
-      // The event rides the attachment's own stream and never enters the
-      // instance fold (version untouched).
-      const stream = yield* events.readStream(att.id)
-      expect(stream.map((e) => e.payload._tag)).toEqual(["AttachmentAdded"])
-      expect((yield* instances.get(instance.id)).version).toBe(0)
-    }).pipe(Effect.provide(testLayer(newOrgId()))),
+        // The event rides the attachment's own stream and never enters the
+        // record version fold (version untouched).
+        const stream = yield* events.readStream(att.id)
+        expect(stream.map((e) => e.payload._tag)).toEqual(["AttachmentAdded"])
+        expect((yield* recordVersions.get(recordVersion.id)).version).toBe(0)
+      }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
 
   it.effect(
     "archive hides from the live list, restore brings it back, purge removes for good",
     () =>
       Effect.gen(function* () {
-        const instance = yield* seedItem
+        const recordVersion = yield* seedItem
         const attachments = yield* AttachmentService
         const events = yield* EventStore
 
         const att = yield* attachments.upload({
-          owner: { itemId: instance.itemId },
+          owner: { recordId: recordVersion.recordId },
           filename: "cv.pdf",
           mimeType: "application/pdf",
           data: new Uint8Array([1, 2, 3]),
@@ -74,20 +77,22 @@ describe("attachments", () => {
 
         const archived = yield* attachments.archive(att.id)
         expect(archived.archivedAt).not.toBeNull()
-        expect((yield* attachments.list({ itemId: instance.itemId })).length).toBe(0)
+        expect((yield* attachments.list({ recordId: recordVersion.recordId })).length).toBe(0)
         expect(
-          (yield* attachments.list({ itemId: instance.itemId, includeArchived: true })).length,
+          (yield* attachments.list({ recordId: recordVersion.recordId, includeArchived: true }))
+            .length,
         ).toBe(1)
         // Archived files stay downloadable.
         expect((yield* attachments.download(att.id)).data.length).toBe(3)
 
         const restored = yield* attachments.restore(att.id)
         expect(restored.archivedAt).toBeNull()
-        expect((yield* attachments.list({ itemId: instance.itemId })).length).toBe(1)
+        expect((yield* attachments.list({ recordId: recordVersion.recordId })).length).toBe(1)
 
         yield* attachments.purge(att.id)
         expect(
-          (yield* attachments.list({ itemId: instance.itemId, includeArchived: true })).length,
+          (yield* attachments.list({ recordId: recordVersion.recordId, includeArchived: true }))
+            .length,
         ).toBe(0)
         const err = yield* attachments.download(att.id).pipe(Effect.flip)
         expect(err._tag).toBe("AttachmentNotFound")
@@ -101,25 +106,27 @@ describe("attachments", () => {
           "AttachmentPurged",
         ])
         expect(
-          stream.every((e) => (e.payload as { subjectId?: string }).subjectId === instance.itemId),
+          stream.every(
+            (e) => (e.payload as { subjectId?: string }).subjectId === recordVersion.recordId,
+          ),
         ).toBe(true)
       }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
 
-  it.effect("upload to an archived item is blocked (block-not-cascade)", () =>
+  it.effect("upload to an archived record is blocked (block-not-cascade)", () =>
     Effect.gen(function* () {
-      const instance = yield* seedItem
-      const instances = yield* InstanceService
+      const recordVersion = yield* seedItem
+      const recordVersions = yield* RecordService
       const attachments = yield* AttachmentService
-      yield* instances.archiveItem({ itemId: instance.itemId })
+      yield* recordVersions.archiveRecord({ recordId: recordVersion.recordId })
       const err = yield* attachments
         .upload({
-          owner: { itemId: instance.itemId },
+          owner: { recordId: recordVersion.recordId },
           filename: "x.txt",
           data: new Uint8Array([0]),
         })
         .pipe(Effect.flip)
-      expect(err._tag).toBe("ItemNotFound")
+      expect(err._tag).toBe("RecordNotFound")
     }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
 
@@ -135,7 +142,7 @@ describe("attachments", () => {
 
   // ── widget-owned buckets (no record) ────────────────────────────────────────
 
-  it.effect("uploads to a bucket with no item, lists it, downloads intact", () =>
+  it.effect("uploads to a bucket with no record, lists it, downloads intact", () =>
     Effect.gen(function* () {
       const attachments = yield* AttachmentService
       const events = yield* EventStore
@@ -149,13 +156,13 @@ describe("attachments", () => {
         data: bytes,
       })
       // No record anywhere in the picture.
-      expect(att.itemId).toBeNull()
+      expect(att.recordId).toBeNull()
       expect(att.bucketId).toBe(bucketId)
       expect(att.bucketShared).toBe(true)
 
       expect((yield* attachments.list({ bucketId })).map((a) => a.id)).toEqual([att.id])
       expect(Array.from((yield* attachments.download(att.id)).data)).toEqual(Array.from(bytes))
-      // The event carries the bucket instead of a host item.
+      // The event carries the bucket instead of a host record.
       const stream = yield* events.readStream(att.id)
       expect(stream.map((e) => e.eventType)).toEqual(["AttachmentAdded"])
       expect((stream[0]?.payload as { bucketId?: string }).bucketId).toBe(bucketId)
@@ -165,13 +172,13 @@ describe("attachments", () => {
 
   it.effect("org scope lists shared bucket files and hides private ones", () =>
     Effect.gen(function* () {
-      const instance = yield* seedItem
+      const recordVersion = yield* seedItem
       const attachments = yield* AttachmentService
       const sharedBucket = randomUUID()
       const privateBucket = randomUUID()
 
       const onRecord = yield* attachments.upload({
-        owner: { itemId: instance.itemId },
+        owner: { recordId: recordVersion.recordId },
         filename: "on-record.txt",
         data: new Uint8Array([1]),
       })
@@ -201,10 +208,12 @@ describe("attachments", () => {
       // the uploader). Another member cannot — see the next test.
       expect((yield* attachments.download(hidden.id)).data.length).toBe(1)
 
-      // Record-shaped scopes can never surface bucket files: no item, no concept.
-      const itemIds = (yield* attachments.list({ itemId: instance.itemId })).map((a) => a.id)
+      // Record-shaped scopes can never surface bucket files: no record, no concept.
+      const itemIds = (yield* attachments.list({ recordId: recordVersion.recordId })).map(
+        (a) => a.id,
+      )
       expect(itemIds).toEqual([onRecord.id])
-      const conceptIds = (yield* attachments.list({ conceptId: instance.conceptId })).map(
+      const conceptIds = (yield* attachments.list({ conceptId: recordVersion.conceptId })).map(
         (a) => a.id,
       )
       expect(conceptIds).toEqual([onRecord.id])
@@ -361,18 +370,18 @@ describe("attachments", () => {
 
   it.effect("the DB rejects a row owned by both or neither", () =>
     Effect.gen(function* () {
-      const instance = yield* seedItem
+      const recordVersion = yield* seedItem
       const sql = yield* PgClient.PgClient
       // SqlError's own message is generic; the violated constraint is on the pg cause.
-      const violated = (itemId: string | null, bucketId: string | null) =>
-        sql`INSERT INTO attachments (org_id, item_id, bucket_id, filename, content_ref)
-            VALUES ('x', ${itemId}, ${bucketId}, 'f.txt', 'k')`.pipe(
+      const violated = (recordId: string | null, bucketId: string | null) =>
+        sql`INSERT INTO attachments (org_id, record_id, bucket_id, filename, content_ref)
+            VALUES ('x', ${recordId}, ${bucketId}, 'f.txt', 'k')`.pipe(
           Effect.flip,
           Effect.map((e) => (e.cause as { constraint?: string })?.constraint),
         )
 
       // Both owners set, and neither — the attachments_one_owner CHECK.
-      expect(yield* violated(instance.itemId, randomUUID())).toBe("attachments_one_owner")
+      expect(yield* violated(recordVersion.recordId, randomUUID())).toBe("attachments_one_owner")
       expect(yield* violated(null, null)).toBe("attachments_one_owner")
     }).pipe(Effect.provide(testLayer(newOrgId()))),
   )

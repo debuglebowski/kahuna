@@ -7,8 +7,8 @@ import { OrgContext } from "./OrgContext"
 export interface Backlink {
   /** Which rich-text home the mention lives in. */
   readonly source: "record" | "task"
-  /** For `record`: the source instance VERSION holding the mention. */
-  readonly fromInstanceId: Id | null
+  /** For `record`: the source record version VERSION holding the mention. */
+  readonly fromVersionId: Id | null
   /** For `record`: the source lineage — what a link should address. */
   readonly fromItemId: Id | null
   /** For `record`: the field the mention sits in, so the panel can name it. */
@@ -20,7 +20,7 @@ export interface Backlink {
 
 interface BacklinkRow {
   readonly source: string
-  readonly from_instance_id: string | null
+  readonly from_version_id: string | null
   readonly from_item_id: string | null
   readonly from_field_id: string | null
   readonly from_concept_id: string | null
@@ -31,7 +31,7 @@ interface BacklinkRow {
  * Reads over the `mentions` index — the inbound half of `@` mentions.
  *
  * Deliberately read-only. Index MAINTENANCE lives with the writes that own each
- * rich-text home (`InstanceService` for instance fields, `AnnotationService` for
+ * rich-text home (`RecordService` for record version fields, `AnnotationService` for
  * task descriptions), because a rebuild has to happen inside the same transaction
  * as the document write or the index can disagree with the doc.
  *
@@ -52,36 +52,36 @@ export class MentionService extends Effect.Service<MentionService>()("engine/Men
      * reference: the source version must be PUBLISHED and not archived, because a
      * draft is private and must not announce itself from the target's side.
      *
-     * The `DISTINCT ON (item_id)` is not decoration. A concept with
+     * The `DISTINCT ON (record_id)` is not decoration. A concept with
      * `edit_reach: "any"` can hold several published versions at once, each
      * carrying the same mention, which would otherwise show the same source five
      * times over. Collapsing to the newest version per lineage is the same shape
-     * `QueryService.findInstances` uses for its head-only reads.
+     * `QueryService.findRecords` uses for its head-only reads.
      */
-    const listBacklinks = (itemId: Id) =>
+    const listBacklinks = (recordId: Id) =>
       Effect.gen(function* () {
         const { orgId } = yield* OrgContext
         const rows = yield* sql<BacklinkRow>`
           (
-            SELECT DISTINCT ON (src.item_id)
+            SELECT DISTINCT ON (src.record_id)
                    'record'          AS source,
-                   src.id            AS from_instance_id,
-                   src.item_id       AS from_item_id,
+                   src.id            AS from_version_id,
+                   src.record_id       AS from_item_id,
                    m.from_field_id   AS from_field_id,
                    src.concept_id    AS from_concept_id,
                    NULL::uuid        AS from_annotation_id
               FROM mentions m
-              JOIN instances src
-                ON src.id = m.from_instance_id
+              JOIN record_versions src
+                ON src.id = m.from_version_id
                AND src.version_status = 'published'
                AND src.archived_at IS NULL
-             WHERE m.org_id = ${orgId} AND m.target_item_id = ${itemId}
-             ORDER BY src.item_id, src.version_seq DESC
+             WHERE m.org_id = ${orgId} AND m.target_record_id = ${recordId}
+             ORDER BY src.record_id, src.version_seq DESC
           )
           UNION ALL
           (
             SELECT 'task'      AS source,
-                   NULL::uuid  AS from_instance_id,
+                   NULL::uuid  AS from_version_id,
                    NULL::uuid  AS from_item_id,
                    NULL::uuid  AS from_field_id,
                    NULL::uuid  AS from_concept_id,
@@ -91,12 +91,12 @@ export class MentionService extends Effect.Service<MentionService>()("engine/Men
                 ON a.id = m.from_annotation_id
                AND a.type = 'task'
                AND a.archived_at IS NULL
-             WHERE m.org_id = ${orgId} AND m.target_item_id = ${itemId}
+             WHERE m.org_id = ${orgId} AND m.target_record_id = ${recordId}
           )`
         return rows.map(
           (r): Backlink => ({
             source: r.source === "task" ? "task" : "record",
-            fromInstanceId: r.from_instance_id,
+            fromVersionId: r.from_version_id,
             fromItemId: r.from_item_id,
             fromFieldId: r.from_field_id,
             fromConceptId: r.from_concept_id,

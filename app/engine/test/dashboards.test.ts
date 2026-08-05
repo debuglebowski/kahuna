@@ -104,7 +104,7 @@ describe("dashboards (DashboardService)", () => {
           id: "s1",
           title: null,
           layout,
-          items: [{ id: "i1", kind: "url", ref: "https://example.com", label: "Docs" }],
+          records: [{ id: "i1", kind: "url", ref: "https://example.com", label: "Docs" }],
         },
         {
           type: "note",

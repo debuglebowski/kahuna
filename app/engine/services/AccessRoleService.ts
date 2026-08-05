@@ -95,7 +95,7 @@ interface RoleSpec {
  * `delete` is withheld from `member` because hard-delete is already admin-gated at
  * the RPC boundary today (see the `admin<>()` handlers) — granting it here would
  * be a widening, not a reproduction. `archive` IS granted, which is also today's
- * behaviour: instance archive/restore is any member.
+ * behaviour: record version archive/restore is any member.
  *
  * ── WHY `member` DOES NOT GRANT `view` ───────────────────────────────────────
  *
@@ -762,7 +762,7 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
        * never showed. The UI surfaces them separately.
        *
        * `org` is refused outright — org-level configure is what the irreducible floor
-       * protects, and it has no place in a per-item grid.
+       * protects, and it has no place in a per-record grid.
        */
       const setScopedRules = (input: {
         readonly roleId: string
@@ -770,7 +770,7 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
         /**
          * Which column the entry id lands in.
          *
-         * "resource" — the item itself (a concept, a dashboard).
+         * "resource" — the record itself (a concept, a dashboard).
          * "concept"  — the CONTAINER. Used by the Records grid, whose rows are
          *              concepts but whose rules mean "records IN this concept", which
          *              the model expresses as `concept_id` with a null `resource_id`.
@@ -803,7 +803,7 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
                       AND resource_type = ${input.resourceType}
                       AND resource_id IS NOT NULL`
               for (const e of input.entries) {
-                // One row per (item, effect), holding that effect's action set —
+                // One row per (record, effect), holding that effect's action set —
                 // the shape the grid reads back cell by cell.
                 for (const [effect, actions] of [
                   ["allow", e.allow],
@@ -828,7 +828,7 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
                 payload: {
                   _tag: "AccessRulesReplaced",
                   resourceType: input.resourceType,
-                  items: input.entries.length,
+                  records: input.entries.length,
                 } as never,
               })
               yield* policies.bump(orgId)

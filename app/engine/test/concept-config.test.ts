@@ -3,7 +3,7 @@ import { describe, expect, it } from "@effect/vitest"
 import { Effect } from "effect"
 import { ConceptService } from "../services/ConceptService"
 import { FieldService } from "../services/FieldService"
-import { InstanceService } from "../services/InstanceService"
+import { RecordService } from "../services/RecordService"
 import { RelationService } from "../services/RelationService"
 import { newOrgId, testLayer } from "./harness"
 
@@ -24,36 +24,36 @@ describe("concept configuration (settings)", () => {
     Effect.gen(function* () {
       const concepts = yield* ConceptService
       const c = yield* concepts.create({ name: "Account" })
-      expect(c.instanceView).toBeNull() // new concepts have no stored layout
+      expect(c.recordView).toBeNull() // new concepts have no stored layout
 
       const tiles = [{ id: "a", contents: ["details", "notes"], x: 0, y: 0, w: 8, h: 4 }]
       const set = yield* concepts.setInstanceView(c.id, { tiles })
-      expect(set.instanceView?.tiles).toEqual(tiles)
+      expect(set.recordView?.tiles).toEqual(tiles)
       // Persisted: a fresh read returns the layout.
       const reread = yield* concepts.getById(c.id)
-      expect(reread.instanceView?.tiles).toEqual(tiles)
+      expect(reread.recordView?.tiles).toEqual(tiles)
       // Other fields are untouched (it's not the identity update path).
       expect(reread.name).toBe("Account")
 
       const cleared = yield* concepts.setInstanceView(c.id, null)
-      expect(cleared.instanceView).toBeNull()
-      expect((yield* concepts.getById(c.id)).instanceView).toBeNull()
+      expect(cleared.recordView).toBeNull()
+      expect((yield* concepts.getById(c.id)).recordView).toBeNull()
     }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
 
-  it.effect("updateConcept renames a concept; existing instances still resolve by id", () =>
+  it.effect("updateConcept renames a concept; existing recordVersions still resolve by id", () =>
     Effect.gen(function* () {
       const concepts = yield* ConceptService
-      const instances = yield* InstanceService
+      const recordVersions = yield* RecordService
       const c = yield* concepts.create({ name: "Account", description: "The hub." })
-      const inst = yield* instances.create({ conceptId: c.id, fields: {} })
+      const inst = yield* recordVersions.create({ conceptId: c.id, fields: {} })
 
       const renamed = yield* concepts.update({ id: c.id, name: "Company", description: "The hub." })
       expect(renamed.id).toBe(c.id) // id stable
       expect(renamed.name).toBe("Company")
 
-      // The instance is unaffected — it points at the (unchanged) concept id.
-      const reread = yield* instances.get(inst.id)
+      // The record version is unaffected — it points at the (unchanged) concept id.
+      const reread = yield* recordVersions.get(inst.id)
       expect(reread.conceptId).toBe(c.id)
       // Old name no longer resolves; new name does, to the same id.
       const byOld = yield* concepts.getByName("Account").pipe(Effect.flip)
@@ -108,7 +108,7 @@ describe("concept configuration (settings)", () => {
     Effect.gen(function* () {
       const concepts = yield* ConceptService
       const fields = yield* FieldService
-      const instances = yield* InstanceService
+      const recordVersions = yield* RecordService
       const relations = yield* RelationService
 
       const account = yield* concepts.create({ name: "Account" })
@@ -121,14 +121,14 @@ describe("concept configuration (settings)", () => {
         config: { target: account.id, cardinality: "one" },
       })
 
-      const acc = yield* instances.create({ conceptId: account.id, fields: {} })
-      const d = yield* instances.create({ conceptId: deal.id, fields: {} })
+      const acc = yield* recordVersions.create({ conceptId: account.id, fields: {} })
+      const d = yield* recordVersions.create({ conceptId: deal.id, fields: {} })
 
-      // Linking to an Account instance satisfies the declared target id.
+      // Linking to an Account record version satisfies the declared target id.
       yield* relations.create({ fieldId: accountField.id, fromId: d.id, toId: acc.id })
 
       // Linking to a non-Account target (another Deal) is rejected.
-      const d2 = yield* instances.create({ conceptId: deal.id, fields: {} })
+      const d2 = yield* recordVersions.create({ conceptId: deal.id, fields: {} })
       const err = yield* relations
         .create({ fieldId: accountField.id, fromId: d.id, toId: d2.id })
         .pipe(Effect.flip)
@@ -150,12 +150,12 @@ describe("concept configuration (settings)", () => {
     }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
 
-  it.effect("deleteConcept is refused while live instances exist", () =>
+  it.effect("deleteConcept is refused while live recordVersions exist", () =>
     Effect.gen(function* () {
       const concepts = yield* ConceptService
-      const instances = yield* InstanceService
+      const recordVersions = yield* RecordService
       const c = yield* concepts.create({ name: "Account" })
-      yield* instances.create({ conceptName: "Account", fields: {} })
+      yield* recordVersions.create({ conceptName: "Account", fields: {} })
       const err = yield* concepts.purge(c.id).pipe(Effect.flip)
       expect(err._tag).toBe("ConceptInUse")
       // Concept still present.
@@ -327,14 +327,14 @@ describe("concept configuration (settings)", () => {
     }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
 
-  it.effect("purge is refused while an archived instance still references the concept", () =>
+  it.effect("purge is refused while an archived recordVersion still references the concept", () =>
     Effect.gen(function* () {
       const concepts = yield* ConceptService
-      const instances = yield* InstanceService
+      const recordVersions = yield* RecordService
       const c = yield* concepts.create({ name: "Ticket" })
-      const inst = yield* instances.create({ conceptId: c.id, fields: {} })
-      yield* instances.archive({ instanceId: inst.id, expectedVersion: inst.version })
-      // Even though the instance is archived (not "live"), it still pins the concept.
+      const inst = yield* recordVersions.create({ conceptId: c.id, fields: {} })
+      yield* recordVersions.archive({ recordVersionId: inst.id, expectedVersion: inst.version })
+      // Even though the record version is archived (not "live"), it still pins the concept.
       const err = yield* concepts.purge(c.id).pipe(Effect.flip)
       expect(err._tag).toBe("ConceptInUse")
     }).pipe(Effect.provide(testLayer(newOrgId()))),
@@ -365,7 +365,7 @@ describe("concept configuration (settings)", () => {
     Effect.gen(function* () {
       const concepts = yield* ConceptService
       const fields = yield* FieldService
-      const instances = yield* InstanceService
+      const recordVersions = yield* RecordService
       const relations = yield* RelationService
       const account = yield* concepts.create({ name: "Account" })
       const deal = yield* concepts.create({ name: "Deal" })
@@ -375,8 +375,8 @@ describe("concept configuration (settings)", () => {
         kind: "relation",
         config: { target: account.id, cardinality: "one" },
       })
-      const acc = yield* instances.create({ conceptId: account.id, fields: {} })
-      const d = yield* instances.create({ conceptId: deal.id, fields: {} })
+      const acc = yield* recordVersions.create({ conceptId: account.id, fields: {} })
+      const d = yield* recordVersions.create({ conceptId: deal.id, fields: {} })
       yield* relations.create({ fieldId: rel.id, fromId: d.id, toId: acc.id })
       const err = yield* fields.purge(rel.id).pipe(Effect.flip)
       expect(err._tag).toBe("FieldInUse")

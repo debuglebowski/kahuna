@@ -5,7 +5,7 @@ import type { FieldConfig, FieldKind } from "./types"
 /**
  * A scalar field validator, factored to work over any `{ name, kind, config }`
  * shape (a concept `Field` or an annotation `AnnotationField`). It mirrors the
- * private validator in `InstanceService` but is restricted to SCALAR kinds —
+ * private validator in `RecordService` but is restricted to SCALAR kinds —
  * relation/computed/file are rejected, since the annotation custom-field bag
  * only ever holds scalars. Kept dependency-free so both layers validate identically.
  */
@@ -86,7 +86,7 @@ const validateScalar = (
     case "relation":
     case "file":
     case "computed":
-    // richtext is instance-only — AnnotationFieldService's allowlist excludes it.
+    // richtext is record version-only — AnnotationFieldService's allowlist excludes it.
     case "richtext":
       return fail(`field "${def.name}" kind "${def.kind}" is not allowed as a custom field`)
   }

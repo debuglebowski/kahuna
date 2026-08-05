@@ -21,15 +21,15 @@ type Sql = PgClient.PgClient
  * anywhere) and a field restriction is a PROJECTION (only at the use-case
  * boundary). A record restriction is neither — it decides which ROWS exist for
  * this caller, so filtering after the fetch would make `LIMIT` bound the wrong
- * set. `listInstances` runs with a 50k limit (`server/rpc.ts`), so a post-fetch
+ * set. `listRecords` runs with a 50k limit (`server/rpc.ts`), so a post-fetch
  * filter reports wrong counts and truncates the wrong rows.
  *
  * Every `AccessCondition` variant therefore has to become a predicate here. That
  * is why the DSL is small and deliberately not `SidebarCondition` — see the
  * comment on `AccessCondition`.
  *
- * The predicates below are written against a row source exposing `item_id` and
- * `state`, which both `findInstances` branches satisfy (the versioned branch's
+ * The predicates below are written against a row source exposing `record_id` and
+ * `state`, which both `findRecords` branches satisfy (the versioned branch's
  * outer `head` subquery selects `*`).
  */
 
@@ -50,9 +50,9 @@ const compileCondition = (
 ): Statement.Fragment => {
   switch (condition.kind) {
     case "actorIs":
-      // The creator lives on the LINEAGE (`items.created_by`), not the version row:
+      // The creator lives on the LINEAGE (`records.created_by`), not the version row:
       // publishing a new version must not change who created the record.
-      return sql`item_id IN (SELECT id FROM items WHERE created_by = ${actorId})`
+      return sql`record_id IN (SELECT id FROM records WHERE created_by = ${actorId})`
     case "fieldIs":
       // Two shapes in one predicate, because a `multiple` user field stores an
       // array while a single one stores a scalar — and the field's `config` is not
@@ -66,7 +66,7 @@ const compileCondition = (
         OR state->${condition.fieldId} @> ${JSON.stringify([actorId])}::jsonb)`
     case "where":
       // Containment — same operator the `where` option already uses, so it rides
-      // the existing `instances_state_gin` index.
+      // the existing `record_versions_state_gin` index.
       return sql`state @> ${sql.json(condition.state)}`
     case "all": {
       // Vacuous truth, matching `matchesCondition`: AND of nothing is TRUE.
@@ -85,9 +85,9 @@ const compileCondition = (
 
 /** The rule's own row predicate: its resource target AND its condition. */
 const compileRule = (sql: Sql, rule: AccessRule, actorId: string): Statement.Fragment => {
-  // A rule naming one record (`resource_id` = an items.id) restricts to that
+  // A rule naming one record (`resource_id` = an records.id) restricts to that
   // lineage; one scoped only by concept applies to every record in it.
-  const target = rule.resourceId !== null ? sql`item_id = ${rule.resourceId}` : sql`TRUE`
+  const target = rule.resourceId !== null ? sql`record_id = ${rule.resourceId}` : sql`TRUE`
   if (rule.condition === null) return target
   return sql`(${target} AND ${compileCondition(sql, rule.condition, actorId)})`
 }
@@ -114,7 +114,7 @@ export const compileRecordFilter = (
 ): CompiledFilter => {
   if (policy.unrestricted) return "all"
   // `recordRulesForConcept`, NOT `rulesFor`: a rule naming ONE record must be kept
-  // and compiled to `item_id = …`, not dropped for failing to match a resource we
+  // and compiled to `record_id = …`, not dropped for failing to match a resource we
   // are not asking about. See the comment on `recordRulesForConcept`.
   const rules = recordRulesForConcept(policy, "view", conceptId)
   const denies = rules.filter((r) => r.effect === "deny")
@@ -152,7 +152,7 @@ export const compileRecordFilter = (
  *
  * `"none"` becomes `AND FALSE` rather than a short-circuit so callers keep ONE
  * code path — the planner drops the scan anyway, and a second early-return branch
- * in `findInstances` is exactly where a future edit would forget the filter.
+ * in `findRecords` is exactly where a future edit would forget the filter.
  */
 export const filterFragment = (sql: Sql, filter: CompiledFilter): Statement.Fragment => {
   if (filter === "all") return sql``

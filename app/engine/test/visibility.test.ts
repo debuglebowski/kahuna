@@ -10,9 +10,9 @@ import {
 } from "../domain/visibility"
 import { ConceptService } from "../services/ConceptService"
 import { FieldService } from "../services/FieldService"
-import { InstanceService } from "../services/InstanceService"
 import type { OrgContext } from "../services/OrgContext"
 import { QueryService } from "../services/QueryService"
+import { RecordService } from "../services/RecordService"
 import { RelationService } from "../services/RelationService"
 import { newOrgId, ordinaryMember, testLayer } from "./harness"
 
@@ -29,15 +29,15 @@ const seedRestricted = () =>
   Effect.gen(function* () {
     const concepts = yield* ConceptService
     const fields = yield* FieldService
-    const instances = yield* InstanceService
+    const recordVersions = yield* RecordService
     const concept = yield* concepts.create({ name: `Secret ${randomUUID().slice(0, 6)}` })
     const field = yield* fields.addField({ conceptId: concept.id, name: "Amount", kind: "text" })
-    const inst = yield* instances.create({
+    const inst = yield* recordVersions.create({
       conceptId: concept.id,
       fields: { [field.id]: "9000" },
     })
     yield* concepts.setVisibility(concept.id, "admin")
-    return { conceptId: concept.id, slug: concept.slug, instance: inst, fieldId: field.id }
+    return { conceptId: concept.id, slug: concept.slug, recordVersion: inst, fieldId: field.id }
   })
 
 describe("concept read visibility", () => {
@@ -93,16 +93,18 @@ describe("concept read visibility", () => {
       Effect.gen(function* () {
         const concepts = yield* ConceptService
         const query = yield* QueryService
-        const instances = yield* InstanceService
+        const recordVersions = yield* RecordService
         const listed = yield* concepts.list()
         const byId = yield* Effect.either(concepts.getByIdForRead(seeded.conceptId))
         const bySlug = yield* Effect.either(concepts.getBySlug(seeded.slug))
-        const rows = yield* Effect.either(query.findInstances({ conceptId: seeded.conceptId }))
-        const one = yield* Effect.either(instances.get(seeded.instance.id))
-        const item = yield* Effect.either(instances.getItem(seeded.instance.itemId))
-        const versions = yield* Effect.either(instances.listVersions(seeded.instance.itemId))
-        const single = yield* Effect.either(instances.singleRecordOf(seeded.conceptId))
-        return { listed, byId, bySlug, rows, one, item, versions, single }
+        const rows = yield* Effect.either(query.findRecords({ conceptId: seeded.conceptId }))
+        const one = yield* Effect.either(recordVersions.get(seeded.recordVersion.id))
+        const record = yield* Effect.either(recordVersions.getRecord(seeded.recordVersion.recordId))
+        const versions = yield* Effect.either(
+          recordVersions.listVersions(seeded.recordVersion.recordId),
+        )
+        const single = yield* Effect.either(recordVersions.singleRecordOf(seeded.conceptId))
+        return { listed, byId, bySlug, rows, one, record, versions, single }
       }).pipe(Effect.provide(testLayer(orgId, "member-user", "member"))),
     )
 
@@ -115,8 +117,8 @@ describe("concept read visibility", () => {
     expect(asMember.rows._tag).toBe("Left")
     expect(asMember.one._tag).toBe("Left")
     if (asMember.one._tag === "Left")
-      expect((asMember.one.left as { _tag: string })._tag).toBe("InstanceNotFound")
-    expect(asMember.item._tag).toBe("Left")
+      expect((asMember.one.left as { _tag: string })._tag).toBe("RecordVersionNotFound")
+    expect(asMember.record._tag).toBe("Left")
     expect(asMember.versions._tag).toBe("Left")
     expect(asMember.single._tag).toBe("Left")
 
@@ -125,13 +127,13 @@ describe("concept read visibility", () => {
       Effect.gen(function* () {
         const concepts = yield* ConceptService
         const query = yield* QueryService
-        const instances = yield* InstanceService
+        const recordVersions = yield* RecordService
         return {
           listed: (yield* concepts.list()).map((c) => c.id),
           byId: (yield* concepts.getByIdForRead(seeded.conceptId)).id,
-          rows: (yield* query.findInstances({ conceptId: seeded.conceptId })).length,
-          value: (yield* instances.get(seeded.instance.id)).state[seeded.fieldId],
-          versions: (yield* instances.listVersions(seeded.instance.itemId)).length,
+          rows: (yield* query.findRecords({ conceptId: seeded.conceptId })).length,
+          value: (yield* recordVersions.get(seeded.recordVersion.id)).state[seeded.fieldId],
+          versions: (yield* recordVersions.listVersions(seeded.recordVersion.recordId)).length,
         }
       }).pipe(
         Effect.provide(testLayer(orgId, "admin-user", "member", unrestrictedPolicy("admin-user"))),
@@ -150,11 +152,11 @@ describe("concept read visibility", () => {
       Effect.gen(function* () {
         const concepts = yield* ConceptService
         const fields = yield* FieldService
-        const instances = yield* InstanceService
+        const recordVersions = yield* RecordService
         const c = yield* concepts.create({ name: `Open ${randomUUID().slice(0, 6)}` })
         const f = yield* fields.addField({ conceptId: c.id, name: "Note", kind: "text" })
-        const i = yield* instances.create({ conceptId: c.id, fields: { [f.id]: "hello" } })
-        return { conceptId: c.id, instanceId: i.id, fieldId: f.id }
+        const i = yield* recordVersions.create({ conceptId: c.id, fields: { [f.id]: "hello" } })
+        return { conceptId: c.id, recordVersionId: i.id, fieldId: f.id }
       }).pipe(Effect.provide(testLayer(orgId, "seed", "system"))),
     )
 
@@ -162,11 +164,11 @@ describe("concept read visibility", () => {
       Effect.gen(function* () {
         const concepts = yield* ConceptService
         const query = yield* QueryService
-        const instances = yield* InstanceService
+        const recordVersions = yield* RecordService
         return {
           listed: (yield* concepts.list()).map((c) => c.id),
-          rows: (yield* query.findInstances({ conceptId: open.conceptId })).length,
-          value: (yield* instances.get(open.instanceId)).state[open.fieldId],
+          rows: (yield* query.findRecords({ conceptId: open.conceptId })).length,
+          value: (yield* recordVersions.get(open.recordVersionId)).state[open.fieldId],
           visibility: (yield* concepts.getByIdForRead(open.conceptId)).visibility,
         }
       }).pipe(
@@ -185,9 +187,9 @@ describe("concept read visibility", () => {
       Effect.gen(function* () {
         const concepts = yield* ConceptService
         const fields = yield* FieldService
-        const instances = yield* InstanceService
+        const recordVersions = yield* RecordService
         const secret = yield* concepts.create({ name: `Vault ${randomUUID().slice(0, 6)}` })
-        const secretRec = yield* instances.create({ conceptId: secret.id, fields: {} })
+        const secretRec = yield* recordVersions.create({ conceptId: secret.id, fields: {} })
         const open = yield* concepts.create({ name: `Doc ${randomUUID().slice(0, 6)}` })
         const link = yield* fields.addField({
           conceptId: open.id,
@@ -195,9 +197,9 @@ describe("concept read visibility", () => {
           kind: "relation",
           config: { target: secret.id },
         })
-        const openRec = yield* instances.create({ conceptId: open.id, fields: {} })
+        const openRec = yield* recordVersions.create({ conceptId: open.id, fields: {} })
         yield* concepts.setVisibility(secret.id, "admin")
-        return { fieldId: link.id, fromId: openRec.id, toItemId: secretRec.itemId }
+        return { fieldId: link.id, fromId: openRec.id, toRecordId: secretRec.recordId }
       }).pipe(Effect.provide(testLayer(orgId, "seed", "system"))),
     )
 
@@ -208,7 +210,7 @@ describe("concept read visibility", () => {
           relations.create({
             fieldId: setup.fieldId,
             fromId: setup.fromId,
-            toItemId: setup.toItemId,
+            toRecordId: setup.toRecordId,
           }),
         )
       }).pipe(Effect.provide(testLayer(orgId, "member-user", "member"))),
@@ -222,7 +224,7 @@ describe("concept read visibility", () => {
         return yield* relations.create({
           fieldId: setup.fieldId,
           fromId: setup.fromId,
-          toItemId: setup.toItemId,
+          toRecordId: setup.toRecordId,
         })
       }).pipe(
         Effect.provide(testLayer(orgId, "admin-user", "member", unrestrictedPolicy("admin-user"))),
@@ -268,11 +270,11 @@ describe("field read visibility", () => {
     Effect.gen(function* () {
       const concepts = yield* ConceptService
       const fields = yield* FieldService
-      const instances = yield* InstanceService
+      const recordVersions = yield* RecordService
       const concept = yield* concepts.create({ name: `Staff ${randomUUID().slice(0, 6)}` })
       const name = yield* fields.addField({ conceptId: concept.id, name: "Name", kind: "text" })
       const salary = yield* fields.addField({ conceptId: concept.id, name: "Salary", kind: "text" })
-      const rec = yield* instances.create({
+      const rec = yield* recordVersions.create({
         conceptId: concept.id,
         fields: { [name.id]: "Ada", [salary.id]: "250000" },
       })
@@ -296,7 +298,7 @@ describe("field read visibility", () => {
 
   it("THE DATA-LOSS GUARD: a member's edit must not erase a hidden field", async () => {
     // This is why the projection lives at the use-case boundary and NOT in
-    // `toInstance`: `update` reads current state through the mapper, folds the patch
+    // `toRecordVersion`: `update` reads current state through the mapper, folds the patch
     // onto it, and writes the result back. A filter there would delete the salary.
     const orgId = newOrgId()
     const f = await Effect.runPromise(
@@ -305,10 +307,10 @@ describe("field read visibility", () => {
 
     const updated = await Effect.runPromise(
       Effect.gen(function* () {
-        const instances = yield* InstanceService
-        const cur = yield* instances.get(f.rec.id)
-        return yield* instances.update({
-          instanceId: f.rec.id,
+        const recordVersions = yield* RecordService
+        const cur = yield* recordVersions.get(f.rec.id)
+        return yield* recordVersions.update({
+          recordVersionId: f.rec.id,
           expectedVersion: cur.version,
           patch: { [f.nameId]: "Grace" },
         })
@@ -321,8 +323,8 @@ describe("field read visibility", () => {
     // Read it back as SYSTEM: the hidden value must still be there.
     const raw = await Effect.runPromise(
       Effect.gen(function* () {
-        const instances = yield* InstanceService
-        return (yield* instances.get(f.rec.id)).state
+        const recordVersions = yield* RecordService
+        return (yield* recordVersions.get(f.rec.id)).state
       }).pipe(Effect.provide(testLayer(orgId, "seed", "system"))),
     )
     expect(raw[f.salaryId]).toBe("250000")
@@ -351,8 +353,10 @@ describe("field read visibility", () => {
 
     const denied = await Effect.runPromise(
       Effect.gen(function* () {
-        const instances = yield* InstanceService
-        return yield* Effect.either(instances.create({ conceptId: setup.conceptId, fields: {} }))
+        const recordVersions = yield* RecordService
+        return yield* Effect.either(
+          recordVersions.create({ conceptId: setup.conceptId, fields: {} }),
+        )
       }).pipe(Effect.provide(testLayer(orgId, "member-user", "member"))),
     )
     expect(denied._tag).toBe("Left")
@@ -368,17 +372,17 @@ describe("field read visibility", () => {
     // A member reads it (which masks), then the projection is rebuilt from events.
     await Effect.runPromise(
       Effect.gen(function* () {
-        const instances = yield* InstanceService
-        yield* instances.get(f.rec.id)
+        const recordVersions = yield* RecordService
+        yield* recordVersions.get(f.rec.id)
       }).pipe(
         Effect.provide(testLayer(orgId, "member-user", "member", ordinaryMember("member-user"))),
       ),
     )
     const rebuilt = await Effect.runPromise(
       Effect.gen(function* () {
-        const instances = yield* InstanceService
-        yield* instances.rebuild(f.rec.id)
-        return (yield* instances.get(f.rec.id)).state
+        const recordVersions = yield* RecordService
+        yield* recordVersions.rebuild(f.rec.id)
+        return (yield* recordVersions.get(f.rec.id)).state
       }).pipe(Effect.provide(testLayer(orgId, "seed", "system"))),
     )
     expect(rebuilt[f.salaryId]).toBe("250000")
@@ -505,7 +509,7 @@ describe("access rules over the visibility default", () => {
  *
  * This was a real hole, found by reviewing the finished feature rather than by any
  * test: every read path was gated, and `update` / `archive` / `transition` / `purge` /
- * `discardDraft` / the item-level writes were not. A member who got `InstanceNotFound`
+ * `discardDraft` / the record-level writes were not. A member who got `RecordVersionNotFound`
  * on read could still overwrite the record's fields by id — the value was verified
  * TAMPERED in the database.
  *
@@ -519,10 +523,10 @@ describe("THE WRITE GATE: no writing what you cannot read", () => {
     Effect.gen(function* () {
       const concepts = yield* ConceptService
       const fields = yield* FieldService
-      const instances = yield* InstanceService
+      const recordVersions = yield* RecordService
       const concept = yield* concepts.create({ name: `Sealed ${randomUUID().slice(0, 6)}` })
       const field = yield* fields.addField({ conceptId: concept.id, name: "T", kind: "text" })
-      const inst = yield* instances.create({
+      const inst = yield* recordVersions.create({
         conceptId: concept.id,
         fields: { [field.id]: "original" },
       })
@@ -535,7 +539,7 @@ describe("THE WRITE GATE: no writing what you cannot read", () => {
     const f = await Effect.runPromise(seedRestrictedRecord().pipe(Effect.provide(testLayer(orgId))))
     const asMember = testLayer(orgId, "intruder", "member")
 
-    const attempt = <A>(eff: Effect.Effect<A, unknown, OrgContext | InstanceService>) =>
+    const attempt = <A>(eff: Effect.Effect<A, unknown, OrgContext | RecordService>) =>
       Effect.runPromise(
         eff.pipe(
           Effect.provide(asMember),
@@ -545,13 +549,13 @@ describe("THE WRITE GATE: no writing what you cannot read", () => {
       )
 
     // The read is refused …
-    expect(await attempt(Effect.flatMap(InstanceService, (i) => i.get(f.inst.id)))).toBe("blocked")
+    expect(await attempt(Effect.flatMap(RecordService, (i) => i.get(f.inst.id)))).toBe("blocked")
     // … so every write must be too.
     expect(
       await attempt(
-        Effect.flatMap(InstanceService, (i) =>
+        Effect.flatMap(RecordService, (i) =>
           i.update({
-            instanceId: f.inst.id,
+            recordVersionId: f.inst.id,
             expectedVersion: f.inst.version,
             patch: { [f.fieldId]: "TAMPERED" },
           }),
@@ -560,21 +564,19 @@ describe("THE WRITE GATE: no writing what you cannot read", () => {
     ).toBe("blocked")
     expect(
       await attempt(
-        Effect.flatMap(InstanceService, (i) =>
-          i.archive({ instanceId: f.inst.id, expectedVersion: f.inst.version }),
+        Effect.flatMap(RecordService, (i) =>
+          i.archive({ recordVersionId: f.inst.id, expectedVersion: f.inst.version }),
         ),
       ),
     ).toBe("blocked")
     expect(
-      await attempt(Effect.flatMap(InstanceService, (i) => i.purge({ instanceId: f.inst.id }))),
+      await attempt(Effect.flatMap(RecordService, (i) => i.purge({ recordVersionId: f.inst.id }))),
     ).toBe("blocked")
 
     // THE PROOF: the value is untouched. A "blocked" result that still wrote would
     // pass every assertion above.
     const after = await Effect.runPromise(
-      Effect.flatMap(InstanceService, (i) => i.get(f.inst.id)).pipe(
-        Effect.provide(testLayer(orgId)),
-      ),
+      Effect.flatMap(RecordService, (i) => i.get(f.inst.id)).pipe(Effect.provide(testLayer(orgId))),
     )
     expect(after.state[f.fieldId]).toBe("original")
   })
@@ -583,9 +585,9 @@ describe("THE WRITE GATE: no writing what you cannot read", () => {
     const orgId = newOrgId()
     const f = await Effect.runPromise(seedRestrictedRecord().pipe(Effect.provide(testLayer(orgId))))
     const updated = await Effect.runPromise(
-      Effect.flatMap(InstanceService, (i) =>
+      Effect.flatMap(RecordService, (i) =>
         i.update({
-          instanceId: f.inst.id,
+          recordVersionId: f.inst.id,
           expectedVersion: f.inst.version,
           patch: { [f.fieldId]: "legitimate" },
         }),
@@ -602,17 +604,20 @@ describe("THE WRITE GATE: no writing what you cannot read", () => {
       Effect.gen(function* () {
         const concepts = yield* ConceptService
         const fields = yield* FieldService
-        const instances = yield* InstanceService
+        const recordVersions = yield* RecordService
         const concept = yield* concepts.create({ name: `Open ${randomUUID().slice(0, 6)}` })
         const field = yield* fields.addField({ conceptId: concept.id, name: "T", kind: "text" })
-        const inst = yield* instances.create({ conceptId: concept.id, fields: { [field.id]: "a" } })
+        const inst = yield* recordVersions.create({
+          conceptId: concept.id,
+          fields: { [field.id]: "a" },
+        })
         return { fieldId: field.id, inst }
       }).pipe(Effect.provide(testLayer(orgId))),
     )
     const edited = await Effect.runPromise(
-      Effect.flatMap(InstanceService, (i) =>
+      Effect.flatMap(RecordService, (i) =>
         i.update({
-          instanceId: open.inst.id,
+          recordVersionId: open.inst.id,
           expectedVersion: open.inst.version,
           patch: { [open.fieldId]: "b" },
         }),

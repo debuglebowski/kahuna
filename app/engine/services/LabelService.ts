@@ -10,7 +10,7 @@ import { type LabelRow, toLabel } from "./rows"
  * Manages the org-wide, flat label vocabulary. A label is keyed by `id`; its
  * `name`/`color` are freely editable (everything else references the id, so a
  * rename needs no backfill) and it is soft-deleted so historical references on
- * instances / concepts stay resolvable. Mirrors `ConceptService`.
+ * record versions / concepts stay resolvable. Mirrors `ConceptService`.
  */
 export class LabelService extends Effect.Service<LabelService>()("engine/LabelService", {
   effect: Effect.gen(function* () {
@@ -43,7 +43,7 @@ export class LabelService extends Effect.Service<LabelService>()("engine/LabelSe
 
     /** Resolve a set of ids to their live labels, sorted alphabetically by name
      *  (missing / soft-deleted ids are dropped — mirrors how a deleted field
-     *  drops out of display while its id stays harmlessly on instance state). */
+     *  drops out of display while its id stays harmlessly on record version state). */
     const resolve = (ids: ReadonlyArray<string>) =>
       Effect.gen(function* () {
         if (ids.length === 0) return [] as ReadonlyArray<Label>
@@ -192,7 +192,7 @@ export class LabelService extends Effect.Service<LabelService>()("engine/LabelSe
         }),
       )
 
-    /** Permanently delete a label. Ids it ever owned on concepts/instances become
+    /** Permanently delete a label. Ids it ever owned on concepts/record versions become
      *  orphaned but harmless (read-time resolve drops anything not live). */
     const purge = (id: string) =>
       sql.withTransaction(

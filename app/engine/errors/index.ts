@@ -7,14 +7,17 @@ import { Schema } from "effect"
  */
 
 export class VersionConflict extends Schema.TaggedError<VersionConflict>()("VersionConflict", {
-  instanceId: Schema.String,
+  recordVersionId: Schema.String,
   expected: Schema.Number,
   actual: Schema.Number,
 }) {}
 
-export class InstanceNotFound extends Schema.TaggedError<InstanceNotFound>()("InstanceNotFound", {
-  instanceId: Schema.String,
-}) {}
+export class RecordVersionNotFound extends Schema.TaggedError<RecordVersionNotFound>()(
+  "RecordVersionNotFound",
+  {
+    recordVersionId: Schema.String,
+  },
+) {}
 
 export class ConceptNotFound extends Schema.TaggedError<ConceptNotFound>()("ConceptNotFound", {
   concept: Schema.String,
@@ -67,11 +70,14 @@ export class FieldInUse extends Schema.TaggedError<FieldInUse>()("FieldInUse", {
   relationCount: Schema.Number,
 }) {}
 
-/** An instance can't be hard-deleted while relation edges still reference it. */
-export class InstanceInUse extends Schema.TaggedError<InstanceInUse>()("InstanceInUse", {
-  instanceId: Schema.String,
-  relationCount: Schema.Number,
-}) {}
+/** An record version can't be hard-deleted while relation edges still reference it. */
+export class RecordVersionInUse extends Schema.TaggedError<RecordVersionInUse>()(
+  "RecordVersionInUse",
+  {
+    recordVersionId: Schema.String,
+    relationCount: Schema.Number,
+  },
+) {}
 
 export class IllegalTransition extends Schema.TaggedError<IllegalTransition>()(
   "IllegalTransition",
@@ -146,8 +152,8 @@ export class EventCorruption extends Schema.TaggedError<EventCorruption>()("Even
 
 // ── versioning ──────────────────────────────────────────────────────────────
 
-export class ItemNotFound extends Schema.TaggedError<ItemNotFound>()("ItemNotFound", {
-  itemId: Schema.String,
+export class RecordNotFound extends Schema.TaggedError<RecordNotFound>()("RecordNotFound", {
+  recordId: Schema.String,
 }) {}
 
 /** A published version is frozen: it can't be edited, re-published, or have its
@@ -155,13 +161,13 @@ export class ItemNotFound extends Schema.TaggedError<ItemNotFound>()("ItemNotFou
  *  — under `any`, published versions are amendable and this never fires for an
  *  edit (it still guards re-publish). */
 export class VersionFrozen extends Schema.TaggedError<VersionFrozen>()("VersionFrozen", {
-  instanceId: Schema.String,
+  recordVersionId: Schema.String,
 }) {}
 
-/** Only one draft may be open per item at a time — publish or discard it first. */
+/** Only one draft may be open per record at a time — publish or discard it first. */
 export class DraftAlreadyExists extends Schema.TaggedError<DraftAlreadyExists>()(
   "DraftAlreadyExists",
-  { itemId: Schema.String, draftInstanceId: Schema.String },
+  { recordId: Schema.String, draftInstanceId: Schema.String },
 ) {}
 
 /** A reference can't pin to a draft (or otherwise non-published) version. */
@@ -170,13 +176,16 @@ export class RelationPinToDraft extends Schema.TaggedError<RelationPinToDraft>()
   { versionId: Schema.String },
 ) {}
 
-/** A general reference can't resolve an item that has no published version yet
- *  (a brand-new item is not referenceable until its first publish). */
-export class ItemNotPublished extends Schema.TaggedError<ItemNotPublished>()("ItemNotPublished", {
-  itemId: Schema.String,
-}) {}
+/** A general reference can't resolve an record that has no published version yet
+ *  (a brand-new record is not referenceable until its first publish). */
+export class RecordNotPublished extends Schema.TaggedError<RecordNotPublished>()(
+  "RecordNotPublished",
+  {
+    recordId: Schema.String,
+  },
+) {}
 
-/** Versioning can't be disabled on a concept while items hold >1 version or an
+/** Versioning can't be disabled on a concept while records hold >1 version or an
  *  open draft — that would orphan versions with no defined "latest". */
 export class VersioningInUse extends Schema.TaggedError<VersioningInUse>()("VersioningInUse", {
   conceptId: Schema.String,
@@ -184,7 +193,7 @@ export class VersioningInUse extends Schema.TaggedError<VersioningInUse>()("Vers
 }) {}
 
 /** A single-record concept can hold only ONE record. Raised two ways: creating a
- *  second record on one, and switching the flag on while >1 live item exists
+ *  second record on one, and switching the flag on while >1 live record exists
  *  (which one would survive is not ours to guess — archive the rest first). */
 export class SingleRecordConflict extends Schema.TaggedError<SingleRecordConflict>()(
   "SingleRecordConflict",
@@ -196,7 +205,7 @@ export class SingleRecordConflict extends Schema.TaggedError<SingleRecordConflic
  *  whole concept (which cascades to the record at the use-case layer). */
 export class SingleRecordProtected extends Schema.TaggedError<SingleRecordProtected>()(
   "SingleRecordProtected",
-  { conceptId: Schema.String, instanceId: Schema.String },
+  { conceptId: Schema.String, recordVersionId: Schema.String },
 ) {}
 
 export class SidebarViewNotFound extends Schema.TaggedError<SidebarViewNotFound>()(
@@ -304,8 +313,8 @@ export class AutomationInvalid extends Schema.TaggedError<AutomationInvalid>()(
 ) {}
 
 /** A connector-managed concept (Linear ticket, Gmail email, …) owns its own
- *  schema + instances via integration sync; user-initiated mutations (rename,
- *  add/remove field, create/edit/delete instance) are rejected. The sync path
+ *  schema + record versions via integration sync; user-initiated mutations (rename,
+ *  add/remove field, create/edit/delete record version) are rejected. The sync path
  *  itself doesn't go through the guarded use-cases, so it's unaffected. */
 export class ManagedConceptReadonly extends Schema.TaggedError<ManagedConceptReadonly>()(
   "ManagedConceptReadonly",
@@ -315,12 +324,12 @@ export class ManagedConceptReadonly extends Schema.TaggedError<ManagedConceptRea
 export type EngineError =
   | VersionConflict
   | ManagedConceptReadonly
-  | InstanceNotFound
+  | RecordVersionNotFound
   | ConceptNotFound
   | ConceptNameConflict
   | ConceptInUse
   | FieldInUse
-  | InstanceInUse
+  | RecordVersionInUse
   | FieldConfigInvalid
   | FieldNameConflict
   | FieldNotFound
@@ -335,11 +344,11 @@ export type EngineError =
   | AttachmentNotFound
   | AttachmentTooLarge
   | EventCorruption
-  | ItemNotFound
+  | RecordNotFound
   | VersionFrozen
   | DraftAlreadyExists
   | RelationPinToDraft
-  | ItemNotPublished
+  | RecordNotPublished
   | VersioningInUse
   | SingleRecordConflict
   | SingleRecordProtected

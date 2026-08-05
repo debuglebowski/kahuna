@@ -8,7 +8,7 @@ import { AutomationService } from "../services/AutomationService"
 import { ConceptService } from "../services/ConceptService"
 import { EventStore } from "../services/EventStore"
 import { FieldService } from "../services/FieldService"
-import { InstanceService } from "../services/InstanceService"
+import { RecordService } from "../services/RecordService"
 import { newOrgId, testLayer } from "./harness"
 
 /** Orgs shared between a fixture-building layer and the layer that reads it back
@@ -256,7 +256,7 @@ describe("claimRun — the idempotency guard", () => {
         subjectId: null,
       })
       expect(first).not.toBeNull()
-      // THE guard: a duplicate delivery (two instances, an SSE replay) must not
+      // THE guard: a duplicate delivery (two record versions, an SSE replay) must not
       // act twice. Correctness can't depend on there being one process.
       const second = yield* automations.claimRun({
         automationId: a.id,
@@ -349,13 +349,13 @@ describe("the trace", () => {
     Effect.gen(function* () {
       const concepts = yield* ConceptService
       const fields = yield* FieldService
-      const instances = yield* InstanceService
+      const recordVersions = yield* RecordService
       const automations = yield* AutomationService
       const events = yield* EventStore
 
       const c = yield* concepts.create({ name: "Deal" })
       yield* fields.addField({ conceptId: c.id, name: "Stage", kind: "text" })
-      const inst = yield* instances.create({ conceptId: c.id, fields: {} })
+      const inst = yield* recordVersions.create({ conceptId: c.id, fields: {} })
       const a = yield* automations.create(baseInput)
 
       yield* automations.appendRanEvent({
@@ -375,7 +375,7 @@ describe("the trace", () => {
 
       // ...and the marker must NOT bump `version`, or it would collide with a
       // user's optimistic-concurrency check on their next save.
-      const after = yield* instances.get(inst.id)
+      const after = yield* recordVersions.get(inst.id)
       expect(after.version).toBe(inst.version)
     }).pipe(Effect.provide(testLayer(newOrgId()))),
   )

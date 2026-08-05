@@ -22,17 +22,17 @@ import type {
   Field,
   FieldConfig,
   FieldKind,
-  Instance,
-  InstanceGraphConfig,
-  InstanceState,
-  InstanceViewLayout,
-  InstanceViewPrefs,
-  InstanceViewPrefsBody,
-  InstanceViewTile,
-  Item,
+  KmRecord,
   Label,
   MemberDeactivation,
   Note,
+  RecordGraphConfig,
+  RecordState,
+  RecordVersion,
+  RecordViewLayout,
+  RecordViewPrefs,
+  RecordViewPrefsBody,
+  RecordViewTile,
   Relation,
   SidebarCondition,
   SidebarView,
@@ -62,16 +62,16 @@ export interface ConceptRow {
   readonly edit_reach: string | null
   readonly single_record: boolean
   readonly visibility: string | null
-  /** Org-wide default instance-detail layout (`{ tiles }`); null = built-in preset. */
-  readonly instance_view: unknown
-  /** Field id used as the instance display label; null = first-text-field fallback. */
+  /** Org-wide default record version-detail layout (`{ tiles }`); null = built-in preset. */
+  readonly record_view: unknown
+  /** Field id used as the record version display label; null = first-text-field fallback. */
   readonly title_field_id: string | null
   readonly created_at: Date
   readonly archived_at: Date | null
   /** Present only when ConceptService.list is called withCounts. */
   readonly item_count?: number | string
 }
-export interface ItemRow {
+export interface RecordRow {
   readonly id: string
   readonly org_id: string
   readonly concept_id: string
@@ -101,12 +101,12 @@ export interface FieldRow {
   readonly position: number | string
   readonly archived_at: Date | null
 }
-export interface InstanceRow {
+export interface RecordVersionRow {
   readonly id: string
   readonly org_id: string
   readonly concept_id: string
-  readonly item_id: string
-  readonly state: InstanceState
+  readonly record_id: string
+  readonly state: RecordState
   readonly version: number | string
   readonly version_status: string
   readonly version_seq: number | string
@@ -119,7 +119,7 @@ export interface RelationRow {
   readonly org_id: string
   readonly field_id: string
   readonly from_id: string
-  readonly to_item_id: string
+  readonly to_record_id: string
   readonly to_version_id: string | null
   readonly to_id: string
   readonly properties: Record<string, unknown>
@@ -214,7 +214,7 @@ const toDashboardBody = (raw: unknown): DashboardBody => {
  *
  * Only the three known values pass through; anything else (a future 'team:eng', a
  * typo) becomes 'admin' — restrictive — rather than org-visible. Shared by concepts,
- * fields, and the raw-column read gates in Instance/RelationService, so no two paths
+ * fields, and the raw-column read gates in Record version/RelationService, so no two paths
  * can coerce differently.
  */
 export const toVisibility = (raw: string | null): ConceptVisibility =>
@@ -245,14 +245,14 @@ export const toConcept = (r: ConceptRow): Concept => ({
   // 'admin' would silently hand admins material meant to be reachable ONLY via an
   // explicit rule (a personal dashboard, an individually-shared concept).
   visibility: toVisibility(r.visibility),
-  instanceView: toInstanceViewLayout(r.instance_view),
+  recordView: toInstanceViewLayout(r.record_view),
   titleFieldId: r.title_field_id,
   createdAt: r.created_at,
   archivedAt: r.archived_at,
-  ...(r.item_count == null ? {} : { itemCount: Number(r.item_count) }),
+  ...(r.item_count == null ? {} : { recordCount: Number(r.item_count) }),
 })
 
-export const toItem = (r: ItemRow): Item => ({
+export const toRecord = (r: RecordRow): KmRecord => ({
   id: r.id,
   orgId: r.org_id,
   conceptId: r.concept_id,
@@ -286,11 +286,11 @@ export const toField = (r: FieldRow): Field => ({
   archivedAt: r.archived_at,
 })
 
-export const toInstance = (r: InstanceRow): Instance => ({
+export const toRecordVersion = (r: RecordVersionRow): RecordVersion => ({
   id: r.id,
   orgId: r.org_id,
   conceptId: r.concept_id,
-  itemId: r.item_id,
+  recordId: r.record_id,
   state: r.state ?? {},
   version: Number(r.version),
   versionStatus: (r.version_status ?? "published") as VersionStatus,
@@ -305,7 +305,7 @@ export const toRelation = (r: RelationRow): Relation => ({
   orgId: r.org_id,
   fieldId: r.field_id,
   fromId: r.from_id,
-  toItemId: r.to_item_id,
+  toRecordId: r.to_record_id,
   toVersionId: r.to_version_id,
   toId: r.to_id,
   properties: r.properties ?? {},
@@ -317,7 +317,7 @@ export interface AttachmentRow {
   readonly id: string
   readonly org_id: string
   /** null ⇔ `bucket_id` is set (DB CHECK `attachments_one_owner`). */
-  readonly item_id: string | null
+  readonly record_id: string | null
   readonly bucket_id: string | null
   readonly bucket_shared: boolean
   readonly filename: string
@@ -332,7 +332,7 @@ export interface AttachmentRow {
 export const toAttachment = (r: AttachmentRow): Attachment => ({
   id: r.id,
   orgId: r.org_id,
-  itemId: r.item_id,
+  recordId: r.record_id,
   bucketId: r.bucket_id,
   bucketShared: r.bucket_shared,
   filename: r.filename,
@@ -406,7 +406,7 @@ export const toDashboard = (r: DashboardRow): Dashboard => ({
   updatedAt: r.updated_at,
 })
 
-export interface InstanceViewPrefsRow {
+export interface RecordViewPrefsRow {
   readonly id: string
   readonly org_id: string
   readonly user_id: string
@@ -415,13 +415,13 @@ export interface InstanceViewPrefsRow {
   readonly updated_at: Date
 }
 
-const EMPTY_VIEW_PREFS: InstanceViewPrefsBody = {
+const EMPTY_VIEW_PREFS: RecordViewPrefsBody = {
   defaultView: null,
   byConcept: {},
   customByConcept: {},
 }
 
-const toInstanceViewTile = (v: unknown): InstanceViewTile | null => {
+const toInstanceViewTile = (v: unknown): RecordViewTile | null => {
   if (!v || typeof v !== "object") return null
   const t = v as Record<string, unknown>
   const nums = [t.x, t.y, t.w, t.h]
@@ -441,14 +441,14 @@ const toInstanceViewTile = (v: unknown): InstanceViewTile | null => {
   }
 }
 
-const toInstanceViewLayout = (v: unknown): InstanceViewLayout | null => {
+const toInstanceViewLayout = (v: unknown): RecordViewLayout | null => {
   if (!v || typeof v !== "object") return null
   const tiles = (v as { tiles?: unknown }).tiles
   if (!Array.isArray(tiles)) return null
-  return { tiles: tiles.map(toInstanceViewTile).filter((t): t is InstanceViewTile => t !== null) }
+  return { tiles: tiles.map(toInstanceViewTile).filter((t): t is RecordViewTile => t !== null) }
 }
 
-const toInstanceGraphConfig = (v: unknown): InstanceGraphConfig | null => {
+const toInstanceGraphConfig = (v: unknown): RecordGraphConfig | null => {
   if (!v || typeof v !== "object") return null
   const c = v as Record<string, unknown>
   if (typeof c.depth !== "number" || !Number.isFinite(c.depth) || typeof c.layout !== "string")
@@ -465,7 +465,7 @@ const toInstanceGraphConfig = (v: unknown): InstanceGraphConfig | null => {
 /** Coerce a jsonb body into well-formed view prefs (defensive against drift):
  *  non-string override values and malformed tiles/configs are dropped, missing
  *  sections read as empty. */
-const toInstanceViewPrefsBody = (raw: unknown): InstanceViewPrefsBody => {
+const toInstanceViewPrefsBody = (raw: unknown): RecordViewPrefsBody => {
   if (!raw || typeof raw !== "object") return EMPTY_VIEW_PREFS
   const r = raw as {
     defaultView?: unknown
@@ -484,17 +484,17 @@ const toInstanceViewPrefsBody = (raw: unknown): InstanceViewPrefsBody => {
     customByConcept: Object.fromEntries(
       Object.entries(custom)
         .map(([k, v]) => [k, toInstanceViewLayout(v)] as const)
-        .filter((e): e is [string, InstanceViewLayout] => e[1] !== null),
+        .filter((e): e is [string, RecordViewLayout] => e[1] !== null),
     ),
     graphByConcept: Object.fromEntries(
       Object.entries(graph)
         .map(([k, v]) => [k, toInstanceGraphConfig(v)] as const)
-        .filter((e): e is [string, InstanceGraphConfig] => e[1] !== null),
+        .filter((e): e is [string, RecordGraphConfig] => e[1] !== null),
     ),
   }
 }
 
-export const toInstanceViewPrefs = (r: InstanceViewPrefsRow): InstanceViewPrefs => ({
+export const toRecordViewPrefs = (r: RecordViewPrefsRow): RecordViewPrefs => ({
   userId: r.user_id,
   body: toInstanceViewPrefsBody(r.body),
 })

@@ -2,13 +2,13 @@ import { PgClient } from "@effect/sql-pg"
 import { Clock, Effect } from "effect"
 import { type DecayParams, decay } from "../computed/decay"
 import { type MomentumParams, momentum } from "../computed/momentum"
-import type { Field, Instance } from "../domain/types"
+import type { Field, RecordVersion } from "../domain/types"
 import { FieldService } from "./FieldService"
 import { OrgContext } from "./OrgContext"
 
 /**
  * Read-time computed fields (decay, momentum). Never stored — merged into a
- * COPY of the instance using `now` from the Effect Clock (so they always
+ * COPY of the record version using `now` from the Effect Clock (so they always
  * reflect the current moment, and TestClock makes them deterministic in tests).
  */
 export class ComputedFields extends Effect.Service<ComputedFields>()("engine/ComputedFields", {
@@ -21,7 +21,12 @@ export class ComputedFields extends Effect.Service<ComputedFields>()("engine/Com
      * dateField. `forRel`/`onRel` are relation **field ids**; `dateField` is the
      * **field id** of the date field on the related concept.
      */
-    const gatherDates = (instanceId: string, forRel: string, onRel: string, dateField: string) =>
+    const gatherDates = (
+      recordVersionId: string,
+      forRel: string,
+      onRel: string,
+      dateField: string,
+    ) =>
       Effect.gen(function* () {
         const { orgId } = yield* OrgContext
         const rows = yield* sql<{ readonly occurred_on: string | null }>`
@@ -30,9 +35,9 @@ export class ComputedFields extends Effect.Service<ComputedFields>()("engine/Com
           JOIN relations r_on
             ON r_on.to_id = r_for.to_id AND r_on.org_id = r_for.org_id
             AND r_on.field_id = ${onRel} AND r_on.archived_at IS NULL
-          JOIN instances i
+          JOIN record_versions i
             ON i.id = r_on.from_id AND i.org_id = r_for.org_id AND i.archived_at IS NULL
-          WHERE r_for.org_id = ${orgId} AND r_for.from_id = ${instanceId}
+          WHERE r_for.org_id = ${orgId} AND r_for.from_id = ${recordVersionId}
             AND r_for.field_id = ${forRel} AND r_for.archived_at IS NULL
             AND (i.state->>${dateField}) IS NOT NULL`
         return rows
@@ -45,19 +50,19 @@ export class ComputedFields extends Effect.Service<ComputedFields>()("engine/Com
      * Fill in a concept's computed fields.
      *
      * `defs` is an optional pre-loaded field list. Without it this does one
-     * `listFields` PER INSTANCE, and `listInstances` decorates every row of a
+     * `listFields` PER INSTANCE, and `listRecords` decorates every row of a
      * concept (capped at 50 000) — a real N+1 on the hottest read in the app. Every
-     * row of one `listInstances` call shares a concept, so the caller can load the
+     * row of one `listRecords` call shares a concept, so the caller can load the
      * defs once and pass them here.
      */
-    const decorate = (instance: Instance, preloaded?: ReadonlyArray<Field>) =>
+    const decorate = (recordVersion: RecordVersion, preloaded?: ReadonlyArray<Field>) =>
       Effect.gen(function* () {
-        const defs = preloaded ?? (yield* fields.listFields(instance.conceptId))
+        const defs = preloaded ?? (yield* fields.listFields(recordVersion.conceptId))
         const computed = defs.filter((d) => d.kind === "computed")
-        if (computed.length === 0) return instance
+        if (computed.length === 0) return recordVersion
 
         const now = new Date(yield* Clock.currentTimeMillis)
-        const state = { ...instance.state }
+        const state = { ...recordVersion.state }
         for (const def of computed) {
           const params = def.config.params ?? {}
           // Relation/date refs are field ids, resolved at field-creation time.
@@ -66,15 +71,15 @@ export class ComputedFields extends Effect.Service<ComputedFields>()("engine/Com
           const dateField = params.dateField as string | undefined
           const dates =
             forRel && onRel && dateField
-              ? yield* gatherDates(instance.id, forRel, onRel, dateField)
+              ? yield* gatherDates(recordVersion.id, forRel, onRel, dateField)
               : []
           if (def.config.computedKind === "decay") {
-            state[def.id] = decay(dates, now, params as DecayParams, instance.createdAt)
+            state[def.id] = decay(dates, now, params as DecayParams, recordVersion.createdAt)
           } else if (def.config.computedKind === "momentum") {
             state[def.id] = momentum(dates, now, params as MomentumParams)
           }
         }
-        return { ...instance, state } satisfies Instance
+        return { ...recordVersion, state } satisfies RecordVersion
       })
 
     return { decorate } as const

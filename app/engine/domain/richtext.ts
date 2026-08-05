@@ -1,5 +1,5 @@
 /**
- * The rich-text `{ doc, text }` envelope shared by instance `richtext` fields
+ * The rich-text `{ doc, text }` envelope shared by record version `richtext` fields
  * and task descriptions: ProseMirror JSON plus extracted plain text. The stored
  * `text` is ALWAYS derived server-side (the client's copy is shape-checked but
  * never persisted), so filters/previews/labels can't be lied to.
@@ -30,7 +30,7 @@ export const isRichText = (v: unknown): v is RichTextValue => {
  *
  * An unlabelled mention contributes NOTHING, and in particular never its
  * `targetId`. Derived `text` is handed to any member who can read the host record
- * (`listInstances` returns it, `conditions.ts` filters on it), so an id here would
+ * (`listRecords` returns it, `conditions.ts` filters on it), so an id here would
  * publish the identity of a record the reader may not be allowed to see — and a
  * joinable one at that. The label is a different matter: it is already visible as
  * prose, which is the accepted trade (enforcement lives at the link).

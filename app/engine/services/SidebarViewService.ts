@@ -23,7 +23,7 @@ export class SidebarViewService extends Effect.Service<SidebarViewService>()(
       const defaults = yield* AccessDefaultsService
 
       /** Guarantee the org has at least one shared view by seeding the Default
-       *  if none exists: an untitled section holding the global nav items, then
+       *  if none exists: an untitled section holding the global nav records, then
        *  a "Dashboards" section pre-populated with the org's shared, non-hidden
        *  dashboards. Atomic (INSERT … WHERE NOT EXISTS), so concurrent reads
        *  never double-seed; a no-op once the org has any shared view. */

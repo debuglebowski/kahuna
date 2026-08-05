@@ -1,6 +1,6 @@
 import { PgClient } from "@effect/sql-pg"
 import { Effect } from "effect"
-import type { ConceptVisibility, EditReach, InstanceViewLayout } from "../domain/types"
+import type { ConceptVisibility, EditReach, RecordViewLayout } from "../domain/types"
 import { scopeCanReadConcept } from "../domain/visibility"
 import {
   ConceptInUse,
@@ -59,7 +59,7 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
      * Deliberately a SEPARATE function rather than a gate inside `getById`, because
      * `getById` is also what the write-side guards resolve through
      * (`ensureUnmanagedConcept`, `ensureWritablePatch`) and what every
-     * InstanceService mutation loads to check `versioningEnabled` / `editReach`.
+     * RecordService mutation loads to check `versioningEnabled` / `editReach`.
      * Gating it there would turn "you can't read this" into confusing write
      * failures on concepts a member legitimately writes.
      */
@@ -90,9 +90,9 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
       })
 
     /** Concepts ordered by name. Archived (archived_at set) are excluded unless
-     *  `includeArchived`. With `withCounts`, each concept carries `itemCount` (its
-     *  total instances, live + archived) — what blocks a purge — so the settings
-     *  UI can show "N items" on archived concepts and never silently strand them. */
+     *  `includeArchived`. With `withCounts`, each concept carries `recordCount` (its
+     *  total record versions, live + archived) — what blocks a purge — so the settings
+     *  UI can show "N records" on archived concepts and never silently strand them. */
     const list = (
       opts: { readonly includeArchived?: boolean; readonly withCounts?: boolean } = {},
     ) =>
@@ -101,13 +101,13 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
         const { orgId } = scope
         const liveOnly = opts.includeArchived ? sql`` : sql` AND archived_at IS NULL`
         // Count ITEMS, not version rows: a versioned concept counts distinct
-        // lineages (each item has ≥1 version); a non-versioned concept counts
-        // instances exactly as before (1:1, so the two coincide). Both still count
+        // lineages (each record has ≥1 version); a non-versioned concept counts
+        // record versions exactly as before (1:1, so the two coincide). Both still count
         // live + archived, so the count keeps blocking a concept purge correctly.
         const countCol = opts.withCounts
           ? sql`, (CASE WHEN c.versioning_enabled
-                    THEN (SELECT COUNT(DISTINCT i.item_id)::int FROM instances i WHERE i.org_id = c.org_id AND i.concept_id = c.id)
-                    ELSE (SELECT COUNT(*)::int FROM instances i WHERE i.org_id = c.org_id AND i.concept_id = c.id)
+                    THEN (SELECT COUNT(DISTINCT i.record_id)::int FROM record_versions i WHERE i.org_id = c.org_id AND i.concept_id = c.id)
+                    ELSE (SELECT COUNT(*)::int FROM record_versions i WHERE i.org_id = c.org_id AND i.concept_id = c.id)
                   END) AS item_count`
           : sql``
         // Unreadable concepts are FILTERED OUT, not an error: this is the read every
@@ -208,8 +208,8 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
       readonly staticLabelIds?: ReadonlyArray<string>
       readonly defaultLabelIds?: ReadonlyArray<string>
       // Toggle per-concept versioning. Enabling is always allowed (existing
-      // instances are already 1-version published items). Disabling is blocked
-      // while any item holds >1 version or an open draft.
+      // record versions are already 1-version published records). Disabling is blocked
+      // while any record holds >1 version or an open draft.
       readonly versioningEnabled?: boolean
       // How far back edits reach ('draft' | 'any'); only meaningful when
       // versioning is on. Unlike a versioning DISABLE this needs no guard in
@@ -227,14 +227,14 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
               ? current.versioningEnabled
               : input.versioningEnabled
           const editReach = input.editReach === undefined ? current.editReach : input.editReach
-          // Guard a disable: refuse if any item has multiple versions or a draft,
+          // Guard a disable: refuse if any record has multiple versions or a draft,
           // which would otherwise orphan versions with no defined "latest".
           if (current.versioningEnabled && versioningEnabled === false) {
             const multi = yield* sql<{ readonly count: number | string }>`
               SELECT COUNT(*)::int AS count FROM (
-                SELECT item_id FROM instances
+                SELECT record_id FROM record_versions
                 WHERE org_id = ${orgId} AND concept_id = ${input.id}
-                GROUP BY item_id
+                GROUP BY record_id
                 HAVING COUNT(*) > 1 OR bool_or(version_status = 'draft')
               ) x`
             const multiVersionItemCount = Number(multi[0]?.count ?? 0)
@@ -303,11 +303,11 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
         }),
       )
 
-    /** Set (or clear) this concept's org-wide default instance-detail layout.
-     *  `null` clears the column → instances render the built-in default preset.
+    /** Set (or clear) this concept's org-wide default record version-detail layout.
+     *  `null` clears the column → record versions render the built-in default preset.
      *  Presentational config (like graph layouts), so it emits no event. Not
      *  admin-gated at the RPC boundary — any member may shape the layout. */
-    const setInstanceView = (id: string, layout: InstanceViewLayout | null) =>
+    const setInstanceView = (id: string, layout: RecordViewLayout | null) =>
       sql.withTransaction(
         Effect.gen(function* () {
           const { orgId } = yield* OrgContext
@@ -316,7 +316,7 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
           // the body is an object, so JSON.stringify + ::jsonb is safe here.
           const json = layout ? JSON.stringify(layout) : null
           const rows = yield* sql<ConceptRow>`
-            UPDATE concepts SET instance_view = ${json}::jsonb
+            UPDATE concepts SET record_view = ${json}::jsonb
             WHERE org_id = ${orgId} AND id = ${id} RETURNING *`
           const row = rows[0]
           if (!row) return yield* Effect.fail(new ConceptNotFound({ concept: id }))
@@ -324,7 +324,7 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
         }),
       )
 
-    /** Set (or clear) the field whose value is this concept's instance display
+    /** Set (or clear) the field whose value is this concept's record version display
      *  label. `null` clears it (fallback to the first-text-field heuristic). Like
      *  `setInstanceView`, presentational config → emits no event. Validates the
      *  field belongs to a LIVE field of this concept (any kind; the picker limits
@@ -353,8 +353,8 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
     /** Flip the "single record" flag. NARROW BY DESIGN: it only writes the column
      *  and appends the event. The invariant it implies — that the one record
      *  always EXISTS — is not enforceable here, because creating a record needs
-     *  InstanceService, which depends on this service (a layer cycle). So the
-     *  only caller is `InstanceService.setConceptSingleRecord`, which owns the
+     *  RecordService, which depends on this service (a layer cycle). So the
+     *  only caller is `RecordService.setConceptSingleRecord`, which owns the
      *  transaction that flips the flag and creates/guards the record together.
      *
      *  Do NOT call this directly from a use-case and do NOT re-expose the flag
@@ -423,7 +423,7 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
       )
 
     /** Archive a concept (soft, restorable): hides it from the live list but keeps
-     *  the row and its fields/instances intact. Idempotent on an archived concept. */
+     *  the row and its fields/record versions intact. Idempotent on an archived concept. */
     const archive = (id: string) =>
       sql.withTransaction(
         Effect.gen(function* () {
@@ -467,7 +467,7 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
         }),
       )
 
-    /** Permanently delete a concept and its field defs. Refused while ANY instance
+    /** Permanently delete a concept and its field defs. Refused while ANY record version
      *  (live or archived) still references it — archive or remove those first. */
     const purge = (id: string) =>
       sql.withTransaction(
@@ -475,25 +475,25 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
           const { orgId } = yield* OrgContext
           const concept = yield* getById(id)
           const counts = yield* sql<{ readonly count: number | string }>`
-            SELECT COUNT(*)::int AS count FROM instances
+            SELECT COUNT(*)::int AS count FROM record_versions
             WHERE org_id = ${orgId} AND concept_id = ${id}`
           const instanceCount = Number(counts[0]?.count ?? 0)
           if (instanceCount > 0) {
             return yield* Effect.fail(new ConceptInUse({ concept: concept.name, instanceCount }))
           }
-          // Mention index rows FK into both `fields` and `items`, so they go first.
-          // Zero instances means this concept's own OUTBOUND rows are already gone
-          // with their instances; what can remain is an INBOUND row — a record in
+          // Mention index rows FK into both `fields` and `records`, so they go first.
+          // Zero record versions means this concept's own OUTBOUND rows are already gone
+          // with their record versions; what can remain is an INBOUND row — a record in
           // another concept whose document still mentions one of these lineages.
           yield* sql`
             DELETE FROM mentions
             WHERE org_id = ${orgId}
               AND (from_field_id IN (SELECT id FROM fields WHERE org_id = ${orgId} AND concept_id = ${id})
-                   OR target_item_id IN (SELECT id FROM items WHERE org_id = ${orgId} AND concept_id = ${id}))`
+                   OR target_record_id IN (SELECT id FROM records WHERE org_id = ${orgId} AND concept_id = ${id}))`
           yield* sql`DELETE FROM fields WHERE org_id = ${orgId} AND concept_id = ${id}`
-          // Zero instances ⇒ any remaining items rows are empty lineages; clear
+          // Zero record versions ⇒ any remaining records rows are empty lineages; clear
           // them so the concept row's FK doesn't block the delete.
-          yield* sql`DELETE FROM items WHERE org_id = ${orgId} AND concept_id = ${id}`
+          yield* sql`DELETE FROM records WHERE org_id = ${orgId} AND concept_id = ${id}`
           // Record dashboards are per-concept templates (logical FK, no DB cascade);
           // drop them so they don't orphan invisibly when the concept goes.
           yield* sql`DELETE FROM dashboards

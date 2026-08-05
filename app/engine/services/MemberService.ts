@@ -1,16 +1,16 @@
 import { PgClient } from "@effect/sql-pg"
 import { Effect } from "effect"
-import type { InstanceViewPrefs, InstanceViewPrefsBody } from "../domain/types"
+import type { RecordViewPrefs, RecordViewPrefsBody } from "../domain/types"
 import { OrgContext } from "./OrgContext"
 import {
-  type InstanceViewPrefsRow,
   type MemberDeactivationRow,
-  toInstanceViewPrefs,
+  type RecordViewPrefsRow,
   toMemberDeactivation,
+  toRecordViewPrefs,
 } from "./rows"
 
 /**
- * Per-member rows: instance-view layout prefs + deactivation markers.
+ * Per-member rows: record version-view layout prefs + deactivation markers.
  *
  * Deactivation is the member analogue of archive: a marker row that the server
  * tier uses to block org access and the client uses to hide the user from
@@ -22,32 +22,32 @@ export class MemberService extends Effect.Service<MemberService>()("engine/Membe
   effect: Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
 
-    /** The CALLER's instance-view layout prefs; defaults if never saved. */
+    /** The CALLER's record version-view layout prefs; defaults if never saved. */
     const getViewPrefs = () =>
       Effect.gen(function* () {
         const { orgId, actor } = yield* OrgContext
-        const rows = yield* sql<InstanceViewPrefsRow>`
-          SELECT * FROM instance_view_prefs
+        const rows = yield* sql<RecordViewPrefsRow>`
+          SELECT * FROM record_view_prefs
           WHERE org_id = ${orgId} AND user_id = ${actor} LIMIT 1`
         return rows[0]
-          ? toInstanceViewPrefs(rows[0])
+          ? toRecordViewPrefs(rows[0])
           : ({
               userId: actor,
               body: { defaultView: null, byConcept: {}, customByConcept: {} },
-            } as InstanceViewPrefs)
+            } as RecordViewPrefs)
       })
 
     /** Upsert the CALLER's own view prefs (owner-only by construction). */
-    const updateViewPrefs = (body: InstanceViewPrefsBody) =>
+    const updateViewPrefs = (body: RecordViewPrefsBody) =>
       Effect.gen(function* () {
         const { orgId, actor } = yield* OrgContext
-        const rows = yield* sql<InstanceViewPrefsRow>`
-          INSERT INTO instance_view_prefs (org_id, user_id, body)
+        const rows = yield* sql<RecordViewPrefsRow>`
+          INSERT INTO record_view_prefs (org_id, user_id, body)
           VALUES (${orgId}, ${actor}, ${JSON.stringify(body)}::jsonb)
           ON CONFLICT (org_id, user_id)
           DO UPDATE SET body = EXCLUDED.body, updated_at = now()
           RETURNING *`
-        return toInstanceViewPrefs(rows[0]!)
+        return toRecordViewPrefs(rows[0]!)
       })
 
     /** All deactivation markers in the org (joined client-side with the member list). */
@@ -89,7 +89,7 @@ export class MemberService extends Effect.Service<MemberService>()("engine/Membe
       sql.withTransaction(
         Effect.gen(function* () {
           const { orgId } = yield* OrgContext
-          yield* sql`DELETE FROM instance_view_prefs
+          yield* sql`DELETE FROM record_view_prefs
             WHERE org_id = ${orgId} AND user_id = ${userId}`
           yield* sql`DELETE FROM member_deactivations
             WHERE org_id = ${orgId} AND user_id = ${userId}`

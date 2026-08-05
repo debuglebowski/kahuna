@@ -53,7 +53,7 @@ export type AccessResourceType =
 /**
  * The thing being acted on.
  *
- * For `record`, `id` is an **`items.id`** (the lineage), never an `instances.id`:
+ * For `record`, `id` is an **`records.id`** (the lineage), never an `record_versions.id`:
  * a versioned concept has N version rows per record, and a share must survive
  * someone publishing a new version. `conceptId` is carried alongside so a
  * concept-scoped rule (`share` on Deals) can match a specific record without a
@@ -72,7 +72,7 @@ export interface AccessResource {
  *
  * EVERY variant must be compilable to a SQL predicate, because record reads are
  * filtered inside the query rather than after the fetch (a post-fetch filter
- * breaks counts and truncation — `listInstances` runs with a 50k limit). If a
+ * breaks counts and truncation — `listRecords` runs with a 50k limit). If a
  * condition cannot become SQL, it does not belong in this union.
  *
  * Deliberately NOT `SidebarCondition`: that shape carries `changedTo`/`changedFrom`,
@@ -80,7 +80,7 @@ export interface AccessResource {
  * Reusing it would invite an uncompilable condition into a rule.
  */
 export type AccessCondition =
-  /** Records whose lineage was created by the caller (`items.created_by`). */
+  /** Records whose lineage was created by the caller (`records.created_by`). */
   | { readonly kind: "actorIs"; readonly who: "creator" }
   /** Records naming the caller in a `user`-kind field (Owner / AE / Assignee). */
   | { readonly kind: "fieldIs"; readonly fieldId: string }
@@ -178,7 +178,7 @@ export const rulesFor = (
  * Distinct from `rulesFor` on purpose. `rulesFor` answers "does this rule cover
  * THIS resource?", so it drops a rule naming a different id — correct for a single
  * check, and wrong for building a list filter, where a rule naming one row is
- * precisely what must be kept and turned into `item_id = …`.
+ * precisely what must be kept and turned into `record_id = …`.
  *
  * Getting this wrong silently drops per-record shares from list queries: the
  * recipient sees an empty list while the record opens fine by id. Both are covered

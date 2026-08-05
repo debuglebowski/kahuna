@@ -8,9 +8,9 @@ import {
   type EngineServices,
   emptyPolicy,
   FieldService,
-  InstanceService,
   type OrgContext,
   type PolicySet,
+  RecordService,
   unrestrictedPolicy,
 } from "#engine"
 import { runEngine, runEngineOrThrow, systemScope } from "./runtime"
@@ -422,7 +422,7 @@ describe("managed concepts: field-level read-only guard", () => {
     // A synced record (created by the sync path).
     const inst = await run(
       org,
-      Effect.flatMap(InstanceService, (i) =>
+      Effect.flatMap(RecordService, (i) =>
         i.create({ conceptId: concept.id, fields: { [synced.id]: "Hello" } }),
       ),
     )
@@ -721,7 +721,7 @@ describe("single-record concepts (use-case layer)", () => {
 /**
  * ── SUBJECT WRITE GATES ─────────────────────────────────────────────────────
  *
- * The annotation/attachment analogue of THE WRITE GATE (engine InstanceService).
+ * The annotation/attachment analogue of THE WRITE GATE (engine RecordService).
  *
  * Every READ of a note, task, file or activity feed was gated through
  * `assertSubjectReadable`, because those tables carry no concept column. The three
@@ -762,7 +762,7 @@ describe("writes cannot name a subject the caller may not read", () => {
     Effect.gen(function* () {
       const concepts = yield* ConceptService
       const fields = yield* FieldService
-      const instances = yield* InstanceService
+      const instances = yield* RecordService
       const sealed = yield* concepts.create({ name: `Sealed ${randomUUID().slice(0, 6)}` })
       const f = yield* fields.addField({ conceptId: sealed.id, name: "T", kind: "text" })
       const rec = yield* instances.create({ conceptId: sealed.id, fields: { [f.id]: "secret" } })
@@ -829,7 +829,7 @@ describe("the org-wide event reads don't leak restricted subjects", () => {
       Effect.gen(function* () {
         const concepts = yield* ConceptService
         const fields = yield* FieldService
-        const instances = yield* InstanceService
+        const instances = yield* RecordService
         const sealed = yield* concepts.create({ name: `Sealed ${randomUUID().slice(0, 6)}` })
         const sf = yield* fields.addField({ conceptId: sealed.id, name: "T", kind: "text" })
         const hidden = yield* instances.create({

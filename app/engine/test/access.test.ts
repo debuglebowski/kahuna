@@ -60,9 +60,9 @@ describe("access decisions", () => {
     // to the person editing it.
     const p = policy([
       rule({ id: "broad", effect: "deny", resourceType: "record", resourceId: null }),
-      rule({ id: "narrow", effect: "allow", resourceType: "record", resourceId: "item-1" }),
+      rule({ id: "narrow", effect: "allow", resourceType: "record", resourceId: "record-1" }),
     ])
-    expect(decide(p, "view", { type: "record", id: "item-1" }, true)).toBe(false)
+    expect(decide(p, "view", { type: "record", id: "record-1" }, true)).toBe(false)
   })
 
   it("a deny that carries a condition still denies when we cannot test it", () => {
@@ -198,7 +198,7 @@ describe("the presets reproduce today's behaviour", () => {
     const actions = new Set(byKey("member").rules.flatMap((r) => r.actions))
     expect(actions.has("create")).toBe(true)
     expect(actions.has("edit")).toBe(true)
-    // Instance archive/restore is any member today.
+    // Record version archive/restore is any member today.
     expect(actions.has("archive")).toBe(true)
     // Both are admin-gated at the RPC boundary today; granting either would widen.
     expect(actions.has("delete")).toBe(false)

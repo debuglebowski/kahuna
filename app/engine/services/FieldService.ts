@@ -19,12 +19,12 @@ export interface AddFieldInput {
   readonly managedBy?: string | null
 }
 
-/** Recognised `config.format` names per kind (value validators live in InstanceService). */
+/** Recognised `config.format` names per kind (value validators live in RecordService). */
 const TEXT_FORMATS = new Set(["email", "url", "phone", "slug", "color"])
 const NUMBER_FORMATS = new Set(["percent"])
 
 /** Kinds whose values have a meaningful equality for `config.unique`. Excludes
- *  bool (two items max), json/richtext (deep-equality on blobs), and the
+ *  bool (two records max), json/richtext (deep-equality on blobs), and the
  *  non-settable kinds (relation/file/computed). */
 const UNIQUE_KINDS = new Set<FieldKind>(["text", "number", "date", "enum", "user", "money"])
 
@@ -203,7 +203,7 @@ export class FieldService extends Effect.Service<FieldService>()("engine/FieldSe
     /**
      * Edit a field's name (the decorative label), config and/or formula. Only
      * `kind` is immutable — changing it would invalidate already-persisted
-     * values. The name is free to change because instance state is keyed by
+     * values. The name is free to change because record version state is keyed by
      * `id`, not by name.
      */
     /** Set who may READ this field's values. A narrow setter (like
@@ -253,20 +253,20 @@ export class FieldService extends Effect.Service<FieldService>()("engine/FieldSe
           yield* validateConfig({ conceptId: current.conceptId, name }, current.kind, config)
           // Flipping `unique` ON must not grandfather existing duplicates — the
           // write-time check would silently never fire for them. Versions of one
-          // item share values, so only cross-ITEM duplicates block the flip.
+          // record share values, so only cross-ITEM duplicates block the flip.
           // Archived rows count too: a value is only released by a purge.
           if (config.unique && !current.config.unique) {
-            // Text dedupes case-insensitively (mirrors InstanceService.checkUnique).
+            // Text dedupes case-insensitively (mirrors RecordService.checkUnique).
             const valueExpr =
               current.kind === "text" ? sql`lower(state->>${input.id})` : sql`state->${input.id}`
             const dupes = yield* sql<{ readonly count: number | string }>`
               SELECT COUNT(*)::int AS count FROM (
-                SELECT 1 FROM instances
+                SELECT 1 FROM record_versions
                 WHERE org_id = ${orgId} AND concept_id = ${current.conceptId}
                   AND state->${input.id} IS NOT NULL
                   AND state->${input.id} NOT IN ('null'::jsonb, '""'::jsonb)
                 GROUP BY ${valueExpr}
-                HAVING COUNT(DISTINCT item_id) > 1
+                HAVING COUNT(DISTINCT record_id) > 1
               ) AS dupes`
             const count = Number(dupes[0]?.count ?? 0)
             if (count > 0) {
@@ -274,7 +274,7 @@ export class FieldService extends Effect.Service<FieldService>()("engine/FieldSe
                 new FieldConfigInvalid({
                   conceptId: current.conceptId,
                   name,
-                  reason: `cannot enable unique: ${count} value(s) are duplicated across items`,
+                  reason: `cannot enable unique: ${count} value(s) are duplicated across records`,
                 }),
               )
             }
@@ -317,7 +317,7 @@ export class FieldService extends Effect.Service<FieldService>()("engine/FieldSe
      * Archive a field def (soft, restorable). The row is retained (archived_at set)
      * so its id stays resolvable to a name for any orphaned `state` keys /
      * historical events / relation edges that still reference it. Existing
-     * instance.state keeps the orphaned key harmlessly (validation is write-time).
+     * record version.state keeps the orphaned key harmlessly (validation is write-time).
      */
     const archive = (id: string) =>
       sql.withTransaction(
@@ -367,7 +367,7 @@ export class FieldService extends Effect.Service<FieldService>()("engine/FieldSe
 
     /** Permanently delete a field def. Refused while relation edges still
      *  reference it (the FK would block it anyway) — archive instead. Orphaned
-     *  instance.state keys for a purged field become unresolvable (raw id shows). */
+     *  record version.state keys for a purged field become unresolvable (raw id shows). */
     const purge = (id: string) =>
       sql.withTransaction(
         Effect.gen(function* () {

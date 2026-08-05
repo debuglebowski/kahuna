@@ -103,14 +103,14 @@ export {
   type GraphLayoutPositions,
   GraphLayoutService,
 } from "./services/GraphLayoutService"
-export { InstanceService } from "./services/InstanceService"
 export { LabelService } from "./services/LabelService"
 export { MemberService } from "./services/MemberService"
 export { type Backlink, MentionService } from "./services/MentionService"
 // Services
 export { OrgContext, type OrgScope, type ScopeRole } from "./services/OrgContext"
 export { PolicyService } from "./services/PolicyService"
-export { type FindInstancesInput, QueryService } from "./services/QueryService"
+export { type FindRecordsInput, QueryService } from "./services/QueryService"
+export { RecordService } from "./services/RecordService"
 export { type CreateRelationInput, RelationService } from "./services/RelationService"
 // `toVisibility` only: the rest of rows.ts is row-mapping internals.
 export { toVisibility } from "./services/rows"

@@ -9,7 +9,12 @@ import {
 } from "../domain/richtext"
 import { validateCustomFields } from "../domain/scalar"
 import type { AnnotationType, EngineEvent } from "../domain/types"
-import { AnnotationNotFound, FieldValidationError, ItemNotFound, VersionConflict } from "../errors"
+import {
+  AnnotationNotFound,
+  FieldValidationError,
+  RecordNotFound,
+  VersionConflict,
+} from "../errors"
 import { AnnotationFieldService } from "./AnnotationFieldService"
 import { EventStore } from "./EventStore"
 import { OrgContext } from "./OrgContext"
@@ -28,12 +33,12 @@ export interface ListTasksFilter {
 }
 
 /**
- * The annotation layer: notes + tasks that hang off an item lineage (or, for
+ * The annotation layer: notes + tasks that hang off an record (or, for
  * tasks, off nothing). CRUD-with-audit-events (the `LabelService` pattern): the
  * row is the source of truth and each mutation appends an `events` row for the
  * activity feed / live-sync — annotations are NOT folded projections. Their event
  * stream uses subject_kind "note"/"task" (subject_id = the annotation id), so they
- * never enter the instance reducer. Optimistic concurrency mirrors instances.
+ * never enter the record version reducer. Optimistic concurrency mirrors record_versions.
  */
 export class AnnotationService extends Effect.Service<AnnotationService>()(
   "engine/AnnotationService",
@@ -47,14 +52,14 @@ export class AnnotationService extends Effect.Service<AnnotationService>()(
 
       // ── shared helpers ──────────────────────────────────────────────────────
 
-      /** The annotated item must exist (when non-null). subjectId targets items.id. */
+      /** The annotated record must exist (when non-null). subjectId targets records.id. */
       const assertSubject = (subjectId: string | null) =>
         Effect.gen(function* () {
           if (subjectId === null) return
           const { orgId } = yield* OrgContext
           const rows = yield* sql<{ readonly id: string }>`
-            SELECT id FROM items WHERE org_id = ${orgId} AND id = ${subjectId} LIMIT 1`
-          if (!rows[0]) return yield* Effect.fail(new ItemNotFound({ itemId: subjectId }))
+            SELECT id FROM records WHERE org_id = ${orgId} AND id = ${subjectId} LIMIT 1`
+          if (!rows[0]) return yield* Effect.fail(new RecordNotFound({ recordId: subjectId }))
         })
 
       const validateCustom = (type: AnnotationType, input: Record<string, unknown> | undefined) =>
@@ -81,14 +86,14 @@ export class AnnotationService extends Effect.Service<AnnotationService>()(
           ? Effect.void
           : Effect.fail(
               new VersionConflict({
-                instanceId: row.id,
+                recordVersionId: row.id,
                 expected,
                 actual: Number(row.version),
               }),
             )
 
       /** Shape-check + cap a description envelope, re-deriving its plain text
-       *  server-side (the instance `richtext` rules). `null` clears. */
+       *  server-side (the record version `richtext` rules). `null` clears. */
       const validateDescription = (
         v: unknown,
       ): Effect.Effect<RichTextValue | null, FieldValidationError> => {
@@ -109,7 +114,7 @@ export class AnnotationService extends Effect.Service<AnnotationService>()(
 
       /**
        * Rebuild the `mentions` index for one task's description. Same rebuild-not-
-       * diff approach as the instance side (`InstanceService.reindexInstanceMentions`);
+       * diff approach as the record version side (`RecordService.reindexRecordVersionMentions`);
        * a task has exactly one rich-text home, so there is no per-field dimension
        * and `from_field_id` stays null.
        */
@@ -120,7 +125,7 @@ export class AnnotationService extends Effect.Service<AnnotationService>()(
           const refs = extractMentions(description.doc)
           if (refs.length === 0) return
           // A `record` mention whose target is gone indexes with a null
-          // `target_item_id` rather than failing the save — see the instance copy.
+          // `target_record_id` rather than failing the save — see the record version copy.
           const candidates = [
             ...new Set(
               refs.filter((r) => r.kind === "record" && isUuid(r.targetId)).map((r) => r.targetId),
@@ -129,19 +134,19 @@ export class AnnotationService extends Effect.Service<AnnotationService>()(
           const live = new Set<string>()
           if (candidates.length > 0) {
             const found = yield* sql<{ readonly id: string }>`
-              SELECT id FROM items WHERE org_id = ${orgId} AND ${sql.in("id", candidates)}`
+              SELECT id FROM records WHERE org_id = ${orgId} AND ${sql.in("id", candidates)}`
             for (const f of found) live.add(f.id)
           }
           for (const r of refs) {
-            const targetItemId = r.kind === "record" && live.has(r.targetId) ? r.targetId : null
+            const targetRecordId = r.kind === "record" && live.has(r.targetId) ? r.targetId : null
             yield* sql`
-              INSERT INTO mentions (org_id, from_annotation_id, kind, target_id, target_item_id)
-              VALUES (${orgId}, ${taskId}, ${r.kind}, ${r.targetId}, ${targetItemId})`
+              INSERT INTO mentions (org_id, from_annotation_id, kind, target_id, target_record_id)
+              VALUES (${orgId}, ${taskId}, ${r.kind}, ${r.targetId}, ${targetRecordId})`
           }
         })
 
       /** Label ids are stored raw and resolved to live labels at read time
-       *  (orphan-tolerant, mirroring instance `__labels`) — only shape-checked. */
+       *  (orphan-tolerant, mirroring record version `__labels`) — only shape-checked. */
       const coerceLabelIds = (v: ReadonlyArray<string>): ReadonlyArray<string> =>
         v.filter((id): id is string => typeof id === "string" && id.length > 0)
 
@@ -178,7 +183,7 @@ export class AnnotationService extends Effect.Service<AnnotationService>()(
             const { orgId, actor } = yield* OrgContext
             yield* assertSubject(input.subjectId)
             const custom = yield* validateCustom("note", input.customFields)
-            const subjectKind = input.subjectId === null ? null : "item"
+            const subjectKind = input.subjectId === null ? null : "record"
             const rows = yield* sql<AnnotationRow>`
               INSERT INTO annotations (org_id, type, subject_id, subject_kind, body, created_by, custom_fields)
               VALUES (${orgId}, 'note', ${input.subjectId}, ${subjectKind}, ${input.body}, ${actor}, ${sql.json(custom)})
@@ -267,7 +272,7 @@ export class AnnotationService extends Effect.Service<AnnotationService>()(
             const description = yield* validateDescription(input.description ?? null)
             const labelIds = coerceLabelIds(input.labelIds ?? [])
             const custom = yield* validateCustom("task", input.customFields)
-            const subjectKind = input.subjectId === null ? null : "item"
+            const subjectKind = input.subjectId === null ? null : "record"
             const dueAt = input.dueAt ?? null
             const rows = yield* sql<AnnotationRow>`
               INSERT INTO annotations
@@ -625,7 +630,7 @@ export class AnnotationService extends Effect.Service<AnnotationService>()(
 
       // ── reads ──────────────────────────────────────────────────────────────────
 
-      /** A subject's notes/tasks (per-item panel). subjectId = item lineage id. */
+      /** A subject's notes/tasks (per-record panel). subjectId = record id. */
       const listForSubject = (
         subjectId: string,
         opts: { readonly type?: AnnotationType; readonly includeArchived?: boolean } = {},
@@ -652,7 +657,7 @@ export class AnnotationService extends Effect.Service<AnnotationService>()(
           return rows.map(toNote)
         }).pipe(Effect.orDie)
 
-      /** Tasks, filterable — powers both the per-item panel (subjectId set) and the
+      /** Tasks, filterable — powers both the per-record panel (subjectId set) and the
        *  global "My Tasks" view (assignee/status/due). */
       const listTasks = (filter: ListTasksFilter = {}) =>
         Effect.gen(function* () {
@@ -679,10 +684,10 @@ export class AnnotationService extends Effect.Service<AnnotationService>()(
         }).pipe(Effect.orDie)
 
       /**
-       * The per-item activity feed: a union of (a) the lineage's own instance/item
+       * The per-record activity feed: a union of (a) the lineage's own record version/record
        * events and (b) its annotations' note/task/attachment events (incl. purge
        * tombstones, matched via the payload's host id once the row is gone).
-       * `subjectId` = the item lineage id. Newest first.
+       * `subjectId` = the record id. Newest first.
        */
       const readActivityForSubject = (
         subjectId: string,
@@ -692,24 +697,24 @@ export class AnnotationService extends Effect.Service<AnnotationService>()(
           const { orgId } = yield* OrgContext
           const limit = opts.limit ?? 100
           // On a versioned concept, opening a new version emits its own
-          // `InstanceCreated`; relabel those (version_seq > 1) to a synthetic
+          // `RecordVersionCreated`; relabel those (version_seq > 1) to a synthetic
           // `VersionCreated` so the feed reads "started a new version" instead of a
-          // second "created this item". The first version (seq 1) stays the create.
+          // second "created this record". The first version (seq 1) stays the create.
           const rows = yield* sql<EventRow>`
             SELECT
               e.id, e.org_id, e.occurred_at, e.actor, e.subject_kind, e.subject_id,
               CASE
-                WHEN e.subject_kind = 'instance' AND e.event_type = 'InstanceCreated'
+                WHEN e.subject_kind = 'recordVersion' AND e.event_type = 'RecordVersionCreated'
                      AND i.version_seq > 1 THEN 'VersionCreated'
                 ELSE e.event_type
               END AS event_type,
               e.payload
             FROM events e
-            LEFT JOIN instances i ON i.id = e.subject_id AND e.subject_kind = 'instance'
+            LEFT JOIN record_versions i ON i.id = e.subject_id AND e.subject_kind = 'recordVersion'
             WHERE e.org_id = ${orgId}
               AND (
-                (e.subject_kind IN ('instance', 'item') AND e.subject_id IN (
-                  SELECT id FROM instances WHERE org_id = ${orgId} AND item_id = ${subjectId}
+                (e.subject_kind IN ('recordVersion', 'record') AND e.subject_id IN (
+                  SELECT id FROM record_versions WHERE org_id = ${orgId} AND record_id = ${subjectId}
                   UNION SELECT ${subjectId}
                 ))
                 OR (e.subject_kind IN ('note', 'task') AND (
@@ -720,7 +725,7 @@ export class AnnotationService extends Effect.Service<AnnotationService>()(
                 ))
                 OR (e.subject_kind = 'attachment' AND (
                   e.subject_id IN (
-                    SELECT id FROM attachments WHERE org_id = ${orgId} AND item_id = ${subjectId}
+                    SELECT id FROM attachments WHERE org_id = ${orgId} AND record_id = ${subjectId}
                   )
                   OR e.payload->>'subjectId' = ${subjectId}
                 ))

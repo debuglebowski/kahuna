@@ -5,30 +5,30 @@ import type { ConceptRef } from "../domain/types"
 import { scopeConceptRead } from "../domain/visibility"
 import { ConceptService } from "./ConceptService"
 import { OrgContext } from "./OrgContext"
-import { type InstanceRow, toInstance } from "./rows"
+import { type RecordVersionRow, toRecordVersion } from "./rows"
 
 /** Identify the concept by id or name (exactly one), plus the query options. */
-export type FindInstancesInput = ConceptRef & {
+export type FindRecordsInput = ConceptRef & {
   /** JSONB containment filter: `state @> where` (keys are field ids). */
   readonly where?: Record<string, unknown>
-  /** Restrict to instances that are the `from` of a `fieldId` relation pointing at `toId`. */
+  /** Restrict to record versions that are the `from` of a `fieldId` relation pointing at `toId`. */
   readonly relatedToTo?: { readonly fieldId: string; readonly toId: string }
-  /** Restrict to instances that are the `to` of a `fieldId` relation coming from `fromId`. */
+  /** Restrict to record versions that are the `to` of a `fieldId` relation coming from `fromId`. */
   readonly relatedToFrom?: { readonly fieldId: string; readonly fromId: string }
   /** `field` is a field id (or `"created_at"`). */
   readonly orderBy?: { readonly field: string; readonly dir?: "asc" | "desc" }
   readonly limit?: number
-  /** Include archived (soft-deleted) instances too — defaults to live-only. */
+  /** Include archived (soft-deleted) record versions too — defaults to live-only. */
   readonly includeArchived?: boolean
 }
 
-/** Read-side: JSONB-filtered, relation-aware instance queries — always org-scoped. */
+/** Read-side: JSONB-filtered, relation-aware record version queries — always org-scoped. */
 export class QueryService extends Effect.Service<QueryService>()("engine/QueryService", {
   effect: Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
     const concepts = yield* ConceptService
 
-    const findInstances = (input: FindInstancesInput) =>
+    const findRecords = (input: FindRecordsInput) =>
       Effect.gen(function* () {
         const scope = yield* OrgContext
         const { orgId } = scope
@@ -70,40 +70,40 @@ export class QueryService extends Effect.Service<QueryService>()("engine/QuerySe
             : sql`state->>${input.orderBy.field}`
         const dir = input.orderBy?.dir === "asc" ? sql.unsafe("ASC") : sql.unsafe("DESC")
 
-        // Versioned concept ⇒ "head-only": one row per item (the latest published,
-        // non-archived version of a non-archived item). DISTINCT ON forces item_id
+        // Versioned concept ⇒ "head-only": one row per record (the latest published,
+        // non-archived version of a non-archived record). DISTINCT ON forces record_id
         // as the lead sort, so we dedupe in an inner query and re-sort/limit outside
-        // (LIMIT then bounds items, not versions). The non-versioned path below is
-        // left byte-for-byte unchanged. Item-archive is filtered via a subquery so
+        // (LIMIT then bounds records, not versions). The non-versioned path below is
+        // left byte-for-byte unchanged. Record-archive is filtered via a subquery so
         // the inner FROM stays a single table. The where/relation filters apply in
         // the OUTER query — they must test the HEAD row, not every version, or a
         // filter could resurrect a superseded version whose old state still matches.
         if (concept.versioningEnabled) {
           const itemLive = input.includeArchived
             ? sql``
-            : sql` AND item_id IN (SELECT id FROM items WHERE org_id = ${orgId} AND archived_at IS NULL)`
-          const rows = yield* sql<InstanceRow>`
+            : sql` AND record_id IN (SELECT id FROM records WHERE org_id = ${orgId} AND archived_at IS NULL)`
+          const rows = yield* sql<RecordVersionRow>`
             SELECT * FROM (
-              SELECT DISTINCT ON (item_id) * FROM instances
+              SELECT DISTINCT ON (record_id) * FROM record_versions
               WHERE org_id = ${orgId} AND concept_id = ${concept.id}
                 AND version_status = 'published' AND archived_at IS NULL${itemLive}
-              ORDER BY item_id, version_seq DESC
+              ORDER BY record_id, version_seq DESC
             ) head
             WHERE TRUE${whereExtra}${relExtra}${accessExtra}
             ORDER BY ${orderCol} ${dir}
             LIMIT ${limit}`
-          return rows.map(toInstance)
+          return rows.map(toRecordVersion)
         }
 
-        const rows = yield* sql<InstanceRow>`
-          SELECT * FROM instances
+        const rows = yield* sql<RecordVersionRow>`
+          SELECT * FROM record_versions
           WHERE org_id = ${orgId} AND concept_id = ${concept.id}${liveOnly}${whereExtra}${relExtra}${accessExtra}
           ORDER BY ${orderCol} ${dir}
           LIMIT ${limit}`
-        return rows.map(toInstance)
+        return rows.map(toRecordVersion)
       })
 
-    return { findInstances } as const
+    return { findRecords } as const
   }),
   dependencies: [ConceptService.Default],
 }) {}

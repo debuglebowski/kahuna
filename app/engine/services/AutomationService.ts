@@ -633,7 +633,7 @@ export class AutomationService extends Effect.Service<AutomationService>()(
 
       /**
        * THE idempotency guard. Insert the run row *before* acting; a duplicate
-       * delivery (two server instances, an SSE reconnect replay) loses the
+       * delivery (two server record versions, an SSE reconnect replay) loses the
        * `unique (automation_id, event_id)` race and gets `null` back, meaning
        * "someone else owns this event — stop".
        *
@@ -699,7 +699,7 @@ export class AutomationService extends Effect.Service<AutomationService>()(
 
       /** Append the `AutomationRan` marker onto the acted-on record's stream, so
        *  the record's own activity feed explains what happened to it. Rides the
-       *  instance stream WITHOUT bumping `version` (like `ComputedBandChanged`). */
+       *  record version stream WITHOUT bumping `version` (like `ComputedBandChanged`). */
       const appendRanEvent = (input: {
         readonly automationId: string
         readonly name: string
@@ -710,7 +710,7 @@ export class AutomationService extends Effect.Service<AutomationService>()(
       }) =>
         events.append({
           // With no record, the marker rides the automation's own stream.
-          subjectKind: input.subjectId ? "instance" : "automation",
+          subjectKind: input.subjectId ? "recordVersion" : "automation",
           subjectId: input.subjectId ?? input.automationId,
           eventType: "AutomationRan",
           payload: {

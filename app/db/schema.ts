@@ -18,7 +18,7 @@ import {
 /**
  * The engine meta-schema — the ENTIRE fixed schema. "Account", "Deal", etc. are
  * rows in `concepts`/`fields`, never tables. `events` is the source of truth;
- * `instances.state` / `relations` are projections derived from it.
+ * `record_versions.state` / `relations` are projections derived from it.
  *
  * `org_id` and `actor` are logical foreign keys into BetterAuth-owned identity
  * tables (organization.id / user.id), which are migrated separately — so no
@@ -43,24 +43,24 @@ export const concepts = pgTable(
     // icon name prefixed "lucide:" (e.g. "lucide:Building2"); null renders none.
     icon: text("icon"),
     // Optional display color (hex, from the same pill palette as labels); used
-    // to tint the concept wherever instances are visualised. Null = neutral.
+    // to tint the concept wherever record versions are visualised. Null = neutral.
     color: text("color"),
     // Connector-owned "managed concept" marker: a typed integration kind (e.g.
     // "linear", "google.gmail", "google.calendar") when this concept's schema +
-    // instances are owned by an integration sync, else null for a normal user
+    // record versions are owned by an integration sync, else null for a normal user
     // concept. Drives read-only guards (at the RPC boundary) and an opinionated
-    // instance detail view. Keyed by this kind, never by the concept name.
+    // record version detail view. Keyed by this kind, never by the concept name.
     managedBy: text("managed_by"),
     // Label-id arrays drawn from the org-wide `labels` vocabulary. `static` =
-    // inherited by every instance (read-time, never written per item); `default`
-    // = snapshotted onto each new instance's `state.__labels` at creation time.
+    // inherited by every record version (read-time, never written per record); `default`
+    // = snapshotted onto each new record version's `state.__labels` at creation time.
     // Stored as ids (not names) so a label rename needs no backfill.
     staticLabelIds: jsonb("static_label_ids").notNull().default(sql`'[]'::jsonb`),
     defaultLabelIds: jsonb("default_label_ids").notNull().default(sql`'[]'::jsonb`),
-    // Opt-in "Versioning": when true, this concept's items hold multiple draft→
-    // published versions (each a first-class `instances` row sharing an `items`
+    // Opt-in "Versioning": when true, this concept's records hold multiple draft→
+    // published versions (each a first-class `record_versions` row sharing an `records`
     // lineage), and references may pin a specific published version. When false
-    // (default) the concept behaves exactly as the plain 1-instance-per-item model.
+    // (default) the concept behaves exactly as the plain 1-record version-per-record model.
     versioningEnabled: boolean("versioning_enabled").notNull().default(false),
     // How far back edits reach on a versioned concept ('draft' | 'any'); only
     // meaningful when `versioning_enabled`. 'draft' (default) = a published
@@ -72,7 +72,7 @@ export const concepts = pgTable(
     // Opt-in "single record": when true this concept holds exactly ONE record —
     // always present (created in the same transaction that flips the flag) and
     // neither archivable nor purgeable while the flag is on. Enforced at the ITEM
-    // level (at most one live `items` lineage), which keeps it orthogonal to
+    // level (at most one live `records` lineage), which keeps it orthogonal to
     // `versioning_enabled`, where one lineage legitimately holds N version rows.
     // Makes the concept addressable without a uuid (routed at /c/<slug>).
     singleRecord: boolean("single_record").notNull().default(false),
@@ -87,20 +87,20 @@ export const concepts = pgTable(
     // one row read.
     //
     // Enforced INSIDE the engine — see ConceptService and the `assertConceptVisible`
-    // gate in InstanceService. Unknown values coerce to 'admin' (fail CLOSED), the
+    // gate in RecordService. Unknown values coerce to 'admin' (fail CLOSED), the
     // opposite polarity to `edit_reach`; see toConcept.
     visibility: text("visibility").notNull().default("visible"),
-    // Org-wide default detail layout for this concept's instances: a 12-col grid
+    // Org-wide default detail layout for this concept's record versions: a 12-col grid
     // of tiles (`{ tiles: [...] }`), the same shape as the view-prefs custom
     // layouts. Null = render the built-in default preset. Set in concept
-    // settings → Layout; every instance of the concept renders it (there is no
+    // settings → Layout; every record version of the concept renders it (there is no
     // per-user layout switch).
-    instanceView: jsonb("instance_view"),
-    // The field whose value is this concept's instance display label ("title").
+    recordView: jsonb("record_view"),
+    // The field whose value is this concept's record version display label ("title").
     // An explicit pick (any scalar field id) replaces the old "first text field"
     // heuristic; null falls back to it only for an as-yet-unconfigured concept.
     // For managed concepts the integration sets this and the UI locks it. No FK:
-    // the value lives in instance state regardless, so a dropped field still
+    // the value lives in record version state regardless, so a dropped field still
     // resolves (and avoids a delete-order constraint).
     titleFieldId: uuid("title_field_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -120,8 +120,8 @@ export const concepts = pgTable(
 
 /**
  * The org-wide, flat label vocabulary. A single label can be applied in three
- * scopes — concept-static, concept-default (see `concepts`), and per-item
- * (`instances.state.__labels`) — all drawing from this one list. Keyed by `id`
+ * scopes — concept-static, concept-default (see `concepts`), and per-record
+ * (`record_versions.state.__labels`) — all drawing from this one list. Keyed by `id`
  * (renameable `name`), soft-deleted so any id it ever owned stays resolvable.
  */
 export const labels = pgTable(
@@ -151,7 +151,7 @@ export const fields = pgTable(
     conceptId: uuid("concept_id")
       .notNull()
       .references(() => concepts.id),
-    // `id` is the authoritative key for instance.state / events / relation edges;
+    // `id` is the authoritative key for record version.state / events / relation edges;
     // `name` is a purely decorative, freely-renameable label.
     name: text("name").notNull(),
     kind: text("kind").notNull(),
@@ -197,28 +197,28 @@ export const fields = pgTable(
 )
 
 /**
- * The lineage row for a logical "item" — the stable identity that survives across
- * a concept's versions. Every `instances` row belongs to exactly one `items` row
- * (`instances.item_id`). For a non-versioned concept (or any legacy row) the
- * mapping is 1:1 (`items.id == instances.id`), so "latest published per item" is an
- * identity no-op. For a versioned concept, all of an item's draft→published
- * versions share one `items.id`. References point at `items.id` ("Latest") rather
- * than a specific instance, and whole-item archive lives here (`archived_at`).
+ * The lineage row for a logical "record" — the stable identity that survives across
+ * a concept's versions. Every `record_versions` row belongs to exactly one `records` row
+ * (`record_versions.record_id`). For a non-versioned concept (or any legacy row) the
+ * mapping is 1:1 (`records.id == record_versions.id`), so "latest published per record" is an
+ * identity no-op. For a versioned concept, all of a record's draft→published
+ * versions share one `records.id`. References point at `records.id` ("Latest") rather
+ * than a specific record version, and whole-record archive lives here (`archived_at`).
  */
-export const items = pgTable(
-  "items",
+export const records = pgTable(
+  "records",
   {
     id: uuid("id").primaryKey().defaultRandom(),
     orgId: text("org_id").notNull(),
     conceptId: uuid("concept_id")
       .notNull()
       .references(() => concepts.id),
-    // Whole-item (lineage-level) archive — hides every version from head lists.
-    // Distinct from per-version `instances.archived_at` (which hides one version,
-    // rolling the item's "Latest" back to the prior published version).
+    // Whole-record (lineage-level) archive — hides every version from head lists.
+    // Distinct from per-version `record_versions.archived_at` (which hides one version,
+    // rolling the record's "Latest" back to the prior published version).
     archivedAt: timestamp("archived_at", { withTimezone: true }),
     // Who created this lineage (logical fk → bauth_user.id, or a `system:*` actor
-    // for a sync). Lives HERE, not on `instances`: the lineage is what a person
+    // for a sync). Lives HERE, not on `record_versions`: the lineage is what a person
     // owns — publishing a new version must not change who created the record.
     //
     // Exists for the `actorIs: "creator"` access condition ("records I created"),
@@ -227,11 +227,11 @@ export const items = pgTable(
     createdBy: text("created_by"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("items_org_concept_idx").on(t.orgId, t.conceptId)],
+  (t) => [index("records_org_concept_idx").on(t.orgId, t.conceptId)],
 )
 
-export const instances = pgTable(
-  "instances",
+export const recordVersions = pgTable(
+  "record_versions",
   {
     id: uuid("id").primaryKey().defaultRandom(),
     orgId: text("org_id").notNull(),
@@ -239,10 +239,10 @@ export const instances = pgTable(
       .notNull()
       .references(() => concepts.id),
     // Lineage this version belongs to. Immutable. For non-versioned/legacy rows
-    // it equals `id` (1:1). All versions of one item share this value.
-    itemId: uuid("item_id")
+    // it equals `id` (1:1). All versions of one record share this value.
+    recordId: uuid("record_id")
       .notNull()
-      .references(() => items.id),
+      .references(() => records.id),
     state: jsonb("state").notNull().default(sql`'{}'::jsonb`),
     // `version` (bigint) is the optimistic-concurrency EVENT counter — unrelated
     // to product versioning below. Do not conflate.
@@ -257,18 +257,18 @@ export const instances = pgTable(
     archivedAt: timestamp("archived_at", { withTimezone: true }),
   },
   (t) => [
-    index("instances_org_concept_idx").on(t.orgId, t.conceptId),
+    index("record_versions_org_concept_idx").on(t.orgId, t.conceptId),
     // Supports `state @> {...}` containment filters (QueryService.where).
-    index("instances_state_gin").using("gin", sql`${t.state} jsonb_path_ops`),
-    // Head-only lists: the latest published, non-archived version per item.
-    index("instances_head_idx")
-      .on(t.orgId, t.conceptId, t.itemId, t.versionSeq.desc())
+    index("record_versions_state_gin").using("gin", sql`${t.state} jsonb_path_ops`),
+    // Head-only lists: the latest published, non-archived version per record.
+    index("record_versions_head_idx")
+      .on(t.orgId, t.conceptId, t.recordId, t.versionSeq.desc())
       .where(sql`${t.versionStatus} = 'published' AND ${t.archivedAt} IS NULL`),
-    // Lineage operations: list-versions, one-draft check, whole-item archive.
-    index("instances_item_idx").on(t.itemId),
+    // Lineage operations: list-versions, one-draft check, whole-record archive.
+    index("record_versions_record_idx").on(t.recordId),
     // A seq number is never reused within a lineage (allocation is MAX+1 over all
     // rows incl. archived) — this backstops "Latest" from ever being ambiguous.
-    uniqueIndex("instances_item_seq_uq").on(t.itemId, t.versionSeq),
+    uniqueIndex("record_versions_record_seq_uq").on(t.recordId, t.versionSeq),
   ],
 )
 
@@ -284,20 +284,20 @@ export const relations = pgTable(
       .references(() => fields.id),
     fromId: uuid("from_id")
       .notNull()
-      .references(() => instances.id),
+      .references(() => recordVersions.id),
     // The referenced lineage ("Latest"): always set. A `to_version_id` of null
-    // means the edge resolves to the item's current latest published version;
+    // means the edge resolves to the record's current latest published version;
     // a non-null `to_version_id` pins it to that specific published version.
-    toItemId: uuid("to_item_id")
+    toRecordId: uuid("to_record_id")
       .notNull()
-      .references(() => items.id),
-    toVersionId: uuid("to_version_id").references(() => instances.id),
-    // Legacy target column — superseded by (to_item_id, to_version_id). Kept as a
+      .references(() => records.id),
+    toVersionId: uuid("to_version_id").references(() => recordVersions.id),
+    // Legacy target column — superseded by (to_record_id, to_version_id). Kept as a
     // shadow for one release to de-risk the migration; dropped once all read paths
     // resolve via the new columns. New edges still populate it (= resolved target).
     toId: uuid("to_id")
       .notNull()
-      .references(() => instances.id),
+      .references(() => recordVersions.id),
     properties: jsonb("properties").notNull().default(sql`'{}'::jsonb`),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     archivedAt: timestamp("archived_at", { withTimezone: true }),
@@ -305,7 +305,7 @@ export const relations = pgTable(
   (t) => [
     index("relations_from_idx").on(t.orgId, t.fromId, t.fieldId),
     index("relations_to_idx").on(t.orgId, t.toId, t.fieldId),
-    index("relations_to_item_idx").on(t.orgId, t.toItemId, t.fieldId),
+    index("relations_to_record_idx").on(t.orgId, t.toRecordId, t.fieldId),
     index("relations_to_version_idx").on(t.orgId, t.toVersionId),
   ],
 )
@@ -314,10 +314,10 @@ export const relations = pgTable(
  * The `@` mention index — the inbound side of a reference written inside rich text.
  *
  * NOT the source of truth. The mention itself lives in the document
- * (`instances.state[fieldId].doc` or `annotations.description.doc`); this table is
+ * (`record_versions.state[fieldId].doc` or `annotations.description.doc`); this table is
  * derived from that doc and rebuilt on every write of it, so that "what mentions
  * this record?" is an indexed lookup rather than a scan of every document in the
- * org. The `instances_state_gin` index cannot serve that question: it is
+ * org. The `record_versions_state_gin` index cannot serve that question: it is
  * `jsonb_path_ops`, whose `@>` is not a recursive search, and a mention sits at
  * arbitrary depth inside `doc.content[…]`.
  *
@@ -328,21 +328,21 @@ export const relations = pgTable(
  * SOURCE is polymorphic over the two rich-text homes that are server-validated
  * (a dashboard note widget's mentions render and link but are NOT indexed — its
  * body is client-owned and never validated server-side):
- *   `from_instance_id` + `from_field_id` — a richtext field on one instance VERSION
+ *   `from_version_id` + `from_field_id` — a richtext field on one record version VERSION
  *   `from_annotation_id`                 — a task's description
  * Exactly one branch is set (`mentions_one_source`).
  *
  * TARGET is the node's `kind` + `target_id` verbatim. `target_id` is opaque TEXT,
  * not a typed FK: the six kinds point at four different tables plus a static nav
- * key that has no row at all. `target_item_id` is the one typed column — it mirrors
+ * key that has no row at all. `target_record_id` is the one typed column — it mirrors
  * `target_id` when, and only when, `kind = 'record'`, which gives the backlink query
- * a real uuid to index and lets an item purge cascade. Records are the only kind a
+ * a real uuid to index and lets a record purge cascade. Records are the only kind a
  * user can stand on, so they are the only kind needing a backlink query. A record
- * mention whose target has been purged indexes with a NULL `target_item_id`: it
+ * mention whose target has been purged indexes with a NULL `target_record_id`: it
  * stops producing a backlink (correct — the target is gone) while `kind`/`target_id`
  * still record what was meant.
  *
- * LIFECYCLE RULE — this table has FKs to `instances`, `fields`, `items` and
+ * LIFECYCLE RULE — this table has FKs to `record_versions`, `fields`, `records` and
  * `annotations`. Any DELETE from those four needs a mentions delete FIRST.
  */
 export const mentions = pgTable(
@@ -351,21 +351,21 @@ export const mentions = pgTable(
     id: uuid("id").primaryKey().defaultRandom(),
     orgId: text("org_id").notNull(),
     // ── source: exactly one branch, per the mentions_one_source CHECK ──
-    fromInstanceId: uuid("from_instance_id").references(() => instances.id),
+    fromVersionId: uuid("from_version_id").references(() => recordVersions.id),
     fromFieldId: uuid("from_field_id").references(() => fields.id),
     fromAnnotationId: uuid("from_annotation_id").references(() => annotations.id),
     // ── target ──
     kind: text("kind").notNull(),
     targetId: text("target_id").notNull(),
     // Set iff kind='record'; the indexed, cascadable form of `target_id`.
-    targetItemId: uuid("target_item_id").references(() => items.id),
+    targetRecordId: uuid("target_record_id").references(() => records.id),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     // THE backlink query: inbound record mentions of one lineage.
-    index("mentions_target_item_idx").on(t.orgId, t.targetItemId),
+    index("mentions_target_record_idx").on(t.orgId, t.targetRecordId),
     // Rebuild-on-write: delete this source's rows before re-inserting.
-    index("mentions_from_instance_idx").on(t.orgId, t.fromInstanceId),
+    index("mentions_from_version_idx").on(t.orgId, t.fromVersionId),
     index("mentions_from_annotation_idx").on(t.orgId, t.fromAnnotationId),
     // Non-record backlinks later ("what mentions this dashboard?") without a migration.
     index("mentions_target_idx").on(t.orgId, t.kind, t.targetId),
@@ -395,7 +395,7 @@ export const events = pgTable(
  * switched via the sidebar pager. `owner_id` null = org-shared (any member sees
  * and may edit it); non-null = personal to that user. The whole layout lives in
  * `body` (a serializable document: sections of ordered entry ids — dashboards
- * and placed global nav items) and is
+ * and placed global nav records) and is
  * **opaque to the engine** — never read or filtered server-side; the web client
  * resolves it against the live dashboards list. This keeps views off the event
  * store and sets up "define views in code" later.
@@ -427,13 +427,13 @@ export const sidebarViews = pgTable(
  * `owner_id` null = org-shared (any member sees/edits), non-null = personal. The
  * whole layout lives in `body` (a serializable document: widgets + their grid
  * coords/config) and is **opaque to the engine** — never read or filtered
- * server-side; the web client resolves it against the live concept/instance/event
+ * server-side; the web client resolves it against the live concept/record version/event
  * collections. This keeps dashboards off the event store.
  *
  * `kind` discriminates two flavours. A `'page'` dashboard (the default, and all
  * legacy rows) is a free-standing canvas with `concept_id` null — it appears in
  * the switcher and may be the org's home. A `'record'` dashboard is a TEMPLATE
- * owned by one concept (`concept_id` set): it renders a single instance at a time
+ * owned by one concept (`concept_id` set): it renders a single record version at a time
  * (every widget is implicitly about that record) and never shows in the switcher.
  * A concept may own several record dashboards; exactly one is `is_default` (the
  * one used when a reference doesn't name a specific view).
@@ -454,7 +454,7 @@ export const dashboards = pgTable(
     // switcher. Shared on org dashboards (anyone may flip it).
     hidden: boolean("hidden").notNull().default(false),
     // 'page' = free-standing canvas (legacy/default); 'record' = per-concept
-    // single-instance template. Drives switcher filtering + the home-seed guard.
+    // single-record version template. Drives switcher filtering + the home-seed guard.
     kind: text("kind").notNull().default("page"),
     // The owning concept for a 'record' dashboard (logical FK into concepts.id, no
     // DB FK — matches `concepts.title_field_id`). null for 'page' dashboards.
@@ -472,13 +472,13 @@ export const dashboards = pgTable(
 )
 
 /**
- * A member's instance-detail layout choices — which preset view to render, as a
+ * A member's record version-detail layout choices — which preset view to render, as a
  * global default plus per-concept overrides (`{ defaultView, byConcept }`,
  * keyed by concept id). The body is opaque to the engine: view keys name
  * client-defined presets. One row per (org, user); owner-only writes.
  */
-export const instanceViewPrefs = pgTable(
-  "instance_view_prefs",
+export const recordViewPrefs = pgTable(
+  "record_view_prefs",
   {
     id: uuid("id").primaryKey().defaultRandom(),
     orgId: text("org_id").notNull(),
@@ -488,7 +488,7 @@ export const instanceViewPrefs = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [uniqueIndex("instance_view_prefs_org_user_uq").on(t.orgId, t.userId)],
+  (t) => [uniqueIndex("record_view_prefs_org_user_uq").on(t.orgId, t.userId)],
 )
 
 /**
@@ -521,20 +521,20 @@ export const conceptGraphLayouts = pgTable("concept_graph_layouts", {
 })
 
 /**
- * Saved node positions for one item's relationship graph (the instance-page
- * graph tile), keyed by the ROOT item whose graph was arranged. Same contract
+ * Saved node positions for one record's relationship graph (the record version-page
+ * graph tile), keyed by the ROOT record whose graph was arranged. Same contract
  * as the concept canvas: org-shared presentation state, last write wins per
- * node (position keys are item ids, plus `ghost:<relationId>` for dangling refs).
+ * node (position keys are record ids, plus `ghost:<relationId>` for dangling refs).
  */
-export const instanceGraphLayouts = pgTable(
-  "instance_graph_layouts",
+export const recordGraphLayouts = pgTable(
+  "record_graph_layouts",
   {
     orgId: text("org_id").notNull(),
-    itemId: uuid("item_id").notNull(),
+    recordId: uuid("record_id").notNull(),
     positions: jsonb("positions").notNull().default(sql`'{}'::jsonb`),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [primaryKey({ columns: [t.orgId, t.itemId] })],
+  (t) => [primaryKey({ columns: [t.orgId, t.recordId] })],
 )
 
 /**
@@ -545,7 +545,7 @@ export const instanceGraphLayouts = pgTable(
  * tombstone.
  *
  * **Exactly one owner**, enforced by the `attachments_one_owner` CHECK:
- * - `item_id` — a file on a record. Targets the **item lineage** (like
+ * - `record_id` — a file on a record. Targets the **record** (like
  *   `annotations.subject_id`), so it survives re-publishes.
  * - `bucket_id` — a file owned by a dashboard Files widget (`scope: "widget"`),
  *   belonging to no record at all. A logical id only: buckets are not an entity,
@@ -556,7 +556,7 @@ export const instanceGraphLayouts = pgTable(
  * `bucket_shared` = may an org-scope Files widget list this row (default yes).
  * Denormalised onto the row, not a bucket table, so the org-scope list filters
  * without a join. It gates *listing* only — a direct download URL is reachable by
- * any member, exactly as for item files.
+ * any member, exactly as for record files.
  */
 export const attachments = pgTable(
   "attachments",
@@ -564,7 +564,7 @@ export const attachments = pgTable(
     id: uuid("id").primaryKey().defaultRandom(),
     orgId: text("org_id").notNull(),
     // Nullable since 0035: null ⇒ bucket-owned (see the CHECK below).
-    itemId: uuid("item_id").references(() => items.id),
+    recordId: uuid("record_id").references(() => records.id),
     bucketId: uuid("bucket_id"),
     bucketShared: boolean("bucket_shared").notNull().default(true),
     filename: text("filename").notNull(),
@@ -576,38 +576,38 @@ export const attachments = pgTable(
     archivedAt: timestamp("archived_at", { withTimezone: true }),
   },
   (t) => [
-    // Per-item Files panel (newest first via id).
-    index("attachments_item_idx").on(t.orgId, t.itemId, t.id),
-    // One widget's bucket, newest first — the item index's counterpart.
+    // Per-record Files panel (newest first via id).
+    index("attachments_record_idx").on(t.orgId, t.recordId, t.id),
+    // One widget's bucket, newest first — the record index's counterpart.
     index("attachments_bucket_idx")
       .on(t.orgId, t.bucketId, t.id)
       .where(sql`${t.bucketId} IS NOT NULL`),
     // Concept/org-scope "recent uploads" lists.
     index("attachments_org_idx").on(t.orgId, t.id),
     // Exactly one owner — never both, never neither.
-    check("attachments_one_owner", sql`(${t.itemId} IS NULL) <> (${t.bucketId} IS NULL)`),
+    check("attachments_one_owner", sql`(${t.recordId} IS NULL) <> (${t.bucketId} IS NULL)`),
   ],
 )
 
 /**
  * The cross-cutting **annotation layer** — notes and tasks that hang off any
- * Concept Item (or, for tasks, off nothing). Deliberately NOT a concept: a
+ * Concept Record (or, for tasks, off nothing). Deliberately NOT a concept: a
  * single polymorphic table whose `type` discriminates the variant, with the
  * fixed per-type core in plain columns and an open `custom_fields` bag for
  * user-defined extensions (keyed by `annotation_fields.id`, exactly like
- * `instances.state` keys by `fields.id`). Adding a future type (e.g. "comment")
+ * `record_versions.state` keys by `fields.id`). Adding a future type (e.g. "comment")
  * is one `type` literal + maybe a nullable column — no table fan-out.
  *
- * Unlike instances, annotations are NOT event-sourced projections: the row is
+ * Unlike record versions, annotations are NOT event-sourced projections: the row is
  * the source of truth (CRUD), and each mutation still appends an `events` row
  * purely for the activity feed / live-sync (the `LabelService`/`FieldService`
  * pattern). Their own event stream uses subject_kind "note"/"task" with
- * subject_id = this row's id, so they never enter the instance fold.
+ * subject_id = this row's id, so they never enter the record version fold.
  *
- * `subject_id` targets the **item lineage** (`items.id`, "the thing"), NOT a
+ * `subject_id` targets the **record** (`records.id`, "the thing"), NOT a
  * specific version — so a note/task survives re-publishes, exactly like how
- * `relations.to_item_id` references the lineage. NULL = an org-level annotation
- * (a standalone task hung off no item). `status_id` (→ task_statuses) and
+ * `relations.to_record_id` references the lineage. NULL = an org-level annotation
+ * (a standalone task hung off no record). `status_id` (→ task_statuses) and
  * `assignee` (→ bauth_user.id) are likewise LOGICAL fks (no Drizzle reference):
  * they tolerate null and survive status archive (orphan-tolerant, matching the
  * archive-vs-delete convention). Existence is checked at the service / RPC
@@ -620,9 +620,9 @@ export const annotations = pgTable(
     orgId: text("org_id").notNull(),
     // Variant discriminator: "note" | "task" today; append-only.
     type: text("type").notNull(),
-    // The annotated item lineage (items.id). NULL = org-level annotation.
+    // The annotated record (records.id). NULL = org-level annotation.
     subjectId: uuid("subject_id"),
-    // Forward-compat for hanging off other subject kinds later; "item" whenever
+    // Forward-compat for hanging off other subject kinds later; "record" whenever
     // subject_id is non-null, else null.
     subjectKind: text("subject_kind"),
 
@@ -635,16 +635,16 @@ export const annotations = pgTable(
     // at create time. Kept as an id (not a name) so statuses stay renameable.
     statusId: uuid("status_id"),
     // Logical fk → bauth_user.id, validated against org membership at the RPC
-    // boundary (like instance `user`-kind fields).
+    // boundary (like record version `user`-kind fields).
     assignee: text("assignee"),
     dueAt: timestamp("due_at", { withTimezone: true }),
     // Rich-text description: a `{ doc, text }` envelope (ProseMirror JSON +
-    // server-derived plain text), same shape as instance `richtext` fields.
+    // server-derived plain text), same shape as record version `richtext` fields.
     description: jsonb("description"),
     // Logical fk → task_priorities.id; null = no priority (orphan-tolerant).
     priorityId: uuid("priority_id"),
     // This task's own label ids (labels.id array) — the org label vocabulary,
-    // mirroring the instance `__labels` pattern but as a real column.
+    // mirroring the record version `__labels` pattern but as a real column.
     labelIds: jsonb("label_ids").notNull().default(sql`'[]'::jsonb`),
     // Hidden from "open" lists until this passes (read-time check, no sweeper).
     snoozedUntil: timestamp("snoozed_until", { withTimezone: true }),
@@ -663,14 +663,14 @@ export const annotations = pgTable(
     customFields: jsonb("custom_fields").notNull().default(sql`'{}'::jsonb`),
 
     // Optimistic-concurrency counter (a plain bump per write — NOT an event
-    // count, since annotations aren't folded). Mirrors instance update ergonomics.
+    // count, since annotations aren't folded). Mirrors record version update ergonomics.
     version: bigint("version", { mode: "number" }).notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     archivedAt: timestamp("archived_at", { withTimezone: true }),
   },
   (t) => [
-    // Per-item panel: a subject's notes/tasks, newest first, filterable by type.
+    // Per-record panel: a subject's notes/tasks, newest first, filterable by type.
     index("annotations_subject_idx").on(t.orgId, t.subjectId, t.type, t.id),
     // Global task queries ("assigned to me", by status). Partial → task-only, small.
     index("annotations_assignee_idx")
@@ -809,7 +809,7 @@ export const automations = pgTable(
     actions: jsonb("actions").notNull().default(sql`'[]'::jsonb`),
     // Schedule triggers only: when this is next due. Claimed atomically by the
     // tick (UPDATE … WHERE next_run_at <= now() RETURNING), so two server
-    // instances can never both take one. NULL for event triggers.
+    // record versions can never both take one. NULL for event triggers.
     nextRunAt: timestamp("next_run_at", { withTimezone: true }),
     lastRunAt: timestamp("last_run_at", { withTimezone: true }),
     runCount: integer("run_count").notNull().default(0),
@@ -837,7 +837,7 @@ export const automations = pgTable(
  *
  *  1. **The idempotency guard.** The runner inserts its row *before* acting,
  *     under `unique (automation_id, event_id)`. A duplicate delivery (two server
- *     instances, an SSE reconnect replay) loses the insert race and skips. So
+ *     record versions, an SSE reconnect replay) loses the insert race and skips. So
  *     correctness does not depend on there being exactly one process — which
  *     matters, because "exactly one process" is a deployment property.
  *  2. **The rate-cap window.** Runs per minute are counted off `started_at`.
@@ -857,7 +857,7 @@ export const automationRuns = pgTable(
       .references(() => automations.id, { onDelete: "cascade" }),
     // The triggering event (`events.id`); NULL for a scheduled run.
     eventId: bigint("event_id", { mode: "number" }),
-    // The record the run acted on (`instances.id`); NULL when there is none.
+    // The record the run acted on (`record_versions.id`); NULL when there is none.
     subjectId: uuid("subject_id"),
     // "ok" | "skipped" | "failed".
     status: text("status").notNull(),
@@ -1005,7 +1005,7 @@ export const accessRules = pgTable(
     // | 'bucket' | 'task' | 'note' | 'member'.
     resourceType: text("resource_type").notNull(),
     // NULL = every resource of this type. For a 'record' rule this is an
-    // **items.id** (the lineage), NEVER an instances.id: a versioned concept has N
+    // **records.id** (the lineage), NEVER an record_versions.id: a versioned concept has N
     // version rows per record, and a share must survive publishing a new version.
     resourceId: uuid("resource_id"),
     // Scopes a 'record' or 'field' rule to one concept without naming a row — how
