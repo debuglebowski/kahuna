@@ -2515,7 +2515,15 @@ export class KingsmakerRpcs extends RpcGroup.make(
    * `configure`-gated, which is the very thing being asked about).
    */
   Rpc.make("myAccess", {
-    success: Schema.Struct({ isOwner: Schema.Boolean, canConfigure: Schema.Boolean }),
+    success: Schema.Struct({
+      isOwner: Schema.Boolean,
+      canConfigure: Schema.Boolean,
+      /** `configure` on `role` specifically — narrower than `canConfigure` (which
+       *  is `org`) since P1/P3. Gates the member access page: giving someone a
+       *  role, ordering their roles, and editing their personal overrides are all
+       *  "may manage permissions", not "may administer the org". */
+      canConfigureRoles: Schema.Boolean,
+    }),
     error: RpcError,
   }),
   /** Who holds a role. Actor ids — user ids, or `system:automation:<id>` for a bot. */
@@ -2579,6 +2587,25 @@ export class KingsmakerRpcs extends RpcGroup.make(
   Rpc.make("unassignRole", {
     payload: { roleId: Schema.String, userId: Schema.String },
     success: Schema.Struct({ ok: Schema.Boolean }),
+    error: RpcError,
+  }),
+  /** Set the ORDER one member's held roles resolve in — index 0 is the highest
+   *  precedence. The member access page's drag-to-reorder writes this; it's the
+   *  first thing in the app that ever sets `access_role_actors.position` away
+   *  from its default. Silently skips any id the member doesn't hold. */
+  Rpc.make("reorderMemberRoles", {
+    payload: { userId: Schema.String, roleIds: Schema.Array(Schema.String) },
+    success: Schema.Struct({ ok: Schema.Boolean }),
+    error: RpcError,
+  }),
+  /** Get-or-create one member's personal role (Layer 1) — the row that carries
+   *  their overrides, at a fixed precedence above every ordinary role. Safe to
+   *  call just from opening the member access page's Personal Overrides
+   *  section; see `AccessRoleService.ensurePersonalRole`'s doc for why viewing
+   *  rather than editing is what creates it. */
+  Rpc.make("ensurePersonalRole", {
+    payload: { userId: Schema.String },
+    success: AccessRole,
     error: RpcError,
   }),
   Rpc.make("addRule", {

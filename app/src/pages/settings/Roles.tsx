@@ -315,7 +315,15 @@ function roleMsg(e: unknown): string {
   return raw && !raw.trimStart().startsWith("{") ? raw : "Something went wrong."
 }
 
-function RuleEditor({ role, onClose }: { role: AccessRole; onClose: () => void }) {
+/**
+ * The rule editor for ONE role — grids per resource area, plus the flat "Other"
+ * list for everything ungridded. Entirely role-agnostic: it takes an `AccessRole`
+ * and reads/writes only through `roleId`, so it works identically whether that
+ * role came from the Roles list or is a member's personal role (Layer 1) — the
+ * member access page reuses this component wholesale rather than rebuilding a
+ * second rule editor.
+ */
+export function RuleEditor({ role, onClose }: { role: AccessRole; onClose: () => void }) {
   const qc = useQueryClient()
   const rules = useQuery({ queryKey: ["rules", role.id], queryFn: () => api.listRules(role.id) })
   const [effect, setEffect] = useState<"allow" | "deny">("allow")
@@ -511,8 +519,9 @@ function RuleEditor({ role, onClose }: { role: AccessRole; onClose: () => void }
               <p className="max-w-2xl text-sm text-muted-foreground">
                 Everything that has no grid of its own: fields, tasks, notes, members, the org — and
                 any conditional rule, wherever it points. A{" "}
-                <span className="text-foreground">Deny</span> always wins, whatever else grants
-                access.
+                <span className="text-foreground">Deny</span> beats an Allow within THIS role. A
+                role this person holds earlier, or their personal overrides, can still override it —
+                see their access page.
               </p>
 
               {rules.isPending ? (

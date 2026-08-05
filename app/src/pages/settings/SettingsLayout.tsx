@@ -130,6 +130,10 @@ export function useIsAdmin() {
     // ordinary role), so the acts that hand it out (making another owner,
     // repointing the org at an IdP) are owner-only and not merely configure-gated.
     isOwner: q.data?.isOwner ?? false,
+    // `configure` on `role` — narrower again, and a THIRD separate question: may
+    // manage permissions specifically (roles, their order, personal overrides),
+    // not org-wide schema/settings. Gates the member access page (P5).
+    canConfigureRoles: q.data?.canConfigureRoles ?? false,
     isPending: q.isPending,
   }
 }

@@ -196,12 +196,16 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
       const policies = yield* PolicyService
       const events = yield* EventStore
 
+      /** Every ORDINARY role — a personal role (`personal_for IS NOT NULL`) is not
+       *  one of these: it belongs to a single member's access page, not the Roles
+       *  list, `assign()`'s picker, or any `based_on` target. */
       const list = (): Effect.Effect<ReadonlyArray<AccessRole>, never, OrgContext> =>
         Effect.gen(function* () {
           const { orgId } = yield* OrgContext
           const rows = yield* sql<AccessRoleRow>`
             SELECT ${sql.unsafe(ROLE_COLUMNS)} FROM access_roles
-            WHERE org_id = ${orgId} ORDER BY position ASC, name ASC`
+            WHERE org_id = ${orgId} AND personal_for IS NULL
+            ORDER BY position ASC, name ASC`
           return rows.map(toRole)
         }).pipe(Effect.orDie)
 
@@ -314,15 +318,36 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
        *
        * An actor may hold ANY NUMBER of roles; this refuses the wrong category, not a
        * second role.
+       *
+       * ── THE PERSONAL-ROLE GUARD ─────────────────────────────────────────────
+       *
+       * A role with `personal_for` set is one PERSON'S overrides — the schema's own
+       * uniqueness constraint already stops two people sharing a row, but nothing
+       * stopped an admin handing IT to a THIRD person through this same RPC
+       * (`assignRole` is otherwise unaware personal roles exist at all — `list()`
+       * hides them from the picker, but a client that already has the id could
+       * still call it directly).
        */
       const assign = (roleId: string, actorId: string) =>
         Effect.gen(function* () {
           const { orgId, actor } = yield* OrgContext
-          const rows = yield* sql<{ readonly kind: string; readonly name: string }>`
-            SELECT kind, name FROM access_roles
+          const rows = yield* sql<{
+            readonly kind: string
+            readonly name: string
+            readonly personal_for: string | null
+          }>`
+            SELECT kind, name, personal_for FROM access_roles
             WHERE org_id = ${orgId} AND id = ${roleId} LIMIT 1`.pipe(Effect.orDie)
           const role = rows[0]
           if (role) {
+            if (role.personal_for !== null && role.personal_for !== actorId) {
+              return yield* Effect.fail(
+                new RoleKindMismatch({
+                  roleKind: "personal",
+                  message: "This is someone else's personal overrides — it can't be reassigned.",
+                }),
+              )
+            }
             const wantsAutomation = role.kind === "automation"
             if (wantsAutomation !== isAutomationActor(actorId)) {
               return yield* Effect.fail(
@@ -351,7 +376,9 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
           yield* policies.bump(orgId)
         }).pipe(Effect.orDie)
 
-      /** Which roles an actor holds. */
+      /** Which ORDINARY roles an actor holds — excludes their own personal role
+       *  (see `list`'s doc): it has a dedicated section on the member page, not a
+       *  pill among the rest. */
       const rolesOf = (
         actorId: string,
       ): Effect.Effect<ReadonlyArray<AccessRole>, never, OrgContext> =>
@@ -362,9 +389,28 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
                    r.active, r.full_access, r.position
             FROM access_roles r
             JOIN access_role_actors a ON a.role_id = r.id AND a.org_id = r.org_id
-            WHERE r.org_id = ${orgId} AND a.actor_id = ${actorId}
-            ORDER BY r.position ASC, r.name ASC`
+            WHERE r.org_id = ${orgId} AND a.actor_id = ${actorId} AND r.personal_for IS NULL
+            ORDER BY a.position ASC, r.name ASC`
           return rows.map(toRole)
+        }).pipe(Effect.orDie)
+
+      /**
+       * Set the ORDER this actor's held roles resolve in — index 0 becomes
+       * `access_role_actors.position = 0`, the highest precedence a role can
+       * occupy (`PolicyService.loadRules`'s `(position + 1) * 100`; lower
+       * beats higher). Only touches roles ALREADY held — an id the actor
+       * doesn't hold is silently skipped, because reordering must not also
+       * grant.
+       */
+      const reorderHeld = (actorId: string, roleIds: ReadonlyArray<string>) =>
+        Effect.gen(function* () {
+          const { orgId } = yield* OrgContext
+          for (let i = 0; i < roleIds.length; i++) {
+            yield* sql`
+              UPDATE access_role_actors SET position = ${i}
+              WHERE org_id = ${orgId} AND actor_id = ${actorId} AND role_id = ${roleIds[i]}`
+          }
+          yield* policies.bump(orgId)
         }).pipe(Effect.orDie)
 
       /** Who holds a role — for the members page and the last-owner floor check. */
@@ -481,6 +527,57 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
                WHERE org_id = ${orgId} AND role_id = ${input.startFrom}
               ON CONFLICT (role_id, resource_type, effect) DO NOTHING`
           }
+          yield* events.append({
+            subjectKind: "accessRole",
+            subjectId: role.id,
+            eventType: "AccessRoleCreated",
+            payload: { _tag: "AccessRoleCreated", name: role.name } as never,
+          })
+          yield* policies.bump(orgId)
+          return role
+        }).pipe(Effect.orDie)
+
+      /** The org's Layer 1 role for one actor — `personal_for = actorId` — or null
+       *  if they have never had an override set. Read-only; never creates. */
+      const getPersonalRole = (
+        actorId: string,
+      ): Effect.Effect<AccessRole | null, never, OrgContext> =>
+        Effect.gen(function* () {
+          const { orgId } = yield* OrgContext
+          const rows = yield* sql<AccessRoleRow>`
+            SELECT ${sql.unsafe(ROLE_COLUMNS)} FROM access_roles
+            WHERE org_id = ${orgId} AND personal_for = ${actorId} LIMIT 1`
+          return rows[0] ? toRole(rows[0]) : null
+        }).pipe(Effect.orDie)
+
+      /**
+       * Get-or-create the actor's personal role, and make sure they hold it.
+       *
+       * Created on first VIEW of the member page's Personal Overrides section, not
+       * literally on the first rule written (the schema doc's "created lazily the
+       * first time an override is set") — the two are indistinguishable from the
+       * outside (an empty personal role grants nothing, same as none existing), and
+       * this avoids a create-then-write race the stricter version would need to
+       * guard against. `access_roles_personal_for_uq` (org_id, personal_for) is the
+       * backstop if two admins open the same member's page at once — the losing
+       * INSERT is absorbed by `ON CONFLICT DO NOTHING` and reads back the winner's row.
+       */
+      const ensurePersonalRole = (actorId: string) =>
+        Effect.gen(function* () {
+          const existing = yield* getPersonalRole(actorId)
+          if (existing) return existing
+          const { orgId, actor } = yield* OrgContext
+          const rows = yield* sql<AccessRoleRow>`
+            INSERT INTO access_roles (org_id, key, name, managed, kind, personal_for)
+            VALUES (${orgId}, NULL, 'Personal overrides', false, 'user', ${actorId})
+            ON CONFLICT (org_id, personal_for) WHERE personal_for IS NOT NULL DO NOTHING
+            RETURNING ${sql.unsafe(ROLE_COLUMNS)}`
+          const role = rows[0] ? toRole(rows[0]) : yield* getPersonalRole(actorId)
+          if (!role) return yield* Effect.die("personal role vanished immediately after creation")
+          yield* sql`
+            INSERT INTO access_role_actors (org_id, role_id, actor_id, created_by)
+            VALUES (${orgId}, ${role.id}, ${actorId}, ${actor})
+            ON CONFLICT (role_id, actor_id) DO NOTHING`
           yield* events.append({
             subjectKind: "accessRole",
             subjectId: role.id,
@@ -893,10 +990,13 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
       return {
         list,
         getByKey,
+        getPersonalRole,
+        ensurePersonalRole,
         autoAssignFor,
         ensureBuiltins,
         assign,
         unassign,
+        reorderHeld,
         rolesOf,
         actorsOf,
         reassignHolders,

@@ -965,13 +965,13 @@ const HandlersLive = ServerRpcs.toLayer({
   myAccess: () =>
     Effect.gen(function* () {
       const scope = yield* OrgContext
+      const has = (type: "org" | "role") =>
+        scope.policy !== undefined &&
+        decide(scope.policy, "configure", { type }, false, { unconditionalOnly: true })
       return {
         isOwner: scope.role === "owner",
-        canConfigure:
-          scope.policy !== undefined &&
-          decide(scope.policy, "configure", { type: "org" }, false, {
-            unconditionalOnly: true,
-          }),
+        canConfigure: has("org"),
+        canConfigureRoles: has("role"),
       }
     }),
   roleHolders: ({ roleId }) =>
@@ -1008,6 +1008,14 @@ const HandlersLive = ServerRpcs.toLayer({
       { type: "role" },
       uc.unassignRole(roleId, userId),
     ),
+  reorderMemberRoles: ({ userId, roleIds }) =>
+    adminOn<{ readonly ok: boolean }>(
+      "configure",
+      { type: "role" },
+      uc.reorderMemberRoles(userId, roleIds),
+    ),
+  ensurePersonalRole: ({ userId }) =>
+    adminOn<AccessRole>("configure", { type: "role" }, uc.ensurePersonalRole(userId)),
   addRule: ({ roleId, effect, actions, resourceType, resourceId, conceptId, condition }) =>
     adminOn<{ readonly id: string }>(
       "configure",
@@ -1040,9 +1048,11 @@ const HandlersLive = ServerRpcs.toLayer({
     adminOn<{ readonly id: string }>("configure", { type: "role" }, uc.removeRule(ruleId)),
   /**
    * Asking about YOURSELF is always allowed — that is the point of the self-serve
-   * report ("why can't I see this?" answered without an admin). Asking about someone
-   * else needs `configure` on `member` — this lives on their member page, not the
-   * role editor, so it is gated with the rest of that page rather than `role`.
+   * report ("why can't I see this?" answered without an admin). Asking about
+   * someone else needs `configure` on `role` — this section lives on the member
+   * ACCESS page (P5), which the same permission gates end to end: seeing why a
+   * decision came out the way it did is "may manage permissions", same as
+   * assigning the role that made it.
    *
    * The target's membership role decides whether their trace carries the Layer 0
    * floor — a fact `PolicyService.resolve` doesn't know (it only reads
@@ -1053,7 +1063,7 @@ const HandlersLive = ServerRpcs.toLayer({
     Effect.gen(function* () {
       const scope = yield* OrgContext
       const target = userId ?? scope.actor
-      if (target !== scope.actor) yield* requireAction("configure", { type: "member" })
+      if (target !== scope.actor) yield* requireAction("configure", { type: "role" })
       const targetRole = yield* Effect.tryPromise({
         try: () => roleOf(target, scope.orgId),
         catch: () => new RpcError({ code: "INTERNAL", message: "role lookup failed", status: 500 }),
@@ -1067,7 +1077,7 @@ const HandlersLive = ServerRpcs.toLayer({
     Effect.gen(function* () {
       const scope = yield* OrgContext
       const target = userId ?? scope.actor
-      if (target !== scope.actor) yield* requireAction("configure", { type: "member" })
+      if (target !== scope.actor) yield* requireAction("configure", { type: "role" })
       const targetRole = yield* Effect.tryPromise({
         try: () => roleOf(target, scope.orgId),
         catch: () => new RpcError({ code: "INTERNAL", message: "role lookup failed", status: 500 }),

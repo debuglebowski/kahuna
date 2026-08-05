@@ -20,6 +20,7 @@ import { memberLabel, useMembers } from "@/lib/members"
 import { recordHref } from "@/lib/recordHref"
 import { openTasksFor } from "@/lib/taskGroups"
 import { initialsOf } from "@/lib/utils"
+import { MemberAccess } from "@/pages/settings/MemberAccess"
 
 /** How many of the member's open tasks / authored events the page shows. */
 const TASK_LIMIT = 5
@@ -188,6 +189,10 @@ export function MemberProfile() {
           </div>
         )}
       </section>
+
+      {/* Renders nothing unless the viewer holds `configure` on `role` — see
+          MemberAccess's own doc. */}
+      <MemberAccess userId={userId} />
     </div>
   )
 }

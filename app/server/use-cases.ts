@@ -2077,6 +2077,16 @@ export const unassignRole = (roleId: string, userId: string): UC<unknown> =>
     return { ok: true }
   })
 
+/** The member access page's drag-to-reorder — see `AccessRoleService.reorderHeld`. */
+export const reorderMemberRoles = (userId: string, roleIds: ReadonlyArray<string>): UC<unknown> =>
+  Effect.flatMap(AccessRoleService, (r) => r.reorderHeld(userId, roleIds)).pipe(
+    Effect.map(() => ({ ok: true })),
+  )
+
+/** Get-or-create the member's personal role — see `AccessRoleService.ensurePersonalRole`. */
+export const ensurePersonalRole = (userId: string): UC<unknown> =>
+  Effect.flatMap(AccessRoleService, (r) => r.ensurePersonalRole(userId))
+
 export const addRule = (input: {
   readonly roleId: string
   readonly effect: "allow" | "deny"

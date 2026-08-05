@@ -100,6 +100,13 @@ export class MemberService extends Effect.Service<MemberService>()("engine/Membe
           // are ever re-added.
           yield* sql`DELETE FROM access_role_actors
             WHERE org_id = ${orgId} AND actor_id = ${userId}`
+          // Their PERSONAL role (Layer 1), if they ever had overrides set — cascades
+          // to its own rules and its own `access_role_actors` row (ON DELETE CASCADE).
+          // Without this, purging then re-adding the same person would silently
+          // restore their old personal overrides — the exact hazard the line above
+          // exists to prevent for ordinary roles.
+          yield* sql`DELETE FROM access_roles
+            WHERE org_id = ${orgId} AND personal_for = ${userId}`
           // Shares are the same row shape with `actor_id` instead of `role_id`, so
           // they need the same treatment; a share outlives the role that granted it
           // by design, which is exactly why it has to be cleaned up explicitly.

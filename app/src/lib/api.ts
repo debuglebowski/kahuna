@@ -1333,6 +1333,11 @@ export const api = {
   deleteRole: (id: string) => call((c) => c.deleteRole({ id })),
   assignRole: (roleId: string, userId: string) => call((c) => c.assignRole({ roleId, userId })),
   unassignRole: (roleId: string, userId: string) => call((c) => c.unassignRole({ roleId, userId })),
+  /** Index 0 = highest precedence. Silently skips any id the member doesn't hold. */
+  reorderMemberRoles: (userId: string, roleIds: ReadonlyArray<string>) =>
+    call((c) => c.reorderMemberRoles({ userId, roleIds })),
+  /** Get-or-create the member's personal role (Layer 1). */
+  ensurePersonalRole: (userId: string) => call((c) => c.ensurePersonalRole({ userId })),
   addRule: (input: {
     roleId: string
     effect: "allow" | "deny"
