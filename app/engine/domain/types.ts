@@ -79,7 +79,7 @@ export interface FieldConfig {
  *  the normal RecordVersionCreated/RecordVersionUpdated payloads and folds like any state key. */
 export type RecordState = Record<string, unknown>
 
-/** Synthetic `RecordState` key holding an record version's own label ids. */
+/** Synthetic `RecordState` key holding a record version's own label ids. */
 export const LABELS_KEY = "__labels"
 
 export interface Concept {
@@ -376,7 +376,7 @@ export type EventPayload =
       readonly to: string
     }
   // Concept/field schema edits (settings → concept configuration). These are
-  // subjectKind "concept"/"field" events — they NEVER appear in an record version
+  // subjectKind "concept"/"field" events — they NEVER appear in a record version
   // stream, so the record version reducer (projection/reducer.ts) ignores them.
   | {
       readonly _tag: "ConceptUpdated"
@@ -396,7 +396,7 @@ export type EventPayload =
   | { readonly _tag: "ConceptRestored" }
   | { readonly _tag: "ConceptDeleted" }
   // Label vocabulary edits (settings → Labels). subjectKind "label"; like
-  // concept/field schema events these never appear in an record version stream.
+  // concept/field schema events these never appear in a record version stream.
   | {
       readonly _tag: "LabelCreated"
       readonly name: string
@@ -423,7 +423,7 @@ export type EventPayload =
   | { readonly _tag: "FieldRestored"; readonly conceptId: Id; readonly name: string }
   | { readonly _tag: "FieldDeleted"; readonly conceptId: Id; readonly name: string }
   // Whole-record (lineage) archive/restore. subjectKind "record"; like concept/field
-  // events these never appear in an record version stream (the reducer ignores them).
+  // events these never appear in a record version stream (the reducer ignores them).
   | { readonly _tag: "RecordArchived" }
   | { readonly _tag: "RecordRestored" }
   // ── annotation layer (notes/tasks) ──────────────────────────────────────────
@@ -512,7 +512,7 @@ export type EventPayload =
   | { readonly _tag: "AnnotationFieldReordered"; readonly annotationType: string }
   // ── automations ─────────────────────────────────────────────────────────────
   // Definition edits (settings → Automations). subjectKind "automation"; like
-  // concept/field/label schema events these never enter an record version stream.
+  // concept/field/label schema events these never enter a record version stream.
   | { readonly _tag: "AutomationCreated"; readonly name: string; readonly trigger: string }
   | { readonly _tag: "AutomationUpdated"; readonly name: string; readonly trigger: string }
   | { readonly _tag: "AutomationEnabled"; readonly name: string }
@@ -853,7 +853,7 @@ export interface GoalWidget extends WidgetBase {
   readonly direction?: "reach" | "stay"
   readonly showPercent?: boolean
 }
-/** One curated shortcut. `ref` is an record version id, dashboard id, or URL per `kind`. */
+/** One curated shortcut. `ref` is a record version id, dashboard id, or URL per `kind`. */
 export interface ShortcutItem {
   readonly id: string
   readonly kind: "recordVersion" | "dashboard" | "url"
@@ -918,7 +918,7 @@ export interface GanttWidget extends WidgetBase {
   readonly conditions: ReadonlyArray<SidebarCondition>
   readonly match?: ConditionMatch
   readonly scale: "day" | "week" | "month"
-  /** Start date field id; an record version with no end renders a milestone. */
+  /** Start date field id; a record version with no end renders a milestone. */
   readonly startField: string
   readonly endField?: string | null
   readonly groupBy?: string | null
@@ -1180,7 +1180,7 @@ export interface AnnotationField {
   readonly archivedAt: Date | null
 }
 
-/** A note — markdown body + author — hung off an record (or org-level). */
+/** A note — markdown body + author — hung off a record (or org-level). */
 export interface Note {
   readonly id: Id
   readonly orgId: OrgId
@@ -1197,7 +1197,7 @@ export interface Note {
 }
 
 /** A task — first-class, org-scoped, assignable, globally queryable — hung off
- *  an record (or org-level when `subjectId` is null). */
+ *  a record (or org-level when `subjectId` is null). */
 export interface Task {
   readonly id: Id
   readonly orgId: OrgId

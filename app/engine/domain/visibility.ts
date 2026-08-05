@@ -195,7 +195,7 @@ export const scopeHiddenFieldIds = (
 }
 
 /**
- * Drop hidden keys from an record version's state. Returns the SAME object when nothing
+ * Drop hidden keys from a record version's state. Returns the SAME object when nothing
  * is hidden, so the common (privileged, or no restricted fields) path allocates
  * nothing and the identity is preserved for React memo comparisons.
  */

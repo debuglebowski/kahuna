@@ -3,7 +3,7 @@ import type { EngineEvent, RecordState, VersionStatus } from "../domain/types"
 import { EventCorruption } from "../errors"
 
 /**
- * The folded state of an record version: its current field values, version, deletion
+ * The folded state of a record version: its current field values, version, deletion
  * marker, and product-version status. Reconstructable purely from the event
  * stream.
  *
@@ -158,7 +158,7 @@ export const applyEvent = (
       })
     }
     default:
-      // Non-record version payloads should never appear in an record version stream.
+      // Non-record version payloads should never appear in a record version stream.
       return Either.left(
         new EventCorruption({
           reason: `unexpected payload ${p._tag} in recordVersion stream`,

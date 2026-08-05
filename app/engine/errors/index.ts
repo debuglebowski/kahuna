@@ -70,7 +70,7 @@ export class FieldInUse extends Schema.TaggedError<FieldInUse>()("FieldInUse", {
   relationCount: Schema.Number,
 }) {}
 
-/** An record version can't be hard-deleted while relation edges still reference it. */
+/** A record version can't be hard-deleted while relation edges still reference it. */
 export class RecordVersionInUse extends Schema.TaggedError<RecordVersionInUse>()(
   "RecordVersionInUse",
   {
@@ -176,7 +176,7 @@ export class RelationPinToDraft extends Schema.TaggedError<RelationPinToDraft>()
   { versionId: Schema.String },
 ) {}
 
-/** A general reference can't resolve an record that has no published version yet
+/** A general reference can't resolve a record that has no published version yet
  *  (a brand-new record is not referenceable until its first publish). */
 export class RecordNotPublished extends Schema.TaggedError<RecordNotPublished>()(
   "RecordNotPublished",

@@ -221,7 +221,7 @@ describe("listBacklinks", () => {
       const after = yield* mentions.listBacklinks(target.recordId)
       expect(after).toHaveLength(1)
       expect(after[0]!.source).toBe("record")
-      expect(after[0]!.fromItemId).toBe(src.recordId)
+      expect(after[0]!.fromRecordId).toBe(src.recordId)
       expect(after[0]!.fromFieldId).toBe(body.id)
     }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
@@ -258,7 +258,7 @@ describe("listBacklinks", () => {
 
       const links = yield* mentions.listBacklinks(target.recordId)
       expect(links).toHaveLength(1)
-      expect(links[0]!.fromItemId).toBe(v1.recordId)
+      expect(links[0]!.fromRecordId).toBe(v1.recordId)
       // …and it is the NEWEST version that represents the lineage.
       expect(links[0]!.fromVersionId).toBe(draft.id)
     }).pipe(Effect.provide(testLayer(newOrgId()))),

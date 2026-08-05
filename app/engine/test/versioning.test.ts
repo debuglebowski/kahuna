@@ -289,7 +289,7 @@ describe("versioning", () => {
     }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
 
-  it.effect("disabling versioning is blocked while an record has multiple versions", () =>
+  it.effect("disabling versioning is blocked while a record has multiple versions", () =>
     Effect.gen(function* () {
       const concepts = yield* ConceptService
       const recordVersions = yield* RecordService

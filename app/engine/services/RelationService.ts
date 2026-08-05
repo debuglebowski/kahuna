@@ -26,7 +26,7 @@ export interface CreateRelationInput {
   /** Target — supply exactly one shape:
    *  - `toVersionId`: pin a specific PUBLISHED version.
    *  - `toRecordId`: reference the record in general ("Latest" published).
-   *  - `toId` (legacy): an record version id, treated as a general ref to its record. */
+   *  - `toId` (legacy): a record version id, treated as a general ref to its record. */
   readonly toRecordId?: Id
   readonly toVersionId?: Id
   readonly toId?: Id
@@ -86,7 +86,7 @@ export class RelationService extends Effect.Service<RelationService>()("engine/R
         Effect.map((rows) => rows[0]?.name ?? conceptId),
       )
 
-    /** The id of an record's latest published, non-archived version (null if none). */
+    /** The id of a record's latest published, non-archived version (null if none). */
     const latestPublished = (orgId: string, recordId: string) =>
       sql<{ readonly id: string }>`
         SELECT id FROM record_versions
@@ -149,7 +149,7 @@ export class RelationService extends Effect.Service<RelationService>()("engine/R
             shadowToId: head,
           }
         }
-        // Legacy: an record version id ⇒ general ref to that record version's record.
+        // Legacy: a record version id ⇒ general ref to that record version's record.
         if (input.toId) {
           const rows = yield* sql<{ readonly concept_id: string; readonly record_id: string }>`
             SELECT concept_id, record_id FROM record_versions
@@ -201,7 +201,7 @@ export class RelationService extends Effect.Service<RelationService>()("engine/R
           const { conceptId: fromConceptId } = yield* assertSourceEditable(orgId, input.fromId)
           const target = yield* resolveTarget(orgId, input)
 
-          // `from` must be an record version of the concept that declares this field.
+          // `from` must be a record version of the concept that declares this field.
           if (fromConceptId !== field.conceptId) {
             const [expectedName, actualName] = yield* Effect.all([
               nameOfConcept(orgId, field.conceptId),

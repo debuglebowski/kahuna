@@ -20,14 +20,14 @@ describe("concept configuration (settings)", () => {
     }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
 
-  it.effect("setInstanceView stores the default layout; null clears it back to the preset", () =>
+  it.effect("setRecordView stores the default layout; null clears it back to the preset", () =>
     Effect.gen(function* () {
       const concepts = yield* ConceptService
       const c = yield* concepts.create({ name: "Account" })
       expect(c.recordView).toBeNull() // new concepts have no stored layout
 
       const tiles = [{ id: "a", contents: ["details", "notes"], x: 0, y: 0, w: 8, h: 4 }]
-      const set = yield* concepts.setInstanceView(c.id, { tiles })
+      const set = yield* concepts.setRecordView(c.id, { tiles })
       expect(set.recordView?.tiles).toEqual(tiles)
       // Persisted: a fresh read returns the layout.
       const reread = yield* concepts.getById(c.id)
@@ -35,7 +35,7 @@ describe("concept configuration (settings)", () => {
       // Other fields are untouched (it's not the identity update path).
       expect(reread.name).toBe("Account")
 
-      const cleared = yield* concepts.setInstanceView(c.id, null)
+      const cleared = yield* concepts.setRecordView(c.id, null)
       expect(cleared.recordView).toBeNull()
       expect((yield* concepts.getById(c.id)).recordView).toBeNull()
     }).pipe(Effect.provide(testLayer(newOrgId()))),

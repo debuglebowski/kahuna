@@ -33,7 +33,7 @@ export interface ListTasksFilter {
 }
 
 /**
- * The annotation layer: notes + tasks that hang off an record (or, for
+ * The annotation layer: notes + tasks that hang off a record (or, for
  * tasks, off nothing). CRUD-with-audit-events (the `LabelService` pattern): the
  * row is the source of truth and each mutation appends an `events` row for the
  * activity feed / live-sync — annotations are NOT folded projections. Their event

@@ -10,7 +10,7 @@ export interface Backlink {
   /** For `record`: the source record version VERSION holding the mention. */
   readonly fromVersionId: Id | null
   /** For `record`: the source lineage — what a link should address. */
-  readonly fromItemId: Id | null
+  readonly fromRecordId: Id | null
   /** For `record`: the field the mention sits in, so the panel can name it. */
   readonly fromFieldId: Id | null
   readonly fromConceptId: Id | null
@@ -21,7 +21,7 @@ export interface Backlink {
 interface BacklinkRow {
   readonly source: string
   readonly from_version_id: string | null
-  readonly from_item_id: string | null
+  readonly from_record_id: string | null
   readonly from_field_id: string | null
   readonly from_concept_id: string | null
   readonly from_annotation_id: string | null
@@ -66,7 +66,7 @@ export class MentionService extends Effect.Service<MentionService>()("engine/Men
             SELECT DISTINCT ON (src.record_id)
                    'record'          AS source,
                    src.id            AS from_version_id,
-                   src.record_id       AS from_item_id,
+                   src.record_id       AS from_record_id,
                    m.from_field_id   AS from_field_id,
                    src.concept_id    AS from_concept_id,
                    NULL::uuid        AS from_annotation_id
@@ -82,7 +82,7 @@ export class MentionService extends Effect.Service<MentionService>()("engine/Men
           (
             SELECT 'task'      AS source,
                    NULL::uuid  AS from_version_id,
-                   NULL::uuid  AS from_item_id,
+                   NULL::uuid  AS from_record_id,
                    NULL::uuid  AS from_field_id,
                    NULL::uuid  AS from_concept_id,
                    a.id        AS from_annotation_id
@@ -97,7 +97,7 @@ export class MentionService extends Effect.Service<MentionService>()("engine/Men
           (r): Backlink => ({
             source: r.source === "task" ? "task" : "record",
             fromVersionId: r.from_version_id,
-            fromItemId: r.from_item_id,
+            fromRecordId: r.from_record_id,
             fromFieldId: r.from_field_id,
             fromConceptId: r.from_concept_id,
             fromAnnotationId: r.from_annotation_id,

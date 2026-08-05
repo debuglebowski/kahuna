@@ -104,7 +104,7 @@ export class AttachmentService extends Effect.Service<AttachmentService>()(
       const list = (filter: ListFilesFilter = {}) =>
         Effect.gen(function* () {
           const { orgId } = yield* OrgContext
-          // A widget may key by an record version row — resolve it to the lineage. A
+          // A widget may key by a record version row — resolve it to the lineage. A
           // dangling id reads as empty, not an error (the host may be purged).
           let recordId = filter.recordId
           if (!recordId && filter.recordVersionId) {

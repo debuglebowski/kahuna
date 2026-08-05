@@ -307,7 +307,7 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
      *  `null` clears the column → record versions render the built-in default preset.
      *  Presentational config (like graph layouts), so it emits no event. Not
      *  admin-gated at the RPC boundary — any member may shape the layout. */
-    const setInstanceView = (id: string, layout: RecordViewLayout | null) =>
+    const setRecordView = (id: string, layout: RecordViewLayout | null) =>
       sql.withTransaction(
         Effect.gen(function* () {
           const { orgId } = yield* OrgContext
@@ -326,7 +326,7 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
 
     /** Set (or clear) the field whose value is this concept's record version display
      *  label. `null` clears it (fallback to the first-text-field heuristic). Like
-     *  `setInstanceView`, presentational config → emits no event. Validates the
+     *  `setRecordView`, presentational config → emits no event. Validates the
      *  field belongs to a LIVE field of this concept (any kind; the picker limits
      *  to scalars, but a stale/relation id is rejected here as a guard). */
     const setTitleField = (id: string, titleFieldId: string | null) =>
@@ -361,7 +361,7 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
      *  through `update()`: either would flip the flag without the record, leaving
      *  a "single-record" concept with nothing in it.
      *
-     *  Unlike `setTitleField`/`setInstanceView` this DOES emit `ConceptUpdated` —
+     *  Unlike `setTitleField`/`setRecordView` this DOES emit `ConceptUpdated` —
      *  it's a behavioural change, not presentation, and the event is what nudges
      *  the client's concept cache so sidebars/editors see the flip live. */
     const setSingleRecord = (id: string, singleRecord: boolean) =>
@@ -524,7 +524,7 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
       setVisibility,
       list,
       update,
-      setInstanceView,
+      setRecordView,
       setTitleField,
       setSingleRecord,
       archive,

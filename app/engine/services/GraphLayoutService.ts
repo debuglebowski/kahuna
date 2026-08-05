@@ -61,7 +61,7 @@ export class GraphLayoutService extends Effect.Service<GraphLayoutService>()(
         )
 
       /** Saved positions for one record's relationship graph; `{}` when unsaved. */
-      const getForItem = (recordId: string) =>
+      const getForRecord = (recordId: string) =>
         Effect.gen(function* () {
           const { orgId } = yield* OrgContext
           const rows = yield* sql<LayoutRow>`
@@ -76,7 +76,7 @@ export class GraphLayoutService extends Effect.Service<GraphLayoutService>()(
        * whose key is a live org record id, plus `ghost:`-prefixed keys (dangling
        * refs have no record to validate against).
        */
-      const saveForItem = (recordId: string, patch: GraphLayoutPositions) =>
+      const saveForRecord = (recordId: string, patch: GraphLayoutPositions) =>
         sql.withTransaction(
           Effect.gen(function* () {
             const { orgId } = yield* OrgContext
@@ -99,7 +99,7 @@ export class GraphLayoutService extends Effect.Service<GraphLayoutService>()(
           }),
         )
 
-      return { get, save, getForItem, saveForItem } as const
+      return { get, save, getForRecord, saveForRecord } as const
     }),
     dependencies: [],
   },

@@ -622,7 +622,7 @@ export class RecordService extends Effect.Service<RecordService>()("engine/Recor
         patch: { [input.field]: input.to },
       })
 
-    /** Archive an record version (soft, restorable) — event-sourced like every write:
+    /** Archive a record version (soft, restorable) — event-sourced like every write:
      *  appends `RecordVersionArchived`, which the reducer folds to a set `archivedAt`. */
     const archive = (input: {
       readonly recordVersionId: string
@@ -734,7 +734,7 @@ export class RecordService extends Effect.Service<RecordService>()("engine/Recor
       )
 
     /**
-     * Permanently delete an record version row + its attachments. Refused while relation
+     * Permanently delete a record version row + its attachments. Refused while relation
      * edges still reference it (archive instead).
      *
      * The event stream is deliberately KEPT as an immutable audit trail: in an
@@ -1112,7 +1112,7 @@ export class RecordService extends Effect.Service<RecordService>()("engine/Recor
         }),
       )
 
-    /** Open a new draft for an record by cloning its latest published version's
+    /** Open a new draft for a record by cloning its latest published version's
      *  state AND outbound relations. Fails if a draft is already open
      *  (one-draft-at-a-time) or the record has no published version to branch from. */
     const newVersion = (input: { readonly recordId: string }) =>
@@ -1454,7 +1454,7 @@ export class RecordService extends Effect.Service<RecordService>()("engine/Recor
         }),
       )
 
-    /** All versions of an record (draft + published, including per-version archived),
+    /** All versions of a record (draft + published, including per-version archived),
      *  oldest first — for the record-detail version history panel. */
     const listVersions = (recordId: string) =>
       Effect.gen(function* () {

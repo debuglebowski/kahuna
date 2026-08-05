@@ -968,7 +968,7 @@ export const slackAuditLog = pgTable(
  * Apollo.io integration — a key-based connector on the PostHog/Linear template.
  * Auth is an Apollo API key stored ENCRYPTED at the ORG level (one connection
  * per org). Unlike PostHog/Linear there is no synced object mirror: Apollo is
- * used on-demand (enrich an record version, search people, bulk-import results). Only
+ * used on-demand (enrich a record version, search people, bulk-import results). Only
  * the encrypted key + an optional, purgeable enrichment cache are persisted —
  * see the compliance note in `apollo.ts`. Tables follow the `posthog_*`/
  * `linear_*` conventions.
