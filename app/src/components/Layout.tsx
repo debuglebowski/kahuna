@@ -39,7 +39,6 @@ import { cn } from "../lib/utils"
 import { SETTINGS_NAV, useIsAdmin } from "../pages/settings/SettingsLayout"
 import { IdentityMenu } from "./IdentityMenu"
 import { ViewNav } from "./sidebar/ViewNav"
-import { ThemeButton } from "./ThemeButton"
 import { UpdateNotice } from "./UpdateNotice"
 import { IconButton } from "./ui"
 
@@ -310,11 +309,13 @@ export function Layout({ children }: { children: ReactNode }) {
             </div>
           ) : (
             <div className="flex items-center justify-between px-4 py-3.5">
-              <span className="text-base font-semibold tracking-tight text-sidebar-foreground">
-                Kingsmaker
-              </span>
+              <div className="flex items-center gap-2">
+                <img src="/favicon.svg" alt="" className="size-5 shrink-0 rounded-full" />
+                <span className="text-base font-semibold tracking-tight text-sidebar-foreground">
+                  Kingsmaker
+                </span>
+              </div>
               <div className="flex items-center gap-0.5">
-                <ThemeButton />
                 <IconButton
                   onClick={() => {
                     setCollapsed(true)
