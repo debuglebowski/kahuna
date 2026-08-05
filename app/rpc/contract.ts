@@ -1539,13 +1539,21 @@ export type AccessRule = Schema.Schema.Type<typeof AccessRule>
 export const EffectiveAccess = Schema.Struct({
   userId: Schema.String,
   roles: Schema.Array(AccessRole),
-  /** Every rule that applies, with the role it came from. `viaRoleId` is non-null on
-   *  every row now that shares are gone — kept nullable pending the explain view. */
+  /** Every rule that applies, with the role — and now the LAYER — it came from.
+   *  `viaRoleId` is null for a Layer 0 rule (see `layerLabel`); every other row now
+   *  has one, since shares are gone. */
   rules: Schema.Array(
     Schema.Struct({
       id: Schema.String,
       viaRoleId: Schema.NullOr(Schema.String),
       viaRoleName: Schema.NullOr(Schema.String),
+      /** The precedence tier this rule resolves at (`AccessRule.precedence`) — lower
+       *  wins outright over higher. Same number across every rule of one held role. */
+      precedence: Schema.Number,
+      /** "Owner" / "Personal overrides" / the role's own name — the human label for
+       *  this rule's tier, computed once server-side so the client never re-derives
+       *  the precedence-0/-1 special cases itself. */
+      layerLabel: Schema.String,
       effect: Schema.Literal("allow", "deny"),
       actions: Schema.Array(Schema.String),
       resourceType: AccessResourceTypeOut,
@@ -1555,6 +1563,38 @@ export const EffectiveAccess = Schema.Struct({
   ),
 })
 export type EffectiveAccess = Schema.Schema.Type<typeof EffectiveAccess>
+
+/** One tier of an `explainAccess` trace. Mirrors `ExplainLayer` in
+ *  `engine/domain/access.ts`, plus the human `label` computed server-side.
+ *  `roleIds` usually has one entry, but can have more than one — per-person role
+ *  ORDER isn't wired yet, so two roles can share a precedence and therefore a
+ *  tier; `label` already folds them together ("Admin + Member"). */
+export const AccessExplainLayer = Schema.Struct({
+  precedence: Schema.Number,
+  roleIds: Schema.Array(Schema.NullOr(Schema.String)),
+  label: Schema.String,
+  ruleIds: Schema.Array(Schema.String),
+  verdict: Schema.Literal("allow", "deny", "silent"),
+  decided: Schema.Boolean,
+})
+export type AccessExplainLayer = Schema.Schema.Type<typeof AccessExplainLayer>
+
+/** "Why can/can't this member do X on Y?" — the ordered layer trace behind one
+ *  specific decision. `effectiveAccess` lists every rule that applies; this
+ *  answers one targeted question and shows what each layer said, in order,
+ *  including the ones that stayed silent. */
+export const ExplainAccess = Schema.Struct({
+  userId: Schema.String,
+  action: AccessActionName,
+  resourceType: AccessResourceTypeOut,
+  resourceId: Schema.NullOr(Schema.String),
+  outcome: Schema.Boolean,
+  unrestricted: Schema.Boolean,
+  decidedByFallback: Schema.Boolean,
+  fallback: Schema.Boolean,
+  layers: Schema.Array(AccessExplainLayer),
+})
+export type ExplainAccess = Schema.Schema.Type<typeof ExplainAccess>
 
 export class KingsmakerRpcs extends RpcGroup.make(
   Rpc.make("listConcepts", {
@@ -2622,6 +2662,21 @@ export class KingsmakerRpcs extends RpcGroup.make(
   Rpc.make("effectiveAccess", {
     payload: { userId: Schema.optional(Schema.String) },
     success: EffectiveAccess,
+    error: RpcError,
+  }),
+  /** "Why can/can't this member do THIS ONE THING?" — the targeted, traceable
+   *  twin of `effectiveAccess`: pick a resource type + action (+ optionally one
+   *  resource) and see every layer's verdict in order, not just the rules that
+   *  happen to apply. Same self-vs-others gate as `effectiveAccess`. */
+  Rpc.make("explainAccess", {
+    payload: {
+      userId: Schema.optional(Schema.String),
+      resourceType: AccessResourceType,
+      resourceId: Schema.optional(Schema.NullOr(Schema.String)),
+      conceptId: Schema.optional(Schema.NullOr(Schema.String)),
+      action: AccessActionName,
+    },
+    success: ExplainAccess,
     error: RpcError,
   }),
 ) {}

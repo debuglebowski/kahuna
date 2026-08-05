@@ -4,6 +4,7 @@ import {
   type AccessAction,
   type AccessCondition,
   AccessDefaultsService,
+  type AccessResource,
   type AccessResourceType,
   AccessRoleService,
   type AnnotationField,
@@ -28,6 +29,7 @@ import {
   type EditReach,
   type EngineServices,
   EventStore,
+  explainDecision,
   type FieldConfig,
   type FieldKind,
   FieldService,
@@ -38,6 +40,7 @@ import {
   type Label,
   LabelService,
   type ListTasksFilter,
+  layer0Rules,
   MAX_MENTIONS_PER_DOC,
   ManagedConceptReadonly,
   MemberService,
@@ -2234,32 +2237,141 @@ const assertFloorHolds = (
   })
 
 /**
+ * The human label for one rule/layer's tier — "Owner" for the synthetic Layer 0
+ * rules (`roleId` is null only there, now that shares are gone), "Personal
+ * overrides" for the fixed Layer 1 precedence, or the role's own name otherwise.
+ * Shared by `effectiveAccess` and `explainAccess` so the two reports never
+ * disagree about what a tier is called.
+ */
+const layerLabel = (
+  roleId: string | null,
+  precedence: number,
+  nameById: ReadonlyMap<string, string>,
+): string => {
+  if (roleId === null) return "Owner"
+  if (precedence === 0) return "Personal overrides"
+  return nameById.get(roleId) ?? "a role"
+}
+
+/**
+ * `layerLabel` for a whole TIER instead of one rule — `explainAccess`'s layers
+ * carry `roleIds` (plural) because a precedence can hold more than one role's
+ * rules (see `ExplainLayer`'s doc: per-person order isn't wired until P5, so
+ * every role sits at its default position today). Folds each id through the same
+ * naming rule and joins the distinct results, so a collided tier reads
+ * "Admin + Member" instead of silently naming only one of them.
+ */
+const tierLabel = (
+  roleIds: ReadonlyArray<string | null>,
+  precedence: number,
+  nameById: ReadonlyMap<string, string>,
+): string => [...new Set(roleIds.map((id) => layerLabel(id, precedence, nameById)))].join(" + ")
+
+/**
  * The effective-access report: what this member can do, and what grants it.
  *
  * The self-serve half matters — a member who cannot see something answers "why?"
  * themselves instead of filing a ticket. The RPC gate allows asking about yourself
  * unconditionally and requires `configure` for anyone else.
+ *
+ * `isOwner` comes from the caller (a membership-tier fact this use-case cannot see
+ * itself — `PolicyService.resolve` only reads `access_rules`) and, when true,
+ * prepends the Layer 0 floor exactly as `sessionScope` would for a live request —
+ * otherwise an owner's OWN report would omit the two rules that are the entire
+ * reason they can reach the role editor at all.
  */
-export const effectiveAccess = (userId: string): UC<unknown> =>
+export const effectiveAccess = (userId: string, isOwner: boolean): UC<unknown> =>
   Effect.gen(function* () {
     const roles = yield* AccessRoleService
     const policies = yield* PolicyService
     const scope = yield* OrgContext
     const held = yield* roles.rolesOf(userId)
-    const policy = yield* policies.resolve(scope.orgId, userId)
+    const resolved = yield* policies.resolve(scope.orgId, userId)
+    const rules = isOwner ? [...layer0Rules(userId), ...resolved.rules] : resolved.rules
     const nameById = new Map(held.map((r) => [r.id, r.name]))
     return {
       userId,
       roles: held,
-      rules: policy.rules.map((r) => ({
+      rules: rules.map((r) => ({
         id: r.id,
         viaRoleId: r.roleId,
         viaRoleName: r.roleId ? (nameById.get(r.roleId) ?? null) : null,
+        precedence: r.precedence ?? 0,
+        layerLabel: layerLabel(r.roleId, r.precedence ?? 0, nameById),
         effect: r.effect,
         actions: r.actions,
         resourceType: r.resourceType,
         resourceId: r.resourceId,
         condition: r.condition,
+      })),
+    }
+  })
+
+/**
+ * Mirrors the fallback each real gate uses for one resource type, so the explain
+ * tool's outcome matches what actually happens rather than guessing `false`
+ * everywhere. Concept / record / dashboard / view / automation reads are decided
+ * ENTIRELY by explicit rules (no membership-tier fallback survives for them); every
+ * other type falls back to `requireAction`'s formula — open unless the action is
+ * `configure` or `delete`. See the access redesign plan's table for why the split
+ * falls exactly here.
+ */
+const ALWAYS_CLOSED_RESOURCES: ReadonlySet<AccessResourceType> = new Set([
+  "concept",
+  "record",
+  "dashboard",
+  "view",
+  "automation",
+])
+const defaultFallbackFor = (resourceType: AccessResourceType, action: AccessAction): boolean =>
+  !ALWAYS_CLOSED_RESOURCES.has(resourceType) && action !== "configure" && action !== "delete"
+
+/**
+ * "Why can/can't this member do THIS ONE THING?" — `explainDecision`'s report,
+ * with role names and the Owner/Personal-overrides labels filled in. Same
+ * Layer-0-if-owner treatment as `effectiveAccess`, for the same reason.
+ */
+export const explainAccess = (
+  userId: string,
+  isOwner: boolean,
+  resourceType: AccessResourceType,
+  resourceId: string | null,
+  conceptId: string | null,
+  action: AccessAction,
+): UC<unknown> =>
+  Effect.gen(function* () {
+    const roles = yield* AccessRoleService
+    const policies = yield* PolicyService
+    const scope = yield* OrgContext
+    const held = yield* roles.rolesOf(userId)
+    const resolved = yield* policies.resolve(scope.orgId, userId)
+    const policy = isOwner
+      ? { ...resolved, rules: [...layer0Rules(userId), ...resolved.rules] }
+      : resolved
+    const nameById = new Map(held.map((r) => [r.id, r.name]))
+    const resource: AccessResource = {
+      type: resourceType,
+      ...(resourceId !== null ? { id: resourceId } : {}),
+      ...(conceptId !== null ? { conceptId } : {}),
+    }
+    const fallback = defaultFallbackFor(resourceType, action)
+    const result = explainDecision(policy, action, resource, fallback, { unconditionalOnly: true })
+    return {
+      userId,
+      action,
+      resourceType,
+      resourceId,
+      outcome: result.outcome,
+      unrestricted: result.unrestricted,
+      decidedByFallback: result.decidedByFallback,
+      fallback,
+      layers: result.layers.map((l) => ({
+        precedence: l.precedence,
+        roleIds: l.roleIds,
+        label: tierLabel(l.roleIds, l.precedence, nameById),
+        ruleIds: l.ruleIds,
+        verdict: l.verdict,
+        decided: l.decided,
       })),
     }
   })

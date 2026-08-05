@@ -24,6 +24,7 @@ import {
   type Dashboard,
   type DeactivatedMember,
   type EffectiveAccess,
+  type ExplainAccess,
   type Field,
   type GraphLayout,
   KingsmakerRpcs,
@@ -1042,13 +1043,45 @@ const HandlersLive = ServerRpcs.toLayer({
    * report ("why can't I see this?" answered without an admin). Asking about someone
    * else needs `configure` on `member` — this lives on their member page, not the
    * role editor, so it is gated with the rest of that page rather than `role`.
+   *
+   * The target's membership role decides whether their trace carries the Layer 0
+   * floor — a fact `PolicyService.resolve` doesn't know (it only reads
+   * `access_rules`), the same reason `assertDeactivatable` looks it up here rather
+   * than trusting the resolved policy alone.
    */
   effectiveAccess: ({ userId }) =>
     Effect.gen(function* () {
       const scope = yield* OrgContext
       const target = userId ?? scope.actor
       if (target !== scope.actor) yield* requireAction("configure", { type: "member" })
-      return yield* as<EffectiveAccess>(uc.effectiveAccess(target))
+      const targetRole = yield* Effect.tryPromise({
+        try: () => roleOf(target, scope.orgId),
+        catch: () => new RpcError({ code: "INTERNAL", message: "role lookup failed", status: 500 }),
+      })
+      return yield* as<EffectiveAccess>(uc.effectiveAccess(target, targetRole === "owner"))
+    }),
+  /** The targeted twin of `effectiveAccess` — same self-vs-others gate, same
+   *  Layer-0 lookup, one specific (resource, action) traced instead of every rule
+   *  listed. */
+  explainAccess: ({ userId, resourceType, resourceId, conceptId, action }) =>
+    Effect.gen(function* () {
+      const scope = yield* OrgContext
+      const target = userId ?? scope.actor
+      if (target !== scope.actor) yield* requireAction("configure", { type: "member" })
+      const targetRole = yield* Effect.tryPromise({
+        try: () => roleOf(target, scope.orgId),
+        catch: () => new RpcError({ code: "INTERNAL", message: "role lookup failed", status: 500 }),
+      })
+      return yield* as<ExplainAccess>(
+        uc.explainAccess(
+          target,
+          targetRole === "owner",
+          resourceType,
+          resourceId ?? null,
+          conceptId ?? null,
+          action,
+        ),
+      )
     }),
 }).pipe(Layer.provide(EngineBase))
 

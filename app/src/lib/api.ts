@@ -49,6 +49,7 @@ export type {
   DeactivatedMember,
   EditReach,
   EffectiveAccess,
+  ExplainAccess,
   FeedItem,
   Field,
   FieldConfig,
@@ -1369,4 +1370,13 @@ export const api = {
   removeRule: (ruleId: string) => call((c) => c.removeRule({ ruleId })),
   /** Omit `userId` for yourself — always allowed, no `configure` needed. */
   effectiveAccess: (userId?: string) => call((c) => c.effectiveAccess({ userId })),
+  /** The targeted "why can/can't they do THIS?" trace. Same self-vs-others rule
+   *  as `effectiveAccess`. */
+  explainAccess: (input: {
+    userId?: string
+    resourceType: AccessResourceType
+    resourceId?: string | null
+    conceptId?: string | null
+    action: AccessActionName
+  }) => call((c) => c.explainAccess(input)),
 }

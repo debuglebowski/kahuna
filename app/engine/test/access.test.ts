@@ -6,6 +6,7 @@ import {
   decide,
   decideRecord,
   emptyPolicy,
+  explainDecision,
   matchesCondition,
   type PolicySet,
   rulesFor,
@@ -297,5 +298,130 @@ describe("the cascade — tiers resolve in precedence order", () => {
     const p = policy([untagged, explicitTierZero])
     // Same tier → deny wins within it, exactly like the flat model.
     expect(decide(p, "view", { type: "concept", id: "c1" }, true)).toBe(false)
+  })
+})
+
+/**
+ * ── THE EXPLAIN VIEW'S ENGINE ────────────────────────────────────────────────
+ *
+ * `explainDecision` is `decide`'s traceable twin: same tier walk, but it returns
+ * every tier's verdict instead of stopping at the first one. These tests assert
+ * it agrees with `decide` on the OUTCOME in every shape `decide` is tested above,
+ * plus what only the trace can show: which tier decided, and that a silent tier
+ * still appears rather than vanishing.
+ */
+describe("explainDecision — decide's traceable twin", () => {
+  const tier = (n: number, over: Partial<AccessRule> = {}) => rule({ ...over, precedence: n })
+  const q = { type: "concept", id: "c1" } as const
+
+  it("unrestricted short-circuits with an empty trace, same as decide", () => {
+    const p: PolicySet = { ...unrestrictedPolicy("seed"), rules: [rule({ effect: "deny" })] }
+    const r = explainDecision(p, "view", q, false)
+    expect(r).toEqual({ outcome: true, unrestricted: true, layers: [], decidedByFallback: false })
+  })
+
+  it("no covering rule at all: no layers, outcome is the fallback", () => {
+    const p = policy([rule({ resourceType: "dashboard" })])
+    const r = explainDecision(p, "view", q, true)
+    expect(r.layers).toEqual([])
+    expect(r.outcome).toBe(true)
+    expect(r.decidedByFallback).toBe(true)
+  })
+
+  it("a single allowing tier decides, and is marked as the one that did", () => {
+    const p = policy([rule({ effect: "allow" })])
+    const r = explainDecision(p, "view", q, false)
+    expect(r.outcome).toBe(true)
+    expect(r.decidedByFallback).toBe(false)
+    expect(r.layers).toHaveLength(1)
+    expect(r.layers[0]).toMatchObject({ precedence: 0, verdict: "allow", decided: true })
+  })
+
+  it("a single denying tier decides false", () => {
+    const p = policy([rule({ effect: "deny" })])
+    const r = explainDecision(p, "view", q, true)
+    expect(r.outcome).toBe(false)
+    expect(r.layers[0]).toMatchObject({ verdict: "deny", decided: true })
+  })
+
+  it("a LOWER tier's allow beats a HIGHER tier's deny, and only the lower is decided", () => {
+    const p = policy([tier(0, { effect: "allow" }), tier(1, { effect: "deny" })])
+    const r = explainDecision(p, "view", q, false)
+    expect(r.outcome).toBe(true)
+    expect(r.layers).toEqual([
+      { precedence: 0, roleIds: ["role-1"], ruleIds: ["r1"], verdict: "allow", decided: true },
+      { precedence: 1, roleIds: ["role-1"], ruleIds: ["r1"], verdict: "deny", decided: false },
+    ])
+  })
+
+  it("a silent tier still appears in the trace, distinct from an absent one", () => {
+    // Tier 0 covers this resource but a DIFFERENT action, so it must show up
+    // "silent" for `view` — proof it was considered, not proof it never applied.
+    const p = policy([tier(0, { actions: ["edit"] }), tier(1, { effect: "deny" })])
+    const r = explainDecision(p, "view", q, true)
+    expect(r.outcome).toBe(false)
+    expect(r.layers.map((l) => l.verdict)).toEqual(["silent", "deny"])
+    expect(r.layers[0]!.decided).toBe(false)
+    expect(r.layers[1]!.decided).toBe(true)
+  })
+
+  it("every tier silent falls through to the fallback, with decidedByFallback true", () => {
+    const p = policy([tier(0, { actions: ["edit"] }), tier(1, { actions: ["archive"] })])
+    const r = explainDecision(p, "view", q, true)
+    expect(r.outcome).toBe(true)
+    expect(r.decidedByFallback).toBe(true)
+    expect(r.layers.every((l) => l.verdict === "silent" && !l.decided)).toBe(true)
+  })
+
+  it("deny still beats allow WITHIN one tier, reported as one deny-verdict layer", () => {
+    const p = policy([tier(0, { effect: "deny" }), tier(0, { effect: "allow", id: "r2" })])
+    const r = explainDecision(p, "view", q, true)
+    expect(r.outcome).toBe(false)
+    expect(r.layers).toHaveLength(1)
+    expect(r.layers[0]).toMatchObject({ verdict: "deny", decided: true })
+    expect([...r.layers[0]!.ruleIds].sort()).toEqual(["r1", "r2"])
+  })
+
+  it("two roles sharing a precedence are BOTH named — a tier is not one role", () => {
+    // Per-person role ORDER isn't wired yet (P5), so every role sits at its
+    // default position and two DIFFERENT roles can land in the same tier. Only
+    // one of them (Admin, via `*`) actually grants `configure` here; the point is
+    // that `roleIds` still names both — collapsing to one would blame whichever
+    // rule happened to come first for a decision the other role had no part in.
+    const p = policy([
+      rule({ id: "admin-rule", roleId: "role-admin", actions: ["*"] }),
+      rule({ id: "member-rule", roleId: "role-member", actions: ["edit"] }),
+    ])
+    const r = explainDecision(p, "configure", q, false)
+    expect(r.outcome).toBe(true)
+    expect(r.layers).toHaveLength(1)
+    expect(new Set(r.layers[0]!.roleIds)).toEqual(new Set(["role-admin", "role-member"]))
+    expect(r.layers[0]!.verdict).toBe("allow")
+  })
+
+  it("agrees with decide() on every case above it in this file", () => {
+    const cases: ReadonlyArray<{
+      readonly p: PolicySet
+      readonly fallback: boolean
+    }> = [
+      { p: policy([]), fallback: true },
+      { p: policy([rule({ resourceId: "c1" })]), fallback: false },
+      {
+        p: policy([
+          tier(0, { effect: "deny", resourceType: "record", resourceId: null }),
+          tier(0, { effect: "allow", resourceType: "record", resourceId: "record-1", id: "r2" }),
+        ]),
+        fallback: true,
+      },
+      { p: policy([tier(0, { effect: "allow" }), tier(1, { effect: "deny" })]), fallback: false },
+      { p: policy([tier(0, { effect: "deny" }), tier(1, { effect: "allow" })]), fallback: false },
+    ]
+    for (const { p, fallback } of cases) {
+      const resource: { readonly type: "record" | "concept"; readonly id: string } =
+        p.rules[0]?.resourceType === "record" ? { type: "record", id: "record-1" } : q
+      expect(explainDecision(p, "view", resource, fallback).outcome).toBe(
+        decide(p, "view", resource, fallback),
+      )
+    }
   })
 })

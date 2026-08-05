@@ -346,6 +346,92 @@ export const decide = (
   return fallback
 }
 
+/** One tier of `explainDecision`'s trace — see that function's doc. */
+export interface ExplainLayer {
+  /** What this tier resolves at — matches `AccessRule.precedence`. */
+  readonly precedence: number
+  /**
+   * Every DISTINCT role contributing a rule to this tier — null for Layer 0
+   * (see `layer0Rules`). Usually one entry, but NOT always: per-person role
+   * ORDER isn't wired yet (that's P5), so every role today sits at its default
+   * `position` and two roles can share a precedence. A tier is a precedence
+   * bucket, not a role — collapsing it to a single "the" role would silently
+   * pick one of the two and blame the wrong one for the verdict.
+   */
+  readonly roleIds: ReadonlyArray<string | null>
+  /** Every rule in this tier relevant to the queried (action, resource), whatever
+   *  their verdict — so a "silent" tier can still point at what it DID say, on a
+   *  different action or a different resource of the same type. */
+  readonly ruleIds: ReadonlyArray<string>
+  /** What this tier said about the QUERIED (action, resource) specifically. */
+  readonly verdict: "allow" | "deny" | "silent"
+  /** True for the one tier whose verdict became the outcome — at most one. */
+  readonly decided: boolean
+}
+
+/** `explainDecision`'s full trace. */
+export interface ExplainResult {
+  readonly outcome: boolean
+  /** True only for `policy.unrestricted` (`systemScope`) — `layers` is then empty,
+   *  since nothing was walked. */
+  readonly unrestricted: boolean
+  /** Every tier holding a rule that covers this RESOURCE (type + id/concept),
+   *  ascending — not just tiers with a rule matching the queried ACTION too, so a
+   *  tier that grants `view` here but says nothing about `delete` still appears as
+   *  silent for `delete`, rather than being indistinguishable from a tier that
+   *  never mentions this resource at all (which is dropped — nothing to trace). */
+  readonly layers: ReadonlyArray<ExplainLayer>
+  /** True when no tier decided and `fallback` answered instead. */
+  readonly decidedByFallback: boolean
+}
+
+/**
+ * The traceable twin of `decide()` — same walk, same tier semantics, but returns
+ * every tier's verdict instead of stopping at the first one. This is the whole
+ * point of naming layers instead of unioning them: a cascade nobody can see
+ * through is a cascade nobody can safely edit.
+ *
+ * Deliberately a SEPARATE function rather than a `decide(..., {trace: true})`
+ * flag: `decide` is on the hot path (every access check in the app) and must stay
+ * exactly as cheap as a short-circuiting loop; this one is for a human asking
+ * "why?", called rarely, and allowed to do more work.
+ */
+export const explainDecision = (
+  policy: PolicySet,
+  action: AccessAction,
+  resource: AccessResource,
+  fallback: boolean,
+  opts: { readonly unconditionalOnly?: boolean } = {},
+): ExplainResult => {
+  if (policy.unrestricted) {
+    return { outcome: true, unrestricted: true, layers: [], decidedByFallback: false }
+  }
+  const covering = policy.rules.filter((r) => coversResource(r, resource))
+  let outcome = fallback
+  let decidedByFallback = true
+  const layers = tiersOf(covering).map((tier): ExplainLayer => {
+    const relevant = tier.filter((r) => coversAction(r, action))
+    const deny = relevant.some((r) => r.effect === "deny")
+    const allow = relevant.some(
+      (r) => r.effect === "allow" && (r.condition === null || !opts.unconditionalOnly),
+    )
+    const verdict = deny ? "deny" : allow ? "allow" : "silent"
+    const decided = decidedByFallback && verdict !== "silent"
+    if (decided) {
+      outcome = verdict === "allow"
+      decidedByFallback = false
+    }
+    return {
+      precedence: tier[0]!.precedence ?? 0,
+      roleIds: [...new Set(tier.map((r) => r.roleId))],
+      ruleIds: relevant.map((r) => r.id),
+      verdict,
+      decided,
+    }
+  })
+  return { outcome, unrestricted: false, layers, decidedByFallback }
+}
+
 /**
  * Evaluate a condition against a record we already hold. The in-memory twin of
  * the SQL compiler, for single-record checks (`getInstance`, a write guard) where
