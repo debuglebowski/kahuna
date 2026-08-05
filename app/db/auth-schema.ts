@@ -463,7 +463,7 @@ export const googleObjectLink = pgTable(
       table.providerId,
       table.recordId,
     ),
-    index("google_object_link_item_idx").on(table.orgId, table.recordId),
+    index("google_object_link_record_idx").on(table.orgId, table.recordId),
   ],
 )
 
@@ -1117,7 +1117,7 @@ export const clayJob = pgTable(
       .notNull()
       .references(() => clayConnection.id, { onDelete: "cascade" }),
     // KM record version being enriched (null for a net-new create job).
-    recordVersionId: text("instance_id"),
+    recordVersionId: text("record_version_id"),
     // Target concept (the record version's concept for enrich; the create target otherwise).
     conceptId: text("concept_id"),
     mapping: jsonb("mapping").notNull().default({}),
@@ -1130,7 +1130,7 @@ export const clayJob = pgTable(
   (table) => [
     index("clay_job_org_idx").on(table.orgId, table.pushedAt),
     index("clay_job_status_idx").on(table.status),
-    index("clay_job_instance_idx").on(table.recordVersionId),
+    index("clay_job_record_version_idx").on(table.recordVersionId),
   ],
 )
 

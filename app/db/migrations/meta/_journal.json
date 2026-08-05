@@ -85,6 +85,13 @@
       "when": 1785882153325,
       "tag": "0011_collapse_membership",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1785922626890,
+      "tag": "0012_record_vocabulary",
+      "breakpoints": true
     }
   ]
 }
