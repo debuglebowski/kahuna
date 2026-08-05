@@ -82,16 +82,14 @@
       "name": "@kingsmaker/cli",
       "version": "0.0.0",
       "bin": {
-        "km": "./index.ts",
+        "km": "./dist/index.js",
       },
-      "dependencies": {
+      "devDependencies": {
         "@effect/platform": "0.96.1",
         "@effect/rpc": "0.75.1",
         "@kingsmaker/contract": "workspace:*",
-        "effect": "3.21.3",
-      },
-      "devDependencies": {
         "@types/node": "25.9.2",
+        "effect": "3.21.3",
         "vitest": "3.2.6",
       },
     },

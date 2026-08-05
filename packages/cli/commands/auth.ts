@@ -36,8 +36,32 @@ export const authCommands: ReadonlyArray<Command> = [
       host: { type: "string" },
       email: { type: "string" },
       password: { type: "string" },
+      sso: { type: "boolean" },
     },
     run: async (ctx) => {
+      // SSO CANNOT WORK WITH A COOKIE JAR, and saying so is better than a flow
+      // that appears to run and then fails somewhere unhelpful.
+      //
+      // The browser round trip ends with `setSessionCookie` on the SERVER's
+      // origin and a redirect to callbackURL. A loopback listener therefore
+      // catches a redirect carrying NO credential — on success the callback gets
+      // nothing but the redirect itself (only failures carry `?error=`). There
+      // is no code to exchange, because nothing mints one.
+      //
+      // What unlocks it is a credential the server can hand to a non-browser
+      // client: BetterAuth's API-key plugin, which is `km auth token create` and
+      // is not installed yet. Until then an SSO-only organization has no CLI
+      // path at all, and pretending otherwise wastes the user's afternoon.
+      if (ctx.flags.sso) {
+        throw new CliError(
+          "SSO sign-in is not available from the command line.",
+          EXIT.usage,
+          "The browser round trip sets a cookie on the server's own origin and hands the CLI nothing.\n" +
+            "This needs a token credential (`km auth token create`), which requires the API-key plugin server-side.\n" +
+            "For now: sign in with email and password, or ask an operator for a password-capable account.",
+        )
+      }
+
       const config = loadConfig()
       const name = ctx.profile ?? process.env.KM_PROFILE ?? config.current ?? "default"
       const host = (

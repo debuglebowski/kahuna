@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { realpathSync } from "node:fs"
 import { pathToFileURL } from "node:url"
 import { parseArgs } from "node:util"
 import { accessCommands } from "./commands/access.ts"
@@ -161,14 +162,28 @@ export const run = async (argv: ReadonlyArray<string>): Promise<number> => {
   }
 }
 
-// Only self-execute when this file IS the program, so tests can import `run`
-// without the CLI running itself. Compared as URLs rather than by filename: a
-// suffix match would also fire whenever some other `index.ts` is the entry.
-const isEntrypoint = process.argv[1]
-  ? import.meta.url === pathToFileURL(process.argv[1]).href
-  : false
+/**
+ * Only self-execute when this file IS the program, so tests can import `run`
+ * without the CLI running itself.
+ *
+ * REALPATH, not the raw argv. An installed CLI is invoked through
+ * `node_modules/.bin/km`, which is a SYMLINK to this file: `process.argv[1]` is
+ * the link, `import.meta.url` is its target, and comparing them directly makes
+ * this false for every real user. The command then exits 0 having done nothing
+ * — silence a script reads as success. Caught by installing the packed tarball
+ * and running it through the bin symlink, which CI now does.
+ */
+const isEntrypoint = (): boolean => {
+  const argv = process.argv[1]
+  if (!argv) return false
+  try {
+    return import.meta.url === pathToFileURL(realpathSync(argv)).href
+  } catch {
+    return false
+  }
+}
 
-if (isEntrypoint) {
+if (isEntrypoint()) {
   run(process.argv.slice(2))
     .then((code) => {
       process.exitCode = code

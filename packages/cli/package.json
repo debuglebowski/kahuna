@@ -13,19 +13,31 @@
     "typecheck": "tsc -p .",
     "test": "vitest run",
     "start": "bun index.ts",
-    "build": "bun build index.ts --target=node --outdir dist --sourcemap=linked"
+    "build": "bun build index.ts --target=node --outdir dist --sourcemap=linked",
+    "prepublishOnly": "bun run build"
   },
-  "dependencies": {
+  "devDependencies": {
     "@effect/platform": "0.96.1",
     "@effect/rpc": "0.75.1",
     "@kingsmaker/contract": "workspace:*",
-    "effect": "3.21.3"
-  },
-  "devDependencies": {
     "@types/node": "25.9.2",
+    "effect": "3.21.3",
     "vitest": "3.2.6"
   },
   "files": [
     "dist"
-  ]
+  ],
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/debuglebowski/kingsmaker.git",
+    "directory": "packages/cli"
+  },
+  "keywords": [
+    "kingsmaker",
+    "cli"
+  ],
+  "publishConfig": {
+    "access": "restricted"
+  }
 }

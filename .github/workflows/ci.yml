@@ -72,6 +72,23 @@ jobs:
       - run: bun run cli:build
       - run: node packages/cli/dist/index.js help
 
+      # PACK AND INSTALL IT, do not just run the file. `node_modules/.bin/km` is
+      # a SYMLINK, and an entrypoint check comparing argv[1] to import.meta.url
+      # is false through a symlink — the CLI then exits 0 having printed
+      # nothing, which every script reads as success. Running dist/index.js
+      # directly cannot catch that; installing the tarball can. It also catches
+      # a dependency npm cannot resolve from a tarball (`workspace:*`), which is
+      # invisible until someone actually installs the package.
+      - name: install the packed tarball and run the binary
+        run: |
+          set -eux
+          npm pack --workspace @kingsmaker/cli --pack-destination /tmp
+          mkdir -p /tmp/km-install && cd /tmp/km-install
+          npm init -y >/dev/null
+          npm install /tmp/kingsmaker-cli-*.tgz
+          out=$(./node_modules/.bin/km help)
+          echo "$out" | grep -q "Kingsmaker command line"
+
       # Includes server/migrations.test.ts, which drives the real `drizzle-kit`
       # deploy path against an empty scratch database and asserts completeness,
       # idempotency, journal monotonicity, and schema drift. The rest of the suite
