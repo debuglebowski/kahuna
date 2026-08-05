@@ -2,8 +2,12 @@
 import { pathToFileURL } from "node:url"
 import { parseArgs } from "node:util"
 import { authCommands } from "./commands/auth.ts"
+import { eventCommands } from "./commands/event.ts"
 import { profileCommands } from "./commands/profile.ts"
+import { recordCommands } from "./commands/record.ts"
+import { relationCommands } from "./commands/relation.ts"
 import { systemCommands } from "./commands/system.ts"
+import { versionCommands } from "./commands/version.ts"
 import { CliError, EXIT, toFailure } from "./errors.ts"
 import type { Format } from "./output.ts"
 import { note } from "./output.ts"
@@ -18,7 +22,15 @@ import { Registry } from "./registry.ts"
  * that is unambiguous. Everything after the matched path is a positional
  * argument or a flag.
  */
-export const registry = new Registry([...authCommands, ...profileCommands, ...systemCommands])
+export const registry = new Registry([
+  ...authCommands,
+  ...profileCommands,
+  ...recordCommands,
+  ...relationCommands,
+  ...versionCommands,
+  ...eventCommands,
+  ...systemCommands,
+])
 
 /** Flags every command accepts. Command-specific options are merged on top. */
 const GLOBAL_OPTIONS = {

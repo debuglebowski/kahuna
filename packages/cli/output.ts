@@ -80,6 +80,9 @@ export const printRows = (
   rows: ReadonlyArray<Row>,
   columns?: ReadonlyArray<string>,
 ): void => {
+  // A table with no rows prints nothing — a lone header reads as data. CSV and
+  // JSON still print their shape, because a consumer must be able to tell an
+  // empty result from a failed one.
   if (format === "table" && rows.length === 0) return
   const out = render(format, rows, columns)
   if (out) process.stdout.write(`${out}\n`)

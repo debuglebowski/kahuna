@@ -21,6 +21,16 @@ const request = async (
       headers: {
         ...(rest.headers as Record<string, string> | undefined),
         ...(cookie ? { cookie } : {}),
+        // ORIGIN IS REQUIRED. BetterAuth rejects a request without one —
+        // `MISSING_OR_NULL_ORIGIN`, 403 — and Node's fetch does not send one
+        // (Bun's does, which is why this only failed under the published
+        // artifact and not in development). We are a first-party client of this
+        // deployment, so the deployment's own URL is the honest value.
+        //
+        // In production `trustedOrigins` is BETTER_AUTH_URL plus whatever
+        // TRUSTED_ORIGINS lists, so this works as long as the host you point at
+        // is the host the server thinks it is.
+        origin: host,
       },
       // Cookies are attached by hand; following a redirect to another origin
       // would leak the session there.
@@ -100,10 +110,14 @@ export const signIn = async (
 
   if (!res.ok) {
     const body = await errorBody(res)
+    // Say what the SERVER said when it told us. Assuming "wrong password" for
+    // every 401/403 is how a missing Origin header spent an afternoon looking
+    // like a credentials problem.
+    const credentials = body.code === "INVALID_EMAIL_OR_PASSWORD" || !body.code
     throw new CliError(
-      res.status === 401 || res.status === 403
+      res.status === 401 || (res.status === 403 && credentials)
         ? "Sign-in failed — check the email and password."
-        : (body.message ?? `Sign-in failed (HTTP ${res.status}).`),
+        : (body.code ?? body.message ?? `Sign-in failed (HTTP ${res.status}).`),
       exitCodeForStatus(res.status),
       res.status === 404 ? `No sign-in endpoint at ${host}. Is that the right host?` : undefined,
     )

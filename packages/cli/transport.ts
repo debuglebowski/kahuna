@@ -33,7 +33,9 @@ const authHeaders = (profile: Profile): Record<string, string> => {
   if (!profile.cookie) {
     throw new CliError("Not signed in.", EXIT.unauthenticated, "Run `km auth login` first.")
   }
-  return { cookie: profile.cookie }
+  // `origin` for the same reason rest.ts sends it: anything that reaches
+  // BetterAuth without one is refused, and Node's fetch adds none.
+  return { cookie: profile.cookie, origin: profile.host }
 }
 
 /**
