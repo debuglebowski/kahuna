@@ -56,14 +56,42 @@ const MESSAGES: Record<string, string> = {
   DEACTIVATED: "Your account is deactivated in this organization.",
   NO_ACTIVE_ORG: "Your session has no active organization.",
   FORBIDDEN: "You do not have permission to do that.",
+  MANAGED_READONLY: "That concept is managed by an integration and cannot be edited here.",
   VERSION_CONFLICT: "The record changed while this command was running.",
   NOT_FOUND: "No such record.",
+  CONFLICT: "That name is already taken.",
+  VALIDATION: "A value was rejected by the field's rules.",
+  ILLEGAL_TRANSITION: "That enum field does not allow moving straight to that value.",
+  RELATION_TARGET_MISMATCH: "That record belongs to a different concept than the relation targets.",
+  FIELD_CONFIG_INVALID: "The field configuration is not valid for that kind.",
+  // The block-not-cascade convention: deleting something still referenced is
+  // refused rather than quietly taking its dependants with it. Each of these
+  // needs to say WHAT is still using it, or the user just sees a wall.
+  CONCEPT_IN_USE: "That concept still has records.",
+  FIELD_IN_USE: "That field still holds values, or something references it.",
+  RECORD_VERSION_IN_USE: "Another record still links to that version.",
+  VERSIONING_IN_USE: "Versioning cannot be switched off while drafts or multiple versions exist.",
+  TASK_STATUS_IN_USE: "Tasks still hold that status.",
+  TASK_PRIORITY_IN_USE: "Tasks still hold that priority.",
+  VERSION_FROZEN: "That version is published, so it cannot be edited.",
+  DRAFT_EXISTS: "There is already an open draft for that record.",
+  SINGLE_RECORD_PROTECTED: "A single-record concept always keeps its one record.",
+  SINGLE_RECORD_CONFLICT:
+    "That concept has more than one record, so it cannot become single-record.",
+  RECORD_NOT_PUBLISHED: "That record has no published version yet.",
+  ATTACHMENT_TOO_LARGE: "The file is larger than the server accepts.",
 }
 
 const HINTS: Record<string, string> = {
   UNAUTHENTICATED: "Run `km auth login` first.",
   NO_ACTIVE_ORG: "Ask an administrator to add you to the organization.",
   VERSION_CONFLICT: "Re-run the command; it re-reads before writing.",
+  CONCEPT_IN_USE: "Delete or archive its records first, or archive the concept instead.",
+  FIELD_IN_USE: "Archive the field instead — archiving keeps the data and is reversible.",
+  VERSIONING_IN_USE: "Publish or discard the open drafts first.",
+  VERSION_FROZEN: "Open a new draft: `km record version create <id>`.",
+  DRAFT_EXISTS: "Publish or discard it: `km record version publish|discard <id>`.",
+  ILLEGAL_TRANSITION: "`km concept get <concept>` shows the field's allowed values.",
 }
 
 /** HTTP status → exit code. The server speaks status; scripts want a code. */

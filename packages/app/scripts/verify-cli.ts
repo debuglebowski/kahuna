@@ -150,6 +150,112 @@ const main = async (): Promise<void> => {
     check("the record is gone afterwards", gone.code !== 0, gone.stdout)
   }
 
+  console.log("\nschema")
+  const stamp = Date.now()
+  const conceptName = `CliVendor${stamp}`
+  const madeConcept = await km(
+    "concept",
+    "create",
+    conceptName,
+    "--description",
+    "made by verify-cli",
+  )
+  check("concept create", madeConcept.code === 0, madeConcept.stderr)
+
+  const slug = conceptName.toLowerCase()
+  const addedField = await km("concept", "field", "add", slug, "--name", "title", "--kind", "text")
+  check("concept field add", addedField.code === 0, addedField.stderr)
+  const addedEnum = await km(
+    "concept",
+    "field",
+    "add",
+    slug,
+    "--name",
+    "stage",
+    "--kind",
+    "enum",
+    "--options",
+    "new,won,lost",
+  )
+  check("concept field add --kind enum --options", addedEnum.code === 0, addedEnum.stderr)
+
+  const relNoTarget = await km(
+    "concept",
+    "field",
+    "add",
+    slug,
+    "--name",
+    "owner",
+    "--kind",
+    "relation",
+  )
+  check("a relation field without --target is refused", relNoTarget.code === 2, relNoTarget.stderr)
+  const badKind = await km("concept", "field", "add", slug, "--name", "x", "--kind", "wormhole")
+  check(
+    "an unknown field kind lists the real ones",
+    badKind.code === 2 && badKind.stderr.includes("richtext"),
+    badKind.stderr,
+  )
+
+  const titled = await km("concept", "update", slug, "--title-field", "title")
+  check("concept update --title-field", titled.code === 0, titled.stderr)
+
+  const shown = await km("concept", "get", slug, "--json")
+  const conceptJson = shown.code === 0 ? JSON.parse(shown.stdout) : {}
+  check(
+    "concept get reports the fields just added",
+    Array.isArray(conceptJson.fields) && conceptJson.fields.length === 2,
+    shown.stdout.slice(0, 200),
+  )
+
+  // A record in the new concept proves the schema is real, and that the title
+  // field is what the label resolves through.
+  const rec = await km("record", "create", slug, "--field", "title=First", "--json")
+  check("a record can be created in the new concept", rec.code === 0, rec.stderr)
+  const recRow = rec.code === 0 ? JSON.parse(rec.stdout) : {}
+  check("the title field becomes the record's label", recRow.label === "First", rec.stdout)
+
+  const reordered = await km("concept", "field", "reorder", slug, "stage")
+  check("concept field reorder", reordered.code === 0, reordered.stderr)
+  const afterOrder = await km("concept", "field", "list", slug, "--json")
+  check(
+    "the named field moved to the front, the rest kept their order",
+    JSON.parse(afterOrder.stdout)[0]?.name === "stage",
+    afterOrder.stdout.slice(0, 200),
+  )
+
+  const labelName = `cli-label-${stamp}`
+  check("label create", (await km("label", "create", labelName)).code === 0)
+  const labels = await km("label", "list", "--json")
+  check("label list shows it", labels.stdout.includes(labelName), labels.stdout.slice(0, 200))
+  check("label archive", (await km("label", "archive", labelName)).code === 0)
+  check("label delete --yes", (await km("label", "delete", labelName, "--yes")).code === 0)
+
+  const conceptUnconfirmed = await km("concept", "delete", slug)
+  check(
+    "concept delete without --yes REFUSES",
+    conceptUnconfirmed.code === 2,
+    conceptUnconfirmed.stderr,
+  )
+
+  // BLOCK, NOT CASCADE. The concept still holds the record created above, and
+  // the server refuses rather than taking it with it — the CLI must say what is
+  // in the way and what to do, not print a bare CONCEPT_IN_USE.
+  const inUse = await km("concept", "delete", slug, "--yes")
+  check(
+    "deleting a concept that still has records is refused (exit 6) and explained",
+    inUse.code === 6 &&
+      inUse.stderr.includes("still has records") &&
+      inUse.stderr.includes("archive"),
+    inUse.stderr,
+  )
+
+  if (recRow.id) await km("record", "delete", String(recRow.id), "--yes")
+  check(
+    "concept delete --yes purges once it is empty",
+    (await km("concept", "delete", slug, "--yes")).code === 0,
+  )
+
   console.log("\nerrors and exit codes")
   const badConcept = await km("record", "list", "nonexistent-concept")
   check("unknown concept exits 5", badConcept.code === 5, badConcept.stderr)
