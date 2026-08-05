@@ -71,6 +71,11 @@ export const VERBS = new Set([
   "download",
   "purge",
   "holders",
+  // Deactivation is its own reversible pair, NOT archive/restore. Reusing
+  // `restore` here would make one verb mean two different mechanisms, which is
+  // exactly what "a verb means the same thing under every noun" forbids.
+  "deactivate",
+  "reactivate",
   "changed",
   "runs",
   "test",

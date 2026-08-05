@@ -1,13 +1,17 @@
 #!/usr/bin/env node
 import { pathToFileURL } from "node:url"
 import { parseArgs } from "node:util"
+import { accessCommands } from "./commands/access.ts"
 import { attachmentCommands } from "./commands/attachment.ts"
 import { authCommands } from "./commands/auth.ts"
+import { automationCommands } from "./commands/automation.ts"
 import { bulkCommands } from "./commands/bulk.ts"
 import { conceptCommands } from "./commands/concept.ts"
+import { dashboardCommands } from "./commands/dashboard.ts"
 import { eventCommands } from "./commands/event.ts"
 import { labelCommands } from "./commands/label.ts"
 import { noteCommands } from "./commands/note.ts"
+import { organizationCommands } from "./commands/organization.ts"
 import { profileCommands } from "./commands/profile.ts"
 import { recordCommands } from "./commands/record.ts"
 import { relationCommands } from "./commands/relation.ts"
@@ -36,6 +40,10 @@ export const registry = new Registry([
   ...taskCommands,
   ...noteCommands,
   ...attachmentCommands,
+  ...accessCommands,
+  ...organizationCommands,
+  ...dashboardCommands,
+  ...automationCommands,
   ...labelCommands,
   ...recordCommands,
   ...relationCommands,

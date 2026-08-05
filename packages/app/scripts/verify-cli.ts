@@ -468,6 +468,116 @@ const main = async (): Promise<void> => {
     check("attachment delete --yes", (await km("attachment", "delete", fileId, "--yes")).code === 0)
   }
 
+  console.log("\naccess, organization, dashboards, automations")
+  const whole = await km("access", "check", "--json")
+  check("access check with no question gives the whole picture", whole.code === 0, whole.stderr)
+  const picture = whole.code === 0 ? JSON.parse(whole.stdout) : {}
+  check(
+    "it reports ownership and the roles held",
+    "isOwner" in picture && "roles" in picture,
+    whole.stdout.slice(0, 160),
+  )
+
+  // The identity provisioned for this run owns its org, so the answer is known.
+  const explained = await km(
+    "access",
+    "check",
+    "--action",
+    "configure",
+    "--resource",
+    "org",
+    "--json",
+  )
+  const trace = explained.code === 0 ? JSON.parse(explained.stdout) : {}
+  check(
+    "access check --action --resource answers one question",
+    explained.code === 0,
+    explained.stderr,
+  )
+  check(
+    "the owner is allowed to configure the org",
+    trace.outcome === true,
+    explained.stdout.slice(0, 200),
+  )
+  check(
+    "the answer comes with an ordered layer trace",
+    Array.isArray(trace.layers) && trace.layers.length > 0,
+    explained.stdout.slice(0, 300),
+  )
+  const table = await km("access", "check", "--action", "configure", "--resource", "org")
+  check(
+    "the trace renders as a table with a decided marker",
+    table.stdout.includes("decided") || table.stdout.includes("ALLOWED"),
+    table.stdout.slice(0, 300),
+  )
+
+  const badAction = await km("access", "check", "--action", "levitate", "--resource", "org")
+  check(
+    "an unknown action lists the real ones",
+    badAction.code === 2 && badAction.stderr.includes("configure"),
+    badAction.stderr,
+  )
+  const halfQuestion = await km("access", "check", "--action", "view")
+  check("--action without --resource is refused", halfQuestion.code === 2, halfQuestion.stderr)
+
+  const roles = await km("access", "role", "list", "--json")
+  check("access role list", roles.code === 0, roles.stderr)
+  const roleNames = (JSON.parse(roles.stdout) as Array<{ name: string }>).map((r) => r.name)
+  check("the seeded roles are there", roleNames.length > 0, roleNames.join(","))
+  const holders = await km("access", "role", "holders", roleNames[0] ?? "")
+  check("access role holders", holders.code === 0, holders.stderr)
+
+  const members = await km("organization", "member", "list", "--json")
+  check("organization member list", members.code === 0, members.stderr)
+  const noSuchAccount = await km("organization", "member", "add", `ghost-${stamp}@example.test`)
+  check(
+    "adding an unprovisioned account explains that sign-up is closed",
+    noSuchAccount.code === 5 && noSuchAccount.stderr.includes("provisioned"),
+    noSuchAccount.stderr,
+  )
+
+  const dashboards = await km("dashboard", "list", "--json")
+  check("dashboard list", dashboards.code === 0, dashboards.stderr)
+  const dashNames = JSON.parse(dashboards.stdout) as Array<{ name: string }>
+  if (dashNames[0]) {
+    const tplPath = path.join(configHome, "dash.json")
+    const exported = await km("dashboard", "export", dashNames[0].name, "--out", tplPath)
+    check("dashboard export writes a template", exported.code === 0, exported.stderr)
+    const tpl = JSON.parse(readFileSync(tplPath, "utf8")) as Record<string, unknown>
+    check(
+      "the template carries a body but NOT the source id",
+      "body" in tpl && !("id" in tpl),
+      Object.keys(tpl).join(","),
+    )
+
+    const cloned = await km("dashboard", "create", tplPath, "--name", `Clone ${stamp}`)
+    check("dashboard create from the template", cloned.code === 0, cloned.stderr)
+    const after = JSON.parse((await km("dashboard", "list", "--json")).stdout) as Array<{
+      name: string
+    }>
+    check(
+      "the clone is listed",
+      after.some((d) => d.name === `Clone ${stamp}`),
+      String(after.length),
+    )
+    check(
+      "dashboard delete --yes",
+      (await km("dashboard", "delete", `Clone ${stamp}`, "--yes")).code === 0,
+    )
+  }
+
+  const bodyless = path.join(configHome, "empty.json")
+  writeFileSync(bodyless, "{}")
+  const noBody = await km("dashboard", "create", bodyless, "--name", "X")
+  check(
+    "a definition with no body is refused with a hint",
+    noBody.code === 2 && noBody.stderr.includes("export"),
+    noBody.stderr,
+  )
+
+  const automations = await km("automation", "list", "--json")
+  check("automation list", automations.code === 0, automations.stderr)
+
   console.log("\nerrors and exit codes")
   const badConcept = await km("record", "list", "nonexistent-concept")
   check("unknown concept exits 5", badConcept.code === 5, badConcept.stderr)
