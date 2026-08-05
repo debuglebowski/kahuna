@@ -2,6 +2,7 @@
   "name": "@kingsmaker/app",
   "version": "0.0.0",
   "private": true,
+  "license": "MIT",
   "description": "The Kingsmaker deployment: Bun server, React SPA, domain engine and the one migration set.",
   "type": "module",
   "scripts": {

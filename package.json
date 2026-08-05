@@ -2,6 +2,7 @@
   "name": "kingsmaker",
   "version": "0.0.0",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "engines": {
     "bun": ">=1.3.0"
