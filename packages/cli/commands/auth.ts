@@ -73,12 +73,20 @@ export const authCommands: ReadonlyArray<Command> = [
 
       const config = loadConfig()
       const name = ctx.profile ?? process.env.KM_PROFILE ?? config.current ?? "default"
-      const host = (
-        (ctx.flags.host as string | undefined) ??
-        process.env.KM_HOST ??
-        config.profiles[name]?.host ??
-        DEFAULT_HOST
-      ).replace(/\/+$/, "")
+      // WHICH DEPLOYMENT, and never silently.
+      //
+      // This used to fall through to `http://localhost:3100` when nothing said
+      // otherwise: someone with a remote deployment was asked for their email
+      // and password by a CLI quietly aiming at their own laptop, and found out
+      // only when the connection failed. A default nobody was told about is
+      // worse than a question.
+      const known =
+        (ctx.flags.host as string | undefined) ?? process.env.KM_HOST ?? config.profiles[name]?.host
+      const asked = known ?? (process.stdin.isTTY ? await prompt(`Host [${DEFAULT_HOST}]: `) : "")
+      const host = (asked || DEFAULT_HOST).replace(/\/+$/, "")
+      // Said out loud either way, including when it came from a flag — the host
+      // is the one thing a failed sign-in should never leave you guessing about.
+      note(`Signing in to ${host}`)
 
       const email = (ctx.flags.email as string | undefined) ?? (await prompt("Email: "))
       // --password exists for scripts, but it lands in shell history and `ps`,
