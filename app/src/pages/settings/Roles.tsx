@@ -1,6 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Plus, Power, Trash2, X } from "lucide-react"
+import { MoreHorizontal, Plus, Power, Star, Trash2, X } from "lucide-react"
 import { useState } from "react"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import {
   Select,
   SelectContent,
@@ -968,76 +975,85 @@ export function Roles() {
                 {rows.map((r) => (
                   <div
                     key={r.id}
-                    className={`flex items-center gap-3 px-4 py-3 ${r.active ? "" : "opacity-55"}`}
+                    className={`flex items-center gap-3 hover:bg-accent/50 ${r.active ? "" : "opacity-55"}`}
                   >
-                    <div className="min-w-0">
+                    {/* The ROW opens the rules. A real <button> rather than a click
+                        handler on the div: this is the primary action, so it has to
+                        be reachable by keyboard and announced as one. */}
+                    <button
+                      type="button"
+                      onClick={() => setEditing(r)}
+                      className="min-w-0 flex-1 px-4 py-3 text-left"
+                    >
                       <div className="flex items-center gap-2">
                         <span className="font-medium">{r.name}</span>
                         {r.active ? null : <Badge tone="gray">off</Badge>}
-                        {r.autoAssign ? (
-                          <Badge tone="blue">
-                            {r.kind === "automation" ? "new automations" : "new members"}
-                          </Badge>
-                        ) : null}
+                        {r.autoAssign ? <Badge tone="blue">Default</Badge> : null}
                       </div>
                       {r.description ? (
                         <p className="truncate text-sm text-muted-foreground">{r.description}</p>
                       ) : null}
-                    </div>
-                    <div className="ml-auto flex items-center gap-2">
-                      {/* A full-access role can't be "not allowed" anything, so
-                          auto-assigning it is a real choice and stays available; the
-                          rules button is what's meaningless there, not this. */}
-                      <ToggleChip
-                        pressed={r.autoAssign}
-                        disabled={!r.active || patch.isPending}
-                        onPressedChange={() =>
-                          patch.mutate({ id: r.id, autoAssign: !r.autoAssign })
-                        }
-                      >
-                        Auto-assign
-                      </ToggleChip>
-                      <Button variant="secondary" size="sm" onClick={() => setEditing(r)}>
-                        Rules
-                      </Button>
-                      {r.active ? (
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => setTurningOff(r)}
-                          title={
-                            isLastLandingZone(r)
-                              ? `The only role new ${r.kind === "automation" ? "automations" : "members"} land on`
-                              : undefined
-                          }
-                        >
-                          <Power size={14} />
-                          Turn off
-                        </Button>
-                      ) : (
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          disabled={patch.isPending}
-                          onClick={() => patch.mutate({ id: r.id, active: true })}
-                        >
-                          <Power size={14} />
-                          Turn on
-                        </Button>
-                      )}
-                      {/* A managed role's rules stay editable — only deletion is
-                          refused, because the seed pins by key and would re-create
-                          one. Turning it off is the reversible equivalent. */}
-                      {r.managed ? null : (
-                        <IconButton
-                          aria-label={`Delete ${r.name}`}
-                          title="Delete role"
-                          variant="danger"
-                          onClick={() => setDeleting(r)}
-                        >
-                          <Trash2 size={14} />
-                        </IconButton>
-                      )}
+                    </button>
+                    <div className="shrink-0 pr-3">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-sm"
+                            className="text-muted-foreground"
+                            aria-label={`Actions for ${r.name}`}
+                          >
+                            <MoreHorizontal size={15} />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          {/* A full-access role can't be "not allowed" anything, so
+                              making it the default is still a real choice. */}
+                          <DropdownMenuItem
+                            disabled={!r.active || patch.isPending}
+                            onSelect={() => patch.mutate({ id: r.id, autoAssign: !r.autoAssign })}
+                          >
+                            <Star size={15} />
+                            {r.autoAssign ? "Remove as default" : "Set as default"}
+                          </DropdownMenuItem>
+                          {r.active ? (
+                            <DropdownMenuItem onSelect={() => setTurningOff(r)}>
+                              <Power size={15} />
+                              Turn off
+                              {isLastLandingZone(r) ? (
+                                <span className="ml-auto pl-2 text-xs text-muted-foreground">
+                                  the only default
+                                </span>
+                              ) : null}
+                            </DropdownMenuItem>
+                          ) : (
+                            <DropdownMenuItem
+                              disabled={patch.isPending}
+                              onSelect={() => patch.mutate({ id: r.id, active: true })}
+                            >
+                              <Power size={15} />
+                              Turn on
+                            </DropdownMenuItem>
+                          )}
+                          {/* A managed role's rules stay editable — only deletion is
+                              refused, because the seed pins by key and would
+                              re-create one. Turning it off is the reversible
+                              equivalent, which is why it sits right above. */}
+                          {r.managed ? null : (
+                            <>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem
+                                variant="destructive"
+                                onSelect={() => setDeleting(r)}
+                              >
+                                <Trash2 size={15} />
+                                Delete
+                              </DropdownMenuItem>
+                            </>
+                          )}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </div>
                   </div>
                 ))}
