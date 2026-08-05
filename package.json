@@ -29,6 +29,7 @@
     "snapshot": "bash scripts/snapshot.sh",
     "version:set": "bun scripts/version.ts",
     "version:check": "bun scripts/version.ts --check",
+    "release": "bash scripts/release.sh",
     "cli": "bun run --cwd packages/cli start",
     "cli:build": "bun run --cwd packages/cli build"
   },
