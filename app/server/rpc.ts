@@ -5,14 +5,12 @@ import { Effect, Layer } from "effect"
 import {
   type AccessAction,
   type AccessResource,
-  type AccessResourceType,
   decide,
   type EngineServices,
   OrgContext,
   type OrgScope,
 } from "#engine"
 import {
-  type AccessGrant,
   type AccessRole,
   type AccessRule,
   type AnnotationField,
@@ -942,28 +940,10 @@ const HandlersLive = ServerRpcs.toLayer({
   // behind the same gate as the editor that launches it.
   testAutomation: ({ id, limit }) => admin<AutomationDryRun>(uc.testAutomation(id, limit)),
 
-  // ── sharing ────────────────────────────────────────────────────────────────
-  // Gated on `share` FOR THE SPECIFIC RESOURCE, not on admin: the point of the
-  // feature is that a team lead hands out access to their own deals without an
-  // admin in the loop. `requireAction` resolves it against their rules, falling
-  // back to the role default — so today's owner/admin behaviour is unchanged.
-  //
-  // Reading the grant list needs `share` too: who a record is shared with is itself
-  // sensitive, and anyone who may change it may see it.
-  listGrants: ({ resourceType, resourceId }) =>
-    requireAction("share", { type: resourceType, id: resourceId }).pipe(
-      Effect.zipRight(as<ReadonlyArray<AccessGrant>>(uc.listGrants(resourceType, resourceId))),
-    ),
-  share: ({ resourceType, resourceId, userId, roleId, actions }) =>
-    requireAction("share", { type: resourceType, id: resourceId }).pipe(
-      Effect.zipRight(
-        as<AccessGrant>(uc.share({ resourceType, resourceId, userId, roleId, actions })),
-      ),
-    ),
   // ── roles ──────────────────────────────────────────────────────────────────
   // Role NAMES are org vocabulary — any member may read them (they render as pills
-  // on /members and populate the Share dialog). The RULES inside a role are the
-  // sensitive half and need `configure`. See the artifact's Surfaces table.
+  // on /members). The RULES inside a role are the sensitive half and need
+  // `configure`. See the artifact's Surfaces table.
   listRoles: () => as<ReadonlyArray<AccessRole>>(uc.listRoles()),
   rolesOf: ({ userId }) => as<ReadonlyArray<AccessRole>>(uc.rolesOfUser(userId)),
   listRules: ({ roleId }) => admin<ReadonlyArray<AccessRule>>(uc.listRules(roleId)),
@@ -1024,22 +1004,6 @@ const HandlersLive = ServerRpcs.toLayer({
       const target = userId ?? scope.actor
       if (target !== scope.actor) yield* requireAction("configure")
       return yield* as<EffectiveAccess>(uc.effectiveAccess(target))
-    }),
-  revoke: ({ grantId }) =>
-    Effect.gen(function* () {
-      // The grant must be resolved BEFORE the gate: `share` is checked against the
-      // resource the grant points at, which only the row knows. A missing grant is a
-      // no-op (idempotent revoke), so it needs no gate at all.
-      const existing = yield* as<{
-        readonly resourceType: AccessResourceType
-        readonly resourceId: string | null
-      } | null>(uc.getGrant(grantId))
-      if (!existing) return { id: grantId }
-      yield* requireAction("share", {
-        type: existing.resourceType,
-        id: existing.resourceId ?? undefined,
-      })
-      return yield* as<{ readonly id: string }>(uc.revoke(grantId))
     }),
 }).pipe(Layer.provide(EngineBase))
 

@@ -2,21 +2,29 @@
  * End-to-end verification of RECORD-level access against a RUNNING server.
  *
  * THREE real sessions in one org — an owner, a plain member, and a "contractor" who
- * holds nothing but a share of one record. That third session is the point: only a
- * caller whose entire access is one grant can prove that record-level filtering
- * enforces rather than merely coincides with the concept-level default.
+ * holds nothing but a role scoped to one record. That third session is the point:
+ * only a caller whose entire access is one targeted rule can prove that record-level
+ * filtering enforces rather than merely coincides with the concept-level default.
+ *
+ * Targeted access is a ROLE rule with `resourceId` set (`addRule`/`configure`), not a
+ * per-person share — sharing was removed (see `app/engine/services/GrantService.ts`,
+ * deleted). The record-filter mechanics this script proves are unchanged by that
+ * removal: `AccessRoleService.addRule` writes the identical shape a share used to
+ * (a rule naming one `records.id`), just through the role editor instead of a dialog,
+ * and gated on `configure` rather than `share` on the resource.
  *
  * What it proves:
- *   1. A restricted concept + one share = that record, and ONLY that record.
- *   2. The list and the by-id read AGREE — the sharee cannot open a record their
+ *   1. A restricted concept + a role scoped to one record = that record, and ONLY
+ *      that record.
+ *   2. The list and the by-id read AGREE — the contractor cannot open a record their
  *      list correctly hid. (A `fallback = true` bug passes #1 and fails here.)
  *   3. Counts and pagination reflect visible rows, not fetched-then-filtered rows.
- *   4. A shared record's notes/tasks/files/activity follow it; a non-shared record's
- *      do not, even with its record id in hand.
- *   5. Relations do NOT cascade: sharing a record does not disclose its targets.
- *   6. `share` is required to share, nobody can share more than they hold, and any
- *      holder of `share` may revoke.
- *   7. A revoke lands on the very next request (no cache staleness).
+ *   4. The targeted record's notes/tasks/files/activity follow it; a non-targeted
+ *      record's do not, even with its record id in hand.
+ *   5. Relations do NOT cascade: access to a record does not disclose its targets.
+ *   6. Granting targeted access is `configure`-gated — a plain member cannot create a
+ *      role or add a rule to one, so they cannot mint themselves (or anyone) access.
+ *   7. Unassigning the role lands on the very next request (no cache staleness).
  *
  * Defaults to the throwaway stack (API :3199) so a run can't disturb the
  * slay-managed one; point API/ORIGIN at :3100/:5100 to verify the managed stack.
@@ -130,11 +138,11 @@ const mk = (n: string) =>
 const one = await mk("One")
 const two = await mk("Two")
 await mk("Three")
-// The shared record links to a company the contractor has no access to.
+// The targeted record links to a company the contractor has no access to.
 await asOwner.call((c) =>
   c.createRelation({ fieldId: link.id, fromId: two.id, toRecordId: acme.recordId }),
 )
-// Annotations on both a shared and a non-shared record, to prove they follow access.
+// Annotations on both a targeted and a non-targeted record, to prove they follow access.
 await asOwner.call((c) => c.createNote({ subjectId: two.recordId, body: "shared-note" }))
 await asOwner.call((c) => c.createNote({ subjectId: one.recordId, body: "private-note" }))
 
@@ -143,9 +151,9 @@ ok(
   (await asMember.call((c) => c.listRecords({ conceptId: deals.id }))).length === 3,
 )
 
-// ── restrict the concept, then share ONE record with the contractor ──────────
+// ── restrict the concept, then give the contractor a role scoped to ONE record ──
 await asOwner.call((c) => c.setConceptVisibility({ id: deals.id, visibility: "admin" }))
-// Company is restricted TOO, so the no-cascade assertion is about the share not
+// Company is restricted TOO, so the no-cascade assertion is about the grant not
 // reaching the target — not about a concept the contractor could read anyway.
 await asOwner.call((c) => c.setConceptVisibility({ id: companies.id, visibility: "admin" }))
 ok(
@@ -157,20 +165,23 @@ ok(
   (await asMember.code((c) => c.listRecords({ conceptId: deals.id }))) === "NOT_FOUND",
 )
 
-const grant = await asOwner.call((c) =>
-  c.share({
+const targeted = await asOwner.call((c) => c.createRole({ name: `Deal ${stamp} — one record` }))
+await asOwner.call((c) => c.assignRole({ roleId: targeted.id, userId: contractor.userId }))
+const rule = await asOwner.call((c) =>
+  c.addRule({
+    roleId: targeted.id,
+    effect: "allow",
+    actions: ["view"],
     resourceType: "record",
     resourceId: two.recordId,
-    userId: contractor.userId,
-    actions: ["view"],
   }),
 )
-ok("2. owner shares ONE record with the contractor", !!grant.id)
+ok("2. owner scopes a role to ONE record and assigns it to the contractor", !!rule.id)
 
 // THE LIST HALF.
 const seen = await asContractor.call((c) => c.listRecords({ conceptId: deals.id }))
 ok(
-  "3. the contractor's list holds EXACTLY the shared record",
+  "3. the contractor's list holds EXACTLY the targeted record",
   seen.length === 1 && seen[0]!.recordId === two.recordId,
   `n=${seen.length}`,
 )
@@ -181,11 +192,11 @@ ok(
 
 // THE BY-ID HALF — must agree with the list.
 ok(
-  "4. the shared record OPENS by id",
+  "4. the targeted record OPENS by id",
   (await asContractor.code((c) => c.getRecord({ id: two.id }))) === null,
 )
 ok(
-  "   THE AGREEMENT: a NON-shared record does NOT open",
+  "   THE AGREEMENT: a NON-targeted record does NOT open",
   (await asContractor.code((c) => c.getRecord({ id: one.id }))) === "NOT_FOUND",
 )
 ok(
@@ -195,7 +206,7 @@ ok(
 
 // Counts: the limit must bound VISIBLE rows.
 ok(
-  "5. THE COUNT GUARD: the member (no share) sees zero, not a truncated page",
+  "5. THE COUNT GUARD: the member (no targeted access) sees zero, not a truncated page",
   (await asMember.code((c) => c.listRecords({ conceptId: deals.id }))) === "NOT_FOUND",
 )
 const ownerAll = await asOwner.call((c) => c.listRecords({ conceptId: deals.id }))
@@ -203,13 +214,13 @@ ok("   …while the owner still sees all three", ownerAll.length === 3, `n=${own
 
 // Annotations follow the record.
 ok(
-  "6. the shared record's notes ARE readable",
+  "6. the targeted record's notes ARE readable",
   (await asContractor.call((c) => c.listNotes({ subjectId: two.recordId }))).some(
     (n) => n.body === "shared-note",
   ),
 )
 ok(
-  "   THE ANNOTATION CHOKEPOINT: a non-shared record's notes are NOT",
+  "   THE ANNOTATION CHOKEPOINT: a non-targeted record's notes are NOT",
   (await asContractor.code((c) => c.listNotes({ subjectId: one.recordId }))) === "NOT_FOUND",
 )
 ok(
@@ -220,42 +231,37 @@ ok(
 // Relations do NOT cascade.
 const detail = await asContractor.call((c) => c.getRecord({ id: two.id }))
 ok(
-  "7. NO CASCADE: the shared record's relation target is not disclosed",
+  "7. NO CASCADE: the targeted record's relation target is not disclosed",
   !detail.related.some((r) => r.conceptId === companies.id),
   `related=${detail.related.length}`,
 )
 
-// Sharing is gated, and bounded by what the sharer holds.
-// Sharing is bounded by what the sharer HOLDS. The contractor holds only `view` on
-// the shared record, so handing out `edit` must be refused — otherwise `share` would
-// be a privilege-escalation primitive (see `share` in use-cases.ts).
+// Granting targeted access is `configure`-gated. Unlike the old self-service share
+// (bounded by what the sharer held), a role/rule write is ordinary RBAC — an admin
+// grants whatever they like — so the safeguard worth proving is that a PLAIN MEMBER
+// cannot reach either write at all, and therefore cannot mint access for themselves
+// or anyone else.
 ok(
-  "8. the contractor cannot grant an action they do not hold",
-  (await asContractor.code((c) =>
-    c.share({
-      resourceType: "record",
-      resourceId: two.recordId,
-      userId: member.userId,
-      actions: ["edit"],
-    }),
-  )) === "VALIDATION",
+  "8. a plain member cannot create a role",
+  (await asMember.code((c) => c.createRole({ name: "self-service" }))) === "FORBIDDEN",
 )
 ok(
-  "   …and cannot share a record they cannot even read",
-  (await asContractor.code((c) =>
-    c.share({
+  "   …nor add a rule to an existing one",
+  (await asMember.code((c) =>
+    c.addRule({
+      roleId: targeted.id,
+      effect: "allow",
+      actions: ["edit"],
       resourceType: "record",
       resourceId: one.recordId,
-      userId: member.userId,
-      actions: ["view"],
     }),
-  )) !== null,
+  )) === "FORBIDDEN",
 )
 
-// Revoke lands immediately.
-await asOwner.call((c) => c.revoke({ grantId: grant.id }))
+// Unassigning lands immediately.
+await asOwner.call((c) => c.unassignRole({ roleId: targeted.id, userId: contractor.userId }))
 ok(
-  "9. after revoke the record is gone from the list",
+  "9. after unassigning the record is gone from the list",
   (await asContractor.code((c) => c.listRecords({ conceptId: deals.id }))) === "NOT_FOUND",
 )
 ok(

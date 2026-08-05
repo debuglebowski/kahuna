@@ -98,7 +98,6 @@ export {
   EventStore,
 } from "./services/EventStore"
 export { type AddFieldInput, FieldService } from "./services/FieldService"
-export { type CreateGrantInput, type Grant, GrantService } from "./services/GrantService"
 export {
   type GraphLayoutPositions,
   GraphLayoutService,

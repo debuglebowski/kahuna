@@ -2,8 +2,7 @@
  * ── THE ACCESS MODEL ─────────────────────────────────────────────────────────
  *
  * One mechanism for every "who may do what" question. A **role** is a named bag
- * of **rules**; a per-person **share** is the same rule row carrying an actor
- * instead of a role. So there is exactly one matcher, not one per feature.
+ * of **rules**. There is exactly one matcher, not one per feature.
  *
  * Pure on purpose: no DB, no Effect, no SQL. `PolicyService` loads the rules and
  * `engine/domain/accessSql.ts` compiles conditions to predicates; everything here
@@ -54,10 +53,9 @@ export type AccessResourceType =
  * The thing being acted on.
  *
  * For `record`, `id` is an **`records.id`** (the lineage), never an `record_versions.id`:
- * a versioned concept has N version rows per record, and a share must survive
- * someone publishing a new version. `conceptId` is carried alongside so a
- * concept-scoped rule (`share` on Deals) can match a specific record without a
- * second lookup.
+ * a versioned concept has N version rows per record, and a rule naming one record
+ * must survive someone publishing a new version. `conceptId` is carried alongside so
+ * a concept-scoped rule can match a specific record without a second lookup.
  */
 export interface AccessResource {
   readonly type: AccessResourceType
@@ -89,12 +87,18 @@ export type AccessCondition =
   | { readonly kind: "all"; readonly of: ReadonlyArray<AccessCondition> }
   | { readonly kind: "any"; readonly of: ReadonlyArray<AccessCondition> }
 
-/** One grant (or refusal). Attached to a role, or straight to an actor (a share). */
+/**
+ * One grant (or refusal). Attached to a role.
+ *
+ * `actorId` is a historical column (once a direct per-person share) that
+ * `PolicyService.loadRules` no longer reads — shares were removed, since every rule
+ * now coming from a role is what makes precedence a complete ordering. Kept typed
+ * here because `AccessRuleRow` still selects it and old rows still carry it; a value
+ * arriving here is inert, not a signal.
+ */
 export interface AccessRule {
   readonly id: string
-  /** Set when this rule came from a role; null on a direct actor share. */
   readonly roleId: string | null
-  /** Set on a direct actor share; null when the rule came from a role. */
   readonly actorId: string | null
   readonly effect: "allow" | "deny"
   /** Action names, or `["*"]`. Empty grants nothing. */
@@ -109,9 +113,8 @@ export interface AccessRule {
 }
 
 /**
- * Every rule that applies to one actor in one org — their roles' rules plus their
- * direct shares, already unioned. Built by `PolicyService` and carried on
- * `OrgScope`, so a request resolves it once.
+ * Every rule that applies to one actor in one org, via their roles, already unioned.
+ * Built by `PolicyService` and carried on `OrgScope`, so a request resolves it once.
  */
 export interface PolicySet {
   readonly actorId: string

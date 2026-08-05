@@ -129,11 +129,14 @@ describe("role kinds, auto-assign and deactivation", () => {
   })
 
   /**
-   * A direct share carries no role, so turning a role off must not touch it.
-   * Someone given one record keeps it when the role that showed them the concept
-   * goes away — the same reason "No" is the ABSENCE of an allow rather than a deny.
+   * THE DEAD COLUMN GUARD. Sharing was removed — every rule now comes from a role,
+   * which is what makes a fixed (role position, chain depth) precedence a complete
+   * ordering. `access_rules.actor_id` stays on the table (the same rollback window
+   * earlier migrations used) but `PolicyService.loadRules` must never read it again.
+   * If this regresses, a "dead" row silently becomes live the next time someone
+   * writes one by hand, or a future migration replays old data.
    */
-  it.effect("deactivation leaves a direct share alone", () => {
+  it.effect("a direct actor-scoped rule is never read, even with a role held", () => {
     const org = newOrgId()
     const shared = "11111111-1111-1111-1111-111111111111"
     return Effect.gen(function* () {
@@ -144,16 +147,20 @@ describe("role kinds, auto-assign and deactivation", () => {
 
       const member = yield* roles.getByKey("member")
       yield* roles.assign(member!.id, PERSON)
-      // A share: the same row shape with `actor_id` instead of `role_id`. Written
-      // directly because that is the distinction under test.
+      const withRoleOnly = yield* policies.resolve(org, PERSON)
+      expect(withRoleOnly.rules.length).toBeGreaterThan(0)
+
+      // Written directly — the same shape a share used to write, with `actor_id`
+      // instead of `role_id` — because the column and the CHECK constraint still
+      // allow it. Nothing in the product writes this any more.
       yield* sql`
         INSERT INTO access_rules (org_id, actor_id, effect, actions, resource_type, resource_id)
         VALUES (${org}, ${PERSON}, 'allow', ${["view"]}, 'record', ${shared})`
       yield* policies.bump(org)
 
-      yield* roles.update({ id: member!.id, active: false })
       const after = yield* policies.resolve(org, PERSON)
-      expect(after.rules.map((r) => r.resourceId)).toEqual([shared])
+      expect(after.rules.map((r) => r.resourceId)).not.toContain(shared)
+      expect(after.rules.length).toBe(withRoleOnly.rules.length)
     }).pipe(Effect.provide(testLayer(org, PERSON)))
   })
 })

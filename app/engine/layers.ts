@@ -10,7 +10,6 @@ import { ConceptService } from "./services/ConceptService"
 import { DashboardService } from "./services/DashboardService"
 import { EventStore } from "./services/EventStore"
 import { FieldService } from "./services/FieldService"
-import { GrantService } from "./services/GrantService"
 import { GraphLayoutService } from "./services/GraphLayoutService"
 import { LabelService } from "./services/LabelService"
 import { MemberService } from "./services/MemberService"
@@ -42,7 +41,6 @@ export const EngineLive = Layer.mergeAll(
   PolicyService.Default,
   AccessDefaultsService.Default,
   AccessRoleService.Default,
-  GrantService.Default,
   SidebarViewService.Default,
   DashboardService.Default,
   GraphLayoutService.Default,
@@ -69,7 +67,6 @@ export type EngineServices =
   | PolicyService
   | AccessDefaultsService
   | AccessRoleService
-  | GrantService
   | SidebarViewService
   | DashboardService
   | GraphLayoutService

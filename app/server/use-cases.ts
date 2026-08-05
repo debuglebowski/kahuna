@@ -25,7 +25,6 @@ import {
   canReadRestricted,
   type DashboardBody,
   DashboardService,
-  decide,
   type EditReach,
   type EngineServices,
   EventStore,
@@ -33,7 +32,6 @@ import {
   type FieldKind,
   FieldService,
   FieldValidationError,
-  GrantService,
   type GraphLayoutPositions,
   GraphLayoutService,
   LABELS_KEY,
@@ -1989,81 +1987,6 @@ export const testAutomation = (id: string, limit?: number) =>
     const automations = yield* AutomationService
     const automation = yield* automations.getById(id)
     return yield* dryRun({ automation, limit })
-  })
-
-// ── sharing ─────────────────────────────────────────────────────────────────
-
-/** Current grants on one resource — what the Share dialog lists. */
-export const listGrants = (resourceType: AccessResourceType, resourceId: string): UC<unknown> =>
-  Effect.flatMap(GrantService, (g) => g.listFor(resourceType, resourceId))
-
-/**
- * Grant access to a person or a role.
- *
- * NOBODY CAN SHARE MORE THAN THEY HOLD. Without this check, `share` on a resource
- * would be a privilege-escalation primitive: a member could grant themselves (or a
- * confederate) `delete` on a record they can only view. So every requested action is
- * re-checked against the sharer's own policy before the rule is written.
- *
- * For a record the resource id is the record's id, so the grant survives a
- * new version being published.
- */
-export const share = (input: {
-  readonly resourceType: AccessResourceType
-  readonly resourceId: string
-  readonly userId?: string
-  readonly roleId?: string
-  readonly actions: ReadonlyArray<AccessAction>
-}): UC<unknown> =>
-  Effect.gen(function* () {
-    const scope = yield* OrgContext
-    const grants = yield* GrantService
-    const resource = { type: input.resourceType, id: input.resourceId }
-    // `unconditionalOnly`: a CONDITIONAL grant of an action does not entitle the
-    // sharer to hand that action out unconditionally.
-    const held = (action: AccessAction) =>
-      scope.policy === undefined ||
-      scope.policy.unrestricted ||
-      decide(scope.policy, action, resource, canReadRestricted(scope), {
-        unconditionalOnly: true,
-      })
-    const overreach = input.actions.filter((a) => !held(a))
-    if (overreach.length > 0)
-      return yield* Effect.fail(
-        new FieldValidationError({
-          message: `you cannot share access you do not hold: ${overreach.join(", ")}`,
-          field: "actions",
-        }),
-      )
-    // Exactly one subject; the DB CHECK enforces it too, but a typed error beats a
-    // constraint violation surfacing as an opaque 500.
-    if ((input.userId === undefined) === (input.roleId === undefined))
-      return yield* Effect.fail(
-        new FieldValidationError({
-          message: "a share names exactly one of userId or roleId",
-          field: "userId",
-        }),
-      )
-    return yield* grants.create({
-      resourceType: input.resourceType,
-      resourceId: input.resourceId,
-      userId: input.userId,
-      roleId: input.roleId,
-      actions: input.actions,
-    })
-  })
-
-/** One grant by id, or null. The revoke gate needs it to learn WHICH resource to
- *  check `share` against — only the row knows that. */
-export const getGrant = (grantId: string): UC<unknown> =>
-  Effect.flatMap(GrantService, (g) => g.getById(grantId))
-
-/** Revoke a grant. Any holder of `share` may revoke, not only whoever granted it. */
-export const revoke = (grantId: string): UC<unknown> =>
-  Effect.gen(function* () {
-    const grants = yield* GrantService
-    yield* grants.revoke(grantId)
-    return { id: grantId }
   })
 
 // ── roles ───────────────────────────────────────────────────────────────────

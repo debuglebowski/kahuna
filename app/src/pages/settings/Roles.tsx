@@ -45,9 +45,8 @@ import { Feedback } from "./parts"
 /**
  * Role management — the editor for the access model's reusable half.
  *
- * A role is a named bag of rules; a per-person share is the same thing attached to
- * one actor (that lives in the Share dialog, not here). An actor may hold any number
- * of roles — a policy is the union of its allows — so nothing here is a tier.
+ * A role is a named bag of rules. An actor may hold any number of roles — a policy
+ * is the union of its allows — so nothing here is a tier.
  *
  * ── THREE SECTIONS, NOT A BADGE ──────────────────────────────────────────────
  *
@@ -65,6 +64,11 @@ import { Feedback } from "./parts"
  * Actions in the order they escalate — view, then the write verbs, then the two that
  * are admin-only by default. Not alphabetical: the list is read as "how much power is
  * this?", so `delete` and `configure` sitting last is information.
+ *
+ * `"share"` is deliberately absent: sharing was removed (the mechanism for "this
+ * person, specifically" is now a personal role, not a per-resource grant). The wire
+ * value stays in `AccessActionName` — old rules still carry it — but nothing in this
+ * editor offers to grant it.
  */
 const ACTIONS: ReadonlyArray<{ id: AccessActionName; label: string; hint: string }> = [
   { id: "view", label: "View", hint: "Read it" },
@@ -72,7 +76,6 @@ const ACTIONS: ReadonlyArray<{ id: AccessActionName; label: string; hint: string
   { id: "edit", label: "Edit", hint: "Change existing ones" },
   { id: "archive", label: "Archive", hint: "Hide, restorably" },
   { id: "delete", label: "Delete", hint: "Destroy permanently" },
-  { id: "share", label: "Share", hint: "Grant access to others" },
   { id: "configure", label: "Configure", hint: "Change its setup" },
 ]
 
@@ -121,13 +124,12 @@ const RESOURCE_GROUPS: ReadonlyArray<{
 /**
  * The rail: one grid per area, plus the full rule list.
  *
- * `actions` is NOT the full seven everywhere, and that is the point. A column only
+ * `actions` is NOT the full six everywhere, and that is the point. A column only
  * appears where the engine actually decides that action against that resource — a
  * cell that writes a rule nothing ever consults is worse than no cell, because it
  * reads as a permission that was granted. Dashboards and views resolve view/edit/
  * delete per row; automations now do too; a `record` rule is only ever consulted for
- * `view`, so the Records grid has the one column. `share` is decided per resource by
- * the share RPC, so it appears wherever there is a resource to name.
+ * `view`, so the Records grid has the one column.
  *
  * "Other" holds only what NO grid owns: the resource types with no item list
  * (fields, tasks, notes, buckets, members, the org itself) and conditional rules,
@@ -154,7 +156,7 @@ const AREAS: ReadonlyArray<Area> = [
     label: "Concepts",
     resourceType: "concept",
     itemsLabel: "Concept",
-    actions: ["view", "archive", "delete", "share", "configure"],
+    actions: ["view", "archive", "delete", "configure"],
     note: "Configure covers the concept and its fields. View decides whether the concept is reachable at all.",
   },
   {
@@ -172,7 +174,7 @@ const AREAS: ReadonlyArray<Area> = [
     label: "Dashboards",
     resourceType: "dashboard",
     itemsLabel: "Dashboard",
-    actions: ["view", "edit", "delete", "share"],
+    actions: ["view", "edit", "delete"],
     note: "By default a dashboard is visible if it is shared with the org, or personal and yours. These are the exceptions to that.",
   },
   {
@@ -180,14 +182,14 @@ const AREAS: ReadonlyArray<Area> = [
     label: "Sidebar views",
     resourceType: "view",
     itemsLabel: "Sidebar view",
-    actions: ["view", "edit", "delete", "share"],
+    actions: ["view", "edit", "delete"],
   },
   {
     id: "automation",
     label: "Automations",
     resourceType: "automation",
     itemsLabel: "Automation",
-    actions: ["view", "edit", "archive", "delete", "share"],
+    actions: ["view", "edit", "archive", "delete"],
     note: "Automations are readable by anyone and editable by admins by default, so a deny here is the lever that narrows one.",
   },
 ]

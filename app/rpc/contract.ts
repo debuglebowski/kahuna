@@ -1481,25 +1481,6 @@ export const AccessActionName = Schema.Literal(
 )
 export type AccessActionName = typeof AccessActionName.Type
 
-/** One grant as the Share dialog sees it. `userId`/`roleId` are exclusive. */
-export const AccessGrant = Schema.Struct({
-  id: Schema.String,
-  userId: Schema.NullOr(Schema.String),
-  roleId: Schema.NullOr(Schema.String),
-  /** The role's display name, resolved server-side so the dialog needs no second
-   *  fetch. Null for a person grant. */
-  roleName: Schema.NullOr(Schema.String),
-  effect: Schema.Literal("allow", "deny"),
-  actions: Schema.Array(Schema.String),
-  // See AccessResourceTypeOut: loose on the way OUT so one unknown value cannot
-  // blank the whole list.
-  resourceType: AccessResourceTypeOut,
-  resourceId: Schema.NullOr(Schema.String),
-  createdBy: Schema.NullOr(Schema.String),
-  createdAt: Schema.Date,
-})
-export type AccessGrant = Schema.Schema.Type<typeof AccessGrant>
-
 /** A condition narrowing a rule to a subset of records. Mirrors `AccessCondition`
  *  in engine/domain/access.ts. Every variant must compile to SQL, which is why the
  *  set is small and closed — see the note there. */
@@ -1557,7 +1538,8 @@ export type AccessRule = Schema.Schema.Type<typeof AccessRule>
 export const EffectiveAccess = Schema.Struct({
   userId: Schema.String,
   roles: Schema.Array(AccessRole),
-  /** Every rule that applies, with the role it came from (null = a direct share). */
+  /** Every rule that applies, with the role it came from. `viaRoleId` is non-null on
+   *  every row now that shares are gone — kept nullable pending the explain view. */
   rules: Schema.Array(
     Schema.Struct({
       id: Schema.String,
@@ -2472,41 +2454,10 @@ export class KingsmakerRpcs extends RpcGroup.make(
     success: AutomationDryRun,
     error: RpcError,
   }),
-  // ── sharing ─────────────────────────────────────────────────────────────────
-  /** Current grants on one resource — what the Share dialog lists. */
-  Rpc.make("listGrants", {
-    payload: { resourceType: AccessResourceType, resourceId: Schema.String },
-    success: Schema.Array(AccessGrant),
-    error: RpcError,
-  }),
-  /**
-   * Grant access to a person or a role. Requires `share` on the resource, and never
-   * grants more than the sharer holds.
-   */
-  Rpc.make("share", {
-    payload: {
-      resourceType: AccessResourceType,
-      /** For a record this is the RECORD id (the lineage), so the grant survives a
-       *  new version being published. */
-      resourceId: Schema.String,
-      /** Exactly one of these. */
-      userId: Schema.optional(Schema.String),
-      roleId: Schema.optional(Schema.String),
-      actions: Schema.Array(AccessActionName),
-    },
-    success: AccessGrant,
-    error: RpcError,
-  }),
-  /** Revoke a grant. Any holder of `share` may revoke, not only the granter. */
-  Rpc.make("revoke", {
-    payload: { grantId: Schema.String },
-    success: Schema.Struct({ id: Schema.String }),
-    error: RpcError,
-  }),
   // ── roles ───────────────────────────────────────────────────────────────────
   /** Every role in the org. Readable by ANY member: role names are org vocabulary
-   *  (they show as pills on /members and populate the Share dialog). The RULES
-   *  inside a role need `configure` — see `listRules`. */
+   *  (they show as pills on /members). The RULES inside a role need `configure` —
+   *  see `listRules`. */
   Rpc.make("listRoles", { success: Schema.Array(AccessRole), error: RpcError }),
   /** Which roles a member holds. Readable by any member (the pills). */
   Rpc.make("rolesOf", {

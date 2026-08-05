@@ -981,13 +981,18 @@ export const accessRoleActors = pgTable(
 )
 
 /**
- * One grant (or refusal). Attached to a role (reusable) or straight to an actor —
- * a per-record share IS this row with `actor_id` set, which is why sharing needs no
- * separate mechanism.
+ * One grant (or refusal), attached to a role.
  *
  * DENY WINS, absolutely: no specificity ladder, no "narrower beats broader". A
  * precedence table is what makes an access model unreadable to the person editing
  * it — see `decide()`.
+ *
+ * `actorId` is a HISTORICAL column. A per-person share used to be this row with
+ * `actor_id` set instead of `role_id`; sharing was removed — every rule now comes
+ * from a role, which is what makes a fixed (role, chain) precedence a complete
+ * ordering — and `PolicyService.loadRules` no longer reads it. Kept (not written,
+ * not dropped) as the same rollback window earlier migrations used; the CHECK below
+ * still enforces exactly one subject for any row that names one.
  */
 export const accessRules = pgTable(
   "access_rules",
@@ -1006,10 +1011,11 @@ export const accessRules = pgTable(
     resourceType: text("resource_type").notNull(),
     // NULL = every resource of this type. For a 'record' rule this is an
     // **records.id** (the lineage), NEVER an record_versions.id: a versioned concept has N
-    // version rows per record, and a share must survive publishing a new version.
+    // version rows per record, and a rule naming one record must survive publishing
+    // a new version.
     resourceId: uuid("resource_id"),
     // Scopes a 'record' or 'field' rule to one concept without naming a row — how
-    // "may share any Deal" is expressed without a rule per deal.
+    // "may act on any Deal" is expressed without a rule per deal.
     conceptId: uuid("concept_id"),
     // AccessCondition | null (null = unconditional). Every variant MUST compile to
     // a SQL predicate, because record reads are filtered inside the query — a
@@ -1019,10 +1025,14 @@ export const accessRules = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    // Role rules load by role; shares load by actor. Two indexes, one per path.
+    // The hot path: every rule applying to one actor, resolved per request via
+    // their roles. `access_rules_actor_idx` (actor_id) is unused by any read path
+    // now — it served the removed share lookup — and is left in place only because
+    // the column it partial-indexes hasn't been dropped yet either.
     index("access_rules_role_idx").on(t.orgId, t.roleId).where(sql`${t.roleId} IS NOT NULL`),
     index("access_rules_actor_idx").on(t.orgId, t.actorId).where(sql`${t.actorId} IS NOT NULL`),
-    // The Share dialog: current grants on one resource.
+    // Rules naming one resource — what a role's "Other" rule list and the
+    // permissions grid read.
     index("access_rules_resource_idx").on(t.orgId, t.resourceType, t.resourceId),
     check("access_rules_one_subject", sql`(${t.roleId} IS NULL) <> (${t.actorId} IS NULL)`),
   ],

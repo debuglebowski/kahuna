@@ -146,11 +146,13 @@ export class PolicyService extends Effect.Service<PolicyService>()("engine/Polic
       )
 
     /**
-     * Every rule applying to `actorId`: their roles' rules UNIONed with their own
-     * direct shares.
+     * Every rule applying to `actorId`, via their roles.
      *
-     * One query rather than two, because the union is what the decision procedure
-     * consumes — and a role rule and a share are the same shape by design.
+     * `r.actor_id` (a direct share) is deliberately NOT read here any more. Shares
+     * were removed — every rule now comes from a role, which is what makes a fixed
+     * (role position, chain depth) precedence a complete ordering. The column stays
+     * on `access_rules` and is not written to, the same rollback window earlier
+     * migrations used; it is dropped in a later release.
      *
      * ── WHAT MAKES DEACTIVATION REAL ─────────────────────────────────────────
      *
@@ -159,24 +161,17 @@ export class PolicyService extends Effect.Service<PolicyService>()("engine/Polic
      * anybody — while its assignments stay on the table, which is what lets
      * reactivating restore exactly what was there. Every other treatment (hiding the
      * row, refusing new assignments) would leave existing holders still holding it.
-     *
-     * A direct share (`actor_id`) has no role and is unaffected: someone who was
-     * given one record keeps it when the role that let them see the concept goes off.
      */
     const loadRules = (orgId: string, actorId: string) =>
       sql<AccessRuleRow>`
         SELECT r.id, r.role_id, r.actor_id, r.effect, r.actions,
                r.resource_type, r.resource_id, r.concept_id, r.condition
         FROM access_rules r
-        WHERE r.org_id = ${orgId}
-          AND (
-            r.actor_id = ${actorId}
-            OR r.role_id IN (
-              SELECT a.role_id FROM access_role_actors a
-              JOIN access_roles ro ON ro.id = a.role_id AND ro.org_id = a.org_id
-              WHERE a.org_id = ${orgId} AND a.actor_id = ${actorId} AND ro.active = true
-            )
-          )`.pipe(Effect.map((rows) => rows.map(toRule)))
+        JOIN access_role_actors a ON a.role_id = r.role_id AND a.org_id = r.org_id
+        JOIN access_roles ro ON ro.id = a.role_id AND ro.org_id = a.org_id
+        WHERE r.org_id = ${orgId} AND a.actor_id = ${actorId} AND ro.active = true`.pipe(
+        Effect.map((rows) => rows.map(toRule)),
+      )
 
     /** The actor's resolved policy, from cache when the generation still matches. */
     const resolve = (orgId: string, actorId: string): Effect.Effect<PolicySet> =>

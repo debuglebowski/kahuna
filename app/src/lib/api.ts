@@ -25,7 +25,6 @@ import {
 export type {
   AccessActionName,
   AccessCondition,
-  AccessGrant,
   AccessResourceType,
   AccessRole,
   AccessRule,
@@ -1370,15 +1369,4 @@ export const api = {
   removeRule: (ruleId: string) => call((c) => c.removeRule({ ruleId })),
   /** Omit `userId` for yourself — always allowed, no `configure` needed. */
   effectiveAccess: (userId?: string) => call((c) => c.effectiveAccess({ userId })),
-  /** Current grants on one resource. Needs `share` on it. */
-  listGrants: (resourceType: AccessResourceType, resourceId: string) =>
-    call((c) => c.listGrants({ resourceType, resourceId })),
-  share: (input: {
-    resourceType: AccessResourceType
-    resourceId: string
-    userId?: string
-    roleId?: string
-    actions: ReadonlyArray<AccessActionName>
-  }) => call((c) => c.share(input)),
-  revokeGrant: (grantId: string) => call((c) => c.revoke({ grantId })),
 }
