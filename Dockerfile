@@ -2,7 +2,7 @@
 
 # Kingsmaker — single-process image: Bun serves auth + RPC + SSE + the built SPA.
 #
-# The engine (`app/engine`) has NO build step: it's consumed as TypeScript
+# The engine (`packages/app/engine`) has NO build step: it's consumed as TypeScript
 # source through the `#engine` subpath import, so the runtime ships Bun + the TS
 # sources rather than a compiled artifact.
 #
@@ -30,14 +30,14 @@ WORKDIR /srv/kingsmaker
 # `--frozen-lockfile` resolves each member and fails if one is missing.
 COPY package.json bun.lock ./
 COPY packages/contract/package.json ./packages/contract/
+COPY packages/app/package.json ./packages/app/
 
 RUN bun install --frozen-lockfile
 
 COPY tsconfig.base.json tsconfig.json biome.json ./
 COPY packages ./packages
-COPY app ./app
 
-# Emits app/dist, which server/index.ts resolves as `../dist`.
+# Emits packages/app/dist, which server/index.ts resolves as `../dist`.
 RUN bun run build
 
 # ---- production dependencies ----------------------------------------------
@@ -47,6 +47,7 @@ WORKDIR /srv/kingsmaker
 
 COPY package.json bun.lock ./
 COPY packages/contract/package.json ./packages/contract/
+COPY packages/app/package.json ./packages/app/
 
 RUN bun install --frozen-lockfile --production
 
@@ -76,22 +77,22 @@ ENV NODE_ENV=production \
 # installs its own graceful-shutdown handler with a 10s internal deadline.
 RUN apk add --no-cache tini
 
+# BOTH trees. With real workspace members Bun installs each member's
+# dependencies into ITS OWN node_modules and leaves the root nearly empty (2
+# entries: biome + typescript, the tooling the root scripts run). Copying only
+# the root, as this did when the repo had a single manifest, produces an image
+# whose every runtime dependency is missing.
 COPY --from=prod-deps /srv/kingsmaker/node_modules ./node_modules
-# The root manifest carries the `imports` map (#engine, #db) that every server
-# module resolves through, so it is required at runtime, not just at build time.
+COPY --from=prod-deps /srv/kingsmaker/packages/app/node_modules ./packages/app/node_modules
+# `packages/app/package.json` carries the `imports` map (#engine, #db) that every
+# server module resolves through, so it is required at RUNTIME, not just at build
+# time. The root manifest comes too: it defines the workspace the node_modules
+# symlinks were built against.
 COPY --from=build /srv/kingsmaker/package.json /srv/kingsmaker/bun.lock ./
 COPY --from=build /srv/kingsmaker/tsconfig.base.json /srv/kingsmaker/tsconfig.json ./
-COPY --from=build /srv/kingsmaker/app/tsconfig.json ./app/
-COPY --from=build /srv/kingsmaker/app/drizzle.config.ts ./app/
-
-# `bunx drizzle-kit` resolves upward from app/ into the root node_modules/.bin.
-# Assert it rather than trust it: with no local binary, bunx silently falls back
-# to DOWNLOADING drizzle-kit at runtime (and then fails on a drizzle-orm version
-# mismatch). A migrate command must never depend on network access.
-RUN set -eux; \
-    test -x node_modules/.bin/drizzle-kit; \
-    test -e node_modules/drizzle-kit/package.json; \
-    test -e node_modules/esbuild/package.json
+COPY --from=build /srv/kingsmaker/packages/app/package.json ./packages/app/
+COPY --from=build /srv/kingsmaker/packages/app/tsconfig.json ./packages/app/
+COPY --from=build /srv/kingsmaker/packages/app/drizzle.config.ts ./packages/app/
 
 # `engine/` is the domain core (TS source, imported as `#engine`); `db/` holds the
 # drizzle schema AND the migrations that `migrate` applies.
@@ -101,11 +102,11 @@ RUN set -eux; \
 # prod-deps stage pointing at `../../packages/contract` — so the directory must
 # land at exactly that path or every server module fails to import at boot.
 COPY --from=build /srv/kingsmaker/packages/contract ./packages/contract
-COPY --from=build /srv/kingsmaker/app/engine ./app/engine
-COPY --from=build /srv/kingsmaker/app/db ./app/db
-COPY --from=build /srv/kingsmaker/app/server ./app/server
-COPY --from=build /srv/kingsmaker/app/scripts ./app/scripts
-COPY --from=build /srv/kingsmaker/app/dist ./app/dist
+COPY --from=build /srv/kingsmaker/packages/app/engine ./packages/app/engine
+COPY --from=build /srv/kingsmaker/packages/app/db ./packages/app/db
+COPY --from=build /srv/kingsmaker/packages/app/server ./packages/app/server
+COPY --from=build /srv/kingsmaker/packages/app/scripts ./packages/app/scripts
+COPY --from=build /srv/kingsmaker/packages/app/dist ./packages/app/dist
 
 # The automation runner evaluates conditions with the SAME matcher the client
 # filters with (`server/automations.ts` -> `../src/lib/conditions`), so these two
@@ -115,14 +116,38 @@ COPY --from=build /srv/kingsmaker/app/dist ./app/dist
 #
 # Without them the server does not boot AT ALL: `Cannot find module
 # '../src/lib/conditions'`, thrown at import time before anything listens.
-COPY --from=build /srv/kingsmaker/app/src/lib/conditions.ts ./app/src/lib/
-COPY --from=build /srv/kingsmaker/app/src/lib/richtext.ts ./app/src/lib/
+COPY --from=build /srv/kingsmaker/packages/app/src/lib/conditions.ts ./packages/app/src/lib/
+COPY --from=build /srv/kingsmaker/packages/app/src/lib/richtext.ts ./packages/app/src/lib/
 
 # A .dockerignore slip or a bad COPY would otherwise surface as `migrate` cheerily
 # applying zero migrations at deploy time. Fail the build instead.
-RUN test -f app/db/migrations/0000_baseline.sql \
-    && test -f app/db/migrations/meta/_journal.json \
-    && test -f app/engine/index.ts
+RUN test -f packages/app/db/migrations/0000_baseline.sql \
+    && test -f packages/app/db/migrations/meta/_journal.json \
+    && test -f packages/app/engine/index.ts
+
+# `bunx drizzle-kit` runs with CWD=packages/app and resolves from that package's
+# own node_modules. Assert it rather than trust it: with no local binary, bunx
+# silently falls back to DOWNLOADING drizzle-kit at runtime (and then fails on a
+# drizzle-orm version mismatch). A migrate command must never depend on network
+# access.
+#
+# PLACED AFTER the source COPYs on purpose: `@kingsmaker/contract` is a symlink
+# into `packages/contract`, so resolving it earlier tests a link whose target has
+# not been copied yet and fails on an image that is fine.
+#
+# RUN IT, don't stat it. The old assertion tested for `node_modules/esbuild` —
+# drizzle-kit's own runtime dependency — as a sibling, which is where a flat
+# single-manifest install put it. A workspace install is isolated: packages are
+# symlinks into the ROOT `node_modules/.bun` store, and esbuild resolves through
+# drizzle-kit's own nested tree, so the path test failed on an image that was
+# actually fine. `--version` loads the binary and its dependencies without
+# touching a database or reading drizzle.config.ts, so it proves the thing the
+# path test was only guessing at.
+RUN set -eux; \
+    test -x packages/app/node_modules/.bin/drizzle-kit; \
+    test -e packages/app/node_modules/@kingsmaker/contract/contract.ts; \
+    cd packages/app && ./node_modules/.bin/drizzle-kit --version
+
 
 # The checks above are per-file and so only catch omissions someone thought to
 # list. This catches the general case: resolve every FIRST-PARTY import the
@@ -136,8 +161,8 @@ RUN test -f app/db/migrations/0000_baseline.sql \
 # 'import(...)'` either — importing server/index.ts EXECUTES it (it opens a DB
 # pool and starts listening at import time), which is not something a build stage
 # should do.
-COPY app/scripts/check-image-imports.ts ./app/scripts/
-RUN cd app && bun scripts/check-image-imports.ts server/index.ts scripts/bootstrap.ts
+COPY packages/app/scripts/check-image-imports.ts ./packages/app/scripts/
+RUN cd packages/app && bun scripts/check-image-imports.ts server/index.ts scripts/bootstrap.ts
 
 COPY docker-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh \

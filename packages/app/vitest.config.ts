@@ -1,4 +1,4 @@
-// Load repo-root .env (vitest runs with CWD=app, which has no .env of its own).
+// Load repo-root .env (vitest runs with CWD=packages/app, which has no .env of its own).
 // This is the SERVER's loader, imported for its side effect, so tests and the
 // running server agree on which keys exist. It used to be a second, subtly
 // different regex here (`^\s*([A-Z0-9_]+)=`) that silently dropped

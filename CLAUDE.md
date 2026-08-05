@@ -1,40 +1,53 @@
 # Kingsmaker
 
-The deployment lives in `app/`; the repo root holds config, the Docker/deploy
-files, and `scripts/snapshot.sh`. `packages/` holds the workspace packages —
-code with consumers that do NOT ship inside the deployment.
+A Bun workspace. The root holds only config, the Docker/deploy files, and
+`scripts/snapshot.sh` — no runtime dependencies of its own.
 
 ```
-app/engine            domain core (imported as #engine — TS source, no build step)
-app/db                drizzle schema + the ONE migration set (imported as #db)
-app/server            Bun HTTP server: auth, RPC, SSE, integrations
-app/src               React SPA
-app/scripts           one-off backfills + end-to-end verify drivers
+packages/app          THE DEPLOYMENT — private, never published
+  engine              domain core (imported as #engine — TS source, no build step)
+  db                  drizzle schema + the ONE migration set (imported as #db)
+  server              Bun HTTP server: auth, RPC, SSE, integrations
+  src                 React SPA
+  scripts             one-off backfills + end-to-end verify drivers
 
 packages/contract     the typed wire schema — @kingsmaker/contract
 ```
 
-`#engine` / `#db` resolve through the `imports` field in the root
-`package.json`, not tsconfig `paths`.
+`#engine` / `#db` resolve through the `imports` field in
+**`packages/app/package.json`** — the package that owns them, not the root, and
+not tsconfig `paths`. That is what stops anything outside the deployment from
+reaching the domain core or the database schema: the resolver refuses, rather
+than a convention asking nicely.
+
+**`packages/app` is deliberately ONE package.** engine, db, server and src share
+a single migration baseline and one `__drizzle_migrations` ledger. Splitting them
+is what `5f3b4f6` collapsed, and re-splitting reintroduces the failure where two
+interleaved journals let the migrator skip a whole set and still exit 0.
 
 **The contract is a package, not a folder.** Server, SPA and (soon) the CLI all
-import `@kingsmaker/contract`, so it has exactly one owner and the resolver — not
-convention — decides who may reach it. It is consumed as TypeScript source with
-no build step, like `#engine`. Typechecked on its own: `tsc -p packages/contract`
-runs first in `bun run typecheck`, so a contract error is reported against the
-contract rather than against whichever consumer tripped over it.
+import `@kingsmaker/contract`, so it has exactly one owner. Consumed as
+TypeScript source with no build step, like `#engine`. Typechecked on its own
+(`tsc -p packages/contract` runs first) so a contract error is reported against
+the contract rather than whichever consumer tripped over it.
+
+**Dependencies live in the package that imports them.** With real workspace
+members Bun installs into `packages/<name>/node_modules` and leaves the root
+nearly empty (biome + typescript). Two consequences: a phantom dependency —
+imported but never declared — now fails instead of resolving through the root by
+luck; and anything copying `node_modules` (the Dockerfile) must copy both trees.
 
 ## Commands
 
-Run these from the repo root — each one `cd`s into `app/` where needed, because
-drizzle-kit and vite both resolve paths against the CWD.
+Run these from the repo root — each one `cd`s into `packages/app` where needed,
+because drizzle-kit and vite both resolve paths against the CWD.
 
 ```bash
 bun run dev          # vite (:5100, strict) — proxies /api to :3100
 bun run serve        # the Bun server (:3100)
-bun run build        # vite build -> app/dist, which the server serves in prod
+bun run build        # vite build -> packages/app/dist, which the server serves in prod
 
-bun run typecheck    # tsc -p app
+bun run typecheck    # tsc -p packages/contract && tsc -p packages/app
 bun run check        # biome lint + format + import order (CI gate)
 bun run format       # biome, writing fixes
 bun run test         # vitest, whole suite (engine + server + client)
@@ -57,11 +70,15 @@ bun run snapshot     # export/import a named dev DB + blob snapshot
   skips migrations and still exits 0. `server/migrations.test.ts` guards this.
 - **`drizzle-kit generate` swallows exceptions and exits 0** — never trust its
   exit code; check stdout and the filesystem.
-- **`BLOB_LOCAL_DIR` is resolved against the server's CWD**, which is `app/`. A
-  relative value therefore means `app/.blobstore`, not the repo root.
+- **`BLOB_LOCAL_DIR` is resolved against the server's CWD**, which is
+  `packages/app`. A relative value therefore means `packages/app/.blobstore`, not
+  the repo root — and `scripts/snapshot.sh` has to resolve it the same way or it
+  silently backs up an empty directory. Set an absolute path and neither matters.
 - **Uploaded blobs are NOT in `pg_dump`.** Back up the blobstore separately.
-- `.env` lives at the repo root only. `app/server/env.ts` loads it for anything
-  running with CWD=`app` (the server, vitest); it is the single parser.
+- `.env` lives at the repo root only. `packages/app/server/env.ts` loads it for
+  anything running with CWD=`packages/app` (the server, vitest); it is the single
+  parser. It finds the root by counting `..` from its own directory and swallows a
+  miss, so a wrong depth is invisible — `server/env.test.ts` pins it.
 
 # SlayZone Environment
 

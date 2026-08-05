@@ -19,14 +19,14 @@ set -eu
 
 case "${1:-serve}" in
   serve)
-    exec bun /srv/kingsmaker/app/server/index.ts
+    exec bun /srv/kingsmaker/packages/app/server/index.ts
     ;;
   migrate)
     # CWD matters: drizzle-kit resolves the config's relative `schema`/`out`
     # against process.cwd(). The config asserts it can see the journal from here,
     # so a wrong directory fails loudly instead of applying nothing.
     echo "==> Applying migrations"
-    cd /srv/kingsmaker/app && bunx drizzle-kit migrate
+    cd /srv/kingsmaker/packages/app && bunx drizzle-kit migrate
     echo "==> Migrations complete"
     # Bootstrap rides along here rather than in `serve` for the same two reasons
     # migrations do: this step is single-instance, so N replicas cannot race it,
@@ -38,7 +38,7 @@ case "${1:-serve}" in
     ;;
   bootstrap)
     echo "==> Bootstrapping initial admin"
-    cd /srv/kingsmaker/app && bun scripts/bootstrap.ts
+    cd /srv/kingsmaker/packages/app && bun scripts/bootstrap.ts
     ;;
   *)
     exec "$@"

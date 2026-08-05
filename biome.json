@@ -13,7 +13,7 @@
       "!**/node_modules",
       "!**/migrations",
       "!**/.blobstore",
-      "!app/src/index.css"
+      "!packages/app/src/index.css"
     ]
   },
   "formatter": {

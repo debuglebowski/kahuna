@@ -34,10 +34,12 @@ BLOB_DIR="${BLOB_LOCAL_DIR:-./.blobstore}"
 case "$BLOB_DIR" in
   /*) ;;                                  # already absolute
   # A relative BLOB_LOCAL_DIR is resolved by the SERVER against its own CWD, and
-  # the server runs from app (`bun run serve`/`dev` both `cd app` first) —
-  # so `./.blobstore` means app/.blobstore, not the repo root. Resolving it
-  # against $ROOT here silently snapshotted the wrong (nearly empty) directory.
-  *) BLOB_DIR="$ROOT/app/${BLOB_DIR#./}" ;;
+  # the server runs from packages/app (`bun run serve`/`dev` both `cd packages/app`
+  # first) — so `./.blobstore` means packages/app/.blobstore, not the repo root.
+  # Resolving it against $ROOT here silently snapshotted the wrong (nearly empty)
+  # directory. The same relative-path hazard is why the image pins an absolute
+  # BLOB_LOCAL_DIR; set one here too and this whole branch stops mattering.
+  *) BLOB_DIR="$ROOT/packages/app/${BLOB_DIR#./}" ;;
 esac
 [ -d "$BLOB_DIR" ] || echo "⚠ blob dir $BLOB_DIR does not exist — snapshot will carry no blobs" >&2
 

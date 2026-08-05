@@ -3,7 +3,7 @@
  *
  * WHY THIS EXISTS: `server/automations.ts` imports `../src/lib/conditions` —
  * client-tree code that is genuinely server runtime code — and the Dockerfile
- * copied `app/server`, `app/engine` and `app/db` but not `app/src`.
+ * copied `server`, `engine` and `db` but not `src`.
  * The image built clean, passed its per-file `test -f` assertions, and then
  * could not boot at all: `Cannot find module '../src/lib/conditions'`, thrown at
  * import time before anything listened. Per-file assertions only catch omissions
@@ -30,12 +30,31 @@ import path from "node:path"
 /** Extensions Bun will try, in order, for an extensionless specifier. */
 const EXTS = ["", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".json"]
 
-/** `imports` map from the ROOT package.json — how `#engine` / `#db` resolve. */
-const ROOT = path.resolve(import.meta.dirname, "../..")
-const rootPkg = JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as {
+/**
+ * Two different roots, and conflating them is the bug this comment prevents.
+ *
+ * `PKG` is this package (`packages/app`) — it owns the `imports` map, so
+ * `#engine` / `#db` resolve relative to IT, not to the repo root. The map used
+ * to live in the root manifest; if this ever reads the wrong one it finds no
+ * map, resolves nothing, and the whole guard passes vacuously — worse than
+ * failing, because it looks green.
+ *
+ * `REPO` is the workspace root, needed only to locate sibling packages
+ * (`packages/contract`) and to print paths a human can find.
+ */
+const PKG = path.resolve(import.meta.dirname, "..")
+const REPO = path.resolve(PKG, "../..")
+const pkgManifest = JSON.parse(readFileSync(path.join(PKG, "package.json"), "utf8")) as {
   imports?: Record<string, string>
 }
-const IMPORT_MAP = rootPkg.imports ?? {}
+const IMPORT_MAP = pkgManifest.imports ?? {}
+if (Object.keys(IMPORT_MAP).length === 0) {
+  console.error(
+    `no "imports" map in ${path.join(PKG, "package.json")} — every #engine/#db ` +
+      "specifier would resolve to nothing and this check would pass without checking.",
+  )
+  process.exit(2)
+}
 
 /**
  * First-party workspace packages. These LOOK like third-party bare specifiers,
@@ -53,7 +72,7 @@ const resolveWorkspace = (spec: string): string | null => {
   const rest = spec.slice(WORKSPACE_SCOPE.length) // "contract" | "contract/x"
   const [pkg, ...sub] = rest.split("/")
   if (!pkg) return null
-  const dir = path.join(ROOT, "packages", pkg)
+  const dir = path.join(REPO, "packages", pkg)
   if (sub.length > 0) return path.join(dir, ...sub)
   // No subpath: read the member's own `exports`/`main` rather than assuming a
   // filename, so renaming the entry file cannot silently pass this check.
@@ -72,16 +91,16 @@ const resolveWorkspace = (spec: string): string | null => {
   }
 }
 
-/** Resolve a `#`-prefixed specifier through the root `imports` map. */
+/** Resolve a `#`-prefixed specifier through THIS package's `imports` map. */
 const resolveSubpath = (spec: string): string | null => {
   // Exact keys first ("#engine"), then wildcard keys ("#engine/*").
   const exact = IMPORT_MAP[spec]
-  if (exact) return path.join(ROOT, exact)
+  if (exact) return path.join(PKG, exact)
   for (const [key, target] of Object.entries(IMPORT_MAP)) {
     if (!key.endsWith("/*")) continue
     const prefix = key.slice(0, -1) // "#engine/"
     if (!spec.startsWith(prefix)) continue
-    return path.join(ROOT, target.replace("*", spec.slice(prefix.length)))
+    return path.join(PKG, target.replace("*", spec.slice(prefix.length)))
   }
   return null
 }
@@ -169,7 +188,7 @@ const walk = (file: string): void => {
         : path.resolve(path.dirname(abs), spec)
     const resolved = base ? resolveFile(base) : null
     if (!resolved) {
-      missing.push({ from: path.relative(ROOT, abs), spec })
+      missing.push({ from: path.relative(REPO, abs), spec })
       continue
     }
     walk(resolved)

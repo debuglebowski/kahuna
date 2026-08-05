@@ -1,14 +1,15 @@
 {
-  // Deliberately compiles nothing. The one real project is app/tsconfig.json,
-  // which `bun run typecheck` invokes directly as `tsc -p app`; this file exists
-  // so tooling that expects a tsconfig at the repo root finds one, and so
-  // tsconfig.base.json has a root-level consumer.
+  // Deliberately compiles nothing. The real projects are packages/app and
+  // packages/contract, which `bun run typecheck` invokes directly (`tsc -p
+  // packages/contract && tsc -p packages/app`); this file exists so tooling that
+  // expects a tsconfig at the repo root finds one, and so tsconfig.base.json has
+  // a root-level consumer.
   //
-  // Do NOT add `references: [{ path: "./app" }]` to make it "do something": the
-  // app project is not `composite`, so build mode (`tsc -b`) then treats it as an
-  // emitting project and reports it out of date because `app/src/App.js` does not
-  // exist. Making it composite to satisfy that would put .tsbuildinfo/declaration
-  // output in the source tree for zero gain.
+  // Do NOT add `references` to make it "do something": neither project is
+  // `composite`, so build mode (`tsc -b`) then treats them as emitting projects
+  // and reports them out of date because `packages/app/src/App.js` does not
+  // exist. Making them composite to satisfy that would put
+  // .tsbuildinfo/declaration output in the source tree for zero gain.
   "extends": "./tsconfig.base.json",
   "files": [],
   "include": []
