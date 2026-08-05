@@ -5,6 +5,7 @@ import {
   type AccessRule,
   type PolicySet,
   recordRulesForConcept,
+  tiersOf,
 } from "./access"
 
 /** The `sql` tag every engine service already holds (`PgClient`, which carries
@@ -93,18 +94,88 @@ const compileRule = (sql: Sql, rule: AccessRule, actorId: string): Statement.Fra
 }
 
 /**
+ * ONE TIER's contribution, in the exact shape this function has always compiled
+ * to — now scoped to rules that share a precedence rather than to every matched
+ * rule. This IS the fast path for the overwhelmingly common case, today:
+ * everyone's rules still land in a single tier until a role gets ordered or based
+ * on another, so `compileRecordFilter` calls this directly (with the REAL
+ * fallback) whenever there is only one tier, producing SQL byte-identical to what
+ * this function always produced.
+ *
+ *   deny rules  → subtracted, ALWAYS (deny wins WITHIN the tier, and a conditional
+ *                 deny narrows to the rows it names rather than being dropped)
+ *   allow rules → unioned with the fallback passed in
+ */
+const compileTier = (
+  sql: Sql,
+  tier: ReadonlyArray<AccessRule>,
+  actorId: string,
+  fallback: boolean,
+): CompiledFilter => {
+  const denies = tier.filter((r) => r.effect === "deny")
+  const allows = tier.filter((r) => r.effect === "allow")
+
+  if (denies.some((r) => r.resourceId === null && r.condition === null)) return "none"
+
+  const positive = fallback
+    ? null // every row qualifies before denies are subtracted
+    : allows.length === 0
+      ? "none"
+      : allows.map((r) => compileRule(sql, r, actorId)).reduce((acc, p) => sql`(${acc} OR ${p})`)
+
+  if (positive === "none") return "none"
+
+  const negative =
+    denies.length === 0
+      ? null
+      : denies.map((r) => compileRule(sql, r, actorId)).reduce((acc, p) => sql`(${acc} OR ${p})`)
+
+  if (positive === null && negative === null) return "all"
+  if (positive === null) return sql`NOT (${negative})`
+  if (negative === null) return positive
+  return sql`(${positive}) AND NOT (${negative})`
+}
+
+/**
+ * One tier's verdict as a raw THREE-valued row expression: `FALSE` (this tier
+ * denies the row), `TRUE` (this tier allows it), or SQL `NULL` (this tier has
+ * nothing to say about it — defer to the next one). Deny beats allow within the
+ * tier, same as `compileTier`, but with no fallback baked in: multiple tiers defer
+ * to each other via `COALESCE`, which is SQL's native "skip the NULLs" operator —
+ * exactly "the first tier with a verdict wins", with no fallback boolean smuggled
+ * in ahead of time the way `compileTier`'s single-tier shape needs to.
+ */
+const compileTierVerdict = (
+  sql: Sql,
+  tier: ReadonlyArray<AccessRule>,
+  actorId: string,
+): Statement.Fragment => {
+  const denyPred = tier
+    .filter((r) => r.effect === "deny")
+    .map((r) => compileRule(sql, r, actorId))
+    .reduce((acc, p) => (acc ? sql`(${acc}) OR (${p})` : p), null as Statement.Fragment | null)
+  const allowPred = tier
+    .filter((r) => r.effect === "allow")
+    .map((r) => compileRule(sql, r, actorId))
+    .reduce((acc, p) => (acc ? sql`(${acc}) OR (${p})` : p), null as Statement.Fragment | null)
+  // A tier from `tiersOf` is never empty, so at least one of these is non-null.
+  if (denyPred && allowPred)
+    return sql`CASE WHEN ${denyPred} THEN FALSE WHEN ${allowPred} THEN TRUE END`
+  if (denyPred) return sql`CASE WHEN ${denyPred} THEN FALSE END`
+  return sql`CASE WHEN ${allowPred} THEN TRUE END`
+}
+
+/**
  * The row filter for reading one concept's records.
  *
  * `fallback` is the concept's own default — whether this caller may read its
- * records absent any rule. The shape mirrors `decide()` deliberately:
+ * records absent any rule ANYWHERE, consulted only once every tier has stayed
+ * silent about a given row.
  *
- *   deny rules  → subtracted, ALWAYS (deny wins, and a conditional deny narrows
- *                 to the rows it names rather than being dropped)
- *   allow rules → unioned with the fallback
- *
- * Returns `"all"` when nothing constrains the read (the overwhelmingly common
- * path, so the query is byte-identical to today's) and `"none"` when no row can
- * possibly qualify.
+ * Returns `"all"` / `"none"` when nothing constrains the read at all (no rule
+ * matched — the overwhelmingly common path, so the query is byte-identical to
+ * today's) or when the FIRST tier decides it outright with no lower tier ever
+ * reachable.
  */
 export const compileRecordFilter = (
   sql: Sql,
@@ -117,34 +188,31 @@ export const compileRecordFilter = (
   // and compiled to `record_id = …`, not dropped for failing to match a resource we
   // are not asking about. See the comment on `recordRulesForConcept`.
   const rules = recordRulesForConcept(policy, "view", conceptId)
-  const denies = rules.filter((r) => r.effect === "deny")
-  const allows = rules.filter((r) => r.effect === "allow")
+  if (rules.length === 0) return fallback ? "all" : "none"
 
-  // A blanket deny (no target, no condition) kills the whole concept for this
-  // caller — nothing an allow can do, because deny wins.
-  if (denies.some((r) => r.resourceId === null && r.condition === null)) return "none"
+  const tiers = tiersOf(rules)
+  if (tiers.length === 1) return compileTier(sql, tiers[0]!, policy.actorId, fallback)
 
-  const positive = fallback
-    ? null // every row qualifies before denies are subtracted
-    : allows.length === 0
-      ? "none"
-      : allows
-          .map((r) => compileRule(sql, r, policy.actorId))
-          .reduce((acc, p) => sql`(${acc} OR ${p})`)
+  // A blanket deny (no target, no condition) in the FIRST — lowest-precedence —
+  // tier kills the read before any lower tier is even relevant: it is
+  // unconditionally TRUE for every row, so `COALESCE` below would land on FALSE
+  // for all of them anyway. This just lets the caller skip the query entirely,
+  // same as the single-tier fast path already did.
+  if (tiers[0]!.some((r) => r.effect === "deny" && r.resourceId === null && r.condition === null))
+    return "none"
 
-  if (positive === "none") return "none"
-
-  const negative =
-    denies.length === 0
-      ? null
-      : denies
-          .map((r) => compileRule(sql, r, policy.actorId))
-          .reduce((acc, p) => sql`(${acc} OR ${p})`)
-
-  if (positive === null && negative === null) return "all"
-  if (positive === null) return sql`NOT (${negative})`
-  if (negative === null) return positive
-  return sql`(${positive}) AND NOT (${negative})`
+  // MULTIPLE tiers. `COALESCE(tier0, tier1, …, tierN, fallback)` — SQL's own
+  // "first non-null wins" is exactly "the first tier with a verdict wins", so no
+  // hand-rolled three-valued logic is needed beyond `compileTierVerdict` itself.
+  // Built as nested COALESCEs (right to left) rather than one N-ary call, since the
+  // tagged-template `sql` helper composes by interpolation, not by splicing a
+  // variable-length argument list — same reasoning as `compileCondition`'s
+  // all/any folds.
+  let acc: Statement.Fragment = fallback ? sql`TRUE` : sql`FALSE`
+  for (let i = tiers.length - 1; i >= 0; i--) {
+    acc = sql`COALESCE(${compileTierVerdict(sql, tiers[i]!, policy.actorId)}, ${acc})`
+  }
+  return acc
 }
 
 /**

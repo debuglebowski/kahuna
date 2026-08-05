@@ -26,7 +26,11 @@ function Appearance() {
         <Field label="Theme">
           <div className="flex gap-1.5">
             {THEME_OPTIONS.map(({ value, label, icon: Icon }) => (
-              <ToggleChip key={value} pressed={theme === value} onPressedChange={() => setTheme(value)}>
+              <ToggleChip
+                key={value}
+                pressed={theme === value}
+                onPressedChange={() => setTheme(value)}
+              >
                 <Icon size={14} />
                 {label}
               </ToggleChip>

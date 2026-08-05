@@ -4,6 +4,13 @@
  * One mechanism for every "who may do what" question. A **role** is a named bag
  * of **rules**. There is exactly one matcher, not one per feature.
  *
+ * Access is a CASCADE: an actor's roles are ordered, each role may be based on
+ * another, and resolving a decision walks that ordering as a sequence of TIERS —
+ * `tiersOf` groups already-matched rules by `precedence`, `decide`/`decideRecord`
+ * walk the tiers ascending, and the first one with a verdict wins outright. See
+ * `decide`'s own doc for the walk itself; `PolicyService.loadRules` is where a
+ * role's position and based-on chain become the `precedence` number a rule carries.
+ *
  * Pure on purpose: no DB, no Effect, no SQL. `PolicyService` loads the rules and
  * `engine/domain/accessSql.ts` compiles conditions to predicates; everything here
  * is a function of its arguments, so the whole decision procedure is unit-testable
@@ -121,6 +128,18 @@ export interface AccessRule {
   readonly conceptId: string | null
   /** null = unconditional. */
   readonly condition: AccessCondition | null
+  /**
+   * Which LAYER this rule resolves in — lower wins outright (see `decide`).
+   * Computed by `PolicyService.loadRules` from the held role's
+   * `access_role_actors.position` and its `based_on` chain depth; never stored,
+   * never round-tripped over the wire.
+   *
+   * Optional, and defaults to tier 0 wherever it is absent (`tiersOf`) — a
+   * hand-built fixture that never sets it therefore shares ONE tier with every
+   * other untagged rule, which is exactly the old flat "any deny beats any allow"
+   * union. Only real DB-sourced policies differentiate.
+   */
+  readonly precedence?: number
 }
 
 /**
@@ -215,16 +234,44 @@ export const recordRulesForConcept = (
   )
 
 /**
+ * Group already-matched rules into precedence TIERS, ascending — tier 0 (or
+ * whatever the lowest number present is) is consulted first and wins outright if
+ * it has a verdict; a tier with nothing to say is skipped, not a tie-break input.
+ *
+ * A rule with no `precedence` defaults to tier 0 — see the field's own doc. That is
+ * what makes every existing caller (every hand-built test fixture, and every real
+ * policy until a role gets ordered or based on another) collapse to exactly ONE
+ * tier, i.e. today's flat union: this function changes NOTHING for them, it only
+ * gives `decide`/`decideRecord`/`compileRecordFilter` somewhere to put a rule that
+ * DOES carry a different tier.
+ */
+export const tiersOf = (
+  rules: ReadonlyArray<AccessRule>,
+): ReadonlyArray<ReadonlyArray<AccessRule>> => {
+  const byTier = new Map<number, AccessRule[]>()
+  for (const r of rules) {
+    const key = r.precedence ?? 0
+    const list = byTier.get(key)
+    if (list) list.push(r)
+    else byTier.set(key, [r])
+  }
+  return [...byTier.entries()].sort(([a], [b]) => a - b).map(([, list]) => list)
+}
+
+/**
  * ── THE DECISION ────────────────────────────────────────────────────────────
  *
- * Deny wins, absolutely. No specificity ladder, no "the narrower rule beats the
- * broader one" — those make a role unreadable to the human editing it, and every
- * such system eventually grows a precedence table nobody can reason about.
+ * Walk tiers ascending; the FIRST one with a verdict wins outright — nothing below
+ * it is even consulted. WITHIN one tier, deny beats allow, same as ever: no
+ * specificity ladder there either, because "the narrower rule beats the broader
+ * one" is what makes a role unreadable to the human editing it. Ordering is the
+ * escape hatch instead — two roles that disagree are resolved by which one the
+ * person holds FIRST, not by which rule happens to look more specific.
  *
  * `fallback` is the resource's OWN default (the `visibility` column: everyone /
- * admins only / no one), consulted only when no rule matched. It stays a column
- * because it is the cheap fast path inside list SQL and answers "who sees this
- * normally?" in a single row read.
+ * admins only / no one), consulted only when NO tier had a verdict. It stays a
+ * column because it is the cheap fast path inside list SQL and answers "who sees
+ * this normally?" in a single row read.
  *
  * `unconditionalOnly` is how a caller says "I have no record to test conditions
  * against" — a conditional rule is then treated as not matching, so a conditional
@@ -239,16 +286,18 @@ export const decide = (
 ): boolean => {
   if (policy.unrestricted) return true
   const matched = rulesFor(policy, action, resource)
-  // Deny first, and WITHOUT the conditional filter: a deny carrying a condition
-  // still denies here, because without the record's data we cannot prove the
-  // condition FAILS. Fail closed.
-  if (matched.some((r) => r.effect === "deny")) return false
-  // An allow is the opposite polarity — a conditional grant must NOT be mistaken
-  // for a blanket one, so it is dropped when there is no record to test it against.
-  if (
-    matched.some((r) => r.effect === "allow" && (r.condition === null || !opts.unconditionalOnly))
-  )
-    return true
+  for (const tier of tiersOf(matched)) {
+    // Deny first, and WITHOUT the conditional filter: a deny carrying a condition
+    // still denies here, because without the record's data we cannot prove the
+    // condition FAILS. Fail closed.
+    if (tier.some((r) => r.effect === "deny")) return false
+    // An allow is the opposite polarity — a conditional grant must NOT be mistaken
+    // for a blanket one, so it is dropped when there is no record to test it
+    // against.
+    if (tier.some((r) => r.effect === "allow" && (r.condition === null || !opts.unconditionalOnly)))
+      return true
+    // Neither in THIS tier — fall through to the next one, not the fallback yet.
+  }
   return fallback
 }
 
@@ -297,6 +346,9 @@ export const matchesCondition = (
  * Split from `decide` rather than folded into it so the call sites stay honest:
  * a caller with no record MUST pass `unconditionalOnly` and cannot accidentally
  * get a conditional rule treated as blanket.
+ *
+ * Same tier walk as `decide`: the first tier with a verdict wins, deny beats allow
+ * within it, and `fallback` is only reached when every tier stayed silent.
  */
 export const decideRecord = (
   policy: PolicySet,
@@ -309,7 +361,9 @@ export const decideRecord = (
   const matched = rulesFor(policy, action, resource).filter((r) =>
     matchesCondition(r.condition, policy.actorId, record),
   )
-  if (matched.some((r) => r.effect === "deny")) return false
-  if (matched.some((r) => r.effect === "allow")) return true
+  for (const tier of tiersOf(matched)) {
+    if (tier.some((r) => r.effect === "deny")) return false
+    if (tier.some((r) => r.effect === "allow")) return true
+  }
   return fallback
 }

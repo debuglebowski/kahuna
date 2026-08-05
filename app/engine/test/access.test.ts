@@ -33,6 +33,11 @@ const rule = (over: Partial<AccessRule> = {}): AccessRule => ({
   resourceId: over.resourceId ?? null,
   conceptId: over.conceptId ?? null,
   condition: over.condition ?? null,
+  // Deliberately spread, not defaulted: most callers never set it and want it
+  // ABSENT (undefined), not 0 — `tiersOf` treats "absent" and "0" the same, but an
+  // explicit test for that equivalence (below) needs to be able to tell them apart
+  // in the fixture, which a `?? 0` default here would make impossible.
+  ...(over.precedence !== undefined ? { precedence: over.precedence } : {}),
 })
 
 const policy = (rules: ReadonlyArray<AccessRule>): PolicySet => ({
@@ -220,5 +225,77 @@ describe("the presets reproduce today's behaviour", () => {
     expect(decide(policy([blanket]), "view", { type: "concept", id: "restricted" }, false)).toBe(
       true,
     )
+  })
+})
+
+/**
+ * ── THE CASCADE ─────────────────────────────────────────────────────────────
+ *
+ * `precedence` groups already-matched rules into TIERS (`tiersOf`); `decide` /
+ * `decideRecord` walk them ascending and stop at the first tier with a verdict.
+ * Everything above this block never sets `precedence`, so every rule there shares
+ * the implicit tier 0 — one bucket, "any deny beats any allow", the old flat
+ * union. These tests are the ones that actually exercise more than one tier.
+ */
+describe("the cascade — tiers resolve in precedence order", () => {
+  const tier = (n: number, over: Partial<AccessRule> = {}) => rule({ ...over, precedence: n })
+
+  it("a HIGHER-precedence (later) tier's allow never overrides a lower tier's deny", () => {
+    // The property that does NOT hold, on purpose: a role held first denying
+    // something is not something a role held second can undo by allowing it.
+    const p = policy([tier(0, { effect: "deny" }), tier(1, { effect: "allow" })])
+    expect(decide(p, "view", { type: "concept", id: "c1" }, false)).toBe(false)
+  })
+
+  it("a LOWER-precedence (earlier) tier's allow beats a later tier's deny", () => {
+    // This is the actual promise of the cascade: two roles that disagree are
+    // resolved by which the person holds FIRST, not by deny always winning
+    // globally — that only still holds WITHIN one tier.
+    const p = policy([tier(0, { effect: "allow" }), tier(1, { effect: "deny" })])
+    expect(decide(p, "view", { type: "concept", id: "c1" }, false)).toBe(true)
+  })
+
+  it("a silent tier is skipped, not treated as a verdict", () => {
+    // Tier 0 doesn't mention this resource at all (it's for a different concept),
+    // so resolution must fall through to tier 1 rather than stopping at 0 with
+    // nothing decided.
+    const p = policy([tier(0, { resourceId: "other-concept" }), tier(1, { effect: "deny" })])
+    expect(decide(p, "view", { type: "concept", id: "c1" }, false)).toBe(false)
+    expect(decide(p, "view", { type: "concept", id: "other-concept" }, true)).toBe(true)
+  })
+
+  it("every tier silent falls through to the fallback, same as no rules at all", () => {
+    const p = policy([tier(0, { resourceId: "x" }), tier(1, { resourceId: "y" })])
+    expect(decide(p, "view", { type: "concept", id: "c1" }, true)).toBe(true)
+    expect(decide(p, "view", { type: "concept", id: "c1" }, false)).toBe(false)
+  })
+
+  it("deny still beats allow WITHIN one tier — that half of today's rule survives", () => {
+    const p = policy([tier(0, { effect: "deny" }), tier(0, { effect: "allow" })])
+    expect(decide(p, "view", { type: "concept", id: "c1" }, true)).toBe(false)
+  })
+
+  it("decideRecord walks tiers identically, conditions included", () => {
+    const record = { state: {}, createdBy: ACTOR }
+    const p = policy([
+      tier(0, { effect: "allow", condition: { kind: "actorIs", who: "creator" } }),
+      tier(1, { effect: "deny" }),
+    ])
+    // Tier 0's conditional allow matches THIS record, so it wins outright — tier
+    // 1's blanket deny is never reached.
+    expect(decideRecord(p, "view", { type: "concept", id: "c1" }, false, record)).toBe(true)
+    // A record the tier-0 condition does NOT match falls through to tier 1.
+    const someoneElses = { state: {}, createdBy: "someone-else" }
+    expect(decideRecord(p, "view", { type: "concept", id: "c1" }, false, someoneElses)).toBe(false)
+  })
+
+  it("a rule with no precedence shares tier 0 with everything else untagged", () => {
+    // The compatibility property every existing fixture (including every test
+    // above this block) relies on without knowing it.
+    const untagged = rule({ effect: "deny" })
+    const explicitTierZero = tier(0, { effect: "allow", id: "r2" })
+    const p = policy([untagged, explicitTierZero])
+    // Same tier → deny wins within it, exactly like the flat model.
+    expect(decide(p, "view", { type: "concept", id: "c1" }, true)).toBe(false)
   })
 })

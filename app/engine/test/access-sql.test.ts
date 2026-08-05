@@ -5,6 +5,7 @@ import { Effect } from "effect"
 import {
   type AccessCondition,
   type AccessRule,
+  decideRecord,
   emptyPolicy,
   matchesCondition,
   type PolicySet,
@@ -42,6 +43,10 @@ const rule = (over: Partial<AccessRule>): AccessRule => ({
   resourceId: over.resourceId ?? null,
   conceptId: over.conceptId ?? null,
   condition: over.condition ?? null,
+  // Spread, not defaulted — most callers want it ABSENT (tier 0 via `tiersOf`'s
+  // own default), and a bare `?? 0` here would make that indistinguishable from a
+  // rule that explicitly asked for tier 0.
+  ...(over.precedence !== undefined ? { precedence: over.precedence } : {}),
 })
 
 const policyOf = (rules: ReadonlyArray<AccessRule>): PolicySet => ({
@@ -571,6 +576,108 @@ describe("record-level access, end to end", () => {
       // …and it is the NEW head, not the superseded row.
       expect(after[0]!.versionSeq).toBeGreaterThan(1)
     }).pipe(Effect.provide(testLayer(ORG))),
+  )
+})
+
+/**
+ * ── THE CASCADE, COMPILED ─────────────────────────────────────────────────────
+ *
+ * `compileRecordFilter`'s multi-tier path (`compileTierVerdict` + `COALESCE`) has
+ * no other test coverage, because nothing before this phase could ever produce
+ * more than one tier — every fixture in the rest of this file, and every real
+ * policy until a role is ordered or based on another, collapses to the single-tier
+ * fast path (`compileTier`, unchanged since before the cascade). These are the
+ * only tests that actually walk the COALESCE fold, against a real query.
+ */
+describe("record filter — multiple tiers (the new path)", () => {
+  it.effect("a lower tier's targeted allow beats a higher tier's blanket deny", () =>
+    Effect.gen(function* () {
+      const f = yield* seed()
+      const p = policyOf([
+        rule({ conceptId: f.conceptId, resourceId: f.theirs.recordId, precedence: 0 }),
+        rule({ conceptId: f.conceptId, effect: "deny", precedence: 1 }),
+      ])
+      // Tier 0 has nothing to say about `mine`/`ownedByMe` (its rule names only
+      // `theirs`), so they fall through to tier 1's blanket deny. `theirs` is
+      // decided outright by tier 0 — tier 1 is never reached for that row.
+      const got = yield* idsMatching(f.conceptId, p, false)
+      expect([...got]).toEqual([f.theirs.recordId])
+    }).pipe(Effect.provide(testLayer(newOrgId()))),
+  )
+
+  it.effect("a higher tier's blanket allow only reaches rows the lower tier is silent on", () =>
+    Effect.gen(function* () {
+      const f = yield* seed()
+      const p = policyOf([
+        rule({
+          conceptId: f.conceptId,
+          effect: "deny",
+          resourceId: f.theirs.recordId,
+          precedence: 0,
+        }),
+        rule({ conceptId: f.conceptId, precedence: 1 }),
+      ])
+      // Tier 0 decides `theirs` outright (deny) — tier 1's blanket allow never
+      // reaches it. Everything else is silent in tier 0, so tier 1 grants it.
+      const got = yield* idsMatching(f.conceptId, p, false)
+      expect(got.has(f.theirs.recordId)).toBe(false)
+      expect(got.has(f.mine.recordId)).toBe(true)
+      expect(got.has(f.ownedByMe.recordId)).toBe(true)
+      expect(got.size).toBe(2)
+    }).pipe(Effect.provide(testLayer(newOrgId()))),
+  )
+
+  it.effect("SQL and the in-memory decideRecord agree on a three-tier policy", () =>
+    Effect.gen(function* () {
+      const f = yield* seed()
+      // Tier 0 targets `mine` only (allow). Tier 1 is a conditional deny (owner
+      // field = OTHER) that would otherwise catch `ownedByMe`. Tier 2 is a blanket
+      // allow, the catch-all everything else falls into.
+      const p = policyOf([
+        rule({ conceptId: f.conceptId, resourceId: f.mine.recordId, precedence: 0 }),
+        rule({
+          conceptId: f.conceptId,
+          effect: "deny",
+          condition: { kind: "fieldIs", fieldId: f.ownerFieldId },
+          precedence: 1,
+        }),
+        rule({ conceptId: f.conceptId, precedence: 2 }),
+      ])
+      const records = [
+        { recordId: f.mine.recordId, state: f.mine.state, createdBy: ACTOR },
+        { recordId: f.ownedByMe.recordId, state: f.ownedByMe.state, createdBy: OTHER },
+        { recordId: f.theirs.recordId, state: f.theirs.state, createdBy: null },
+      ]
+      // `decideRecord`'s condition check is keyed to ACTOR (the policy's own
+      // actorId) — `fieldIs` matches when ACTOR is named in that field.
+      //
+      // `conceptId` on the resource is REQUIRED here, unlike `compileRecordFilter`
+      // (which takes the concept id as its own parameter and matches concept-scoped
+      // rules directly): `decideRecord` goes through `rulesFor`/`coversResource`,
+      // which only matches R1/R2 (both `resourceId: null, conceptId: f.conceptId`)
+      // by comparing `rule.conceptId` against `resource.conceptId` — omit it and
+      // both rules silently stop matching anything.
+      const inMemory = new Set(
+        records
+          .filter((r) =>
+            decideRecord(
+              p,
+              "view",
+              { type: "record", id: r.recordId, conceptId: f.conceptId },
+              false,
+              r,
+            ),
+          )
+          .map((r) => r.recordId),
+      )
+      const fromSql = yield* idsMatching(f.conceptId, p, false)
+      expect(fromSql).toEqual(inMemory)
+      // Spelled out, so a change to either side fails loudly rather than the two
+      // drifting together: `mine` by tier 0, `theirs` by tier 2 (tier 1 is silent
+      // for it — its owner field is unset, not ACTOR), `ownedByMe` excluded by
+      // tier 1's deny before tier 2 is ever reached.
+      expect([...fromSql].sort()).toEqual([f.mine.recordId, f.theirs.recordId].sort())
+    }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
 })
 

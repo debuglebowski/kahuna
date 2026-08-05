@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm"
 import {
+  type AnyPgColumn,
   bigint,
   bigserial,
   boolean,
@@ -897,8 +898,10 @@ export const automationRuns = pgTable(
  * — editable, not hardcoded tiers — plus one managed role in the `automation`
  * category that every automation starts with.
  *
- * An actor may hold ANY NUMBER of roles; there is no tier and no ordering between
- * them. `position` is display order on the Roles page, nothing more.
+ * An actor may hold ANY NUMBER of roles, and — since the access model became a
+ * CASCADE of layers rather than a flat union — their `access_role_actors.position`
+ * on each one decides which wins when two roles disagree. This table's own
+ * `position` below is unrelated: display order on the Roles page, nothing more.
  */
 export const accessRoles = pgTable(
   "access_roles",
@@ -944,12 +947,33 @@ export const accessRoles = pgTable(
     // have it.
     fullAccess: boolean("full_access").notNull().default(false),
     position: integer("position").notNull().default(0),
+    // INHERITANCE. A role may be BASED ON another; resolving it walks the chain
+    // (via `access_role_actors.position`, then chain depth) so a role's own value
+    // always beats what it inherits. `ON DELETE SET NULL`, not cascade — deleting a
+    // parent must not delete every role that named it, only sever the link (the
+    // child's own rules are unaffected either way). Nullable self-reference, so
+    // `AnyPgColumn` types the lazy callback (drizzle needs it — `accessRoles` isn't
+    // defined yet at the point this column's own definition runs).
+    basedOn: uuid("based_on").references((): AnyPgColumn => accessRoles.id, {
+      onDelete: "set null",
+    }),
+    // LAYER 1. Set = this role is one PERSON's overrides, not a reusable role: it
+    // holds the actor id (a user id) it belongs to, created lazily the first time an
+    // admin sets an override for that person and resolved at a fixed precedence
+    // ABOVE every ordinary role (see `PolicyService.loadRules`) — "this person,
+    // specifically" beats any role they hold. Hidden from the Roles list, assignable
+    // only to its own actor, never a `based_on` target. Unique per (org, actor): one
+    // sheet of overrides per person, not a role you could accidentally duplicate.
+    personalFor: text("personal_for"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     uniqueIndex("access_roles_key_uq").on(t.orgId, t.key).where(sql`${t.key} IS NOT NULL`),
     index("access_roles_org_idx").on(t.orgId, t.position),
+    uniqueIndex("access_roles_personal_for_uq")
+      .on(t.orgId, t.personalFor)
+      .where(sql`${t.personalFor} IS NOT NULL`),
   ],
 )
 
@@ -959,7 +983,13 @@ export const accessRoles = pgTable(
  * and connectors key the same way. So people and machines are assigned through one
  * table, with no second code path to keep in sync.
  *
- * A member may hold several roles; their access is the union, minus any deny.
+ * A member may hold several roles; their access CASCADES rather than merely
+ * unions — `position` orders THIS actor's roles (0 = highest precedence; ties keep
+ * the flat "any deny beats any allow" semantics), so two roles disagreeing is no
+ * longer a contradiction, it is a question with an answer. Ordering someone's roles
+ * changes nothing for anyone else — it lives here, per (role, actor), not on
+ * `access_roles` itself. Default 0 for every row today: until something sets a
+ * different value, every held role ties, which is exactly the old flat union.
  */
 export const accessRoleActors = pgTable(
   "access_role_actors",
@@ -969,6 +999,7 @@ export const accessRoleActors = pgTable(
       .notNull()
       .references(() => accessRoles.id, { onDelete: "cascade" }),
     actorId: text("actor_id").notNull(),
+    position: integer("position").notNull().default(0),
     // Who assigned it, for the audit trail (the event log carries this too).
     createdBy: text("created_by"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

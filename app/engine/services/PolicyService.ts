@@ -10,7 +10,8 @@ import {
   type PolicySet,
 } from "../domain/access"
 
-/** A row of `access_rules`, as Postgres returns it. */
+/** A row of `access_rules`, as `loadRules` returns it — `precedence` is computed
+ *  by the query, not a column on the table (see `AccessRule.precedence`). */
 interface AccessRuleRow {
   readonly id: string
   readonly role_id: string | null
@@ -21,6 +22,7 @@ interface AccessRuleRow {
   readonly resource_id: string | null
   readonly concept_id: string | null
   readonly condition: unknown
+  readonly precedence: number
 }
 
 /**
@@ -95,6 +97,7 @@ const toRule = (r: AccessRuleRow): AccessRule => ({
   resourceId: r.resource_id,
   conceptId: r.concept_id,
   condition: toCondition(r.condition),
+  precedence: r.precedence,
 })
 
 /** One memoized entry: the rules an actor holds, and the generation they came from. */
@@ -146,7 +149,8 @@ export class PolicyService extends Effect.Service<PolicyService>()("engine/Polic
       )
 
     /**
-     * Every rule applying to `actorId`, via their roles.
+     * Every rule applying to `actorId`, via their roles — each carrying the
+     * PRECEDENCE it resolves at (see `AccessRule.precedence` / `decide`).
      *
      * `r.actor_id` (a direct share) is deliberately NOT read here any more. Shares
      * were removed — every rule now comes from a role, which is what makes a fixed
@@ -161,15 +165,53 @@ export class PolicyService extends Effect.Service<PolicyService>()("engine/Polic
      * anybody — while its assignments stay on the table, which is what lets
      * reactivating restore exactly what was there. Every other treatment (hiding the
      * row, refusing new assignments) would leave existing holders still holding it.
+     * An inactive PARENT stops the based-on walk too (`parent.active = true` below)
+     * — a child must not silently keep inheriting from a role that was turned off.
+     *
+     * ── THE PRECEDENCE WALK ──────────────────────────────────────────────────
+     *
+     * `chain` is a recursive CTE: it starts at every role `actorId` directly holds
+     * (depth 0, precedence `(position + 1) * 100` — Layer 1 is reserved for a
+     * PERSONAL role, `personal_for IS NOT NULL`, which always resolves at 0
+     * regardless of position, and Layer 0 is the owner bypass, added by the caller
+     * of this service, never a row here), then walks each role's `based_on` parent
+     * upward, one hop = one more point of precedence AND one more step of `depth`
+     * (a defensive cap, `< 8`, purely against a cycle nothing today can create —
+     * `based_on` accepts no write path yet — but this runs on every request, so a
+     * future bug must not turn it into an unbounded loop).
+     *
+     * The SAME role can be reachable more than one way (held directly AND inherited
+     * through a different held role's chain) — `best` takes `MIN(precedence)`, the
+     * more favourable path, per role. With every `position` at its default 0 and no
+     * `based_on` set anywhere yet, every held role computes to the SAME precedence
+     * (100) — one tier, i.e. today's flat union, unchanged.
      */
     const loadRules = (orgId: string, actorId: string) =>
       sql<AccessRuleRow>`
+        WITH RECURSIVE chain AS (
+          SELECT a.role_id AS role_id, 0 AS depth,
+                 CASE WHEN ro.personal_for IS NOT NULL THEN 0
+                      ELSE (a.position + 1) * 100 END AS precedence
+            FROM access_role_actors a
+            JOIN access_roles ro ON ro.id = a.role_id AND ro.org_id = a.org_id
+           WHERE a.org_id = ${orgId} AND a.actor_id = ${actorId} AND ro.active = true
+          UNION ALL
+          SELECT parent.id AS role_id, chain.depth + 1 AS depth,
+                 chain.precedence + 1 AS precedence
+            FROM chain
+            JOIN access_roles child ON child.id = chain.role_id
+            JOIN access_roles parent
+              ON parent.id = child.based_on AND parent.org_id = child.org_id
+           WHERE parent.active = true AND chain.depth < 8
+        ),
+        best AS (
+          SELECT role_id, MIN(precedence) AS precedence FROM chain GROUP BY role_id
+        )
         SELECT r.id, r.role_id, r.actor_id, r.effect, r.actions,
-               r.resource_type, r.resource_id, r.concept_id, r.condition
-        FROM access_rules r
-        JOIN access_role_actors a ON a.role_id = r.role_id AND a.org_id = r.org_id
-        JOIN access_roles ro ON ro.id = a.role_id AND ro.org_id = a.org_id
-        WHERE r.org_id = ${orgId} AND a.actor_id = ${actorId} AND ro.active = true`.pipe(
+               r.resource_type, r.resource_id, r.concept_id, r.condition,
+               b.precedence
+        FROM best b
+        JOIN access_rules r ON r.role_id = b.role_id AND r.org_id = ${orgId}`.pipe(
         Effect.map((rows) => rows.map(toRule)),
       )
 
