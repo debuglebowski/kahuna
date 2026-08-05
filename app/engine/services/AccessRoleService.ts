@@ -128,6 +128,7 @@ const ALL_RESOURCES: ReadonlyArray<AccessResourceType> = [
   "task",
   "note",
   "member",
+  "role",
 ]
 
 const everything = (

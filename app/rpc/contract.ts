@@ -1449,6 +1449,7 @@ export const AccessResourceType = Schema.Literal(
   "task",
   "note",
   "member",
+  "role",
 )
 export type AccessResourceType = typeof AccessResourceType.Type
 

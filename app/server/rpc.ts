@@ -910,7 +910,7 @@ const HandlersLive = ServerRpcs.toLayer({
   // is the plain-HTTP DELETE /api/org/members/:userId (see router.ts).
   listDeactivatedMembers: () => as<ReadonlyArray<DeactivatedMember>>(uc.listDeactivatedMembers),
   deactivateMember: ({ userId }) =>
-    requireAdmin.pipe(
+    requireAction("configure", { type: "member" }).pipe(
       Effect.zipRight(
         checkThen(
           (orgId, actor) => assertDeactivatable(orgId, actor, userId),
@@ -918,7 +918,8 @@ const HandlersLive = ServerRpcs.toLayer({
         ),
       ),
     ) as Effect.Effect<DeactivatedMember, RpcError, OrgContext | EngineServices>,
-  reactivateMember: ({ userId }) => admin<{ userId: string }>(uc.reactivateMember(userId)),
+  reactivateMember: ({ userId }) =>
+    adminOn<{ userId: string }>("configure", { type: "member" }, uc.reactivateMember(userId)),
   // Automations. Reads are member-visible (a record's activity trail names the
   // automation that touched it, so the list must be resolvable); every WRITE is
   // admin-gated, because an automation writes to everyone's records.
@@ -943,10 +944,13 @@ const HandlersLive = ServerRpcs.toLayer({
   // ── roles ──────────────────────────────────────────────────────────────────
   // Role NAMES are org vocabulary — any member may read them (they render as pills
   // on /members). The RULES inside a role are the sensitive half and need
-  // `configure`. See the artifact's Surfaces table.
+  // `configure` on `role` — its OWN resource type, not blanket org-configure, so
+  // "may manage permissions" is grantable without also handing out schema/settings
+  // administration. See the artifact's Surfaces table.
   listRoles: () => as<ReadonlyArray<AccessRole>>(uc.listRoles()),
   rolesOf: ({ userId }) => as<ReadonlyArray<AccessRole>>(uc.rolesOfUser(userId)),
-  listRules: ({ roleId }) => admin<ReadonlyArray<AccessRule>>(uc.listRules(roleId)),
+  listRules: ({ roleId }) =>
+    adminOn<ReadonlyArray<AccessRule>>("configure", { type: "role" }, uc.listRules(roleId)),
   // Not `admin`-gated, deliberately: this is how a client finds out whether it is an
   // admin, so gating it on being one makes it useless. It reveals only the caller's
   // own answer.
@@ -964,45 +968,80 @@ const HandlersLive = ServerRpcs.toLayer({
       }
     }),
   roleHolders: ({ roleId }) =>
-    admin<{ readonly actors: ReadonlyArray<string> }>(uc.roleHolders(roleId)),
+    adminOn<{ readonly actors: ReadonlyArray<string> }>(
+      "configure",
+      { type: "role" },
+      uc.roleHolders(roleId),
+    ),
   reassignRoleHolders: ({ fromRoleId, toRoleId }) =>
-    admin<{ readonly moved: number }>(uc.reassignRoleHolders({ fromRoleId, toRoleId })),
+    adminOn<{ readonly moved: number }>(
+      "configure",
+      { type: "role" },
+      uc.reassignRoleHolders({ fromRoleId, toRoleId }),
+    ),
   createRole: ({ name, description, kind, startFrom }) =>
-    admin<AccessRole>(uc.createRole({ name, description, kind, startFrom })),
+    adminOn<AccessRole>(
+      "configure",
+      { type: "role" },
+      uc.createRole({ name, description, kind, startFrom }),
+    ),
   updateRole: ({ id, name, description, autoAssign, active }) =>
-    admin<AccessRole>(uc.updateRole({ id, name, description, autoAssign, active })),
-  deleteRole: ({ id }) => admin<{ readonly id: string }>(uc.deleteRole(id)),
+    adminOn<AccessRole>(
+      "configure",
+      { type: "role" },
+      uc.updateRole({ id, name, description, autoAssign, active }),
+    ),
+  deleteRole: ({ id }) =>
+    adminOn<{ readonly id: string }>("configure", { type: "role" }, uc.deleteRole(id)),
   assignRole: ({ roleId, userId }) =>
-    admin<{ readonly ok: boolean }>(uc.assignRole(roleId, userId)),
+    adminOn<{ readonly ok: boolean }>("configure", { type: "role" }, uc.assignRole(roleId, userId)),
   unassignRole: ({ roleId, userId }) =>
-    admin<{ readonly ok: boolean }>(uc.unassignRole(roleId, userId)),
+    adminOn<{ readonly ok: boolean }>(
+      "configure",
+      { type: "role" },
+      uc.unassignRole(roleId, userId),
+    ),
   addRule: ({ roleId, effect, actions, resourceType, resourceId, conceptId, condition }) =>
-    admin<{ readonly id: string }>(
+    adminOn<{ readonly id: string }>(
+      "configure",
+      { type: "role" },
       uc.addRule({ roleId, effect, actions, resourceType, resourceId, conceptId, condition }),
     ),
   updateRule: ({ ruleId, effect, actions, resourceType, resourceId, conceptId, condition }) =>
-    admin<{ readonly id: string }>(
+    adminOn<{ readonly id: string }>(
+      "configure",
+      { type: "role" },
       uc.updateRule({ ruleId, effect, actions, resourceType, resourceId, conceptId, condition }),
     ),
   setScopedRules: ({ roleId, resourceType, scopeBy, entries }) =>
-    admin<{ readonly ok: boolean }>(uc.setScopedRules({ roleId, resourceType, scopeBy, entries })),
+    adminOn<{ readonly ok: boolean }>(
+      "configure",
+      { type: "role" },
+      uc.setScopedRules({ roleId, resourceType, scopeBy, entries }),
+    ),
   listAccessDefaults: () =>
     as<ReadonlyArray<{ roleId: string; resourceType: string; actions: ReadonlyArray<string> }>>(
       uc.listAccessDefaults,
     ),
   setAccessDefault: ({ roleId, resourceType, actions }) =>
-    admin<{ readonly ok: boolean }>(uc.setAccessDefault({ roleId, resourceType, actions })),
-  removeRule: ({ ruleId }) => admin<{ readonly id: string }>(uc.removeRule(ruleId)),
+    adminOn<{ readonly ok: boolean }>(
+      "configure",
+      { type: "role" },
+      uc.setAccessDefault({ roleId, resourceType, actions }),
+    ),
+  removeRule: ({ ruleId }) =>
+    adminOn<{ readonly id: string }>("configure", { type: "role" }, uc.removeRule(ruleId)),
   /**
    * Asking about YOURSELF is always allowed — that is the point of the self-serve
    * report ("why can't I see this?" answered without an admin). Asking about someone
-   * else is `configure`.
+   * else needs `configure` on `member` — this lives on their member page, not the
+   * role editor, so it is gated with the rest of that page rather than `role`.
    */
   effectiveAccess: ({ userId }) =>
     Effect.gen(function* () {
       const scope = yield* OrgContext
       const target = userId ?? scope.actor
-      if (target !== scope.actor) yield* requireAction("configure")
+      if (target !== scope.actor) yield* requireAction("configure", { type: "member" })
       return yield* as<EffectiveAccess>(uc.effectiveAccess(target))
     }),
 }).pipe(Layer.provide(EngineBase))

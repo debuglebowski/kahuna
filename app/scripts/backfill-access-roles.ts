@@ -38,6 +38,7 @@ const RESOURCES = [
   "task",
   "note",
   "member",
+  "role",
 ] as const
 
 /** Must match BUILTIN_ROLES (asserted by server/access-backfill.test.ts).

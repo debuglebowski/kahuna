@@ -308,11 +308,12 @@ export const handleApi = async (req: Request): Promise<Response | null> => {
       shared: new URL(req.url).searchParams.get("shared") !== "false",
     })
 
-  // Org rename / logo. Ours rather than `authClient.organization.update`, for the
-  // same reason as the two member routes: BetterAuth decides that endpoint from the
-  // caller's MEMBERSHIP tier, and an administrator is a membership-`member` holding
-  // the Admin role now — it would refuse them. Gated on `configure`, like everything
-  // else an admin does.
+  // Org rename / logo. Ours rather than `authClient.organization.update` — BetterAuth
+  // decides that endpoint from the caller's MEMBERSHIP tier, and an administrator is
+  // a membership-`member` holding the Admin role now, so it would refuse them.
+  // Schema/settings administration, so it stays on blanket org-`configure` (the
+  // default `canConfigure` resource) rather than the narrower `member`/`role` gates
+  // the two member-roster routes below use.
   if (seg[1] === "org" && !seg[2] && m === "POST") {
     const org = await resolveOrg(req)
     if (!org.ok) return Response.json({ error: org.code }, { status: org.status })
@@ -340,13 +341,17 @@ export const handleApi = async (req: Request): Promise<Response | null> => {
     return Response.json(updated)
   }
 
-  // Team management (admin-only): add an EXISTING user to the active org by email.
-  // No invitation/email flow — the user must already have an account.
+  // Team management: add an EXISTING user to the active org by email. No
+  // invitation/email flow — the user must already have an account.
+  //
+  // Gated on `configure` on `member`, not blanket org-configure — this is the
+  // member roster, not schema/settings administration, and the two are now
+  // separately grantable.
   if (seg[1] === "org" && seg[2] === "members" && !seg[3] && m === "POST") {
     const org = await resolveOrg(req)
     if (!org.ok) return Response.json({ error: org.code }, { status: org.status })
     const role = await roleOf(org.actor, org.orgId)
-    if (!(await canConfigure(org.orgId, org.actor, role)))
+    if (!(await canConfigure(org.orgId, org.actor, role, { type: "member" })))
       return Response.json({ error: "FORBIDDEN" }, { status: 403 })
 
     const body = (await req.json().catch(() => null)) as {
@@ -445,16 +450,16 @@ export const handleApi = async (req: Request): Promise<Response | null> => {
     }
   }
 
-  // Member purge (admin-only): permanently remove a DEACTIVATED member from the
-  // org — BetterAuth membership first, then the engine's per-member data (page +
+  // Member purge: permanently remove a DEACTIVATED member from the org —
+  // BetterAuth membership first, then the engine's per-member data (page +
   // deactivation marker). Mirrors the archive→purge convention: an active member
   // must be deactivated before they can be deleted. The user account itself is
-  // never touched (it may belong to other orgs).
+  // never touched (it may belong to other orgs). Same `member` gate as adding one.
   if (seg[1] === "org" && seg[2] === "members" && seg[3] && m === "DELETE") {
     const org = await resolveOrg(req)
     if (!org.ok) return Response.json({ error: org.code }, { status: org.status })
     const role = await roleOf(org.actor, org.orgId)
-    if (!(await canConfigure(org.orgId, org.actor, role)))
+    if (!(await canConfigure(org.orgId, org.actor, role, { type: "member" })))
       return Response.json({ error: "FORBIDDEN" }, { status: 403 })
 
     const userId = seg[3]

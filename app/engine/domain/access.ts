@@ -35,7 +35,17 @@ export const ACCESS_ACTIONS: ReadonlyArray<AccessAction> = [
 /** Wildcard in a rule's `actions` array — matches every action, present and future. */
 export const ACTION_ALL = "*"
 
-/** What a rule can be about — see `AccessResource`. */
+/**
+ * What a rule can be about — see `AccessResource`.
+ *
+ * `role` governs role/rule editing itself (creating roles, assigning them, writing
+ * rules) and `member` governs the member roster (add/remove/deactivate). Both used
+ * to be reachable only through blanket org-`configure` — there was nothing narrower
+ * to grant — which meant "may manage people" and "may manage permissions" could
+ * never be separated. `configure` on `org` still exists and still gates schema/
+ * settings administration (concepts, fields, labels, integrations); it does NOT
+ * cover these two any more.
+ */
 export type AccessResourceType =
   | "org"
   | "concept"
@@ -48,6 +58,7 @@ export type AccessResourceType =
   | "task"
   | "note"
   | "member"
+  | "role"
 
 /**
  * The thing being acted on.
