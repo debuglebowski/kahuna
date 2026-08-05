@@ -7,7 +7,7 @@
  * Idempotent — keyed by event id; safe to re-run and safe alongside a UI "Sync".
  */
 import { pool } from "../server/db"
-import { upsertInstanceByExternalId } from "../server/integrations/instances"
+import { upsertRecordVersionByExternalId } from "../server/integrations/records"
 import { systemScope } from "../server/runtime"
 
 type RawEvent = {
@@ -70,7 +70,7 @@ for (const c of conns.rows) {
       skipped++
       continue
     }
-    const res = await upsertInstanceByExternalId(systemScope(c.org_id, c.user_id), {
+    const res = await upsertRecordVersionByExternalId(systemScope(c.org_id, c.user_id), {
       conceptId: c.concept_id,
       externalFieldId,
       externalValue: row.google_event_id,
