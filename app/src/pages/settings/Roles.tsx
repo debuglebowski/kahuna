@@ -326,6 +326,13 @@ function roleMsg(e: unknown): string {
 export function RuleEditor({ role, onClose }: { role: AccessRole; onClose: () => void }) {
   const qc = useQueryClient()
   const rules = useQuery({ queryKey: ["rules", role.id], queryFn: () => api.listRules(role.id) })
+  // The `based on` PARENT's rules (P6), so a cell this role stays silent on can
+  // name what the parent resolves — see `PermissionMatrix`'s `inheritedFrom`.
+  const parentRules = useQuery({
+    queryKey: ["rules", role.basedOn],
+    queryFn: () => api.listRules(role.basedOn ?? ""),
+    enabled: !!role.basedOn,
+  })
   const [effect, setEffect] = useState<"allow" | "deny">("allow")
   // `field`, not `concept`: concepts have their own grid now, so the form's resting
   // state has to be a type this page still owns.
@@ -566,6 +573,8 @@ export function RuleEditor({ role, onClose }: { role: AccessRole; onClose: () =>
               note={current.note}
               resourceNoun={current.resourceNoun}
               loading={rules.isPending || defaults.isPending || itemsFor(current).busy}
+              parentRules={role.basedOn ? parentRules.data : undefined}
+              parentLabel={basedOnParent?.name}
             />
           ) : (
             <>
