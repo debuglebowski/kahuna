@@ -768,7 +768,11 @@ export const api = {
     form.append("file", file)
     const url =
       "recordId" in owner
-        ? `/api/items/${owner.recordId}/attachments`
+        ? // `/api/records/`, NOT `/api/items/`. The vocabulary rename moved the
+          // route (router.ts) and left this call site behind, so every upload
+          // from the app 404'd — a URL string is invisible to the typechecker,
+          // and no test covers this path. Found by the CLI hitting the same route.
+          `/api/records/${owner.recordId}/attachments`
         : `/api/buckets/${owner.bucketId}/attachments?shared=${owner.shared === false ? "false" : "true"}`
     const res = await fetch(url, { method: "POST", body: form })
     if (!res.ok) {

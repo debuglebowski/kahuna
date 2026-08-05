@@ -1,7 +1,7 @@
 import "../server/env"
 
 import { execFile } from "node:child_process"
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { promisify } from "node:util"
@@ -353,6 +353,120 @@ const main = async (): Promise<void> => {
     exportAll.code === 0 && Object.keys(JSON.parse(exportAll.stdout)).length > 1,
     exportAll.stdout.slice(0, 120),
   )
+
+  console.log("\ntasks, notes and attachments")
+  // The LINEAGE id (`record`), not the version id: annotations attach to the
+  // record, and passing the version id is exactly the mistake the column exists
+  // to prevent.
+  const anchorRecord = (
+    JSON.parse((await km("record", "list", bulkSlug, "--json")).stdout) as Array<{
+      id: string
+      record: string
+    }>
+  )[0]?.record
+  check("a record to hang annotations on", Boolean(anchorRecord))
+
+  const statuses = await km("task", "status", "list", "--json")
+  check("task status list", statuses.code === 0, statuses.stderr)
+  const firstStatus = (JSON.parse(statuses.stdout) as Array<{ name: string }>)[0]?.name ?? ""
+
+  const madeTask = await km("task", "create", "Ship the CLI", "--record", String(anchorRecord))
+  check("task create on a record", madeTask.code === 0, madeTask.stderr)
+  const tasks = JSON.parse(
+    (await km("task", "list", "--record", String(anchorRecord), "--json")).stdout,
+  ) as Array<Record<string, unknown>>
+  check("task list --record finds it", tasks.length === 1, JSON.stringify(tasks).slice(0, 200))
+  const taskId = String(tasks[0]?.id ?? "")
+
+  if (taskId && firstStatus) {
+    // Four procedures behind one command, each bumping expectedVersion — the
+    // case that fails if they are batched instead of re-read between.
+    const multi = await km(
+      "task",
+      "update",
+      taskId,
+      "--title",
+      "Ship it",
+      "--status",
+      firstStatus,
+      "--assignee",
+      "none",
+    )
+    check("task update changes title AND status in one command", multi.code === 0, multi.stderr)
+    const after = JSON.parse(
+      (await km("task", "list", "--record", String(anchorRecord), "--json")).stdout,
+    ) as Array<Record<string, unknown>>
+    check("the title changed", after[0]?.title === "Ship it", JSON.stringify(after).slice(0, 200))
+    check(
+      "the status changed",
+      after[0]?.status === firstStatus,
+      JSON.stringify(after).slice(0, 200),
+    )
+
+    check("task archive", (await km("task", "archive", taskId)).code === 0)
+    check("task restore", (await km("task", "restore", taskId)).code === 0)
+    check("task delete --yes", (await km("task", "delete", taskId, "--yes")).code === 0)
+  }
+
+  const madeNote = await km(
+    "note",
+    "create",
+    "A note from the CLI",
+    "--record",
+    String(anchorRecord),
+  )
+  check("note create", madeNote.code === 0, madeNote.stderr)
+  const notes = JSON.parse(
+    (await km("note", "list", "--record", String(anchorRecord), "--json")).stdout,
+  ) as Array<Record<string, unknown>>
+  check("note list --record finds it", notes.length === 1, JSON.stringify(notes).slice(0, 200))
+  const noteListNoRecord = await km("note", "list")
+  check(
+    "note list without a record explains WHY it cannot",
+    noteListNoRecord.code === 2 && noteListNoRecord.stderr.includes("subject"),
+    noteListNoRecord.stderr,
+  )
+
+  // Attachments: the bytes must survive a round trip, which is the only thing
+  // that proves multipart up and streamed down actually agree.
+  const uploadPath = path.join(configHome, "attach.txt")
+  const payload = `bytes ${stamp}\nsecond line\n`
+  writeFileSync(uploadPath, payload)
+  const uploaded = await km("attachment", "upload", uploadPath, "--record", String(anchorRecord))
+  check("attachment upload", uploaded.code === 0, uploaded.stderr)
+  const bothOwners = await km(
+    "attachment",
+    "upload",
+    uploadPath,
+    "--record",
+    String(anchorRecord),
+    "--bucket",
+    "x",
+  )
+  check("--record AND --bucket together is refused", bothOwners.code === 2, bothOwners.stderr)
+
+  const files = JSON.parse(
+    (await km("attachment", "list", "--record", String(anchorRecord), "--json")).stdout,
+  ) as Array<Record<string, unknown>>
+  check("attachment list shows it", files.length === 1, JSON.stringify(files).slice(0, 200))
+  const fileId = String(files[0]?.id ?? "")
+  check(
+    "the size is reported",
+    Number(files[0]?.size) === Buffer.byteLength(payload),
+    String(files[0]?.size),
+  )
+
+  if (fileId) {
+    const outPath = path.join(configHome, "downloaded.txt")
+    const down = await km("attachment", "download", fileId, "--out", outPath)
+    check("attachment download", down.code === 0, down.stderr)
+    check(
+      "the downloaded bytes are IDENTICAL to what was uploaded",
+      readFileSync(outPath, "utf8") === payload,
+      readFileSync(outPath, "utf8").slice(0, 80),
+    )
+    check("attachment delete --yes", (await km("attachment", "delete", fileId, "--yes")).code === 0)
+  }
 
   console.log("\nerrors and exit codes")
   const badConcept = await km("record", "list", "nonexistent-concept")

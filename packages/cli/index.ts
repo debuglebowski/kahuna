@@ -1,15 +1,18 @@
 #!/usr/bin/env node
 import { pathToFileURL } from "node:url"
 import { parseArgs } from "node:util"
+import { attachmentCommands } from "./commands/attachment.ts"
 import { authCommands } from "./commands/auth.ts"
 import { bulkCommands } from "./commands/bulk.ts"
 import { conceptCommands } from "./commands/concept.ts"
 import { eventCommands } from "./commands/event.ts"
 import { labelCommands } from "./commands/label.ts"
+import { noteCommands } from "./commands/note.ts"
 import { profileCommands } from "./commands/profile.ts"
 import { recordCommands } from "./commands/record.ts"
 import { relationCommands } from "./commands/relation.ts"
 import { systemCommands } from "./commands/system.ts"
+import { taskCommands } from "./commands/task.ts"
 import { versionCommands } from "./commands/version.ts"
 import { CliError, EXIT, toFailure } from "./errors.ts"
 import type { Format } from "./output.ts"
@@ -30,6 +33,9 @@ export const registry = new Registry([
   ...profileCommands,
   ...conceptCommands,
   ...bulkCommands,
+  ...taskCommands,
+  ...noteCommands,
+  ...attachmentCommands,
   ...labelCommands,
   ...recordCommands,
   ...relationCommands,

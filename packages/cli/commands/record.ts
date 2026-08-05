@@ -32,6 +32,7 @@ const asArray = (v: unknown): ReadonlyArray<string> =>
  */
 const columnsFor = (concept: Concept, fields: ReadonlyArray<Field>): ReadonlyArray<string> => [
   "id",
+  "record",
   "label",
   ...(concept.versioningEnabled ? ["version", "status"] : []),
   ...fields.map((f) => f.name),
@@ -41,6 +42,11 @@ const columnsFor = (concept: Concept, fields: ReadonlyArray<Field>): ReadonlyArr
 const toRow = (version: RecordVersion, concept: Concept, fields: ReadonlyArray<Field>): Row => {
   const row: Row = {
     id: version.id,
+    // BOTH ids, always. `id` addresses this VERSION; `record` addresses the
+    // lineage — and the lineage is what tasks, notes and attachments attach to
+    // (`subjectId`, `listFiles.recordId`, the upload route). Printing only the
+    // version id left no way to reach any of them from the shell.
+    record: version.recordId,
     label: labelOf(version, concept, fields),
   }
   if (concept.versioningEnabled) {
