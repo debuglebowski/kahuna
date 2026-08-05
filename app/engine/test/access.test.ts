@@ -12,6 +12,7 @@ import {
   rulesFor,
   unrestrictedPolicy,
 } from "../domain/access"
+import { TEMPLATED_TYPES } from "../services/AccessDefaultsService"
 import { BUILTIN_ROLES } from "../services/AccessRoleService"
 
 /**
@@ -185,19 +186,43 @@ describe("access conditions", () => {
 describe("the presets reproduce today's behaviour", () => {
   const byKey = (key: string) => BUILTIN_ROLES.find((r) => r.key === key)!
 
-  it("THE BLANKET-VIEW GUARD: the member preset must not grant view", () => {
-    // Read access is the DEFAULT LAYER's job (the `visibility` column). A preset
-    // rule granting `view` on every concept has `resource_id = null`, so it would
-    // OUTRANK that column and hand members every admin-only concept — silently
-    // undoing concept and field visibility.
+  it("THE BLANKET-VIEW GUARD: the member preset must not grant view on a TEMPLATED type", () => {
+    // Read access on a TEMPLATED type (concept/record/dashboard/view/automation) is
+    // the DEFAULT LAYER's job — a creation-time rule, or (for concept/field) the
+    // `visibility` column. A preset rule granting `view` there has `resource_id =
+    // null`, so it would OUTRANK that default and hand members every admin-only
+    // concept — silently undoing concept and field visibility.
     //
     // The engine tests would NOT catch that regression: `testLayer` provides a role
     // but no policy, so they fall through to the fallback and pass either way. Only
     // a real request resolves the blanket rule. Hence this assertion.
     for (const rule of byKey("member").rules) {
-      expect(rule.actions, `member grants view on ${rule.resourceType}`).not.toContain("view")
+      if (!TEMPLATED_TYPES.includes(rule.resourceType)) continue
+      expect(rule.actions, `member grants view on templated ${rule.resourceType}`).not.toContain(
+        "view",
+      )
       expect(rule.actions).not.toContain("*")
     }
+  })
+
+  it("the member preset DOES grant view on the six UNTEMPLATED types — P8", () => {
+    // These have no per-resource default of their own to outrank (no creation-time
+    // rule, no visibility column), so the reasoning above does not apply — and
+    // since P8 closed the implicit "no rule = allowed" fallback they used to rely
+    // on, an explicit grant is the only thing keeping today's behaviour.
+    const untemplatedVisible = ["org", "field", "bucket", "task", "note", "member"]
+    for (const resourceType of untemplatedVisible) {
+      const rules = byKey("member").rules.filter((r) => r.resourceType === resourceType)
+      const actions = new Set(rules.flatMap((r) => r.actions))
+      expect(actions.has("view"), `member should grant view on ${resourceType}`).toBe(true)
+    }
+    // `role` is untemplated too, but deliberately excluded: role/rule editing is
+    // governed entirely by `configure`, with no separate "view" of its own.
+    expect(
+      byKey("member")
+        .rules.filter((r) => r.resourceType === "role")
+        .flatMap((r) => r.actions),
+    ).not.toContain("view")
   })
 
   it("member holds the write actions it has today, and not the two it doesn't", () => {

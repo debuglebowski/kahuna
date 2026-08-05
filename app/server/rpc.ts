@@ -181,14 +181,28 @@ const mapErr = <A, E, R>(eff: Effect.Effect<A, E, R>) =>
   eff.pipe(Effect.catchAll((e) => Effect.fail(toRpcError(e))))
 
 /**
- * THE WRITE GATE. Resolves `action` against the caller's access rules, falling back
- * to the role-derived default — so an org with no rules behaves exactly as it did
- * under `policy.ts:can()`.
+ * THE WRITE GATE. Resolves `action` against the caller's access rules. No fallback
+ * of any kind any more (P8) — `false` unconditionally, for every action, not just
+ * `configure`/`delete`. An admin passes because they hold the Admin role, whose
+ * rules grant `*`; an owner with no other role passes only for `role`/`member`
+ * (Layer 0). Silence means refused, full stop; an explicit rule is what grants
+ * anything.
  *
  * Both inputs come off the scope AuthMiddleware already resolved, so this costs no
  * lookup. `"system"` is refused outright: an engine-level caller must never arrive
  * over HTTP, and `sessionScope`'s type makes that unreachable — this is the
  * belt-and-braces check that survives a future refactor.
+ *
+ * ── WHY THIS WAS SAFE TO CLOSE ────────────────────────────────────────────────
+ *
+ * The old formula (`action !== "configure" && action !== "delete"`) LOOKED like it
+ * kept `view`/`create`/`edit`/`archive` open for every resource this function
+ * gates — but every real call site only ever asks about `configure` (`org`,
+ * `member`, `concept`, `role`), so the "open" branch was already dead: nothing here
+ * ever relied on it. The actual open surface this phase closes — `bucket`/`task`/
+ * `note` having no gate at all for `view`/`create` — lives in `use-cases.ts`
+ * (`assertAllowed`), not here; those three never went through `requireAction` in
+ * the first place.
  */
 const requireAction = (
   action: AccessAction,
@@ -201,26 +215,9 @@ const requireAction = (
         new RpcError({ code: "FORBIDDEN", message: "Admin only", status: 403 }),
       )
     }
-    // ── THE LAST ROLE-DERIVED FALLBACK, NOW CLOSED ──────────────────────────
-    //
-    // `configure` and `delete` used to fall back to `isAdminRole(membership role)`.
-    // They now fall back to NOTHING: an admin passes because they hold the Admin
-    // role, whose rules grant `*`, and an owner passes because their session is
-    // unrestricted. Deciding it from the tier would ignore an org that granted
-    // org-configuration to a role of its own making — which is the whole point of
-    // Admin becoming an ordinary role.
-    //
-    // This is a fail-closed flip, so it depends on every actor actually HOLDING a
-    // role: `scripts/backfill-auto-roles.ts` is what guarantees that, and the
-    // failure mode if it did not run is silent (buttons quietly stop working for
-    // people who should have them).
-    //
-    // The other actions stay open — they were open to any member before, and the
-    // per-resource rules are what narrow them.
-    const fallback = action !== "configure" && action !== "delete"
     const allowed = scope.policy
-      ? decide(scope.policy, action, resource, fallback, { unconditionalOnly: true })
-      : fallback
+      ? decide(scope.policy, action, resource, false, { unconditionalOnly: true })
+      : false
     if (!allowed) {
       return yield* Effect.fail(
         new RpcError({ code: "FORBIDDEN", message: "Admin only", status: 403 }),

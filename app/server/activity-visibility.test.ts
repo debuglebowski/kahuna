@@ -240,9 +240,12 @@ describe("subject-keyed reads on a restricted concept", () => {
     const { orgId, userId } = await orgWithOwner()
     const sys = systemScope(orgId, userId)
     await runEngineOrThrow(sys, createTask({ subjectId: null, title: "standalone" }))
-    // No subjectId → nothing to gate; a member's own task list must still work.
+    // No subjectId → nothing SUBJECT-based to gate; a member's own task list must
+    // still work. `unrestrictedPolicy` stands in for "holds whatever grants `view`
+    // on `task`" (P8 made that a real, separate check) — this test is about the
+    // list not requiring a lineage, not about permission grants.
     const rows = (await runEngineOrThrow(
-      sessionScope(orgId, userId, "member"),
+      sessionScope(orgId, userId, "member", unrestrictedPolicy(userId)),
       listTasks({}),
     )) as unknown[]
     expect(rows.length).toBeGreaterThan(0)

@@ -278,10 +278,20 @@ describe("policy loading", () => {
       expect(after.rules.length).toBeGreaterThan(0)
       // The seeded Member role reproduces today's behaviour: the write actions a
       // member has, minus configure (admin-gated) and delete (already admin-only at
-      // the RPC tier) — and NOT `view`, which is the default layer's job. A blanket
-      // view rule would outrank the visibility column; see THE BLANKET-VIEW GUARD.
+      // the RPC tier) — plus (P8) `view` on the six UNTEMPLATED types (org/field/
+      // bucket/task/note/member), but NOT on a TEMPLATED one (concept/record/
+      // dashboard/view/automation), where it is still the default layer's job — a
+      // blanket view rule there would outrank the visibility column; see THE
+      // BLANKET-VIEW GUARD.
       const actions = new Set(after.rules.flatMap((r) => r.actions))
-      expect(actions.has("view")).toBe(false)
+      const taskActions = new Set(
+        after.rules.filter((r) => r.resourceType === "task").flatMap((r) => r.actions),
+      )
+      const conceptActions = new Set(
+        after.rules.filter((r) => r.resourceType === "concept").flatMap((r) => r.actions),
+      )
+      expect(taskActions.has("view")).toBe(true)
+      expect(conceptActions.has("view")).toBe(false)
       expect(actions.has("create")).toBe(true)
       expect(actions.has("edit")).toBe(true)
       expect(actions.has("archive")).toBe(true)

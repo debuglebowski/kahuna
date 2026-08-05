@@ -321,6 +321,20 @@ export class ManagedConceptReadonly extends Schema.TaggedError<ManagedConceptRea
   { concept: Schema.String, managedBy: Schema.String },
 ) {}
 
+/**
+ * A use-case-level access refusal for a resource with no natural entity to
+ * resolve first — an org-level task/note, a widget's file bucket — where the
+ * record/concept read gate (`assertSubjectReadable`, `getRecord`) has nothing
+ * to delegate to. The RPC boundary's own `requireAction` throws its own
+ * `RpcError` and never reaches use-case code; this is for the use-cases that
+ * are ALSO reachable off the RPC path (`uploadAttachment`'s plain-HTTP route),
+ * so both paths refuse the same way through the same `ERROR_MAP` entry.
+ */
+export class AccessDenied extends Schema.TaggedError<AccessDenied>()("AccessDenied", {
+  resourceType: Schema.String,
+  action: Schema.String,
+}) {}
+
 export type EngineError =
   | VersionConflict
   | ManagedConceptReadonly
@@ -369,3 +383,4 @@ export type EngineError =
   | AnnotationFieldConfigInvalid
   | AutomationNotFound
   | AutomationInvalid
+  | AccessDenied

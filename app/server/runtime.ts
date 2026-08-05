@@ -118,6 +118,11 @@ export const ERROR_MAP: Record<string, { status: number; code: string }> = {
   // "Internal error" and `validateActions`' prose never arrived.
   AutomationInvalid: { status: 422, code: "AUTOMATION_INVALID" },
   AutomationNotFound: { status: 404, code: "NOT_FOUND" },
+  // The use-case-level twin of requireAction's RpcError FORBIDDEN — see
+  // errors/index.ts's doc. Same status/code, reached from a different path
+  // (a use-case ALSO callable off the RPC boundary, e.g. the plain-HTTP upload
+  // route), through the same map so both refuse identically.
+  AccessDenied: { status: 403, code: "FORBIDDEN" },
 }
 
 /** Map an engine effect's Exit to a stable, framework-agnostic result. */

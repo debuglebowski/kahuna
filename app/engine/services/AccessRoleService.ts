@@ -142,6 +142,35 @@ const everything = (
 ): ReadonlyArray<RuleSpec> =>
   ALL_RESOURCES.map((resourceType) => ({ effect: "allow" as const, actions, resourceType }))
 
+/** Blanket rules for a NAMED subset of resource types, not all of them. */
+const onlyOn = (
+  actions: ReadonlyArray<AccessAction | typeof ACTION_ALL>,
+  resourceTypes: ReadonlyArray<AccessResourceType>,
+): ReadonlyArray<RuleSpec> =>
+  resourceTypes.map((resourceType) => ({ effect: "allow" as const, actions, resourceType }))
+
+/**
+ * The six resource types with no per-resource default of their own — not in
+ * `TEMPLATED_TYPES` (which get a creation-time rule or, for `concept`/`field`,
+ * the `visibility` column) and not `role` (role/rule editing stays governed
+ * entirely by `configure`; there is no separate "view" concept for it — the
+ * whole Roles page gates on one permission, not two).
+ *
+ * These six used to fall back to an implicit "no rule = allowed" default for
+ * `view` (`requireAction`'s old formula) — P8 closed that, so Member needs an
+ * EXPLICIT `view` grant here or every non-admin loses the ability to see org
+ * settings, fields, file buckets, the global task/note lists and the member
+ * roster the moment the implicit allow goes away.
+ */
+const UNTEMPLATED_VISIBLE: ReadonlyArray<AccessResourceType> = [
+  "org",
+  "field",
+  "bucket",
+  "task",
+  "note",
+  "member",
+]
+
 /**
  * There is deliberately NO `owner` role. Owner is a membership flag carrying the
  * Layer 0 recovery floor (`configure` on `role`/`member` only —
@@ -163,15 +192,21 @@ export const BUILTIN_ROLES: ReadonlyArray<RoleSpec> = [
   {
     key: "member",
     name: "Member",
-    // No `view`: reading is governed by each resource's own default. See the
-    // comment above — granting it here would override concept/field visibility.
+    // No `view` on the TEMPLATED types (concept/record/dashboard/view/automation):
+    // reading those is governed by each resource's own default (a creation-time
+    // rule, or the `visibility` column) — granting it here would override that.
+    // The six UNTEMPLATED_VISIBLE types get an explicit `view` below instead;
+    // see that constant's doc for why (P8).
     description: "Creates and edits; cannot configure or delete. Reads what is visible.",
     position: 2,
     kind: "user",
     // WHERE A NEW MEMBER LANDS. Not a hardcoded key anywhere — the flag is what the
     // join path reads, so an org can move it to a role of its own making.
     autoAssign: true,
-    rules: everything(["create", "edit", "archive", "share"]),
+    rules: [
+      ...everything(["create", "edit", "archive", "share"]),
+      ...onlyOn(["view"], UNTEMPLATED_VISIBLE),
+    ],
   },
   {
     // The `automation` category exists so a bot role never sits among people roles

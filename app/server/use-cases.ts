@@ -4,6 +4,7 @@ import {
   type AccessAction,
   type AccessCondition,
   AccessDefaultsService,
+  AccessDenied,
   type AccessResource,
   type AccessResourceType,
   AccessRoleService,
@@ -26,6 +27,7 @@ import {
   canReadRestricted,
   type DashboardBody,
   DashboardService,
+  decide,
   type EditReach,
   type EngineServices,
   EventStore,
@@ -300,8 +302,10 @@ const assertSubjectReadable = (subjectId: string): UC<void> =>
  * of an annotation was gated while `createNote` / `createTask` named the subject
  * directly and were not. A member could attach content to a record they cannot see.
  *
- * `null` is an ORG-LEVEL annotation — it belongs to no record, so there is nothing to
- * gate and it must stay allowed (the global Tasks page creates these).
+ * `null` is an ORG-LEVEL annotation — it belongs to no record, so there is nothing HERE
+ * to gate; it stays a no-op on purpose. It is NOT "therefore always allowed" any more,
+ * though — `createNote`/`createTask` compose this with `assertAllowed` for the null
+ * case instead of skipping the gate outright (see there).
  *
  * Deliberately reuses the read gate: "may I write to this subject?" is answered by
  * "may I read it?", so the two can never disagree. Per-annotation mutation rights
@@ -309,6 +313,31 @@ const assertSubjectReadable = (subjectId: string): UC<void> =>
  */
 const assertSubjectWritable = (subjectId: string | null): UC<void> =>
   subjectId === null ? Effect.void : assertSubjectReadable(subjectId)
+
+/**
+ * Gate an action against a resource with no natural entity to resolve first —
+ * an org-level task/note, or a widget's own file bucket — where
+ * `assertSubjectReadable` has nothing to delegate to (there is no record).
+ *
+ * Lives at the use-case layer rather than as an RPC-boundary `requireAction`
+ * call because `uploadAttachment` is ALSO reachable from the plain-HTTP
+ * multipart route (`router.ts`'s upload endpoint), which never passes through
+ * `rpc.ts` at all — putting the check here is the one place both paths share.
+ *
+ * `false` fallback, unconditionally: the open fallback these six resource
+ * types used to get from `requireAction`'s old formula is gone (P8) — an
+ * explicit rule is what grants this now, not silence.
+ */
+const assertAllowed = (action: AccessAction, resource: AccessResource): UC<void> =>
+  Effect.gen(function* () {
+    const scope = yield* OrgContext
+    const allowed = scope.policy
+      ? decide(scope.policy, action, resource, false, { unconditionalOnly: true })
+      : false
+    if (!allowed) {
+      return yield* Effect.fail(new AccessDenied({ resourceType: resource.type, action }))
+    }
+  })
 
 /** Apply a mask to one record version (no-op when nothing is hidden). */
 const maskRecordVersion = <T extends { readonly state: Record<string, unknown> }>(
@@ -1185,11 +1214,13 @@ export const uploadAttachment = (
   mimeType: string | undefined,
   data: Uint8Array,
 ): UC<Attachment> =>
-  // Gate the OWNER when it is a record, mirroring `listFiles` (which already gates the
-  // read). Without this a member could upload onto a record they cannot see — and then
-  // not be able to list it back. A `bucketId` owner belongs to a Files widget rather
-  // than a record, so there is nothing to gate.
-  assertSubjectWritable("recordId" in owner ? owner.recordId : null).pipe(
+  // Gate the OWNER: a record's write gate when it is one (mirroring `listFiles`,
+  // below), or `create` on the BUCKET itself otherwise (P8) — a widget's file
+  // bucket belongs to no record, but it is real content now, not implicitly open.
+  ("recordId" in owner
+    ? assertSubjectWritable(owner.recordId)
+    : assertAllowed("create", { type: "bucket", id: owner.bucketId })
+  ).pipe(
     Effect.zipRight(
       Effect.flatMap(AttachmentService, (a) => a.upload({ owner, filename, mimeType, data })),
     ),
@@ -1205,12 +1236,13 @@ export const listFiles = (filter: {
 }): UC<ReadonlyArray<Attachment>> =>
   Effect.gen(function* () {
     // `recordId` is a lineage; `conceptId` is gated by resolving the concept for read.
-    // A widget `bucketId` belongs to no record, so there is nothing to gate.
+    // A widget `bucketId` belongs to no record, so it gets its own check (P8).
     if (filter.recordId) yield* assertSubjectReadable(filter.recordId)
     if (filter.conceptId) {
       const concepts = yield* ConceptService
       yield* concepts.getByIdForRead(filter.conceptId)
     }
+    if (filter.bucketId) yield* assertAllowed("view", { type: "bucket", id: filter.bucketId })
     const attachments = yield* AttachmentService
     return yield* attachments.list(filter)
   })
@@ -1254,11 +1286,13 @@ export const createNote = (input: {
 }): UC<Note> =>
   // Gate the SUBJECT, not just reads of it. Attaching a note to a record you cannot
   // read was possible: the write landed and the read of it was then refused, so the
-  // author couldn't even see what they'd planted. A null subject is an org-level note,
-  // which belongs to no record and needs no gate.
-  assertSubjectWritable(input.subjectId).pipe(
-    Effect.zipRight(Effect.flatMap(AnnotationService, (a) => a.createNote(input))),
-  )
+  // author couldn't even see what they'd planted. A null subject is an org-level
+  // note — it belongs to no record, but it needs `create` on `note` now (P8),
+  // not an implicit pass.
+  (input.subjectId === null
+    ? assertAllowed("create", { type: "note" })
+    : assertSubjectWritable(input.subjectId)
+  ).pipe(Effect.zipRight(Effect.flatMap(AnnotationService, (a) => a.createNote(input))))
 
 export const updateNote = (input: {
   readonly id: string
@@ -1283,7 +1317,10 @@ export const listTasks = (filter: ListTasksFilter = {}): UC<ReadonlyArray<Task>>
     // Only the per-record panel names a lineage; the global "My tasks" view is not
     // subject-scoped, and its rows are already resolved through
     // `resolveTaskSubjects`, which degrades a restricted subject to "(unavailable)".
+    // The global list itself needs `view` on `task` now (P8) — it used to have no
+    // gate of any kind.
     if (filter.subjectId) yield* assertSubjectReadable(filter.subjectId)
+    else yield* assertAllowed("view", { type: "task" })
     const annotations = yield* AnnotationService
     return yield* annotations.listTasks(filter)
   })
@@ -1716,10 +1753,11 @@ export const createTask = (input: {
   readonly dueAt?: string | null
   readonly customFields?: Record<string, unknown>
 }): UC<Task> =>
-  // Same gate as `createNote` — see there.
-  assertSubjectWritable(input.subjectId).pipe(
-    Effect.zipRight(Effect.flatMap(AnnotationService, (a) => a.createTask(input))),
-  )
+  // Same gate as `createNote` — see there — but `create` on `task` for the null case.
+  (input.subjectId === null
+    ? assertAllowed("create", { type: "task" })
+    : assertSubjectWritable(input.subjectId)
+  ).pipe(Effect.zipRight(Effect.flatMap(AnnotationService, (a) => a.createTask(input))))
 
 export const updateTask = (input: {
   readonly id: string

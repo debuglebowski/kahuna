@@ -778,8 +778,37 @@ describe("writes cannot name a subject the caller may not read", () => {
     const orgId = randomUUID()
     const f = await runEngineOrThrow(systemScope(orgId, "seed"), seedSealed())
 
-    // Sees the open concept, holds nothing naming the sealed one.
-    const policy = memberSeeing("intruder", [f.openId])
+    // Sees the open concept, holds nothing naming the sealed one — plus `create`
+    // on `task`/`note`, needed since P8: an org-level (subjectless) annotation is
+    // no longer implicitly open, it needs its own rule like everything else.
+    const policy: PolicySet = {
+      ...memberSeeing("intruder", [f.openId]),
+      rules: [
+        ...memberSeeing("intruder", [f.openId]).rules,
+        {
+          id: "t-task",
+          roleId: "test-role",
+          actorId: null,
+          effect: "allow",
+          actions: ["create"],
+          resourceType: "task",
+          resourceId: null,
+          conceptId: null,
+          condition: null,
+        },
+        {
+          id: "t-note",
+          roleId: "test-role",
+          actorId: null,
+          effect: "allow",
+          actions: ["create"],
+          resourceType: "note",
+          resourceId: null,
+          conceptId: null,
+          condition: null,
+        },
+      ],
+    }
     const asMember = <A>(eff: Effect.Effect<A, unknown, OrgContext | EngineServices>) =>
       runEngine({ orgId, actor: "intruder", role: "member", policy }, eff)
 
@@ -813,8 +842,9 @@ describe("writes cannot name a subject the caller may not read", () => {
     expect((await asMember(uc.createTask({ subjectId: f.openRecordId, title: "ok" }))).ok).toBe(
       true,
     )
-    // CONTROL: an org-level annotation names no record, so it is never gated (the
-    // global Tasks page creates these).
+    // CONTROL: an org-level annotation names no record, so it isn't gated by the
+    // SUBJECT — but it does need `create` on `note` itself now (P8), which the
+    // policy above grants explicitly (the global Tasks page creates these).
     expect((await asMember(uc.createNote({ subjectId: null, body: "ok" }))).ok).toBe(true)
   })
 })
