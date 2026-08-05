@@ -50,7 +50,13 @@ export function AuthPage() {
     try {
       const r = await authClient.signIn.email({ email, password })
       if (r.error) throw new Error(r.error.message ?? "Sign-in failed")
-      location.reload()
+      // `?next=` finishes a flow that sent the person here to sign in — the CLI
+      // browser hand-off (`/api/cli/authorize`) is the one that needs it, since
+      // reloading onto the dashboard would strand it. Same-origin PATHS only: a
+      // full URL here would be an open redirect on our own sign-in page.
+      const next = new URLSearchParams(location.search).get("next")
+      if (next?.startsWith("/") && !next.startsWith("//")) location.assign(next)
+      else location.reload()
     } catch (err) {
       setError((err as Error).message)
     } finally {

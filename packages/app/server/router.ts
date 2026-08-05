@@ -18,6 +18,7 @@ import {
   enrichForRequest as enrichClayForRequest,
   handleClayCallback,
 } from "./clay"
+import { authorizeCli, exchangeCli } from "./cli-auth"
 import { db, pool } from "./db"
 import {
   disconnectGoogle,
@@ -204,6 +205,16 @@ export const handleApi = async (req: Request): Promise<Response | null> => {
     if (seg[2] === "sso" && !seg[3] && m === "POST") return saveSsoProvider(req)
     if (seg[2] === "sso" && !seg[3] && m === "DELETE") return deleteSsoProvider(req)
     if (seg[2] === "methods" && !seg[3] && m === "POST") return updateAuthMethods(req)
+  }
+
+  // Browser hand-off for the CLI: the person signs in normally in a browser and
+  // the credential comes back to a loopback listener. Deliberately NOT under
+  // /api/auth (that whole prefix belongs to BetterAuth's own handler) and
+  // deliberately not an RPC — `authorize` has to be a plain GET a browser can
+  // follow, and it answers with a redirect.
+  if (seg[1] === "cli") {
+    if (seg[2] === "authorize" && !seg[3] && m === "GET") return authorizeCli(req)
+    if (seg[2] === "exchange" && !seg[3] && m === "POST") return exchangeCli(req)
   }
 
   // Per-org overrides for the connector toggles. Sibling of the connectors

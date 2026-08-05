@@ -57,13 +57,26 @@ km record list vendor --profile local     # one command, other deployment
 `KM_HOST` overrides the host without touching the stored profile, and
 `KM_PROFILE` picks one — both meant for CI.
 
+## Signing in through the browser
+
+```bash
+km auth login --browser     # or --sso, which is the same thing
+```
+
+The CLI binds a port on `127.0.0.1`, opens the deployment in your browser, and
+waits. You sign in however this deployment allows — password, SSO, anything —
+and the server hands the credential back to that listener through a one-time
+code. The CLI never talks to your identity provider, which is why this works
+where a CLI-driven SSO flow cannot.
+
+The credential is the browser's session, so **signing out in the browser signs
+the CLI out too**. That goes away when token credentials land.
+
 ## What it cannot do yet
 
-- **SSO sign-in.** The browser round trip sets a cookie on the *server's* origin
-  and hands the CLI nothing, so there is no credential to capture. An SSO-only
-  organization has no CLI path until token credentials land.
-- **Unattended CI.** Same reason: a session cookie expires, and `km auth token
-  create` needs BetterAuth's API-key plugin server-side.
+- **Unattended CI.** A session expires, and `km auth token create` needs
+  BetterAuth's API-key plugin server-side. Until then, CI needs a
+  password-capable account and `km auth login --email --password`.
 - **Filter or sort on the server.** `listRecords` takes a concept and nothing
   else, so `--where` / `--sort` / `--limit` run client-side over the whole set,
   which the server caps at 50 000 records. Above that the CLI says so rather

@@ -1,4 +1,5 @@
 import { createInterface } from "node:readline/promises"
+import { browserLogin } from "../browser-login.ts"
 import { DEFAULT_HOST, loadConfig, resolveProfile, saveConfig, upsertProfile } from "../config.ts"
 import { CliError, EXIT } from "../errors.ts"
 import { note, printOne } from "../output.ts"
@@ -30,12 +31,15 @@ const prompt = async (question: string, secret = false): Promise<string> => {
 export const authCommands: ReadonlyArray<Command> = [
   {
     path: "auth login",
-    summary: "Sign in to a deployment and store the session",
-    usage: "auth login [--host <url>] [--email <address>] [--profile <name>]",
+    summary: "Sign in to a deployment and store the session (--browser for SSO and the like)",
+    usage: "auth login [--browser] [--host <url>] [--email <address>] [--profile <name>]",
     options: {
       host: { type: "string" },
       email: { type: "string" },
       password: { type: "string" },
+      browser: { type: "boolean" },
+      // `--sso` is an alias: SSO is just one of the sign-in methods the browser
+      // hand-off supports, and it is the word people reach for.
       sso: { type: "boolean" },
     },
     run: async (ctx) => {
@@ -52,14 +56,19 @@ export const authCommands: ReadonlyArray<Command> = [
       // client: BetterAuth's API-key plugin, which is `km auth token create` and
       // is not installed yet. Until then an SSO-only organization has no CLI
       // path at all, and pretending otherwise wastes the user's afternoon.
-      if (ctx.flags.sso) {
-        throw new CliError(
-          "SSO sign-in is not available from the command line.",
-          EXIT.usage,
-          "The browser round trip sets a cookie on the server's own origin and hands the CLI nothing.\n" +
-            "This needs a token credential (`km auth token create`), which requires the API-key plugin server-side.\n" +
-            "For now: sign in with email and password, or ask an operator for a password-capable account.",
-        )
+      if (ctx.flags.sso || ctx.flags.browser) {
+        const config0 = loadConfig()
+        const name0 = ctx.profile ?? process.env.KM_PROFILE ?? config0.current ?? "default"
+        const host0 = (
+          (ctx.flags.host as string | undefined) ??
+          process.env.KM_HOST ??
+          config0.profiles[name0]?.host ??
+          DEFAULT_HOST
+        ).replace(/\/+$/, "")
+        const result0 = await browserLogin(host0)
+        upsertProfile(name0, { host: host0, cookie: result0.cookie, email: result0.email })
+        note(`Signed in to ${host0} (profile "${name0}").`)
+        return
       }
 
       const config = loadConfig()

@@ -38,6 +38,6 @@
     "cli"
   ],
   "publishConfig": {
-    "access": "restricted"
+    "access": "public"
   }
 }
