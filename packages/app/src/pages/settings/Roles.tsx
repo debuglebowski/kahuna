@@ -197,15 +197,31 @@ const AREAS: ReadonlyArray<Area> = [
 /** The rail entry for everything no grid covers. */
 const OTHER_AREA = "all" as const
 
-/** Resource types an area grid owns. A non-conditional rule of one of these types is
- *  edited there and is therefore hidden from Other — listing it in both places would
- *  give the same rule two editors that disagree about what a blank cell means. */
+/** Resource types an area grid owns. A non-conditional, TARGETED rule of one of
+ *  these types is edited there and is therefore hidden from Other — listing it
+ *  in both places would give the same rule two editors that disagree about
+ *  what a blank cell means. */
 const GRIDDED = new Set<string>(AREAS.map((a) => a.resourceType))
 
-/** Is this rule owned by an area grid? Conditions never are: a cell has nowhere to
- *  put one, so a conditional rule stays in Other whatever its type. */
-const inGrid = (r: { resourceType: string; condition: unknown }): boolean =>
-  GRIDDED.has(r.resourceType) && !r.condition
+/**
+ * Is this rule owned by an area grid? Two things keep a rule out of the grid's
+ * hands even when its type is gridded:
+ *
+ *  - a CONDITION — a cell has nowhere to put one, so a conditional rule stays
+ *    in Other whatever its type.
+ *  - being UNTARGETED (no `resourceId`/`conceptId`) — a blanket rule covers
+ *    every row (including ones created later) at once; the grid can only show
+ *    its EFFECT (the "Blocked" banner, P7), it has no cell that means "all of
+ *    them" and therefore no way to edit or remove one. Leaving it in Other is
+ *    what keeps it reachable at all — otherwise creating one would make it
+ *    vanish from every editor in the same click.
+ */
+const inGrid = (r: {
+  resourceType: string
+  resourceId: string | null
+  conceptId: string | null
+  condition: unknown
+}): boolean => GRIDDED.has(r.resourceType) && !r.condition && (!!r.resourceId || !!r.conceptId)
 
 const RESOURCE_LABEL = new Map<string, string>(
   RESOURCE_GROUPS.flatMap((g) => g.items).map((r) => [r.id, r.label] as const),
@@ -490,12 +506,20 @@ export function RuleEditor({ role, onClose }: { role: AccessRole; onClose: () =>
   const current = AREAS.find((a) => a.id === area) ?? null
   /** What "Other" shows: everything no area grid owns. */
   const otherRules = (rules.data ?? []).filter((r) => !inGrid(r))
-  /** The picker's options: types with no grid, plus whatever the rule being edited
-   *  already is (a conditional record rule, say) so opening it doesn't blank the field. */
-  const pickerGroups = RESOURCE_GROUPS.map((g) => ({
-    label: g.label,
-    items: g.items.filter((r) => !GRIDDED.has(r.id) || r.id === resourceType),
-  })).filter((g) => g.items.length > 0)
+  /** The picker's options: EVERY type, gridded or not.
+   *
+   * A gridded type is still useful here for exactly the case its own grid
+   * cannot express — a BLANKET rule, with no target, covering every row of
+   * that type including ones created later (see `inGrid`'s doc). That is how
+   * "deny this to everyone, and no role held later can override it" is
+   * expressed: the Default-value row is allow-only by design (P8), and a
+   * per-row grid cell can only ever cover rows that already exist.
+   *
+   * A blanket ALLOW on a gridded type is refused server-side either way
+   * (`assertNotBlanketAllow` — it would outrank each row's own value), and
+   * the refusal's message says so; the picker does not pre-filter that case
+   * out, it just won't save. */
+  const pickerGroups = RESOURCE_GROUPS
   const conceptName = (id: string) => (concepts.data ?? []).find((c) => c.id === id)?.name
   const scopeLabel = (r: {
     resourceId: string | null
