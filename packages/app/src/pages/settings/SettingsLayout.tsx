@@ -41,6 +41,11 @@ interface SettingsItem {
    *  route, its own chrome — so the layout renders it bare rather than wrapping
    *  it in the section `<h2>`. See `useSectionBase`. */
   readonly dual?: boolean
+  /** The page renders its own {@link SettingsHeading} because it puts controls
+   *  (a filter, a create button) on the heading LINE. The layout can't do that
+   *  for it — those controls are the page's state — so it stands aside. Same
+   *  heading component either way, so the two can't drift apart. */
+  readonly ownsHeading?: boolean
 }
 
 /** Whether the current caller may see this section — shared by the route guard
@@ -99,7 +104,13 @@ export const SETTINGS_NAV: ReadonlyArray<SettingsGroup> = [
       // tab is gated on `role`-configure — NOT `admin` (org-configure): those are
       // separate permissions since P1/P5, and an owner with no other role holds
       // only the former (Layer 0).
-      { to: "roles", label: "Roles", gate: "roles", icon: <ShieldCheck size={16} /> },
+      {
+        to: "roles",
+        label: "Roles",
+        gate: "roles",
+        icon: <ShieldCheck size={16} />,
+        ownsHeading: true,
+      },
       { to: "integrations", label: "Integrations", icon: <Plug size={16} /> },
     ],
   },
@@ -173,6 +184,23 @@ export function useIsAdmin() {
   }
 }
 
+/**
+ * A settings section's title, and anything that belongs on its line.
+ *
+ * Exported because a page with a filter or a create action puts them HERE rather
+ * than in a row of its own below — the row cost a full line to say nothing. The
+ * layout renders this for ordinary sections; a section flagged `ownsHeading`
+ * renders it itself, with children.
+ */
+export function SettingsHeading({ title, children }: { title: string; children?: ReactNode }) {
+  return (
+    <div className="flex min-h-9 items-center justify-between gap-4">
+      <h2 className="text-2xl font-bold tracking-tight text-foreground">{title}</h2>
+      {children ? <div className="flex shrink-0 items-center gap-2">{children}</div> : null}
+    </div>
+  )
+}
+
 export function SettingsLayout() {
   const loc = useLocation()
   const { admin, canConfigureRoles, isPending } = useIsAdmin()
@@ -196,7 +224,9 @@ export function SettingsLayout() {
   if (item?.fillHeight) {
     return (
       <div className="flex h-full flex-col gap-5">
-        <h2 className="shrink-0 text-2xl font-bold tracking-tight text-foreground">{item.label}</h2>
+        <div className="shrink-0">
+          <SettingsHeading title={item.label} />
+        </div>
         <div className="min-h-0 flex-1">
           <Outlet context={{ admin }} />
         </div>
@@ -211,7 +241,7 @@ export function SettingsLayout() {
 
   return (
     <div className="space-y-5">
-      {item && <h2 className="text-2xl font-bold tracking-tight text-foreground">{item.label}</h2>}
+      {item && !item.ownsHeading ? <SettingsHeading title={item.label} /> : null}
       <Outlet context={{ admin }} />
     </div>
   )

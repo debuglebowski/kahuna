@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { MoreHorizontal, Plus, Power, Star, Trash2, X } from "lucide-react"
-import { useState } from "react"
+import { type ReactNode, useState } from "react"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -31,16 +31,18 @@ import {
   Card,
   ConfirmDialog,
   Field,
+  FilterInput,
   IconButton,
+  InfoHint,
   Input,
   Modal,
   Spinner,
   ToggleChip,
-  Toolbar,
 } from "../../components/ui"
 import { type AccessActionName, type AccessResourceType, type AccessRole, api } from "../../lib/api"
 import { PermissionMatrix, type ScopeBy } from "./PermissionMatrix"
 import { Feedback } from "./parts"
+import { SettingsHeading } from "./SettingsLayout"
 
 /**
  * Role management — the editor for the access model's reusable half.
@@ -48,13 +50,15 @@ import { Feedback } from "./parts"
  * A role is a named bag of rules. An actor may hold any number of roles — a policy
  * is the union of its allows — so nothing here is a tier.
  *
- * ── THREE SECTIONS, NOT A BADGE ──────────────────────────────────────────────
+ * ── TWO SECTIONS AND A DIVIDER, NOT A BADGE ──────────────────────────────────
  *
- * Managed / Custom / Automations. The split carries what a per-row badge used to
- * mumble: a managed role is seeded so it cannot be deleted (the seed would put it
- * back — turning it off is the reversible equivalent), and an automation role can
- * never be held by a person. That second one is enforced by the engine, so showing
- * bot roles among people roles was inviting an action that would be refused.
+ * User roles and Automation roles, each cut into a managed half and a custom
+ * half. The split carries what a per-row badge used to mumble: a managed role is
+ * seeded so it cannot be deleted (the seed would put it back — turning it off is
+ * the reversible equivalent), and an automation role can never be held by a
+ * person. That second one is enforced by the engine, so showing bot roles among
+ * people roles was inviting an action that would be refused — which is why KIND
+ * is the outer cut and managed-ness the inner one.
  *
  * `configure`-gated as a whole: the rules inside a role are the sensitive part. Role
  * NAMES are readable by any member and render as pills on /members.
@@ -93,7 +97,6 @@ const RESOURCE_GROUPS: ReadonlyArray<{
     items: [
       { id: "concept", label: "Concepts", hint: "The types themselves — Deal, Company" },
       { id: "record", label: "Records", hint: "Individual entries" },
-      { id: "field", label: "Fields", hint: "Values on a record" },
     ],
   },
   {
@@ -223,15 +226,40 @@ const inGrid = (r: {
   condition: unknown
 }): boolean => GRIDDED.has(r.resourceType) && !r.condition && (!!r.resourceId || !!r.conceptId)
 
-const RESOURCE_LABEL = new Map<string, string>(
-  RESOURCE_GROUPS.flatMap((g) => g.items).map((r) => [r.id, r.label] as const),
-)
+/** Shown standalone — nothing else would share a heading with it. `field` used
+ *  to sit in "Data" alongside Concepts/Records, but those are gridded now
+ *  (each with a tab of its own), which would have left "Data" wrapping this
+ *  one item for no reason: a category header earns its keep by grouping
+ *  more than one thing. */
+const UNGROUPED_RESOURCE: {
+  readonly id: AccessResourceType
+  readonly label: string
+  readonly hint: string
+} = { id: "field", label: "Fields", hint: "Values on a record" }
 
-/** Which group a resource belongs to — the SAME grouping the picker offers, so the list
- *  someone reads and the menu they choose from agree. */
-const GROUP_OF = new Map<string, string>(
-  RESOURCE_GROUPS.flatMap((g) => g.items.map((r) => [r.id, g.label] as const)),
-)
+/** `role` isn't in `RESOURCE_GROUPS` — it has no picker entry, because role/rule
+ *  editing is governed entirely by `configure` rather than being addable per
+ *  resource (see `GRIDDED`'s doc). But an EXISTING rule on it (every managed
+ *  role's preset carries one) still needs a real name and group here, or it
+ *  falls into `groupRules`' fallback bucket — literally labelled "Other",
+ *  which read as a duplicate heading inside the "Other" pane itself. */
+const RESOURCE_LABEL = new Map<string, string>([
+  ...RESOURCE_GROUPS.flatMap((g) => g.items).map((r) => [r.id, r.label] as const),
+  [UNGROUPED_RESOURCE.id, UNGROUPED_RESOURCE.label],
+  ["role", "Roles & permissions"],
+])
+
+/** Which group a resource belongs to, or `null` for one shown standalone (see
+ *  `UNGROUPED_RESOURCE`) — `groupRules` skips the header row for those instead
+ *  of falling back to the generic "Other" bucket. ABSENT from this map (not
+ *  even a `null` entry) still means "an unrecognised type", and that one DOES
+ *  fall back to Other. `role` is the other explicit exception: see
+ *  `RESOURCE_LABEL`'s doc. */
+const GROUP_OF = new Map<string, string | null>([
+  ...RESOURCE_GROUPS.flatMap((g) => g.items.map((r) => [r.id, g.label] as const)),
+  [UNGROUPED_RESOURCE.id, null],
+  ["role", "Administration"],
+])
 
 /** Sort position within a group, mirroring the picker's order (Concepts before Records
  *  before Fields, not alphabetical) so a rule sits where the reader expects it. */
@@ -273,27 +301,37 @@ const scopeLabelFor = (
  *
  * An unrecognised `resourceType` (a newer server than this client) falls into "Other"
  * rather than vanishing — a rule the UI can't name is exactly the one worth showing.
+ * A resource `GROUP_OF` maps to `null` (see `UNGROUPED_RESOURCE`) gets no header row
+ * at all, and leads the list — there's nothing to file it under, so it isn't buried
+ * after every category either.
  */
 const groupRules = <T extends { readonly resourceType: string }>(
   rules: ReadonlyArray<T>,
-): ReadonlyArray<{ readonly label: string; readonly rules: ReadonlyArray<T> }> => {
+): ReadonlyArray<{ readonly label: string | null; readonly rules: ReadonlyArray<T> }> => {
   const order = [...RESOURCE_GROUPS.map((g) => g.label), "Other"]
   const byGroup = new Map<string, T[]>()
+  const ungrouped: T[] = []
   for (const r of rules) {
-    const group = GROUP_OF.get(r.resourceType) ?? "Other"
-    const list = byGroup.get(group)
+    const group = GROUP_OF.get(r.resourceType)
+    if (group === null) {
+      ungrouped.push(r)
+      continue
+    }
+    const key = group ?? "Other"
+    const list = byGroup.get(key)
     if (list) list.push(r)
-    else byGroup.set(group, [r])
+    else byGroup.set(key, [r])
   }
-  return order
+  const grouped = order
     .filter((label) => byGroup.has(label))
     .map((label) => ({
-      label,
+      label: label as string | null,
       rules: [...(byGroup.get(label) ?? [])].sort(
         (a, b) =>
           (RESOURCE_RANK.get(a.resourceType) ?? 99) - (RESOURCE_RANK.get(b.resourceType) ?? 99),
       ),
     }))
+  return ungrouped.length > 0 ? [{ label: null, rules: ungrouped }, ...grouped] : grouped
 }
 const ACTION_LABEL = new Map<string, string>(ACTIONS.map((a) => [a.id, a.label] as const))
 
@@ -331,6 +369,393 @@ function roleMsg(e: unknown): string {
   return raw && !raw.trimStart().startsWith("{") ? raw : "Something went wrong."
 }
 
+/** Shown under a gridded area's own grid, when its "other rules" section has
+ *  nothing in it yet. Generic on purpose — one line that reads the same for
+ *  Concepts, Dashboards or any of the five, so five bespoke variants don't
+ *  drift out of sync with what the section actually does. */
+const AREA_OTHER_HINT =
+  "Rules the grid above can't represent: untargeted (covers every one, including ones made later) or with a condition."
+
+/** The global "Other" destination's blurb — now only the types with no grid
+ *  of their own. A gridded type's blanket/conditional rules moved to that
+ *  type's own area (see `OtherRulesPanel`'s header) — a rule was showing up
+ *  in two editors that disagreed about what a blank cell meant. */
+const GLOBAL_OTHER_HINT: ReactNode = (
+  <>
+    Everything with no grid of its own: fields, tasks, notes, members, file buckets, the
+    organisation. A <span className="text-foreground">Deny</span> beats an Allow within THIS role. A
+    role this person holds earlier, or their personal overrides, can still override it — see their
+    access page.
+  </>
+)
+
+/**
+ * Blanket & conditional rules — everything a grid cell cannot represent.
+ *
+ * Two shapes, one component. With `lockedType` set, it renders INLINE under
+ * that type's own grid (`RuleEditor`'s per-area pane): compact, no type
+ * picker, every rule it writes is that one type. Without it, it IS the global
+ * "Other" destination: the full table, the type picker, the empty state — for
+ * the resource types that have no grid of their own at all.
+ *
+ * Self-contained (owns its add/edit form and mutations) and remounted per
+ * pane by the caller's `key`, exactly like `PermissionMatrix` — carrying a
+ * draft across a rail click would offer to save a rule under the wrong type.
+ */
+function OtherRulesPanel({
+  roleId,
+  rules,
+  concepts,
+  lockedType,
+}: {
+  roleId: string
+  /** Pre-filtered by the caller: exactly what this instance should show. */
+  rules: ReadonlyArray<{
+    readonly id: string
+    readonly effect: "allow" | "deny"
+    readonly actions: ReadonlyArray<string>
+    readonly resourceType: string
+    readonly resourceId: string | null
+    readonly conceptId: string | null
+    readonly condition: unknown
+  }>
+  concepts: ReadonlyArray<{ readonly id: string; readonly name: string }>
+  /** Set inside a gridded area's own pane: hides the type picker and locks
+   *  every rule this instance writes to that one type. Unset only for the
+   *  global "Other" pane, whose picker offers the UNGRIDDED types. */
+  lockedType?: AccessResourceType
+}) {
+  const qc = useQueryClient()
+  const compact = lockedType !== undefined
+  const [effect, setEffect] = useState<"allow" | "deny">("allow")
+  const [resourceType, setResourceType] = useState<AccessResourceType>(lockedType ?? "field")
+  const [actions, setActions] = useState<ReadonlyArray<AccessActionName>>(["view"])
+  // "" = every one of that type. Only concept-shaped rules can name a target here;
+  // a record is picked from the record's own Share dialog, not from a role.
+  const [targetId, setTargetId] = useState("")
+  const [adding, setAdding] = useState(false)
+  /** null while adding; the rule's id while editing one. Drives the form's copy and
+   *  which mutation the submit runs. */
+  const [editingId, setEditingId] = useState<string | null>(null)
+
+  const resetDraft = () => {
+    setEffect("allow")
+    setResourceType(lockedType ?? "field")
+    setTargetId("")
+    setActions(["view"])
+    setEditingId(null)
+  }
+
+  /** Open the form on an existing rule, prefilled. `*` has no chip, so a wildcard rule
+   *  loads with every action selected — the closest faithful representation, and
+   *  saving it writes those actions explicitly rather than silently keeping `*`. */
+  const startEditing = (r: (typeof rules)[number]) => {
+    setEditingId(r.id)
+    setEffect(r.effect)
+    setResourceType(r.resourceType as AccessResourceType)
+    setTargetId(r.resourceId ?? r.conceptId ?? "")
+    setActions(
+      r.actions.includes("*")
+        ? ACTIONS.map((a) => a.id)
+        : (r.actions.filter((a) => ACTION_LABEL.has(a)) as ReadonlyArray<AccessActionName>),
+    )
+    setAdding(true)
+  }
+
+  const add = useMutation({
+    mutationFn: () => {
+      const target = {
+        // A `concept` rule names the concept itself; a `record` rule scoped to a
+        // concept uses `conceptId` — "records IN Deals", not "the Deals concept".
+        resourceId: targetId && resourceType === "concept" ? targetId : null,
+        conceptId: targetId && resourceType === "record" ? targetId : null,
+      }
+      return editingId
+        ? api.updateRule({ ruleId: editingId, effect, actions, resourceType, ...target })
+        : api.addRule({ roleId, effect, actions, resourceType, ...target })
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["rules", roleId] })
+      // Collapse on success: the saved rule is now visible in the table above, which
+      // is the confirmation. Leaving the form open invites an accidental duplicate.
+      setAdding(false)
+      resetDraft()
+    },
+  })
+
+  const remove = useMutation({
+    mutationFn: (ruleId: string) => api.removeRule(ruleId),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["rules", roleId] }),
+  })
+
+  const toggle = (a: AccessActionName) =>
+    setActions((cur) => (cur.includes(a) ? cur.filter((x) => x !== a) : [...cur, a]))
+
+  const conceptName = (id: string) => concepts.find((c) => c.id === id)?.name
+  const scopeLabel = (r: {
+    resourceId: string | null
+    conceptId: string | null
+    condition: unknown
+  }) => scopeLabelFor(r, conceptName)
+
+  /** The picker's options. Unset (global Other) only: the UNGRIDDED types — a
+   *  gridded one now has its own dedicated pane for exactly this shape of
+   *  rule, so offering it here would give the same rule two editors again. */
+  const pickerGroups = RESOURCE_GROUPS.map((g) => ({
+    ...g,
+    items: g.items.filter((r) => !GRIDDED.has(r.id)),
+  })).filter((g) => g.items.length > 0)
+
+  const rows = compact ? [{ label: null as string | null, rules }] : groupRules(rules)
+
+  return (
+    <div className={compact ? "space-y-3" : "space-y-4"}>
+      {compact ? (
+        rules.length > 0 || adding ? (
+          <div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Other rules
+            {rules.length > 0 ? (
+              <span className="font-normal opacity-70">{rules.length}</span>
+            ) : null}
+          </div>
+        ) : null
+      ) : (
+        <p className="max-w-2xl text-sm text-muted-foreground">{GLOBAL_OTHER_HINT}</p>
+      )}
+
+      {rules.length > 0 ? (
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="w-28">Effect</TableHead>
+              <TableHead>Can</TableHead>
+              {compact ? null : <TableHead>On</TableHead>}
+              <TableHead className="w-40">Scope</TableHead>
+              <TableHead className="w-12" />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.flatMap((group) => [
+              // A group header row rather than nested tables: one set of column
+              // widths keeps Effect/Can/On/Scope aligned all the way down. The
+              // compact (locked-type) shape has exactly one group and skips it.
+              group.label ? (
+                <TableRow key={`h-${group.label}`} className="hover:bg-transparent">
+                  <TableCell
+                    colSpan={compact ? 4 : 5}
+                    className="bg-muted/40 py-2 text-xs font-medium tracking-wide text-muted-foreground"
+                  >
+                    {group.label}
+                    <span className="ml-2 font-normal opacity-70">{group.rules.length}</span>
+                  </TableCell>
+                </TableRow>
+              ) : null,
+              ...group.rules.map((r) => (
+                <TableRow
+                  key={r.id}
+                  // The whole row opens the editor; the remove button stops the event
+                  // so a delete never reads as "edit this".
+                  className={`cursor-pointer ${editingId === r.id ? "bg-accent" : ""}`}
+                  onClick={() => startEditing(r)}
+                >
+                  <TableCell>
+                    <Badge tone={r.effect === "deny" ? "red" : "green"}>
+                      {r.effect === "deny" ? "Deny" : "Allow"}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="font-medium text-foreground">
+                    {actionsLabel(r.actions)}
+                  </TableCell>
+                  {compact ? null : (
+                    <TableCell>{RESOURCE_LABEL.get(r.resourceType) ?? r.resourceType}</TableCell>
+                  )}
+                  <TableCell className="text-muted-foreground">
+                    {/* "Scope" answers "which ones?" — a raw `(any)` or a truncated
+                        uuid told the reader a rule was narrowed, but not to what,
+                        which is the one thing they need. */}
+                    {scopeLabel(r)}
+                  </TableCell>
+                  <TableCell>
+                    <IconButton
+                      aria-label={`Remove ${actionsLabel(r.actions)} on ${
+                        RESOURCE_LABEL.get(r.resourceType) ?? r.resourceType
+                      }`}
+                      title="Remove rule"
+                      variant="danger"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        remove.mutate(r.id)
+                      }}
+                      disabled={remove.isPending}
+                    >
+                      <X size={14} />
+                    </IconButton>
+                  </TableCell>
+                </TableRow>
+              )),
+            ])}
+          </TableBody>
+        </Table>
+      ) : compact ? (
+        <p className="text-sm text-muted-foreground">{AREA_OTHER_HINT}</p>
+      ) : (
+        <div className="rounded-lg border border-dashed px-6 py-8 text-center">
+          <p className="text-sm font-medium">No rules yet</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            This role grants nothing beyond what every member already sees.
+          </p>
+        </div>
+      )}
+      <Feedback error={remove.error ? roleMsg(remove.error) : undefined} />
+
+      {!adding ? (
+        <Button variant="outline" size="sm" onClick={() => setAdding(true)}>
+          <Plus size={15} />
+          {compact ? "Add exception" : "Add rule"}
+        </Button>
+      ) : (
+        <div className="space-y-4 rounded-lg border p-6">
+          <span className="block text-sm font-medium">
+            {editingId ? "Edit rule" : "Add a rule"}
+          </span>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Effect">
+              <Select value={effect} onValueChange={(v) => setEffect(v as "allow" | "deny")}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="allow">Allow</SelectItem>
+                  <SelectItem value="deny">Deny — always wins</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+            {/* Locked (a gridded area's own pane): no picker at all, every rule
+                this instance writes is `lockedType` — that's the whole point of
+                being here instead of in the global Other pane. */}
+            {lockedType ? null : (
+              <Field label="Applies to">
+                <Select
+                  value={resourceType}
+                  onValueChange={(v) => {
+                    setResourceType(v as AccessResourceType)
+                    // Drop the target: a concept id is meaningless against `dashboard`,
+                    // and carrying it over would silently scope the new rule.
+                    setTargetId("")
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {/* Fields leads, ungrouped — see `UNGROUPED_RESOURCE`'s doc: it has
+                        no category, so it isn't nested under a heading that would
+                        only ever wrap this one item. Everything after IS grouped,
+                        because eleven flat engine words are a lookup table, not a
+                        menu someone can scan. Gridded types are omitted here — each
+                        has its own pane for this exact shape of rule now. */}
+                    <SelectItem value={UNGROUPED_RESOURCE.id}>
+                      {UNGROUPED_RESOURCE.label}
+                    </SelectItem>
+                    {pickerGroups.map((g) => (
+                      <SelectGroup key={g.label}>
+                        <SelectLabel>{g.label}</SelectLabel>
+                        {g.items.map((r) => (
+                          <SelectItem key={r.id} value={r.id}>
+                            {r.label}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
+            )}
+          </div>
+          {resourceType === "concept" || resourceType === "record" ? (
+            <Field
+              label={resourceType === "record" ? "In which concept?" : "Which concept?"}
+              hint={
+                resourceType === "record"
+                  ? "Leave as All to cover records everywhere."
+                  : "Leave as All to cover every concept."
+              }
+            >
+              <Select
+                value={targetId || "__all"}
+                onValueChange={(v) => setTargetId(v === "__all" ? "" : v)}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {/* Radix forbids an empty SelectItem value, so "all" rides a
+                      sentinel mapped back to "" — the project's standard workaround. */}
+                  <SelectItem value="__all">All</SelectItem>
+                  {concepts.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Field>
+          ) : null}
+          <Field label="Can" hint="Pick one or more.">
+            <div className="flex flex-wrap gap-1.5">
+              {ACTIONS.map((a) => (
+                <ToggleChip
+                  key={a.id}
+                  pressed={actions.includes(a.id)}
+                  onPressedChange={() => toggle(a.id)}
+                >
+                  {a.label}
+                </ToggleChip>
+              ))}
+            </div>
+          </Field>
+          <div className="flex items-center gap-3">
+            <Button
+              onClick={() => add.mutate()}
+              disabled={add.isPending || actions.length === 0}
+              size="sm"
+            >
+              {add.isPending
+                ? editingId
+                  ? "Saving…"
+                  : "Adding…"
+                : editingId
+                  ? "Save changes"
+                  : "Add rule"}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setAdding(false)
+                resetDraft()
+                add.reset()
+              }}
+              disabled={add.isPending}
+            >
+              Cancel
+            </Button>
+            {/* The one thing a reader can get badly wrong: thinking a `view` rule is
+                how you open a restricted concept to everyone. It isn't — it outranks
+                the default, which is why no preset carries one. */}
+            {actions.includes("view") ? (
+              <span className="text-xs text-muted-foreground">
+                A View rule overrides the record's own default visibility.
+              </span>
+            ) : null}
+          </div>
+          <Feedback error={add.error ? roleMsg(add.error) : undefined} />
+        </div>
+      )}
+    </div>
+  )
+}
+
 /**
  * The rule editor for ONE role — grids per resource area, plus the flat "Other"
  * list for everything ungridded. Entirely role-agnostic: it takes an `AccessRole`
@@ -349,21 +774,6 @@ export function RuleEditor({ role, onClose }: { role: AccessRole; onClose: () =>
     queryFn: () => api.listRules(role.basedOn ?? ""),
     enabled: !!role.basedOn,
   })
-  const [effect, setEffect] = useState<"allow" | "deny">("allow")
-  // `field`, not `concept`: concepts have their own grid now, so the form's resting
-  // state has to be a type this page still owns.
-  const [resourceType, setResourceType] = useState<AccessResourceType>("field")
-  const [actions, setActions] = useState<ReadonlyArray<AccessActionName>>(["view"])
-  // "" = every one of that type. Only concept-shaped rules can name a target here;
-  // a record is picked from the record's own Share dialog, not from a role.
-  const [targetId, setTargetId] = useState("")
-  // The form is a deliberate step, not the resting state: a role's rules are read far
-  // more often than they are written, and an always-open form made the screen look
-  // like a data-entry page rather than a list of what this role grants.
-  const [adding, setAdding] = useState(false)
-  /** null while adding; the rule's id while editing one. Drives the form's copy and
-   *  which mutation the submit runs. */
-  const [editingId, setEditingId] = useState<string | null>(null)
   /** Which pane the rail is showing: a per-area grid, or the full rule list. */
   const [area, setArea] = useState<string>("concept")
 
@@ -391,37 +801,6 @@ export function RuleEditor({ role, onClose }: { role: AccessRole; onClose: () =>
   )
   const basedOnParent = (allRoles.data ?? []).find((r) => r.id === basedOnValue)
   const NONE_BASED_ON = "__none"
-
-  const resetDraft = () => {
-    setEffect("allow")
-    setResourceType("field")
-    setTargetId("")
-    setActions(["view"])
-    setEditingId(null)
-  }
-
-  /** Open the form on an existing rule, prefilled. `*` has no chip, so a wildcard rule
-   *  loads with every action selected — the closest faithful representation, and
-   *  saving it writes those actions explicitly rather than silently keeping `*`. */
-  const startEditing = (r: {
-    id: string
-    effect: "allow" | "deny"
-    actions: ReadonlyArray<string>
-    resourceType: string
-    resourceId: string | null
-    conceptId: string | null
-  }) => {
-    setEditingId(r.id)
-    setEffect(r.effect)
-    setResourceType(r.resourceType as AccessResourceType)
-    setTargetId(r.resourceId ?? r.conceptId ?? "")
-    setActions(
-      r.actions.includes("*")
-        ? ACTIONS.map((a) => a.id)
-        : (r.actions.filter((a) => ACTION_LABEL.has(a)) as ReadonlyArray<AccessActionName>),
-    )
-    setAdding(true)
-  }
 
   // Named targets for the picker AND for resolving ids in the table's Scope column.
   // Not gated on the selected type: the table needs names for rules that are already
@@ -474,58 +853,12 @@ export function RuleEditor({ role, onClose }: { role: AccessRole; onClose: () =>
     }
   }
 
-  const add = useMutation({
-    mutationFn: () => {
-      const target = {
-        // A `concept` rule names the concept itself; a `record` rule scoped to a
-        // concept uses `conceptId` — "records IN Deals", not "the Deals concept".
-        resourceId: targetId && resourceType === "concept" ? targetId : null,
-        conceptId: targetId && resourceType === "record" ? targetId : null,
-      }
-      return editingId
-        ? api.updateRule({ ruleId: editingId, effect, actions, resourceType, ...target })
-        : api.addRule({ roleId: role.id, effect, actions, resourceType, ...target })
-    },
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ["rules", role.id] })
-      // Collapse on success: the saved rule is now visible in the table above, which
-      // is the confirmation. Leaving the form open invites an accidental duplicate.
-      setAdding(false)
-      resetDraft()
-    },
-  })
-
-  const remove = useMutation({
-    mutationFn: (ruleId: string) => api.removeRule(ruleId),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ["rules", role.id] }),
-  })
-
-  const toggle = (a: AccessActionName) =>
-    setActions((cur) => (cur.includes(a) ? cur.filter((x) => x !== a) : [...cur, a]))
-
   const current = AREAS.find((a) => a.id === area) ?? null
-  /** What "Other" shows: everything no area grid owns. */
-  const otherRules = (rules.data ?? []).filter((r) => !inGrid(r))
-  /** The picker's options: EVERY type, gridded or not.
-   *
-   * A gridded type is still useful here for exactly the case its own grid
-   * cannot express — a BLANKET rule, with no target, covering every row of
-   * that type including ones created later (see `inGrid`'s doc). That is how
-   * "deny this to everyone, and no role held later can override it" is
-   * expressed: the Default-value row is allow-only by design (P8), and a
-   * per-row grid cell can only ever cover rows that already exist.
-   *
-   * A blanket ALLOW on a gridded type is refused server-side either way
-   * (`assertNotBlanketAllow` — it would outrank each row's own value), and
-   * the refusal's message says so; the picker does not pre-filter that case
-   * out, it just won't save. */
-  const pickerGroups = RESOURCE_GROUPS
-  const conceptName = (id: string) => (concepts.data ?? []).find((c) => c.id === id)?.name
-  const scopeLabel = (r: {
-    resourceId: string | null
-    conceptId: string | null
-    condition: unknown
-  }) => scopeLabelFor(r, conceptName)
+  /** This area's blanket/conditional rules — the ones its grid can't show. */
+  const otherRulesFor = (resourceType: AccessResourceType) =>
+    (rules.data ?? []).filter((r) => r.resourceType === resourceType && !inGrid(r))
+  /** What the global "Other" pane shows: every type with no grid of its own. */
+  const ungriddedRules = (rules.data ?? []).filter((r) => !GRIDDED.has(r.resourceType))
 
   return (
     <Modal onClose={onClose} title={`Rules — ${role.name}`} size="wide">
@@ -582,255 +915,47 @@ export function RuleEditor({ role, onClose }: { role: AccessRole; onClose: () =>
         </nav>
         <div className="min-w-0 flex-1 space-y-6">
           {current ? (
-            <PermissionMatrix
-              // Remount per area: the grid holds a draft, and carrying one across a
-              // rail click would offer to save cells from a different resource type.
-              key={current.id}
-              roleId={role.id}
-              resourceType={current.resourceType}
-              scopeBy={current.scopeBy}
-              items={itemsFor(current).items}
-              itemsLabel={current.itemsLabel}
-              actions={ACTIONS.filter((a) => current.actions.includes(a.id))}
-              rules={rules.data ?? []}
-              defaults={(defaults.data ?? []).filter((d) => d.roleId === role.id)}
-              note={current.note}
-              resourceNoun={current.resourceNoun}
-              loading={rules.isPending || defaults.isPending || itemsFor(current).busy}
-              parentRules={role.basedOn ? parentRules.data : undefined}
-              parentLabel={basedOnParent?.name}
-            />
-          ) : (
             <>
-              <p className="max-w-2xl text-sm text-muted-foreground">
-                Everything that has no grid of its own: fields, tasks, notes, members, the org — and
-                any conditional rule, wherever it points. A{" "}
-                <span className="text-foreground">Deny</span> beats an Allow within THIS role. A
-                role this person holds earlier, or their personal overrides, can still override it —
-                see their access page.
-              </p>
-
-              {rules.isPending ? (
-                <Spinner />
-              ) : otherRules.length > 0 ? (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="w-28">Effect</TableHead>
-                      <TableHead>Can</TableHead>
-                      <TableHead>On</TableHead>
-                      <TableHead className="w-40">Scope</TableHead>
-                      <TableHead className="w-12" />
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {groupRules(otherRules).flatMap((group) => [
-                      // A group header row rather than nested tables: one set of column
-                      // widths keeps Effect/Can/On/Scope aligned all the way down.
-                      <TableRow key={`h-${group.label}`} className="hover:bg-transparent">
-                        <TableCell
-                          colSpan={5}
-                          className="bg-muted/40 py-2 text-xs font-medium tracking-wide text-muted-foreground"
-                        >
-                          {group.label}
-                          <span className="ml-2 font-normal opacity-70">{group.rules.length}</span>
-                        </TableCell>
-                      </TableRow>,
-                      ...group.rules.map((r) => (
-                        <TableRow
-                          key={r.id}
-                          // The whole row opens the editor; the remove button stops the event
-                          // so a delete never reads as "edit this".
-                          className={`cursor-pointer ${editingId === r.id ? "bg-accent" : ""}`}
-                          onClick={() => startEditing(r)}
-                        >
-                          <TableCell>
-                            <Badge tone={r.effect === "deny" ? "red" : "green"}>
-                              {r.effect === "deny" ? "Deny" : "Allow"}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="font-medium text-foreground">
-                            {actionsLabel(r.actions)}
-                          </TableCell>
-                          <TableCell>
-                            {RESOURCE_LABEL.get(r.resourceType) ?? r.resourceType}
-                          </TableCell>
-                          <TableCell className="text-muted-foreground">
-                            {/* "Scope" answers "which ones?" — a raw `(any)` or a truncated
-                          uuid told the reader a rule was narrowed, but not to what,
-                          which is the one thing they need. */}
-                            {scopeLabel(r)}
-                          </TableCell>
-                          <TableCell>
-                            <IconButton
-                              aria-label={`Remove ${actionsLabel(r.actions)} on ${
-                                RESOURCE_LABEL.get(r.resourceType) ?? r.resourceType
-                              }`}
-                              title="Remove rule"
-                              variant="danger"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                remove.mutate(r.id)
-                              }}
-                              disabled={remove.isPending}
-                            >
-                              <X size={14} />
-                            </IconButton>
-                          </TableCell>
-                        </TableRow>
-                      )),
-                    ])}
-                  </TableBody>
-                </Table>
-              ) : (
-                <div className="rounded-lg border border-dashed px-6 py-8 text-center">
-                  <p className="text-sm font-medium">No rules yet</p>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    This role grants nothing beyond what every member already sees.
-                  </p>
-                </div>
-              )}
-              <Feedback error={remove.error ? roleMsg(remove.error) : undefined} />
-
-              {!adding ? (
-                <Button variant="outline" size="sm" onClick={() => setAdding(true)}>
-                  <Plus size={15} />
-                  Add rule
-                </Button>
-              ) : (
-                <div className="space-y-4 rounded-lg border p-6">
-                  <span className="block text-sm font-medium">
-                    {editingId ? "Edit rule" : "Add a rule"}
-                  </span>
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <Field label="Effect">
-                      <Select
-                        value={effect}
-                        onValueChange={(v) => setEffect(v as "allow" | "deny")}
-                      >
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="allow">Allow</SelectItem>
-                          <SelectItem value="deny">Deny — always wins</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </Field>
-                    <Field label="Applies to">
-                      <Select
-                        value={resourceType}
-                        onValueChange={(v) => {
-                          setResourceType(v as AccessResourceType)
-                          // Drop the target: a concept id is meaningless against `dashboard`,
-                          // and carrying it over would silently scope the new rule.
-                          setTargetId("")
-                        }}
-                      >
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {/* Grouped, because eleven flat engine words are a lookup table, not
-                      a menu someone can scan. Types owned by a grid are omitted: a rule
-                      created here would be saved and then immediately disappear from this
-                      list, having become the grid's. The one exception is the type of the
-                      rule being edited, so an existing conditional rule keeps its value. */}
-                          {pickerGroups.map((g) => (
-                            <SelectGroup key={g.label}>
-                              <SelectLabel>{g.label}</SelectLabel>
-                              {g.items.map((r) => (
-                                <SelectItem key={r.id} value={r.id}>
-                                  {r.label}
-                                </SelectItem>
-                              ))}
-                            </SelectGroup>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </Field>
-                  </div>
-                  {resourceType === "concept" || resourceType === "record" ? (
-                    <Field
-                      label={resourceType === "record" ? "In which concept?" : "Which concept?"}
-                      hint={
-                        resourceType === "record"
-                          ? "Leave as All to cover records everywhere."
-                          : "Leave as All to cover every concept."
-                      }
-                    >
-                      <Select
-                        value={targetId || "__all"}
-                        onValueChange={(v) => setTargetId(v === "__all" ? "" : v)}
-                      >
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {/* Radix forbids an empty SelectItem value, so "all" rides a
-                      sentinel mapped back to "" — the project's standard workaround. */}
-                          <SelectItem value="__all">All</SelectItem>
-                          {(concepts.data ?? []).map((c) => (
-                            <SelectItem key={c.id} value={c.id}>
-                              {c.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </Field>
-                  ) : null}
-                  <Field label="Can" hint="Pick one or more.">
-                    <div className="flex flex-wrap gap-1.5">
-                      {ACTIONS.map((a) => (
-                        <ToggleChip
-                          key={a.id}
-                          pressed={actions.includes(a.id)}
-                          onPressedChange={() => toggle(a.id)}
-                        >
-                          {a.label}
-                        </ToggleChip>
-                      ))}
-                    </div>
-                  </Field>
-                  <div className="flex items-center gap-3">
-                    <Button
-                      onClick={() => add.mutate()}
-                      disabled={add.isPending || actions.length === 0}
-                      size="sm"
-                    >
-                      {add.isPending
-                        ? editingId
-                          ? "Saving…"
-                          : "Adding…"
-                        : editingId
-                          ? "Save changes"
-                          : "Add rule"}
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => {
-                        setAdding(false)
-                        resetDraft()
-                        add.reset()
-                      }}
-                      disabled={add.isPending}
-                    >
-                      Cancel
-                    </Button>
-                    {/* The one thing a reader can get badly wrong: thinking a `view` rule is
-                how you open a restricted concept to everyone. It isn't — it outranks
-                the default, which is why no preset carries one. */}
-                    {actions.includes("view") ? (
-                      <span className="text-xs text-muted-foreground">
-                        A View rule overrides the record's own default visibility.
-                      </span>
-                    ) : null}
-                  </div>
-                  <Feedback error={add.error ? roleMsg(add.error) : undefined} />
-                </div>
+              <PermissionMatrix
+                // Remount per area: the grid holds a draft, and carrying one across a
+                // rail click would offer to save cells from a different resource type.
+                key={current.id}
+                roleId={role.id}
+                resourceType={current.resourceType}
+                scopeBy={current.scopeBy}
+                items={itemsFor(current).items}
+                itemsLabel={current.itemsLabel}
+                actions={ACTIONS.filter((a) => current.actions.includes(a.id))}
+                rules={rules.data ?? []}
+                defaults={(defaults.data ?? []).filter((d) => d.roleId === role.id)}
+                note={current.note}
+                resourceNoun={current.resourceNoun}
+                loading={rules.isPending || defaults.isPending || itemsFor(current).busy}
+                parentRules={role.basedOn ? parentRules.data : undefined}
+                parentLabel={basedOnParent?.name}
+              />
+              {/* Blanket/conditional rules for THIS type, inline rather than in the
+                  global "Other" pane — a rule here used to show up in two editors
+                  (this grid's Default row AND a separate Other list entry) that
+                  disagreed about what a blank cell meant. */}
+              {rules.isPending ? null : (
+                <OtherRulesPanel
+                  key={`other-${current.id}`}
+                  roleId={role.id}
+                  rules={otherRulesFor(current.resourceType)}
+                  concepts={concepts.data ?? []}
+                  lockedType={current.resourceType}
+                />
               )}
             </>
+          ) : rules.isPending ? (
+            <Spinner />
+          ) : (
+            <OtherRulesPanel
+              roleId={role.id}
+              rules={ungriddedRules}
+              concepts={concepts.data ?? []}
+            />
           )}
         </div>
       </div>
@@ -949,49 +1074,206 @@ function DeactivateDialog({
  * rides a sentinel, the same workaround the rule form already uses for its All option.
  *
  * This is not hypothetical: the Start from picker shipped with `value=""` and crashed
- * the New role dialog on open, every time.
+ * the New custom role dialog on open, every time.
  */
 const NONE = "__none"
 
-/** The three sections the list is cut into, in the order they matter. */
+/** One half of a section's card — the roles of that section's kind that are
+ *  managed, or the ones that aren't. */
+interface RoleGroup {
+  readonly id: string
+  /** One word: the section heading already said which KIND these are. */
+  readonly label: string
+  /** What the reader can do with them. Lives in the divider's hint, NOT on the
+   *  divider line — a sentence there turned a structural label into a third
+   *  competing line of prose. */
+  readonly note: string
+  /** Shown when the group has no rows and no filter is hiding them. Terse: the
+   *  heading above already named what is missing. */
+  readonly empty: string
+  readonly managed: boolean
+}
+
+/**
+ * TWO sections, cut by the axis that decides who may hold a role at all — and
+ * inside each, a divider between the managed half and the custom half.
+ *
+ * Both axes have to reach the reader: kind (a role of the wrong one is refused
+ * by the engine, not merely discouraged) and managed-ness (a managed role's
+ * delete is refused, because the seed would put it back). Neither is visible
+ * from a role's name.
+ *
+ * They are NOT two levels of card, though. The managed halves are fixed by the
+ * seed — two user roles and exactly one automation role, forever — so a heading,
+ * a hint and a box of their own would be chrome around something that never
+ * changes. A divider row inside the one card is what the rule table already does
+ * with `groupRules`, for the same reason.
+ */
 const SECTIONS: ReadonlyArray<{
   readonly id: string
   readonly label: string
+  /** The section-level fact: who can hold these. The per-half advice lives on
+   *  the divider rows instead. */
   readonly hint: string
   readonly kind: "user" | "automation"
-  readonly managed: boolean
+  readonly groups: ReadonlyArray<RoleGroup>
 }> = [
   {
-    id: "managed",
-    label: "Managed roles",
-    // Says what someone can DO with them, not where they came from. The old copy
-    // ("seeded with the org … the seed would put one back") explained our
-    // implementation to justify a restriction, which is not the reader's problem.
-    hint: "Come with the app. Edit or turn them off — they can't be deleted.",
+    id: "user",
+    label: "User roles",
+    hint: "Held by people, never automations.",
     kind: "user",
-    managed: true,
-  },
-  {
-    id: "custom",
-    label: "Custom roles",
-    hint: "Yours. Delete them freely.",
-    kind: "user",
-    managed: false,
+    groups: [
+      {
+        id: "managed",
+        label: "Managed",
+        // Says what someone can DO with them, not where they came from. The old
+        // copy ("seeded with the org … the seed would put one back") explained
+        // our implementation to justify a restriction, which is not the reader's
+        // problem.
+        note: "Come with the app. Edit them or turn them off — they can't be deleted.",
+        empty: "None.",
+        managed: true,
+      },
+      {
+        id: "custom",
+        label: "Custom",
+        note: "Made by you. Edit, turn off or delete them freely.",
+        empty: "None yet.",
+        managed: false,
+      },
+    ],
   },
   {
     id: "automation",
     label: "Automation roles",
-    hint: "For automations, never people. A new automation starts on whichever of these is the default.",
+    hint: "Held by automations, never people. A new automation starts on whichever of these is the default.",
     kind: "automation",
-    managed: false,
+    groups: [
+      {
+        id: "managed",
+        label: "Managed",
+        note: "Comes with the app. Edit it or turn it off — it can't be deleted.",
+        empty: "None.",
+        managed: true,
+      },
+      {
+        id: "custom",
+        label: "Custom",
+        note: "Made by you. Edit, turn off or delete them freely.",
+        empty: "None yet.",
+        managed: false,
+      },
+    ],
   },
 ]
+
+/**
+ * One role in the list. Lifted out of the render so the section → half → row
+ * nesting stays legible; it holds no state and decides nothing — every act is a
+ * callback, so the page keeps owning which dialog is open and what is in flight.
+ */
+function RoleRow({
+  role,
+  onOpen,
+  onToggleDefault,
+  onTurnOff,
+  onTurnOn,
+  onDelete,
+  patching,
+  /** Turning this one off would leave its category with no landing zone. */
+  lastLandingZone,
+}: {
+  role: AccessRole
+  onOpen: () => void
+  onToggleDefault: () => void
+  onTurnOff: () => void
+  onTurnOn: () => void
+  onDelete: () => void
+  patching: boolean
+  lastLandingZone: boolean
+}) {
+  return (
+    <div
+      className={`flex items-center gap-3 hover:bg-accent/50 ${role.active ? "" : "opacity-55"}`}
+    >
+      {/* The ROW opens the rules. A real <button> rather than a click handler on
+          the div: this is the primary action, so it has to be reachable by
+          keyboard and announced as one. */}
+      {/* Name and description are deliberately DIFFERENT sizes. At the same size
+          the pair read as two competing lines and made every row look twice as
+          heavy as it is. */}
+      <button type="button" onClick={onOpen} className="min-w-0 flex-1 px-4 py-3 text-left">
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-medium">{role.name}</span>
+          {role.active ? null : <Badge tone="gray">off</Badge>}
+          {role.autoAssign ? <Badge tone="blue">Default</Badge> : null}
+        </div>
+        {role.description ? (
+          <p className="mt-0.5 truncate text-xs text-muted-foreground">{role.description}</p>
+        ) : null}
+      </button>
+      <div className="shrink-0 pr-3">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              className="text-muted-foreground"
+              aria-label={`Actions for ${role.name}`}
+            >
+              <MoreHorizontal size={15} />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {/* A full-access role can't be "not allowed" anything, so making it
+                the default is still a real choice. */}
+            <DropdownMenuItem disabled={!role.active || patching} onSelect={onToggleDefault}>
+              <Star size={15} />
+              {role.autoAssign ? "Remove as default" : "Set as default"}
+            </DropdownMenuItem>
+            {role.active ? (
+              <DropdownMenuItem onSelect={onTurnOff}>
+                <Power size={15} />
+                Turn off
+                {lastLandingZone ? (
+                  <span className="ml-auto pl-2 text-xs text-muted-foreground">
+                    the only default
+                  </span>
+                ) : null}
+              </DropdownMenuItem>
+            ) : (
+              <DropdownMenuItem disabled={patching} onSelect={onTurnOn}>
+                <Power size={15} />
+                Turn on
+              </DropdownMenuItem>
+            )}
+            {/* A managed role's rules stay editable — only deletion is refused,
+                because the seed pins by key and would re-create one. Turning it
+                off is the reversible equivalent, which is why it sits right
+                above. */}
+            {role.managed ? null : (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem variant="destructive" onSelect={onDelete}>
+                  <Trash2 size={15} />
+                  Delete
+                </DropdownMenuItem>
+              </>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    </div>
+  )
+}
 
 export function Roles() {
   const qc = useQueryClient()
   const roles = useQuery({ queryKey: ["roles"], queryFn: () => api.listRoles() })
   const [filter, setFilter] = useState("")
-  /** null = closed; otherwise the category the New role dialog is creating into. */
+  /** null = closed; otherwise the category the New custom role dialog is creating into. */
   const [creating, setCreating] = useState<"user" | "automation" | null>(null)
   const [name, setName] = useState("")
   /** "" = start from nothing. See the note on the picker. */
@@ -1038,131 +1320,83 @@ export function Roles() {
     all.filter((o) => o.kind === r.kind && o.autoAssign && o.active).length === 1
 
   return (
-    <div className="space-y-4">
-      {/* Functional toolbar: filter left, create right, no description row — the
-          settings convention for every tab that can create something. */}
-      <Toolbar filter={filter} onFilter={setFilter} placeholder="Filter roles…">
+    <div className="space-y-8">
+      {/* Filter and create sit ON the page title's line rather than in a toolbar
+          row beneath it: the row was a full line of chrome carrying two controls,
+          and the title line was empty to its right. `ownsHeading` on the nav item
+          is what stops the layout drawing a second title. */}
+      <SettingsHeading title="Roles">
+        <FilterInput
+          value={filter}
+          onChange={setFilter}
+          placeholder="Filter roles…"
+          className="w-56"
+        />
+        {/* "Custom", because that is the only kind this button can make — a
+            managed role is seeded, never created here. */}
         <Button size="sm" onClick={() => setCreating("user")}>
           <Plus size={15} />
-          New role
+          New custom role
         </Button>
-      </Toolbar>
+      </SettingsHeading>
 
-      {/* Wrapped, so the gap BETWEEN groups is wider than the gap inside one. Left as
-          siblings of the toolbar they all shared its spacing, and three headings a
-          card's width apart read as one long list rather than three things. */}
-      <div className="space-y-9">
+      {/* Three nested spacings, widest outermost, so the hierarchy is carried by
+          air rather than by rules and fills: section → its two lists → the label
+          above each list. Each section is wrapped in a subtle border. */}
+      <div className="space-y-10">
         {SECTIONS.map((section) => {
-          const rows = shown.filter(
-            (r) =>
-              r.kind === section.kind &&
-              (section.kind === "automation" || r.managed === section.managed),
-          )
-          // An empty Custom section still renders its header — "you have none yet" is
-          // information. An empty section under an active filter is just noise.
-          if (rows.length === 0 && q) return null
+          const groups = section.groups
+            .map((g) => ({
+              group: g,
+              rows: shown.filter((r) => r.kind === section.kind && r.managed === g.managed),
+            }))
+            // An empty half still renders — "you have none yet" is information.
+            // An empty half under an active filter is just noise.
+            .filter((g) => g.rows.length > 0 || !q)
+          if (groups.length === 0) return null
           return (
-            <div key={section.id} className="space-y-2">
+            <div key={section.id} className="space-y-4 rounded-xl border p-4">
               <div>
                 <h3 className="font-medium text-sm">{section.label}</h3>
                 <p className="text-xs text-muted-foreground">{section.hint}</p>
               </div>
-              <Card>
-                <div className="divide-y">
-                  {rows.length === 0 ? (
-                    <p className="px-4 py-5 text-sm text-muted-foreground">
-                      {section.id === "automation"
-                        ? "No automation roles yet."
-                        : "No roles here yet."}
-                    </p>
-                  ) : null}
-                  {rows.map((r) => (
-                    <div
-                      key={r.id}
-                      className={`flex items-center gap-3 hover:bg-accent/50 ${r.active ? "" : "opacity-55"}`}
-                    >
-                      {/* The ROW opens the rules. A real <button> rather than a click
-                        handler on the div: this is the primary action, so it has to
-                        be reachable by keyboard and announced as one. */}
-                      <button
-                        type="button"
-                        onClick={() => setEditing(r)}
-                        className="min-w-0 flex-1 px-4 py-3 text-left"
-                      >
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium">{r.name}</span>
-                          {r.active ? null : <Badge tone="gray">off</Badge>}
-                          {r.autoAssign ? <Badge tone="blue">Default</Badge> : null}
-                        </div>
-                        {r.description ? (
-                          <p className="truncate text-sm text-muted-foreground">{r.description}</p>
-                        ) : null}
-                      </button>
-                      <div className="shrink-0 pr-3">
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon-sm"
-                              className="text-muted-foreground"
-                              aria-label={`Actions for ${r.name}`}
-                            >
-                              <MoreHorizontal size={15} />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            {/* A full-access role can't be "not allowed" anything, so
-                              making it the default is still a real choice. */}
-                            <DropdownMenuItem
-                              disabled={!r.active || patch.isPending}
-                              onSelect={() => patch.mutate({ id: r.id, autoAssign: !r.autoAssign })}
-                            >
-                              <Star size={15} />
-                              {r.autoAssign ? "Remove as default" : "Set as default"}
-                            </DropdownMenuItem>
-                            {r.active ? (
-                              <DropdownMenuItem onSelect={() => setTurningOff(r)}>
-                                <Power size={15} />
-                                Turn off
-                                {isLastLandingZone(r) ? (
-                                  <span className="ml-auto pl-2 text-xs text-muted-foreground">
-                                    the only default
-                                  </span>
-                                ) : null}
-                              </DropdownMenuItem>
-                            ) : (
-                              <DropdownMenuItem
-                                disabled={patch.isPending}
-                                onSelect={() => patch.mutate({ id: r.id, active: true })}
-                              >
-                                <Power size={15} />
-                                Turn on
-                              </DropdownMenuItem>
-                            )}
-                            {/* A managed role's rules stay editable — only deletion is
-                              refused, because the seed pins by key and would
-                              re-create one. Turning it off is the reversible
-                              equivalent, which is why it sits right above. */}
-                            {r.managed ? null : (
-                              <>
-                                <DropdownMenuSeparator />
-                                <DropdownMenuItem
-                                  variant="destructive"
-                                  onSelect={() => setDeleting(r)}
-                                >
-                                  <Trash2 size={15} />
-                                  Delete
-                                </DropdownMenuItem>
-                              </>
-                            )}
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </div>
+              {/* A LIST EACH, not one list with bands across it. The managed and
+                  custom halves answer different questions ("what came with the
+                  app" / "what have we built"), and a filled divider row inside a
+                  single card put a heavy horizontal rule through the middle of
+                  the one thing the reader is scanning. */}
+              <div className="space-y-5">
+                {groups.map(({ group, rows }) => (
+                  <div key={group.id} className="space-y-1.5">
+                    <div className="flex items-center gap-1.5 px-1 text-[11px] font-medium tracking-wider text-muted-foreground uppercase">
+                      {group.label}
+                      <InfoHint text={group.note} label={`${group.label} roles — more info`} />
                     </div>
-                  ))}
-                </div>
-              </Card>
+                    <Card>
+                      <div className="divide-y">
+                        {rows.length === 0 ? (
+                          <p className="px-4 py-4 text-sm text-muted-foreground">{group.empty}</p>
+                        ) : null}
+                        {rows.map((r) => (
+                          <RoleRow
+                            key={r.id}
+                            role={r}
+                            onOpen={() => setEditing(r)}
+                            onToggleDefault={() =>
+                              patch.mutate({ id: r.id, autoAssign: !r.autoAssign })
+                            }
+                            onTurnOff={() => setTurningOff(r)}
+                            onTurnOn={() => patch.mutate({ id: r.id, active: true })}
+                            onDelete={() => setDeleting(r)}
+                            patching={patch.isPending}
+                            lastLandingZone={isLastLandingZone(r)}
+                          />
+                        ))}
+                      </div>
+                    </Card>
+                  </div>
+                ))}
+              </div>
             </div>
           )
         })}
@@ -1172,7 +1406,7 @@ export function Roles() {
       {creating ? (
         <Modal
           onClose={() => setCreating(null)}
-          title={creating === "automation" ? "New automation role" : "New role"}
+          title={creating === "automation" ? "New custom automation role" : "New custom user role"}
         >
           <div className="space-y-3">
             <Input

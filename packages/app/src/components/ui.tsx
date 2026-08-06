@@ -92,6 +92,40 @@ export function CardHeader({
 }
 
 /**
+ * The search-icon + input pair every list page filters with. Its own component
+ * so a page that puts the filter somewhere other than a {@link Toolbar} — on the
+ * page heading line, say — gets the same control rather than a second one that
+ * drifts.
+ */
+export function FilterInput({
+  value,
+  onChange,
+  placeholder,
+  className,
+}: {
+  value: string
+  onChange: (v: string) => void
+  placeholder: string
+  /** Sizing only; the control's own look is fixed. */
+  className?: string
+}) {
+  return (
+    <div className={cn("relative", className)}>
+      <Search
+        size={14}
+        className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-muted-foreground"
+      />
+      <Input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="h-8 pl-8"
+      />
+    </div>
+  )
+}
+
+/**
  * Functional toolbar for list pages that can create things: a filter input
  * on the left, toggles + the create action on the right. Replaces descriptive
  * header prose — explanations belong in empty states (or an info tooltip).
@@ -109,18 +143,12 @@ export function Toolbar({
 }) {
   return (
     <div className="flex items-center justify-between gap-3">
-      <div className="relative w-full max-w-xs">
-        <Search
-          size={14}
-          className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-muted-foreground"
-        />
-        <Input
-          value={filter}
-          onChange={(e) => onFilter(e.target.value)}
-          placeholder={placeholder}
-          className="h-8 pl-8"
-        />
-      </div>
+      <FilterInput
+        value={filter}
+        onChange={onFilter}
+        placeholder={placeholder}
+        className="w-full max-w-xs"
+      />
       {children && <div className="flex shrink-0 items-center gap-2">{children}</div>}
     </div>
   )
