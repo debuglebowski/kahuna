@@ -4,15 +4,9 @@ import path from "node:path"
 import { PgClient } from "@effect/sql-pg"
 import { Config, Layer } from "effect"
 import { LocalFsBlobStore } from "../blob/local"
-import {
-  ACTION_ALL,
-  type AccessResourceType,
-  type AccessRule,
-  emptyPolicy,
-  type PolicySet,
-} from "../domain/access"
+import type { AccessAction, AccessResourceType, AccessRule, PolicySet } from "../domain/access"
+import { emptyPolicy } from "../domain/access"
 import { EngineLive } from "../layers"
-import { TEMPLATED_TYPES } from "../services/AccessDefaultsService"
 import { OrgContext, type ScopeRole } from "../services/OrgContext"
 
 /** SqlClient layer pointed at the dedicated test database. */
@@ -21,18 +15,6 @@ export const PgTestLive = PgClient.layerConfig({
 })
 
 const BlobTestLive = LocalFsBlobStore(path.join(tmpdir(), "kingsmaker-test-blobs"))
-
-/** The six untemplated types a REAL Member role now also grants `view` on
- *  (P8) — mirrors `AccessRoleService`'s private `UNTEMPLATED_VISIBLE`. `role`
- *  is untemplated too but deliberately absent from both: no separate view. */
-const UNTEMPLATED_VISIBLE: ReadonlyArray<AccessResourceType> = [
-  "org",
-  "field",
-  "bucket",
-  "task",
-  "note",
-  "member",
-]
 
 /**
  * A policy standing in for AN ORDINARY MEMBER of a live org.
@@ -43,50 +25,59 @@ const UNTEMPLATED_VISIBLE: ReadonlyArray<AccessResourceType> = [
  * so a `member` scope with no policy sees nothing — correctly, but that is rarely
  * what a test about something else means.
  *
- * TEMPLATED types (concept/record/dashboard/view/automation) get the full
- * wildcard, as they always have — "may do everything, everywhere" WITHIN them.
- * The six UNTEMPLATED_VISIBLE types get exactly what the real seeded Member
- * role grants (`create`/`edit`/`archive`/`share`, plus `view` — P8's
- * `AccessRoleService.UNTEMPLATED_VISIBLE`), deliberately NOT the wildcard:
- * `org` must NOT carry `configure` here, or this fixture would silently make
- * "an ordinary member" indistinguishable from an admin for every test that
- * uses it — exactly the property `visibility.test.ts`'s
- * `canReadRestricted`/`org`-`configure` check exists to pin. `role` gets
- * nothing, matching the real role too (no separate "view" of it).
+ * MUST track `AccessRoleService.BUILTIN_ROLES`'s `member` spec exactly — that
+ * divergence (a wildcard here standing in for a curated per-type grant there) is
+ * exactly what let the field-visibility bug ship unnoticed: this fixture granted
+ * a narrower `view` than the real blanket rule, so no test ever exercised the
+ * real rule's shape against a restricted field.
+ *
+ * For the five TEMPLATED types, each entry is the real blanket rule's actions
+ * UNIONED with `view` — reproducing what `ensureBuiltins`'s materialization
+ * injects into every EXISTING resource's per-resource rule (this fixture has no
+ * real resource ids to scope a separate rule to, so the blanket union is the
+ * accurate stand-in). `automation` gets no rule at all: reads there default OPEN
+ * (`AutomationService.allowed`'s `fallback: true`), so an empty policy already
+ * reproduces "member can read automations" correctly.
+ *
+ * `org`/`role`/`member`/`field` deliberately get NO rule — matching the real
+ * preset exactly: the first three because only `configure` is ever decided
+ * against them (which Member never holds — a rule here would silently make "an
+ * ordinary member" indistinguishable from an admin, exactly the property
+ * `visibility.test.ts`'s `canReadRestricted`/`org`-`configure` check exists to
+ * pin); `field` because a blanket grant there is the bug this fixture exists to
+ * catch, not paper over.
  *
  * Tests ABOUT access should build a narrower policy naming specific resources
  * instead — a blanket rule here would paper over exactly what they are checking.
  */
+const MEMBER_GRANTS: ReadonlyArray<{
+  readonly resourceType: AccessResourceType
+  readonly actions: ReadonlyArray<AccessAction>
+}> = [
+  { resourceType: "concept", actions: ["create", "view"] },
+  { resourceType: "record", actions: ["create", "view"] },
+  { resourceType: "dashboard", actions: ["edit", "view"] },
+  { resourceType: "view", actions: ["edit", "view"] },
+  { resourceType: "bucket", actions: ["create", "view"] },
+  { resourceType: "task", actions: ["create", "view"] },
+  { resourceType: "note", actions: ["create"] },
+]
+
 export const ordinaryMember = (actor: string): PolicySet => ({
   ...emptyPolicy(actor),
-  rules: [
-    ...TEMPLATED_TYPES.map(
-      (resourceType, i): AccessRule => ({
-        id: `test-templated-${i}`,
-        roleId: "test-role",
-        actorId: null,
-        effect: "allow",
-        actions: [ACTION_ALL],
-        resourceType,
-        resourceId: null,
-        conceptId: null,
-        condition: null,
-      }),
-    ),
-    ...UNTEMPLATED_VISIBLE.map(
-      (resourceType, i): AccessRule => ({
-        id: `test-untemplated-${i}`,
-        roleId: "test-role",
-        actorId: null,
-        effect: "allow",
-        actions: ["create", "edit", "archive", "share", "view"],
-        resourceType,
-        resourceId: null,
-        conceptId: null,
-        condition: null,
-      }),
-    ),
-  ],
+  rules: MEMBER_GRANTS.map(
+    ({ resourceType, actions }, i): AccessRule => ({
+      id: `test-member-${i}`,
+      roleId: "test-role",
+      actorId: null,
+      effect: "allow",
+      actions,
+      resourceType,
+      resourceId: null,
+      conceptId: null,
+      condition: null,
+    }),
+  ),
 })
 
 /** A fully-provided engine layer scoped to one org (Engine + Pg + Blob + OrgContext).

@@ -102,12 +102,12 @@ describe("effectiveAccess: rules tagged with the layer they resolve in", () => {
 })
 
 describe("explainAccess: the ordered trace behind one decision", () => {
-  it("org-configure: Admin and Member share one tier (order isn't wired until P5), both named, Admin's `*` decides", async () => {
+  it("org-configure: only Admin's tier shows — Member holds no rule on `org` at all", async () => {
     // The founding owner holds BOTH roles today — Member from auto-assign, Admin
-    // from `seedKingsmaker` — and neither has an explicit `position`, so they
-    // resolve to the SAME precedence and land in one combined tier. Only Admin's
-    // `*` actually grants `configure`, but `roleIds`/the label must still name
-    // Member too: it's genuinely present in the tier, just silent for this action.
+    // from `seedKingsmaker`. Member's preset carries no `org` rule whatsoever (see
+    // `AccessRoleService.BUILTIN_ROLES`'s header — every action ever decided
+    // against `org` is `configure`, which Member never holds), so it never
+    // appears in this trace at all, not even silently.
     const { orgId, ownerId } = await orgWithOwner()
     const result = (await runEngineOrThrow(
       systemScope(orgId, "system:test"),
@@ -130,10 +130,10 @@ describe("explainAccess: the ordered trace behind one decision", () => {
     expect(result.layers).toHaveLength(1)
     expect(result.layers[0]!.verdict).toBe("allow")
     expect(result.layers[0]!.decided).toBe(true)
-    expect(new Set(result.layers[0]!.label.split(" + "))).toEqual(new Set(["Admin", "Member"]))
+    expect(result.layers[0]!.label).toBe("Admin")
   })
 
-  it("role-configure: Layer 0 decides first; the Admin+Member tier still shows, undecided", async () => {
+  it("role-configure: Layer 0 decides first; only Admin's tier shows, undecided", async () => {
     const { orgId, ownerId } = await orgWithOwner()
     const result = (await runEngineOrThrow(
       systemScope(orgId, "system:test"),
@@ -159,10 +159,10 @@ describe("explainAccess: the ordered trace behind one decision", () => {
     })
     expect(result.layers[1]!.decided).toBe(false)
     expect(result.layers[1]!.verdict).toBe("allow")
-    expect(new Set(result.layers[1]!.label.split(" + "))).toEqual(new Set(["Admin", "Member"]))
+    expect(result.layers[1]!.label).toBe("Admin")
   })
 
-  it("a plain member asking about org-configure: their Member tier is silent, the closed fallback decides", async () => {
+  it("a plain member asking about org-configure: no tier at all, the closed fallback decides", async () => {
     const { orgId } = await orgWithOwner()
     const memberId = await signUp("Member")
     await addMember(orgId, memberId)
@@ -178,8 +178,7 @@ describe("explainAccess: the ordered trace behind one decision", () => {
     expect(result.outcome).toBe(false)
     expect(result.fallback).toBe(false)
     expect(result.decidedByFallback).toBe(true)
-    expect(result.layers).toHaveLength(1)
-    expect(result.layers[0]).toMatchObject({ label: "Member", verdict: "silent", decided: false })
+    expect(result.layers).toHaveLength(0)
   })
 
   it("a plain member CAN edit records — the open fallback, no rule needed", async () => {

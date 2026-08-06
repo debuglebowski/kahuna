@@ -90,33 +90,61 @@ interface RoleSpec {
 /**
  * ── THE MANAGED ROLES ────────────────────────────────────────────────────────
  *
- * These reproduce today's behaviour EXACTLY, which is the whole point of seeding
- * them before anything consults them: `server/policy.ts:can()` currently says a
- * member reads and writes everything while owner/admin can additionally
- * administer. So:
+ * Admin and `automation_full` are trivial: `everything([ACTION_ALL])` is a
+ * blanket `*` on every resource type, correct by construction for "full access".
  *
- *   owner / admin → everything, `configure` included
- *   member        → write actions, but not `configure` or `delete`
+ * Member is not — its rules are curated PER RESOURCE TYPE, each entry chosen by
+ * cross-referencing every `decide()`/`assertAllowed()` call site in the app for
+ * what actually consults a rule on that type. A grant that nothing ever decides
+ * is not a smaller version of "reproduce today's behaviour" — it is decoration
+ * that makes the Roles page lie about what Member can do. So each row below is
+ * either load-bearing (something breaks without it) or absent:
  *
- * `delete` is withheld from `member` because hard-delete is already admin-gated at
- * the RPC boundary today (see the `admin<>()` handlers) — granting it here would
- * be a widening, not a reproduction. `archive` IS granted, which is also today's
- * behaviour: record version archive/restore is any member.
+ *   concept, record  → `create` only. Any `allow` rule on a TEMPLATED type makes
+ *                       `ensureBuiltins`'s injection (below) add `view` to the
+ *                       creation TEMPLATE, which is what actually grants reading —
+ *                       for `record`, the SAME action also grants writing
+ *                       (`RecordService.assertRecordWritable` reuses `view`).
+ *                       `edit`/`archive`/`share` are never decided against either
+ *                       type; `archive` on `concept` specifically WAS granted
+ *                       (schema-level archive/restore of a whole concept) but
+ *                       moved to admin-only for consistency with every other
+ *                       concept-schema action (rename/fields/visibility/
+ *                       versioning/delete), all of which are already `configure`.
+ *   dashboard, view   → `edit` only. `DashboardService`/`SidebarViewService`'s
+ *                       `maySee`/`findForWrite` decide `edit`/`delete` by id; a
+ *                       blanket rule covers every one, present and future. Also
+ *                       drives the template injection above, for listing.
+ *                       `create` is ungated for EVERYONE by design (see
+ *                       `DashboardService`'s header) — granting it here would be
+ *                       decorative, not a widening if removed.
+ *   field             → NO rule at all — this is a fix, not an omission. A
+ *                       blanket `view` here (the old shape) matches every field
+ *                       unconditionally and outranks `scopeHiddenFieldIds`'s
+ *                       per-field fallback, silently defeating `admin`-visibility
+ *                       fields for every ordinary member. Dropping it costs
+ *                       nothing: `visible` fields (the overwhelming default) are
+ *                       already readable via that same fallback with no rule at
+ *                       all needed.
+ *   bucket, task      → `create`, `view`. Both decided directly (`assertAllowed`
+ *                       in `use-cases.ts`, the null-subject / widget-bucket case).
+ *   note              → `create` only. `view` is never decided against the bare
+ *                       type — an existing note's read/write goes through its
+ *                       SUBJECT record (`assertSubjectReadable`), not a `note`
+ *                       rule; there is no global note list, unlike tasks.
+ *   org, role, member,
+ *   automation        → NO rule. Every action ever decided against the first
+ *                       three is `configure` (member never holds it, by design —
+ *                       "cannot configure"). Automation's writes are RPC-boundary
+ *                       admin-gated unconditionally (`rpc.ts`'s `admin<Automation>`
+ *                       wrapper) regardless of any per-automation rule, and its
+ *                       reads default OPEN (`AutomationService.allowed`'s
+ *                       `fallback: true` — "reads are member-visible" by design),
+ *                       so a rule here is doubly inert for Member specifically.
  *
- * ── WHY `member` DOES NOT GRANT `view` ───────────────────────────────────────
- *
- * Read access is the DEFAULT LAYER's job — the `visibility` column. Rules are
- * exceptions layered over it, so a rule granting `view` on every concept
- * (`resource_id = null`) would OUTRANK the column and hand members every
- * `admin`-visibility concept, silently undoing concept and field visibility.
- *
- * So the presets grant write actions only, and `view` appears in a rule solely as
- * a deliberate exception: a share of one record, a role opening one restricted
- * concept, or a deny. `owner`/`admin` still hold `*`, which is correct — they can
- * read restricted material today.
- *
- * `access.test.ts` pins this ("the member preset must not grant blanket view").
- * Do not "complete" the member preset by adding `view` to it.
+ * `delete` is withheld everywhere — already admin-gated at the RPC boundary, so
+ * granting it would be a widening. `configure` likewise, everywhere — that is the
+ * entire meaning of "cannot configure".
  *
  * They are ordinary rows and fully editable. `managed` only means "seeded", which
  * buys them exactly one thing: deletion is refused, because the seed would put them
@@ -142,35 +170,6 @@ const everything = (
 ): ReadonlyArray<RuleSpec> =>
   ALL_RESOURCES.map((resourceType) => ({ effect: "allow" as const, actions, resourceType }))
 
-/** Blanket rules for a NAMED subset of resource types, not all of them. */
-const onlyOn = (
-  actions: ReadonlyArray<AccessAction | typeof ACTION_ALL>,
-  resourceTypes: ReadonlyArray<AccessResourceType>,
-): ReadonlyArray<RuleSpec> =>
-  resourceTypes.map((resourceType) => ({ effect: "allow" as const, actions, resourceType }))
-
-/**
- * The six resource types with no per-resource default of their own — not in
- * `TEMPLATED_TYPES` (which get a creation-time rule or, for `concept`/`field`,
- * the `visibility` column) and not `role` (role/rule editing stays governed
- * entirely by `configure`; there is no separate "view" concept for it — the
- * whole Roles page gates on one permission, not two).
- *
- * These six used to fall back to an implicit "no rule = allowed" default for
- * `view` (`requireAction`'s old formula) — P8 closed that, so Member needs an
- * EXPLICIT `view` grant here or every non-admin loses the ability to see org
- * settings, fields, file buckets, the global task/note lists and the member
- * roster the moment the implicit allow goes away.
- */
-const UNTEMPLATED_VISIBLE: ReadonlyArray<AccessResourceType> = [
-  "org",
-  "field",
-  "bucket",
-  "task",
-  "note",
-  "member",
-]
-
 /**
  * There is deliberately NO `owner` role. Owner is a membership flag carrying the
  * Layer 0 recovery floor (`configure` on `role`/`member` only —
@@ -192,11 +191,9 @@ export const BUILTIN_ROLES: ReadonlyArray<RoleSpec> = [
   {
     key: "member",
     name: "Member",
-    // No `view` on the TEMPLATED types (concept/record/dashboard/view/automation):
-    // reading those is governed by each resource's own default (a creation-time
-    // rule, or the `visibility` column) — granting it here would override that.
-    // The six UNTEMPLATED_VISIBLE types get an explicit `view` below instead;
-    // see that constant's doc for why (P8).
+    // Every grant below is load-bearing — see `BUILTIN_ROLES`'s header for what
+    // decides each one. Not `everything()`: that blankets a uniform action list
+    // across every resource type, and Member's real grants are not uniform.
     description: "Creates and edits; cannot configure or delete. Reads what is visible.",
     position: 2,
     kind: "user",
@@ -204,8 +201,13 @@ export const BUILTIN_ROLES: ReadonlyArray<RoleSpec> = [
     // join path reads, so an org can move it to a role of its own making.
     autoAssign: true,
     rules: [
-      ...everything(["create", "edit", "archive", "share"]),
-      ...onlyOn(["view"], UNTEMPLATED_VISIBLE),
+      { effect: "allow", actions: ["create"], resourceType: "concept" },
+      { effect: "allow", actions: ["create"], resourceType: "record" },
+      { effect: "allow", actions: ["edit"], resourceType: "dashboard" },
+      { effect: "allow", actions: ["edit"], resourceType: "view" },
+      { effect: "allow", actions: ["create", "view"], resourceType: "bucket" },
+      { effect: "allow", actions: ["create", "view"], resourceType: "task" },
+      { effect: "allow", actions: ["create"], resourceType: "note" },
     ],
   },
   {

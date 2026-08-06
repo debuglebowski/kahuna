@@ -553,6 +553,7 @@ export const createConcept = (
   access?: ReadonlyArray<{ readonly roleId: string; readonly view: boolean }>,
 ): UC<unknown> =>
   Effect.gen(function* () {
+    yield* assertAllowed("create", { type: "concept" })
     const concepts = yield* ConceptService
     const dashboards = yield* DashboardService
     const concept = yield* concepts.create({ name, color, access })
@@ -1160,11 +1161,21 @@ export const discardDraft = (id: string): UC<RecordVersion> =>
     return maskRecordVersion(out, yield* fieldMaskFor(out.conceptId))
   })
 
+// Unlike every per-version sibling above, the whole-lineage archive/restore
+// took no gate at all — fixed by resolving through `getRecord`, which already
+// runs the full read gate (`assertConceptVisible` + `assertRecordReadable`,
+// "THE ANNOTATION CHOKEPOINT" in RecordService.ts) before the actual mutation.
 export const archiveRecord = (recordId: string): UC<unknown> =>
-  Effect.flatMap(RecordService, (i) => i.archiveRecord({ recordId }))
+  Effect.flatMap(RecordService, (i) => i.getRecord(recordId)).pipe(
+    Effect.flatMap((record) => ensureUnmanagedConcept(record.conceptId)),
+    Effect.zipRight(Effect.flatMap(RecordService, (i) => i.archiveRecord({ recordId }))),
+  )
 
 export const restoreRecord = (recordId: string): UC<unknown> =>
-  Effect.flatMap(RecordService, (i) => i.restoreRecord({ recordId }))
+  Effect.flatMap(RecordService, (i) => i.getRecord(recordId)).pipe(
+    Effect.flatMap((record) => ensureUnmanagedConcept(record.conceptId)),
+    Effect.zipRight(Effect.flatMap(RecordService, (i) => i.restoreRecord({ recordId }))),
+  )
 
 /** Relation-picker candidates: the head (latest published) of each record of a
  *  concept whose display label matches `query`. */
@@ -1265,10 +1276,17 @@ export const purgeBucket = (bucketId: string): UC<ReadonlyArray<Attachment>> =>
 export const setBucketShared = (bucketId: string, shared: boolean): UC<ReadonlyArray<Attachment>> =>
   Effect.flatMap(AttachmentService, (a) => a.setBucketShared(bucketId, shared))
 
+// Mirrors `resolveFile` below: a file carries no concept column, so the read
+// gate goes through its host record. `download` itself only enforces the
+// private-bucket-uploader rule — it never had a concept/record check, which let
+// a guessed attachment id return bytes for a record the caller cannot read.
 export const downloadAttachment = (
   attachmentId: string,
 ): UC<{ attachment: Attachment; data: Uint8Array }> =>
-  Effect.flatMap(AttachmentService, (a) => a.download(attachmentId))
+  Effect.flatMap(AttachmentService, (a) => a.get(attachmentId)).pipe(
+    Effect.flatMap((meta) => (meta.recordId ? assertSubjectReadable(meta.recordId) : Effect.void)),
+    Effect.zipRight(Effect.flatMap(AttachmentService, (a) => a.download(attachmentId))),
+  )
 
 // ── annotation layer: notes ────────────────────────────────────────────────────
 

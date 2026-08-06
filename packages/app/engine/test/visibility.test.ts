@@ -351,13 +351,18 @@ describe("field read visibility", () => {
       }).pipe(Effect.provide(testLayer(orgId, "seed", "system"))),
     )
 
+    // A real policy, not a bare role: `create` now gates on being able to READ the
+    // concept first (see `RecordService.create`), so a policy-less scope would
+    // fail with `ConceptNotFound` before ever reaching the field check below.
     const denied = await Effect.runPromise(
       Effect.gen(function* () {
         const recordVersions = yield* RecordService
         return yield* Effect.either(
           recordVersions.create({ conceptId: setup.conceptId, fields: {} }),
         )
-      }).pipe(Effect.provide(testLayer(orgId, "member-user", "member"))),
+      }).pipe(
+        Effect.provide(testLayer(orgId, "member-user", "member", ordinaryMember("member-user"))),
+      ),
     )
     expect(denied._tag).toBe("Left")
     if (denied._tag === "Left")

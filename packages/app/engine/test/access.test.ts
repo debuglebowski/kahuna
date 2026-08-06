@@ -12,7 +12,6 @@ import {
   rulesFor,
   unrestrictedPolicy,
 } from "../domain/access"
-import { TEMPLATED_TYPES } from "../services/AccessDefaultsService"
 import { BUILTIN_ROLES } from "../services/AccessRoleService"
 
 /**
@@ -183,57 +182,84 @@ describe("access conditions", () => {
   })
 })
 
-describe("the presets reproduce today's behaviour", () => {
+describe("the presets are reasonable — every grant is decided somewhere", () => {
   const byKey = (key: string) => BUILTIN_ROLES.find((r) => r.key === key)!
 
-  it("THE BLANKET-VIEW GUARD: the member preset must not grant view on a TEMPLATED type", () => {
-    // Read access on a TEMPLATED type (concept/record/dashboard/view/automation) is
-    // the DEFAULT LAYER's job — a creation-time rule, or (for concept/field) the
-    // `visibility` column. A preset rule granting `view` there has `resource_id =
-    // null`, so it would OUTRANK that default and hand members every admin-only
-    // concept — silently undoing concept and field visibility.
-    //
-    // The engine tests would NOT catch that regression: `testLayer` provides a role
-    // but no policy, so they fall through to the fallback and pass either way. Only
-    // a real request resolves the blanket rule. Hence this assertion.
-    for (const rule of byKey("member").rules) {
-      if (!TEMPLATED_TYPES.includes(rule.resourceType)) continue
-      expect(rule.actions, `member grants view on templated ${rule.resourceType}`).not.toContain(
-        "view",
-      )
-      expect(rule.actions).not.toContain("*")
-    }
+  it("THE NO-DEAD-GRANTS GUARD: member holds no rule on org/role/member/automation/field", () => {
+    // Every action ever decided against org/role/member is `configure`, which
+    // member never holds — so any OTHER grant there is inert and misleads the
+    // Roles page. Automation's writes are RPC-boundary admin-gated regardless of
+    // any rule, and field gets none at all (the next test is why).
+    const memberTypes = new Set(byKey("member").rules.map((r) => r.resourceType))
+    for (const t of ["org", "role", "member", "automation", "field"] as const)
+      expect(memberTypes.has(t), `member should hold no rule on ${t}`).toBe(false)
   })
 
-  it("the member preset DOES grant view on the six UNTEMPLATED types — P8", () => {
-    // These have no per-resource default of their own to outrank (no creation-time
-    // rule, no visibility column), so the reasoning above does not apply — and
-    // since P8 closed the implicit "no rule = allowed" fallback they used to rely
-    // on, an explicit grant is the only thing keeping today's behaviour.
-    const untemplatedVisible = ["org", "field", "bucket", "task", "note", "member"]
-    for (const resourceType of untemplatedVisible) {
-      const rules = byKey("member").rules.filter((r) => r.resourceType === resourceType)
-      const actions = new Set(rules.flatMap((r) => r.actions))
-      expect(actions.has("view"), `member should grant view on ${resourceType}`).toBe(true)
-    }
-    // `role` is untemplated too, but deliberately excluded: role/rule editing is
-    // governed entirely by `configure`, with no separate "view" of its own.
+  it("THE BLANKET-FIELD GUARD: member must not hold a blanket view on field", () => {
+    // A blanket rule (no resourceId/conceptId) matches EVERY field unconditionally
+    // and outranks `scopeHiddenFieldIds`'s per-field fallback — silently defeating
+    // `admin`-visibility fields for every member. Executable proof, not just the
+    // rule above: build exactly the old shape and show it overrides a closed
+    // (fallback: false) field decision.
     expect(
       byKey("member")
-        .rules.filter((r) => r.resourceType === "role")
+        .rules.filter((r) => r.resourceType === "field")
         .flatMap((r) => r.actions),
-    ).not.toContain("view")
+    ).toHaveLength(0)
+    const blanketFieldView: AccessRule = rule({
+      actions: ["view"],
+      resourceType: "field",
+      conceptId: "c1",
+    })
+    expect(
+      decide(
+        policy([blanketFieldView]),
+        "view",
+        { type: "field", id: "salary", conceptId: "c1" },
+        false,
+        { unconditionalOnly: true },
+      ),
+    ).toBe(true)
   })
 
-  it("member holds the write actions it has today, and not the two it doesn't", () => {
-    const actions = new Set(byKey("member").rules.flatMap((r) => r.actions))
-    expect(actions.has("create")).toBe(true)
-    expect(actions.has("edit")).toBe(true)
-    // Record version archive/restore is any member today.
-    expect(actions.has("archive")).toBe(true)
-    // Both are admin-gated at the RPC boundary today; granting either would widen.
-    expect(actions.has("delete")).toBe(false)
-    expect(actions.has("configure")).toBe(false)
+  it("member's view grants match exactly what's decided per type", () => {
+    // concept/record/dashboard/view have no `view` in the BLANKET rule — reading an
+    // EXISTING one comes from the separate per-resource rule materialized at
+    // creation (`ensureBuiltins`'s injection), not from this row. bucket/task DO
+    // decide `view` directly against the bare type, so they carry it here.
+    const viewOn = (t: string) =>
+      new Set(
+        byKey("member")
+          .rules.filter((r) => r.resourceType === t)
+          .flatMap((r) => r.actions),
+      ).has("view")
+    for (const t of ["concept", "record", "dashboard", "view", "note"])
+      expect(viewOn(t), `member should NOT grant view on ${t}`).toBe(false)
+    for (const t of ["bucket", "task"])
+      expect(viewOn(t), `member should grant view on ${t}`).toBe(true)
+  })
+
+  it("member holds create on the five types that need it, and nothing wider", () => {
+    const actionsOn = (t: string) =>
+      new Set(
+        byKey("member")
+          .rules.filter((r) => r.resourceType === t)
+          .flatMap((r) => r.actions),
+      )
+    expect(actionsOn("concept")).toEqual(new Set(["create"]))
+    expect(actionsOn("record")).toEqual(new Set(["create"]))
+    expect(actionsOn("dashboard")).toEqual(new Set(["edit"]))
+    expect(actionsOn("view")).toEqual(new Set(["edit"]))
+    expect(actionsOn("bucket")).toEqual(new Set(["create", "view"]))
+    expect(actionsOn("task")).toEqual(new Set(["create", "view"]))
+    expect(actionsOn("note")).toEqual(new Set(["create"]))
+    // Neither is granted anywhere: both are admin-gated at the RPC boundary today.
+    const all = new Set(byKey("member").rules.flatMap((r) => r.actions))
+    expect(all.has("delete")).toBe(false)
+    expect(all.has("configure")).toBe(false)
+    // `share` is a defined action nothing anywhere ever decides — dead by design,
+    // so the preset never grants it.
+    expect(all.has("share")).toBe(false)
   })
 
   it("Admin holds the wildcard, so restricted reads still work for it", () => {
@@ -244,9 +270,9 @@ describe("the presets reproduce today's behaviour", () => {
     expect(BUILTIN_ROLES.some((r) => r.key === "owner")).toBe(false)
   })
 
-  it("a blanket view rule DOES override a closed default — which is why none is seeded", () => {
-    // Demonstrates the mechanism the guard above protects against, so the reason
-    // for that guard is executable rather than only written down.
+  it("a blanket view rule DOES override a closed default — which is why none is seeded on concept", () => {
+    // Demonstrates the mechanism the field guard above protects against, so the
+    // reason for it is executable rather than only written down.
     const blanket: AccessRule = rule({ actions: ["view"], resourceType: "concept" })
     expect(decide(policy([blanket]), "view", { type: "concept", id: "restricted" }, false)).toBe(
       true,

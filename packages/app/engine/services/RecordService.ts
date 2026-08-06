@@ -443,9 +443,14 @@ export class RecordService extends Effect.Service<RecordService>()("engine/Recor
       sql.withTransaction(
         Effect.gen(function* () {
           const { orgId, actor } = yield* OrgContext
+          // Read-gated: a caller who cannot see the concept must not be able to
+          // populate it either. The `conceptName` branch is only ever reached by
+          // direct engine/integration callers (never the RPC path), left as
+          // `getByName` — those run under "system" or a full-access role, which
+          // `scopeCanReadConcept` already exempts, same as every other by-id gate.
           const concept =
             "conceptId" in input
-              ? yield* concepts.getById(input.conceptId)
+              ? yield* concepts.getByIdForRead(input.conceptId)
               : yield* concepts.getByName(input.conceptName)
           // A single-record concept admits exactly one lineage. This is the guard
           // integrations hit too (they call the engine directly, bypassing the

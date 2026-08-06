@@ -4,6 +4,7 @@ import { Effect } from "effect"
 import { describe, expect, it } from "vitest"
 import {
   ACTION_ALL,
+  AccessRoleService,
   ConceptService,
   type EngineServices,
   emptyPolicy,
@@ -13,7 +14,7 @@ import {
   RecordService,
   unrestrictedPolicy,
 } from "#engine"
-import { runEngine, runEngineOrThrow, systemScope } from "./runtime"
+import { resolvePolicy, runEngine, runEngineOrThrow, sessionScope, systemScope } from "./runtime"
 import { seedKingsmaker } from "./seed/seed"
 import * as uc from "./use-cases"
 import {
@@ -462,6 +463,84 @@ describe("managed concepts: field-level read-only guard", () => {
       (await runEngine(scope, updateRecord(inst.id, inst.version, { [field.id]: "y" }))).ok,
     ).toBe(true)
     expect((await runEngine(scope, deleteRecordVersion(inst.id))).ok).toBe(true)
+  })
+})
+
+/**
+ * THE FIELD-VISIBILITY GUARD, end to end.
+ *
+ * The stock Member role used to hold a BLANKET `view` rule on `field`
+ * (resourceId/conceptId both null), which matches every field unconditionally and
+ * outranks `scopeHiddenFieldIds`'s per-field fallback — silently defeating
+ * `admin`-visibility fields for every ordinary member. Fixed by dropping that rule
+ * entirely (see `AccessRoleService.BUILTIN_ROLES`'s header). This is the real path
+ * a member's read actually takes (`getRecordDetail` -> `fieldMaskFor` ->
+ * `scopeHiddenFieldIds`), through a REAL seeded+assigned Member role — not a hand-
+ * built policy — so a regression here is exactly what would ship unnoticed.
+ */
+describe("field visibility survives a real Member role, end to end", () => {
+  it("an admin-only field is masked from a member's record read", async () => {
+    const org = randomUUID()
+
+    // Seed + assign the REAL Member role FIRST — a real org always has it before
+    // any concept exists, and materialization only copies a template for a role
+    // that already has one at creation time (`AccessDefaultsService.materialize`).
+    const memberId = `member-${randomUUID()}`
+    await run(
+      org,
+      Effect.gen(function* () {
+        const roles = yield* AccessRoleService
+        yield* roles.ensureBuiltins
+        const member = yield* roles.getByKey("member")
+        yield* roles.assign(member!.id, memberId)
+      }),
+    )
+
+    const concept = await run(
+      org,
+      Effect.flatMap(ConceptService, (c) =>
+        c.create({ name: `Staff ${randomUUID().slice(0, 6)}` }),
+      ),
+    )
+    const name = await run(
+      org,
+      Effect.flatMap(FieldService, (f) =>
+        f.addField({ conceptId: concept.id, name: "Name", kind: "text" }),
+      ),
+    )
+    const salary = await run(
+      org,
+      Effect.flatMap(FieldService, (f) =>
+        f.addField({ conceptId: concept.id, name: "Salary", kind: "text" }),
+      ),
+    )
+    await run(
+      org,
+      Effect.flatMap(FieldService, (f) => f.setVisibility(salary.id, "admin")),
+    )
+    const record = await run(
+      org,
+      Effect.flatMap(RecordService, (r) =>
+        r.create({ conceptId: concept.id, fields: { [name.id]: "Ada", [salary.id]: "250000" } }),
+      ),
+    )
+
+    const memberScope = sessionScope(org, memberId, "member", await resolvePolicy(org, memberId))
+
+    const seen = (await runEngineOrThrow(memberScope, getRecordDetail(record.id))) as {
+      recordVersion: { state: Record<string, unknown> }
+      fields: ReadonlyArray<{ id: string }>
+    }
+    expect(seen.recordVersion.state[name.id]).toBe("Ada")
+    expect(seen.recordVersion.state[salary.id]).toBeUndefined()
+    // The hidden field's DEF is dropped too — not just its value.
+    expect(seen.fields.some((f) => f.id === salary.id)).toBe(false)
+
+    // ...and the ordinary field is untouched — this isn't hiding everything.
+    const admin = (await run(org, getRecordDetail(record.id))) as {
+      recordVersion: { state: Record<string, unknown> }
+    }
+    expect(admin.recordVersion.state[salary.id]).toBe("250000")
   })
 })
 

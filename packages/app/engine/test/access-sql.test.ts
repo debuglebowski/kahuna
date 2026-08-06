@@ -276,13 +276,11 @@ describe("policy loading", () => {
       const after = yield* policies.resolve(org, ACTOR)
       expect(after.version).toBeGreaterThan(before.version)
       expect(after.rules.length).toBeGreaterThan(0)
-      // The seeded Member role reproduces today's behaviour: the write actions a
-      // member has, minus configure (admin-gated) and delete (already admin-only at
-      // the RPC tier) — plus (P8) `view` on the six UNTEMPLATED types (org/field/
-      // bucket/task/note/member), but NOT on a TEMPLATED one (concept/record/
-      // dashboard/view/automation), where it is still the default layer's job — a
-      // blanket view rule there would outrank the visibility column; see THE
-      // BLANKET-VIEW GUARD.
+      // The seeded Member role grants only what's actually decided somewhere —
+      // see `AccessRoleService.BUILTIN_ROLES`'s header. `task` gets an explicit
+      // `view` (decided directly); `concept`'s blanket rule does NOT — reading an
+      // EXISTING concept comes from the separate per-resource rule materialized
+      // at creation time (none was created here), not from this blanket row.
       const actions = new Set(after.rules.flatMap((r) => r.actions))
       const taskActions = new Set(
         after.rules.filter((r) => r.resourceType === "task").flatMap((r) => r.actions),
@@ -294,7 +292,10 @@ describe("policy loading", () => {
       expect(conceptActions.has("view")).toBe(false)
       expect(actions.has("create")).toBe(true)
       expect(actions.has("edit")).toBe(true)
-      expect(actions.has("archive")).toBe(true)
+      // No type grants `archive` any more — the one case that did (concept-schema
+      // archive/restore) moved to admin-only for consistency with every other
+      // concept-schema action.
+      expect(actions.has("archive")).toBe(false)
       expect(actions.has("configure")).toBe(false)
       expect(actions.has("delete")).toBe(false)
     }).pipe(Effect.provide(testLayer(org))),
