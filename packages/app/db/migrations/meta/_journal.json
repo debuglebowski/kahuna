@@ -120,6 +120,13 @@
       "when": 1786011274440,
       "tag": "0016_member_defaults_reasonable",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1786020204476,
+      "tag": "0017_admin_field_rule_dead_weight",
+      "breakpoints": true
     }
   ]
 }

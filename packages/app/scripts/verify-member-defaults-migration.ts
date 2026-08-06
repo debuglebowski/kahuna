@@ -26,13 +26,7 @@
  */
 
 import { Pool } from "pg"
-import {
-  type AccessResourceType,
-  type AccessRule,
-  decide,
-  emptyPolicy,
-  type PolicySet,
-} from "#engine"
+import { type AccessRule, decide, emptyPolicy, type PolicySet } from "#engine"
 
 const connectionString =
   process.env.DATABASE_URL ?? "postgresql://kingsmaker:kingsmaker@localhost:5544/kingsmaker"
@@ -185,7 +179,11 @@ const main = async () => {
       }
     }
   }
-  console.log(failures === 0 ? "OK — structure matches BUILTIN_ROLES exactly" : `${failures} structural mismatch(es)`)
+  console.log(
+    failures === 0
+      ? "OK — structure matches BUILTIN_ROLES exactly"
+      : `${failures} structural mismatch(es)`,
+  )
 
   // ── 2. THE FIX — admin-visibility fields are now hidden from Member ───────
   const adminFields = await pool.query<{ id: string; concept_id: string; org_id: string }>(

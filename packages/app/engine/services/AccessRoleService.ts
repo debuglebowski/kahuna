@@ -91,7 +91,9 @@ interface RoleSpec {
  * ── THE MANAGED ROLES ────────────────────────────────────────────────────────
  *
  * Admin and `automation_full` are trivial: `everything([ACTION_ALL])` is a
- * blanket `*` on every resource type, correct by construction for "full access".
+ * blanket `*` on every resource type IN `ALL_RESOURCES` — see that constant's
+ * doc for the one deliberate omission (`field`) — correct by construction for
+ * "full access".
  *
  * Member is not — its rules are curated PER RESOURCE TYPE, each entry chosen by
  * cross-referencing every `decide()`/`assertAllowed()` call site in the app for
@@ -150,11 +152,18 @@ interface RoleSpec {
  * buys them exactly one thing: deletion is refused, because the seed would put them
  * back. `active = false` is how one is turned off for good.
  */
+// `field` deliberately absent: full-access roles (the only consumer of this
+// list, via `everything()` below) already see every field unconditionally
+// through the org-configure privileged bypass in `scopeHiddenFieldIds` — a
+// blanket `*` rule naming `field` explicitly would be dead weight. It also
+// isn't offered as a permission in the Roles page's "Applies to" picker at
+// all any more (`field` permissions are too easy to grant without meaning to,
+// and there's no field-level redaction UI to make one legible) — see that
+// picker's comment, in Roles.tsx.
 const ALL_RESOURCES: ReadonlyArray<AccessResourceType> = [
   "org",
   "concept",
   "record",
-  "field",
   "dashboard",
   "view",
   "automation",
