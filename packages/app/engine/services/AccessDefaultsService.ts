@@ -22,12 +22,21 @@ import { PolicyService } from "./PolicyService"
  * again, and the grid goes back to needing "Inherit". `access-defaults.test.ts` pins
  * this by asserting a resolved `PolicySet` is unchanged by writing a template row.
  *
- * ── WHAT "NOT ALLOWED" LOOKS LIKE ────────────────────────────────────────────
+ * ── WHY DENY IS A REAL TEMPLATE, NOT JUST ABSENCE ────────────────────────────
  *
- * The ABSENCE of an allow — never a deny row. A deny is absolute and beats per-record
- * shares (see `scopeConceptRead`), so materializing "this role can't see Deals" as
- * `deny(role, Deals)` would silently kill every share of a Deal to that role's
- * holders. Templates and materialization therefore write allows only.
+ * "Not allowed" is usually the ABSENCE of an allow — a role with no view template
+ * for `concept` simply gets no rule on a newly created one, and the bottom-of-cascade
+ * deny (P8) covers it. That is enough when the role has nothing else to say.
+ *
+ * It stops being enough once a role inherits (`based_on`) or is held alongside
+ * another role that WOULD allow it: absence can't subtract from a tier at lower
+ * precedence, only a deny in the role's OWN tier can (see `decide()`'s "the role's
+ * own value always beats what it inherits"). A deny template materializes into a
+ * targeted deny rule for that one role on that one new resource — the SAME shape an
+ * admin could write by hand the moment after creation, just without the gap where
+ * the resource sat allowed. Now that shares are gone (P0), there is no absolute-deny
+ * hazard to guard against: this deny only ever competes within the tier it belongs
+ * to, exactly like any other rule.
  */
 
 /** The resource types that carry per-resource values (and so have a grid). The rest
@@ -43,16 +52,19 @@ export const TEMPLATED_TYPES: ReadonlyArray<AccessResourceType> = [
 
 const isTemplated = (t: AccessResourceType): boolean => TEMPLATED_TYPES.includes(t)
 
-/** One role's template for one resource type. */
+/** One role's template for one resource type, ONE effect — a role may hold both an
+ *  allow row and a deny row for the same type (different actions on each). */
 export interface AccessDefault {
   readonly roleId: string
   readonly resourceType: AccessResourceType
+  readonly effect: "allow" | "deny"
   readonly actions: ReadonlyArray<AccessAction | typeof ACTION_ALL>
 }
 
 interface DefaultRow {
   readonly role_id: string
   readonly resource_type: string
+  readonly effect: string
   readonly actions: ReadonlyArray<string>
 }
 
@@ -63,46 +75,60 @@ export class AccessDefaultsService extends Effect.Service<AccessDefaultsService>
       const sql = yield* PgClient.PgClient
       const policies = yield* PolicyService
 
-      /** Every template row for the org, allow-effect only (see the header). */
+      /** Every template row for the org, both effects (see the header). */
       const list = (): Effect.Effect<ReadonlyArray<AccessDefault>, never, OrgContext> =>
         Effect.gen(function* () {
           const { orgId } = yield* OrgContext
           const rows = yield* sql<DefaultRow>`
-            SELECT role_id, resource_type, actions FROM access_defaults
-            WHERE org_id = ${orgId} AND effect = 'allow'`
+            SELECT role_id, resource_type, effect, actions FROM access_defaults
+            WHERE org_id = ${orgId}`
           return rows.map((r) => ({
             roleId: r.role_id,
             resourceType: r.resource_type as AccessResourceType,
+            effect: r.effect as "allow" | "deny",
             actions: r.actions as ReadonlyArray<AccessAction>,
           }))
         }).pipe(Effect.orDie)
 
+      /** Upsert-or-clear one (role, type, effect) template row. Empty `actions`
+       *  deletes it — a delete rather than an empty array so the absent-means-nothing
+       *  rule holds everywhere. */
+      const setOne = (
+        orgId: string,
+        actor: string,
+        roleId: string,
+        resourceType: AccessResourceType,
+        effect: "allow" | "deny",
+        actions: ReadonlyArray<AccessAction | typeof ACTION_ALL>,
+      ) =>
+        actions.length === 0
+          ? sql`
+              DELETE FROM access_defaults
+              WHERE org_id = ${orgId} AND role_id = ${roleId}
+                AND resource_type = ${resourceType} AND effect = ${effect}`
+          : sql`
+              INSERT INTO access_defaults
+                (org_id, role_id, resource_type, effect, actions, created_by)
+              VALUES (${orgId}, ${roleId}, ${resourceType}, ${effect},
+                      ${[...actions]}, ${actor})
+              ON CONFLICT (role_id, resource_type, effect)
+              DO UPDATE SET actions = EXCLUDED.actions, updated_at = now()`
+
       /**
-       * Set one role's template for one type. Empty `actions` clears it — that is how
-       * "a new concept grants this role nothing" is expressed, and it is a delete
-       * rather than an empty array so the absent-means-nothing rule holds everywhere.
+       * Set one role's template for one type — allow and deny together, as the tri-
+       * state default row edits them. Empty `allow` clears the allow side; empty
+       * `deny` clears the deny side; either, both, or neither may be non-empty.
        */
       const set = (input: {
         readonly roleId: string
         readonly resourceType: AccessResourceType
-        readonly actions: ReadonlyArray<AccessAction | typeof ACTION_ALL>
+        readonly allow: ReadonlyArray<AccessAction | typeof ACTION_ALL>
+        readonly deny: ReadonlyArray<AccessAction | typeof ACTION_ALL>
       }) =>
         Effect.gen(function* () {
           const { orgId, actor } = yield* OrgContext
-          if (input.actions.length === 0) {
-            yield* sql`
-              DELETE FROM access_defaults
-              WHERE org_id = ${orgId} AND role_id = ${input.roleId}
-                AND resource_type = ${input.resourceType} AND effect = 'allow'`
-          } else {
-            yield* sql`
-              INSERT INTO access_defaults
-                (org_id, role_id, resource_type, effect, actions, created_by)
-              VALUES (${orgId}, ${input.roleId}, ${input.resourceType}, 'allow',
-                      ${[...input.actions]}, ${actor})
-              ON CONFLICT (role_id, resource_type, effect)
-              DO UPDATE SET actions = EXCLUDED.actions, updated_at = now()`
-          }
+          yield* setOne(orgId, actor, input.roleId, input.resourceType, "allow", input.allow)
+          yield* setOne(orgId, actor, input.roleId, input.resourceType, "deny", input.deny)
           // No policy bump: templates are not rules and no resolved PolicySet
           // contains them. Bumping here would invalidate every cached policy in the
           // org for a change that cannot affect a single decision.
@@ -141,33 +167,62 @@ export class AccessDefaultsService extends Effect.Service<AccessDefaultsService>
           const { orgId, actor } = yield* OrgContext
           if (!isTemplated(input.resourceType)) return 0
           const rows = yield* sql<DefaultRow>`
-            SELECT d.role_id, d.resource_type, d.actions
+            SELECT d.role_id, d.resource_type, d.effect, d.actions
             FROM access_defaults d
             JOIN access_roles r ON r.id = d.role_id
             WHERE d.org_id = ${orgId} AND d.resource_type = ${input.resourceType}
-              AND d.effect = 'allow' AND r.full_access = false`
+              AND r.full_access = false`
           const override = new Map((input.viewFor ?? []).map((v) => [v.roleId, v.view]))
-          for (const base of rows) {
-            const want = override.get(base.role_id)
-            const actions =
-              want === undefined
-                ? base.actions
-                : want
-                  ? [...new Set([...base.actions, "view"])]
-                  : base.actions.filter((a) => a !== "view")
-            // A role left with nothing gets no rule at all — absence IS "no".
-            if (actions.length === 0) continue
-            const row = { ...base, actions }
-            yield* sql`
-              INSERT INTO access_rules
-                (org_id, role_id, effect, actions, resource_type, resource_id,
-                 concept_id, created_by)
-              VALUES (${orgId}, ${row.role_id}, 'allow', ${[...row.actions]},
-                      ${input.resourceType}, ${input.resourceId ?? null},
-                      ${input.conceptId ?? null}, ${actor})`
+          // Group by role: a role may hold both an allow row and a deny row for this
+          // type, and the two must be resolved together — `want: true` from the
+          // create form has to win over a deny template, not just add to an allow one
+          // that may not exist.
+          const byRole = new Map<
+            string,
+            { allow: ReadonlyArray<string>; deny: ReadonlyArray<string> }
+          >()
+          for (const r of rows) {
+            const cur = byRole.get(r.role_id) ?? { allow: [], deny: [] }
+            byRole.set(r.role_id, { ...cur, [r.effect]: r.actions })
           }
-          if (rows.length > 0) yield* policies.bump(orgId)
-          return rows.length
+          // The override can name a role the template says nothing about at all —
+          // still needs an entry, or "make this role able to view it" from the
+          // create form would silently do nothing for a role with no template row.
+          for (const roleId of override.keys()) {
+            if (!byRole.has(roleId)) byRole.set(roleId, { allow: [], deny: [] })
+          }
+          let inserted = 0
+          for (const [roleId, base] of byRole) {
+            const want = override.get(roleId)
+            // `want: true` overrides the deny side too — an explicit "this role may
+            // view it" in the create form beats a deny template the same way it adds
+            // to an allow one.
+            const deny = want === true ? base.deny.filter((a) => a !== "view") : base.deny
+            const allow =
+              want === undefined
+                ? base.allow
+                : want
+                  ? [...new Set([...base.allow, "view"])]
+                  : base.allow.filter((a) => a !== "view")
+            for (const [effect, actions] of [
+              ["allow", allow],
+              ["deny", deny],
+            ] as const) {
+              // A role left with nothing on this side gets no rule at all — absence
+              // IS "no", on both sides.
+              if (actions.length === 0) continue
+              yield* sql`
+                INSERT INTO access_rules
+                  (org_id, role_id, effect, actions, resource_type, resource_id,
+                   concept_id, created_by)
+                VALUES (${orgId}, ${roleId}, ${effect}, ${[...actions]},
+                        ${input.resourceType}, ${input.resourceId ?? null},
+                        ${input.conceptId ?? null}, ${actor})`
+              inserted++
+            }
+          }
+          if (inserted > 0) yield* policies.bump(orgId)
+          return inserted
         }).pipe(Effect.orDie)
 
       /**

@@ -87,10 +87,16 @@ export function Concepts() {
   // it" is not a state they can be in, and a disabled checkbox for each would just be
   // noise on a create form.
   const scopedRoles = (roles.data ?? []).filter((r) => !r.fullAccess)
-  const templateView = (roleId: string) =>
-    (accessDefaults.data ?? []).some(
-      (d) => d.roleId === roleId && d.resourceType === "concept" && d.actions.includes("view"),
+  // A deny template beats an allow one for the same role — same fold as the grid
+  // (`PermissionMatrix.stateFrom`) — so a role whose default is "deny view" reads
+  // as unchecked here even if it also somehow holds an allow row.
+  const templateView = (roleId: string) => {
+    const mine = (accessDefaults.data ?? []).filter(
+      (d) => d.roleId === roleId && d.resourceType === "concept",
     )
+    if (mine.some((d) => d.effect === "deny" && d.actions.includes("view"))) return false
+    return mine.some((d) => d.effect === "allow" && d.actions.includes("view"))
+  }
   const mayView = (roleId: string) => access[roleId] ?? templateView(roleId)
 
   const createConcept = useMutation({

@@ -135,12 +135,35 @@ describe("stateFrom", () => {
     expect(out.size).toBe(0)
   })
 
-  it("the creation template (access_defaults) seeds the DEFAULT_ROW, allow-only", () => {
+  it("the creation template (access_defaults) seeds the DEFAULT_ROW, allow effect", () => {
     const defaults: ReadonlyArray<MatrixDefault> = [
-      { roleId: "role-1", resourceType: "concept", actions: ["view"] },
+      { roleId: "role-1", resourceType: "concept", effect: "allow", actions: ["view"] },
     ]
     const out = stateFrom([], defaults, "concept", [...ACTIONS], "resource")
     expect(out.get(key(DEFAULT_ROW, "view"))).toBe("allow")
+  })
+
+  it("a deny template also seeds the DEFAULT_ROW", () => {
+    const defaults: ReadonlyArray<MatrixDefault> = [
+      { roleId: "role-1", resourceType: "concept", effect: "deny", actions: ["view"] },
+    ]
+    const out = stateFrom([], defaults, "concept", [...ACTIONS], "resource")
+    expect(out.get(key(DEFAULT_ROW, "view"))).toBe("deny")
+  })
+
+  it("a deny template beats an allow template for the same role — deny folds first", () => {
+    const defaults: ReadonlyArray<MatrixDefault> = [
+      {
+        roleId: "role-1",
+        resourceType: "concept",
+        effect: "allow",
+        actions: ["view", "configure"],
+      },
+      { roleId: "role-1", resourceType: "concept", effect: "deny", actions: ["view"] },
+    ]
+    const out = stateFrom([], defaults, "concept", [...ACTIONS], "resource")
+    expect(out.get(key(DEFAULT_ROW, "view"))).toBe("deny")
+    expect(out.get(key(DEFAULT_ROW, "configure"))).toBe("allow")
   })
 
   it("an untargeted deny is NOT folded in here — that's blanketDenyCells' job", () => {

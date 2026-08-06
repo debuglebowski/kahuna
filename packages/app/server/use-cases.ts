@@ -2179,11 +2179,13 @@ export const listAccessDefaults: UC<unknown> = Effect.flatMap(AccessDefaultsServ
   d.list(),
 )
 
-/** Set one role's template for one type. Empty `actions` clears it. */
+/** Set one role's template for one type — allow and deny together. Empty clears
+ *  that side. */
 export const setAccessDefault = (input: {
   readonly roleId: string
   readonly resourceType: AccessResourceType
-  readonly actions: ReadonlyArray<AccessAction>
+  readonly allow: ReadonlyArray<AccessAction>
+  readonly deny: ReadonlyArray<AccessAction>
 }): UC<{ readonly ok: boolean }> =>
   Effect.flatMap(AccessDefaultsService, (d) => d.set(input)).pipe(Effect.as({ ok: true }))
 

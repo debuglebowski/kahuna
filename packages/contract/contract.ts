@@ -2668,26 +2668,30 @@ export class KingsmakerRpcs extends RpcGroup.make(
     success: Schema.Struct({ id: Schema.String }),
     error: RpcError,
   }),
-  /** THE CREATION TEMPLATE: what a NEWLY created resource of each type grants each
-   *  role. Not a rule — nothing consults it at request time; it is copied into real
-   *  rules when a concept/dashboard/view/automation is created. */
+  /** THE CREATION TEMPLATE: what a NEWLY created resource of each type grants (or
+   *  refuses) each role. Not a rule — nothing consults it at request time; it is
+   *  copied into real rules when a concept/dashboard/view/automation is created. */
   Rpc.make("listAccessDefaults", {
     success: Schema.Array(
       Schema.Struct({
         roleId: Schema.String,
         resourceType: AccessResourceTypeOut,
+        effect: Schema.Literal("allow", "deny"),
         actions: Schema.Array(Schema.String),
       }),
     ),
     error: RpcError,
   }),
-  /** Set one role's template for one type. Empty `actions` clears it — a new
-   *  resource then grants that role nothing. */
+  /** Set one role's template for one type — both the allow and the deny side, as
+   *  the tri-state default row edits them together. Empty `allow` clears the
+   *  allow template (a new resource then grants that role nothing by default);
+   *  empty `deny` clears the deny template. */
   Rpc.make("setAccessDefault", {
     payload: {
       roleId: Schema.String,
       resourceType: AccessResourceType,
-      actions: Schema.Array(AccessActionName),
+      allow: Schema.Array(AccessActionName),
+      deny: Schema.Array(AccessActionName),
     },
     success: Schema.Struct({ ok: Schema.Boolean }),
     error: RpcError,

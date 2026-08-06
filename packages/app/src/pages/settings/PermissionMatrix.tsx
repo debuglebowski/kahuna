@@ -59,10 +59,6 @@ const STATES: ReadonlyArray<{
   { id: "inherit", label: "Inherit", tip: "No rule here — the cascade decides" },
   { id: "allow", label: "Allow", tip: "Allowed by this role" },
 ]
-/** The default row has no deny concept (`access_defaults` is allow-only — see
- *  `AccessDefaultsService`), so its segments drop that third option entirely
- *  rather than offer a control that would silently do nothing. */
-const DEFAULT_ROW_STATES = STATES.filter((s) => s.id !== "deny")
 
 /** A rule as the grid consumes it. */
 export interface MatrixRule {
@@ -75,10 +71,12 @@ export interface MatrixRule {
   readonly condition: unknown
 }
 
-/** One row of `access_defaults` as the grid consumes it. */
+/** One row of `access_defaults` as the grid consumes it — ONE effect; a role may
+ *  hold both an allow row and a deny row for the same type. */
 export interface MatrixDefault {
   readonly roleId: string
   readonly resourceType: string
+  readonly effect: "allow" | "deny"
   readonly actions: ReadonlyArray<string>
 }
 
@@ -137,11 +135,20 @@ export const stateFrom = (
 ): Map<string, CellState> => {
   const out = new Map<string, CellState>()
   // The template row first: it comes from `access_defaults`, a different table, and
-  // is deliberately NOT a rule — see the header.
+  // is deliberately NOT a rule — see the header. Deny before allow, same fold as
+  // the rules below: a role's own deny template beats its own allow template.
   for (const a of defaults) {
-    if (a.resourceType !== resourceType) continue
+    if (a.resourceType !== resourceType || a.effect !== "deny") continue
     for (const action of actions) {
       if (!a.actions.includes(action) && !a.actions.includes("*")) continue
+      out.set(key(DEFAULT_ROW, action), "deny")
+    }
+  }
+  for (const a of defaults) {
+    if (a.resourceType !== resourceType || a.effect !== "allow") continue
+    for (const action of actions) {
+      if (!a.actions.includes(action) && !a.actions.includes("*")) continue
+      if (out.get(key(DEFAULT_ROW, action)) === "deny") continue
       out.set(key(DEFAULT_ROW, action), "allow")
     }
   }
@@ -223,7 +230,6 @@ function StateGroup({
   state,
   onSelect,
   describe,
-  states = STATES,
 }: {
   state: CellState
   onSelect: (next: CellState) => void
@@ -231,12 +237,10 @@ function StateGroup({
    *  tooltip on purpose: a screen reader has no column header or row label to hand,
    *  so the name is the only place the target can be stated. */
   describe: (s: (typeof STATES)[number]) => string
-  /** The default row drops Deny — see `DEFAULT_ROW_STATES`. */
-  states?: ReadonlyArray<(typeof STATES)[number]>
 }) {
   return (
     <fieldset className="inline-flex overflow-hidden rounded-md border border-border/70 bg-background">
-      {states.map((s) => {
+      {STATES.map((s) => {
         const Icon = ICON[s.id]
         const on = state === s.id
         return (
@@ -334,13 +338,20 @@ export function PermissionMatrix({
         // An all-Inherit row needs no rule at all.
         .filter((e) => e.allow.length > 0 || e.deny.length > 0)
       // The DEFAULT row is not a rule — it is the creation template, written to its
-      // own table precisely so nothing consults it at request time. Allow-only.
-      const defaultActions = actions
+      // own table precisely so nothing consults it at request time. Tri-state, same
+      // as any other row: a deny here beats an allow this role would otherwise
+      // inherit on a resource created from now on.
+      const defaultAllow = actions
         .filter((a) => draft.get(key(DEFAULT_ROW, a.id)) === "allow")
+        .map((a) => a.id)
+      const defaultDeny = actions
+        .filter((a) => draft.get(key(DEFAULT_ROW, a.id)) === "deny")
         .map((a) => a.id)
       return api
         .setScopedRules({ roleId, resourceType, scopeBy, entries })
-        .then(() => api.setAccessDefault({ roleId, resourceType, actions: defaultActions }))
+        .then(() =>
+          api.setAccessDefault({ roleId, resourceType, allow: defaultAllow, deny: defaultDeny }),
+        )
     },
     onSuccess: () => {
       setDirty(false)
@@ -428,7 +439,8 @@ export function PermissionMatrix({
                 says what a resource created LATER starts with, and is copied into real
                 rules at that moment. Pinned first and tinted because it is the one row
                 whose effect is in the future, which is easy to misread as "and also
-                everything below". Allow-only: `access_defaults` has no deny concept. */}
+                everything below". Tri-state like any other row: Deny here beats an
+                allow this role would otherwise inherit on a future resource. */}
             <TableRow className="border-b-2 border-border bg-muted/40 hover:bg-muted/40">
               <TableCell className="font-semibold text-foreground">
                 Default value
@@ -443,7 +455,6 @@ export function PermissionMatrix({
                       state={draft.get(key(DEFAULT_ROW, a.id)) ?? "inherit"}
                       onSelect={(next) => setCell(DEFAULT_ROW, a.id, next)}
                       describe={(st) => `${st.label} ${a.label.toLowerCase()} by default`}
-                      states={DEFAULT_ROW_STATES}
                     />
                   </div>
                 </TableCell>

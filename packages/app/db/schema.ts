@@ -1099,9 +1099,10 @@ export const accessDefaults = pgTable(
     // 'concept' | 'record' | 'dashboard' | 'view' | 'automation'. Only the five types
     // with a grid: the rest keep their existing defaults and are edited under "Other".
     resourceType: text("resource_type").notNull(),
-    // 'allow' | 'deny'. Deny is storable but is NOT what an empty grid cell means —
-    // "not allowed" is the ABSENCE of an allow, because a deny also beats per-record
-    // shares and would silently kill sharing. See engine/domain/access.ts.
+    // 'allow' | 'deny'. An empty grid cell still means the ABSENCE of an allow, not
+    // a stored deny row — deny is for the rarer case where the role needs to beat
+    // what it would otherwise inherit (`based_on`, or another role held earlier).
+    // See engine/services/AccessDefaultsService.ts.
     effect: text("effect").notNull().default("allow"),
     actions: text("actions").array().notNull(),
     createdBy: text("created_by"),

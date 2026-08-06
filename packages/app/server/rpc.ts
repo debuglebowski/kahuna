@@ -1032,14 +1032,19 @@ const HandlersLive = ServerRpcs.toLayer({
       uc.setScopedRules({ roleId, resourceType, scopeBy, entries }),
     ),
   listAccessDefaults: () =>
-    as<ReadonlyArray<{ roleId: string; resourceType: string; actions: ReadonlyArray<string> }>>(
-      uc.listAccessDefaults,
-    ),
-  setAccessDefault: ({ roleId, resourceType, actions }) =>
+    as<
+      ReadonlyArray<{
+        roleId: string
+        resourceType: string
+        effect: "allow" | "deny"
+        actions: ReadonlyArray<string>
+      }>
+    >(uc.listAccessDefaults),
+  setAccessDefault: ({ roleId, resourceType, allow, deny }) =>
     adminOn<{ readonly ok: boolean }>(
       "configure",
       { type: "role" },
-      uc.setAccessDefault({ roleId, resourceType, actions }),
+      uc.setAccessDefault({ roleId, resourceType, allow, deny }),
     ),
   removeRule: ({ ruleId }) =>
     adminOn<{ readonly id: string }>("configure", { type: "role" }, uc.removeRule(ruleId)),

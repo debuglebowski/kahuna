@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto"
 import { PgClient } from "@effect/sql-pg"
 import { describe, expect, it } from "@effect/vitest"
 import { Effect } from "effect"
+import { decide } from "../domain/access"
 import { AccessDefaultsService } from "../services/AccessDefaultsService"
 import { AccessRoleService } from "../services/AccessRoleService"
 import { ConceptService } from "../services/ConceptService"
@@ -42,7 +43,8 @@ describe("access defaults — the creation template", () => {
       yield* defaults.set({
         roleId: member!.id,
         resourceType: "concept",
-        actions: ["view", "edit", "delete"],
+        allow: ["view", "edit", "delete"],
+        deny: [],
       })
       const after = yield* policies.resolve(org, ACTOR)
 
@@ -64,7 +66,8 @@ describe("access defaults — the creation template", () => {
       yield* defaults.set({
         roleId: member!.id,
         resourceType: "concept",
-        actions: ["view", "edit"],
+        allow: ["view", "edit"],
+        deny: [],
       })
 
       const concept = yield* concepts.create({ name: `Deal ${randomUUID().slice(0, 8)}` })
@@ -93,7 +96,12 @@ describe("access defaults — the creation template", () => {
 
       yield* roles.ensureBuiltins
       const member = yield* roles.getByKey("member")
-      yield* defaults.set({ roleId: member!.id, resourceType: "record", actions: ["view"] })
+      yield* defaults.set({
+        roleId: member!.id,
+        resourceType: "record",
+        allow: ["view"],
+        deny: [],
+      })
 
       const concept = yield* concepts.create({ name: `Deal ${randomUUID().slice(0, 8)}` })
 
@@ -155,8 +163,13 @@ describe("access defaults — the creation template", () => {
 
       yield* roles.ensureBuiltins
       const member = yield* roles.getByKey("member")
-      yield* defaults.set({ roleId: member!.id, resourceType: "concept", actions: ["view"] })
-      yield* defaults.set({ roleId: member!.id, resourceType: "record", actions: ["view"] })
+      yield* defaults.set({
+        roleId: member!.id,
+        resourceType: "concept",
+        allow: ["view"],
+        deny: [],
+      })
+      yield* defaults.set({ roleId: member!.id, resourceType: "record", allow: ["view"], deny: [] })
 
       const concept = yield* concepts.create({ name: `Deal ${randomUUID().slice(0, 8)}` })
       yield* concepts.purge(concept.id)
@@ -268,4 +281,104 @@ describe("access defaults — the creation template", () => {
       expect((yield* defaults.list()).filter((d) => d.roleId === bare.id).length).toBe(0)
     }).pipe(Effect.provide(testLayer(org, ACTOR)))
   })
+
+  /**
+   * ── THE DENY TEMPLATE ─────────────────────────────────────────────────────
+   *
+   * A deny default materializes into a targeted DENY rule on the new resource, the
+   * same as an admin adding one by hand right after creation — see
+   * `AccessDefaultsService`'s "WHY DENY IS A REAL TEMPLATE" header.
+   */
+  it.effect("a deny template materializes as a deny rule on the new resource", () => {
+    const org = newOrgId()
+    return Effect.gen(function* () {
+      const roles = yield* AccessRoleService
+      const defaults = yield* AccessDefaultsService
+      const concepts = yield* ConceptService
+      const sql = yield* PgClient.PgClient
+      yield* roles.ensureBuiltins
+      const member = yield* roles.getByKey("member")
+
+      yield* defaults.set({
+        roleId: member!.id,
+        resourceType: "concept",
+        allow: ["edit"],
+        deny: ["view"],
+      })
+      const concept = yield* concepts.create({ name: `Deal ${randomUUID().slice(0, 8)}` })
+
+      const rows = yield* sql<{ readonly effect: string; readonly actions: ReadonlyArray<string> }>`
+        SELECT effect, actions FROM access_rules
+        WHERE org_id = ${org} AND role_id = ${member!.id}
+          AND resource_type = 'concept' AND resource_id = ${concept.id}
+        ORDER BY effect`
+      expect(rows.map((r) => r.effect)).toEqual(["allow", "deny"])
+      expect(rows.find((r) => r.effect === "allow")?.actions).toEqual(["edit"])
+      expect(rows.find((r) => r.effect === "deny")?.actions).toEqual(["view"])
+    }).pipe(Effect.provide(testLayer(org, ACTOR)))
+  })
+
+  it.effect("list returns both effects for a role that holds an allow and a deny template", () => {
+    const org = newOrgId()
+    return Effect.gen(function* () {
+      const roles = yield* AccessRoleService
+      const defaults = yield* AccessDefaultsService
+      yield* roles.ensureBuiltins
+      const member = yield* roles.getByKey("member")
+
+      yield* defaults.set({
+        roleId: member!.id,
+        resourceType: "dashboard",
+        allow: ["edit"],
+        deny: ["view"],
+      })
+
+      const mine = (yield* defaults.list()).filter(
+        (d) => d.roleId === member!.id && d.resourceType === "dashboard",
+      )
+      expect(mine.length).toBe(2)
+      expect(mine.find((d) => d.effect === "allow")?.actions).toEqual(["edit"])
+      expect(mine.find((d) => d.effect === "deny")?.actions).toEqual(["view"])
+    }).pipe(Effect.provide(testLayer(org, ACTOR)))
+  })
+
+  /**
+   * THE MOTIVATING CASE. A role's own deny template must beat what it would
+   * otherwise inherit — here, an allow the role only has through a `based_on`
+   * parent — on a resource that did not exist when either template was set. This
+   * is the whole reason a deny template exists: absence can't subtract from a
+   * lower-precedence tier, only an explicit deny in the role's OWN tier can (see
+   * `role-based-on.test.ts`'s "the role's own value always beats what it inherits").
+   */
+  it.effect(
+    "a role's own deny template beats an allow it only inherits, on a brand-new resource",
+    () => {
+      const org = newOrgId()
+      const actor = "user-deny-template"
+      return Effect.gen(function* () {
+        const roles = yield* AccessRoleService
+        const defaults = yield* AccessDefaultsService
+        const concepts = yield* ConceptService
+        const policies = yield* PolicyService
+
+        const base = yield* roles.create({ name: "Base" })
+        const child = yield* roles.create({ name: "Child" })
+        yield* roles.update({ id: child.id, basedOn: base.id })
+        yield* roles.assign(child.id, actor)
+
+        yield* defaults.set({ roleId: base.id, resourceType: "concept", allow: ["view"], deny: [] })
+        yield* defaults.set({
+          roleId: child.id,
+          resourceType: "concept",
+          allow: [],
+          deny: ["view"],
+        })
+
+        const concept = yield* concepts.create({ name: `Deal ${randomUUID().slice(0, 8)}` })
+        const policy = yield* policies.resolve(org, actor)
+        const outcome = decide(policy, "view", { type: "concept", id: concept.id }, false)
+        expect(outcome).toBe(false)
+      }).pipe(Effect.provide(testLayer(org, actor)))
+    },
+  )
 })

@@ -1365,7 +1365,8 @@ export const api = {
   setAccessDefault: (input: {
     roleId: string
     resourceType: AccessResourceType
-    actions: ReadonlyArray<AccessActionName>
+    allow: ReadonlyArray<AccessActionName>
+    deny: ReadonlyArray<AccessActionName>
   }) => call((c) => c.setAccessDefault(input)),
   setScopedRules: (input: {
     roleId: string
