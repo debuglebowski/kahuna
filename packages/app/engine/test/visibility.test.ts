@@ -2,12 +2,7 @@ import { randomUUID } from "node:crypto"
 import { describe, expect, it } from "@effect/vitest"
 import { Effect } from "effect"
 import { type AccessRule, emptyPolicy, type PolicySet, unrestrictedPolicy } from "../domain/access"
-import {
-  canReadConcept,
-  canReadRestricted,
-  hiddenFieldIds,
-  projectState,
-} from "../domain/visibility"
+import { canReadConcept } from "../domain/visibility"
 import { ConceptService } from "../services/ConceptService"
 import { FieldService } from "../services/FieldService"
 import type { OrgContext } from "../services/OrgContext"
@@ -41,42 +36,7 @@ const seedRestricted = () =>
   })
 
 describe("concept read visibility", () => {
-  it("who may read restricted material is decided by RULES, not by a tier", () => {
-    const scope = (policy: PolicySet | undefined, role: "member" | "system" = "member") => ({
-      orgId: "o",
-      actor: "u",
-      role,
-      policy,
-    })
-    const orgConfigure: PolicySet = {
-      ...emptyPolicy("u"),
-      rules: [
-        {
-          id: "r",
-          roleId: "role",
-          actorId: null,
-          effect: "allow",
-          actions: ["configure"],
-          resourceType: "org",
-          resourceId: null,
-          conceptId: null,
-          condition: null,
-        } as AccessRule,
-      ],
-    }
-    // Holding nothing — or holding the ordinary member grant, which covers the
-    // templated types but never `org` — reads no restricted material.
-    expect(canReadRestricted(scope(emptyPolicy("u")))).toBe(false)
-    expect(canReadRestricted(scope(ordinaryMember("u")))).toBe(false)
-    // What "admin" used to mean, said in the model that decides it now.
-    expect(canReadRestricted(scope(orgConfigure))).toBe(true)
-    // The owner bypass and the engine itself.
-    expect(canReadRestricted(scope(unrestrictedPolicy("u")))).toBe(true)
-    expect(canReadRestricted(scope(undefined, "system"))).toBe(true)
-    // No policy at all grants nothing — the same fail-closed polarity as everywhere.
-    expect(canReadRestricted(scope(undefined))).toBe(false)
-
-    // `canReadConcept` is the OLD tier answer, kept only for the migration proof.
+  it("canReadConcept: the OLD tier answer, kept only for the migration proof", () => {
     expect(canReadConcept("visible", "member")).toBe(true)
     expect(canReadConcept("admin", "member")).toBe(false)
     expect(canReadConcept("admin", "owner")).toBe(true)
@@ -261,137 +221,6 @@ describe("concept read visibility", () => {
     )
     expect(asMember.listed).not.toContain(created.id)
     expect(asMember.byId._tag).toBe("Left")
-  })
-})
-
-describe("field read visibility", () => {
-  /** A concept with one open + one restricted field, and a record holding both. */
-  const seedFields = () =>
-    Effect.gen(function* () {
-      const concepts = yield* ConceptService
-      const fields = yield* FieldService
-      const recordVersions = yield* RecordService
-      const concept = yield* concepts.create({ name: `Staff ${randomUUID().slice(0, 6)}` })
-      const name = yield* fields.addField({ conceptId: concept.id, name: "Name", kind: "text" })
-      const salary = yield* fields.addField({ conceptId: concept.id, name: "Salary", kind: "text" })
-      const rec = yield* recordVersions.create({
-        conceptId: concept.id,
-        fields: { [name.id]: "Ada", [salary.id]: "250000" },
-      })
-      yield* fields.setVisibility(salary.id, "admin")
-      return { conceptId: concept.id, nameId: name.id, salaryId: salary.id, rec }
-    })
-
-  it("the projection drops only hidden keys, and is identity when nothing hides", () => {
-    const defs = [
-      { id: "a", visibility: "visible" as const },
-      { id: "b", visibility: "admin" as const },
-    ]
-    const hidden = hiddenFieldIds(defs, false)
-    expect([...hidden]).toEqual(["b"])
-    expect(projectState({ a: 1, b: 2 }, hidden)).toEqual({ a: 1 })
-    // A privileged caller gets the SAME object back — no needless copying.
-    const none = hiddenFieldIds(defs, true)
-    const state = { a: 1, b: 2 }
-    expect(projectState(state, none)).toBe(state)
-  })
-
-  it("THE DATA-LOSS GUARD: a member's edit must not erase a hidden field", async () => {
-    // This is why the projection lives at the use-case boundary and NOT in
-    // `toRecordVersion`: `update` reads current state through the mapper, folds the patch
-    // onto it, and writes the result back. A filter there would delete the salary.
-    const orgId = newOrgId()
-    const f = await Effect.runPromise(
-      seedFields().pipe(Effect.provide(testLayer(orgId, "seed", "system"))),
-    )
-
-    const updated = await Effect.runPromise(
-      Effect.gen(function* () {
-        const recordVersions = yield* RecordService
-        const cur = yield* recordVersions.get(f.rec.id)
-        return yield* recordVersions.update({
-          recordVersionId: f.rec.id,
-          expectedVersion: cur.version,
-          patch: { [f.nameId]: "Grace" },
-        })
-      }).pipe(
-        Effect.provide(testLayer(orgId, "member-user", "member", ordinaryMember("member-user"))),
-      ),
-    )
-    expect(updated.state[f.nameId]).toBe("Grace")
-
-    // Read it back as SYSTEM: the hidden value must still be there.
-    const raw = await Effect.runPromise(
-      Effect.gen(function* () {
-        const recordVersions = yield* RecordService
-        return (yield* recordVersions.get(f.rec.id)).state
-      }).pipe(Effect.provide(testLayer(orgId, "seed", "system"))),
-    )
-    expect(raw[f.salaryId]).toBe("250000")
-    expect(raw[f.nameId]).toBe("Grace")
-  })
-
-  it("THE ENFORCEMENT GUARD: a required hidden field still blocks a create", async () => {
-    // Why the filter is not in `FieldService.listFields`: `checkRequired` iterates
-    // those same defs, so filtering them would silently stop enforcing requirements.
-    const orgId = newOrgId()
-    const setup = await Effect.runPromise(
-      Effect.gen(function* () {
-        const concepts = yield* ConceptService
-        const fields = yield* FieldService
-        const c = yield* concepts.create({ name: `Req ${randomUUID().slice(0, 6)}` })
-        const secret = yield* fields.addField({
-          conceptId: c.id,
-          name: "Secret",
-          kind: "text",
-          config: { requirement: "required" },
-        })
-        yield* fields.setVisibility(secret.id, "admin")
-        return { conceptId: c.id, secretId: secret.id }
-      }).pipe(Effect.provide(testLayer(orgId, "seed", "system"))),
-    )
-
-    // A real policy, not a bare role: `create` now gates on being able to READ the
-    // concept first (see `RecordService.create`), so a policy-less scope would
-    // fail with `ConceptNotFound` before ever reaching the field check below.
-    const denied = await Effect.runPromise(
-      Effect.gen(function* () {
-        const recordVersions = yield* RecordService
-        return yield* Effect.either(
-          recordVersions.create({ conceptId: setup.conceptId, fields: {} }),
-        )
-      }).pipe(
-        Effect.provide(testLayer(orgId, "member-user", "member", ordinaryMember("member-user"))),
-      ),
-    )
-    expect(denied._tag).toBe("Left")
-    if (denied._tag === "Left")
-      expect((denied.left as { _tag: string })._tag).toBe("FieldValidationError")
-  })
-
-  it("rebuild after a member-scoped read leaves state byte-identical", async () => {
-    const orgId = newOrgId()
-    const f = await Effect.runPromise(
-      seedFields().pipe(Effect.provide(testLayer(orgId, "seed", "system"))),
-    )
-    // A member reads it (which masks), then the projection is rebuilt from events.
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        const recordVersions = yield* RecordService
-        yield* recordVersions.get(f.rec.id)
-      }).pipe(
-        Effect.provide(testLayer(orgId, "member-user", "member", ordinaryMember("member-user"))),
-      ),
-    )
-    const rebuilt = await Effect.runPromise(
-      Effect.gen(function* () {
-        const recordVersions = yield* RecordService
-        yield* recordVersions.rebuild(f.rec.id)
-        return (yield* recordVersions.get(f.rec.id)).state
-      }).pipe(Effect.provide(testLayer(orgId, "seed", "system"))),
-    )
-    expect(rebuilt[f.salaryId]).toBe("250000")
-    expect(rebuilt[f.nameId]).toBe("Ada")
   })
 })
 

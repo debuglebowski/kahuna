@@ -59,14 +59,7 @@ export {
   richTextWalk,
 } from "./domain/richtext"
 export * from "./domain/types"
-export {
-  canReadConcept,
-  canReadRestricted,
-  hiddenFieldIds,
-  projectState,
-  scopeCanReadConcept,
-  scopeHiddenFieldIds,
-} from "./domain/visibility"
+export { canReadConcept, scopeCanReadConcept } from "./domain/visibility"
 export * from "./errors"
 export { EngineLive, type EngineServices } from "./layers"
 export { foldEvents, foldUntil } from "./projection/fold"

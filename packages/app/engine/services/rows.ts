@@ -96,7 +96,6 @@ export interface FieldRow {
   readonly formula: string | null
   readonly config: unknown
   readonly managed_by: string | null
-  readonly visibility: string | null
   readonly icon: string | null
   readonly position: number | string
   readonly archived_at: Date | null
@@ -213,8 +212,8 @@ const toDashboardBody = (raw: unknown): DashboardBody => {
  * Narrow a `visibility` column to the typed union, failing CLOSED.
  *
  * Only the three known values pass through; anything else (a future 'team:eng', a
- * typo) becomes 'admin' — restrictive — rather than org-visible. Shared by concepts,
- * fields, and the raw-column read gates in Record version/RelationService, so no two paths
+ * typo) becomes 'admin' — restrictive — rather than org-visible. Shared by concepts
+ * and the raw-column read gates in Record version/RelationService, so no two paths
  * can coerce differently.
  */
 export const toVisibility = (raw: string | null): ConceptVisibility =>
@@ -279,8 +278,6 @@ export const toField = (r: FieldRow): Field => ({
   formula: r.formula,
   config: toFieldConfig(r.config),
   managedBy: r.managed_by,
-  // Fail CLOSED on anything unrecognised, same rule as `toConcept.visibility`.
-  visibility: toVisibility(r.visibility),
   icon: r.icon,
   position: Number(r.position),
   archivedAt: r.archived_at,

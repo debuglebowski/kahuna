@@ -222,10 +222,6 @@ export const Field = Schema.Struct({
    *  null for a user-added field. On a managed concept, synced fields carry the
    *  kind while user fields stay null — so members may add + edit their own. */
   managedBy: Schema.NullOr(Schema.String),
-  /** Who may READ this field's values. A member never receives a def whose value
-   *  they can't read — it is filtered out of `listFields` entirely — so a member
-   *  only ever sees `"visible"` here. Set via `setFieldVisibility` (admin-only). */
-  visibility: ConceptVisibility,
   /** Display glyph: literal emoji or `lucide:Name` (see `Concept.icon`). */
   icon: Schema.NullOr(Schema.String),
   /** Display order within the concept (ascending); ties broken by name. */
@@ -1441,11 +1437,9 @@ export const AccessResourceType = Schema.Literal(
   "org",
   "concept",
   "record",
-  "field",
   "dashboard",
   "view",
   "automation",
-  "bucket",
   "task",
   "note",
   "member",
@@ -1666,14 +1660,6 @@ export class KingsmakerRpcs extends RpcGroup.make(
   // part of `updateConcept`'s batched patch: it is a security control, so it should
   // not ride along with a name/description save (nor be silently re-sent by an
   // editor that loaded the concept before the setting changed).
-  // Set who may READ one field's values (admin-gated, immediate). Concept-level
-  // visibility hides a whole concept; this is for the case where the concept must
-  // stay readable but one field must not.
-  Rpc.make("setFieldVisibility", {
-    payload: { id: Schema.String, visibility: ConceptVisibility },
-    success: Field,
-    error: RpcError,
-  }),
   Rpc.make("setConceptVisibility", {
     payload: { id: Schema.String, visibility: ConceptVisibility },
     success: Concept,

@@ -527,9 +527,6 @@ export const api = {
     call((c) => c.setConceptTitleField({ id, titleFieldId })),
   /** Set who may READ a concept's records. Admin-only; applied immediately (not
    *  part of the batched `updateConcept` save). */
-  /** Set who may READ one field's values. Admin-only; applied immediately. */
-  setFieldVisibility: (id: string, visibility: "visible" | "admin") =>
-    call((c) => c.setFieldVisibility({ id, visibility })),
   setConceptVisibility: (id: string, visibility: "visible" | "admin") =>
     call((c) => c.setConceptVisibility({ id, visibility })),
   /** Toggle single-record mode. `fields` seeds the record created when switching

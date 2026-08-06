@@ -185,48 +185,22 @@ describe("access conditions", () => {
 describe("the presets are reasonable — every grant is decided somewhere", () => {
   const byKey = (key: string) => BUILTIN_ROLES.find((r) => r.key === key)!
 
-  it("THE NO-DEAD-GRANTS GUARD: member holds no rule on org/role/member/automation/field", () => {
+  it("THE NO-DEAD-GRANTS GUARD: member holds no rule on org/role/member/automation", () => {
     // Every action ever decided against org/role/member is `configure`, which
     // member never holds — so any OTHER grant there is inert and misleads the
     // Roles page. Automation's writes are RPC-boundary admin-gated regardless of
-    // any rule, and field gets none at all (the next test is why).
+    // any rule. `field` isn't a resource type at all any more, so it isn't in
+    // this list either — there's nothing left for member to hold a rule ON.
     const memberTypes = new Set(byKey("member").rules.map((r) => r.resourceType))
-    for (const t of ["org", "role", "member", "automation", "field"] as const)
+    for (const t of ["org", "role", "member", "automation"] as const)
       expect(memberTypes.has(t), `member should hold no rule on ${t}`).toBe(false)
-  })
-
-  it("THE BLANKET-FIELD GUARD: member must not hold a blanket view on field", () => {
-    // A blanket rule (no resourceId/conceptId) matches EVERY field unconditionally
-    // and outranks `scopeHiddenFieldIds`'s per-field fallback — silently defeating
-    // `admin`-visibility fields for every member. Executable proof, not just the
-    // rule above: build exactly the old shape and show it overrides a closed
-    // (fallback: false) field decision.
-    expect(
-      byKey("member")
-        .rules.filter((r) => r.resourceType === "field")
-        .flatMap((r) => r.actions),
-    ).toHaveLength(0)
-    const blanketFieldView: AccessRule = rule({
-      actions: ["view"],
-      resourceType: "field",
-      conceptId: "c1",
-    })
-    expect(
-      decide(
-        policy([blanketFieldView]),
-        "view",
-        { type: "field", id: "salary", conceptId: "c1" },
-        false,
-        { unconditionalOnly: true },
-      ),
-    ).toBe(true)
   })
 
   it("member's view grants match exactly what's decided per type", () => {
     // concept/record/dashboard/view have no `view` in the BLANKET rule — reading an
     // EXISTING one comes from the separate per-resource rule materialized at
-    // creation (`ensureBuiltins`'s injection), not from this row. bucket/task DO
-    // decide `view` directly against the bare type, so they carry it here.
+    // creation (`ensureBuiltins`'s injection), not from this row. `task` DOES
+    // decide `view` directly against the bare type, so it carries it here.
     const viewOn = (t: string) =>
       new Set(
         byKey("member")
@@ -235,8 +209,7 @@ describe("the presets are reasonable — every grant is decided somewhere", () =
       ).has("view")
     for (const t of ["concept", "record", "dashboard", "view", "note"])
       expect(viewOn(t), `member should NOT grant view on ${t}`).toBe(false)
-    for (const t of ["bucket", "task"])
-      expect(viewOn(t), `member should grant view on ${t}`).toBe(true)
+    expect(viewOn("task"), "member should grant view on task").toBe(true)
   })
 
   it("member holds create on the five types that need it, and nothing wider", () => {
@@ -250,7 +223,6 @@ describe("the presets are reasonable — every grant is decided somewhere", () =
     expect(actionsOn("record")).toEqual(new Set(["create"]))
     expect(actionsOn("dashboard")).toEqual(new Set(["edit"]))
     expect(actionsOn("view")).toEqual(new Set(["edit"]))
-    expect(actionsOn("bucket")).toEqual(new Set(["create", "view"]))
     expect(actionsOn("task")).toEqual(new Set(["create", "view"]))
     expect(actionsOn("note")).toEqual(new Set(["create"]))
     // Neither is granted anywhere: both are admin-gated at the RPC boundary today.

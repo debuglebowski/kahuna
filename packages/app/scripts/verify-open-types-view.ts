@@ -27,14 +27,10 @@ const connectionString =
   process.env.DATABASE_URL ?? "postgresql://kingsmaker:kingsmaker@localhost:5544/kingsmaker"
 const pool = new Pool({ connectionString })
 
-const TYPES: ReadonlyArray<AccessResourceType> = [
-  "org",
-  "field",
-  "bucket",
-  "task",
-  "note",
-  "member",
-]
+// `field` and `bucket` were removed from `AccessResourceType` entirely in a later
+// migration (0018) — neither can be checked here any more, so this now covers
+// four of the original six types.
+const TYPES: ReadonlyArray<AccessResourceType> = ["org", "task", "note", "member"]
 
 interface RuleRow {
   readonly id: string

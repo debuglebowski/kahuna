@@ -85,8 +85,8 @@ const ACTIONS: ReadonlyArray<{ id: AccessActionName; label: string; hint: string
 
 /**
  * Resources grouped the way someone thinks about them, with plain-English names —
- * the wire values (`record`, `bucket`, `view`) are engine vocabulary and mean little
- * on their own.
+ * the wire values (`record`, `dashboard`, `view`) are engine vocabulary and mean
+ * little on their own.
  */
 const RESOURCE_GROUPS: ReadonlyArray<{
   label: string
@@ -104,7 +104,6 @@ const RESOURCE_GROUPS: ReadonlyArray<{
     items: [
       { id: "dashboard", label: "Dashboards", hint: "Widget canvases" },
       { id: "view", label: "Sidebar views", hint: "Nav layouts" },
-      { id: "bucket", label: "File buckets", hint: "Files on a widget" },
     ],
   },
   {
@@ -135,8 +134,8 @@ const RESOURCE_GROUPS: ReadonlyArray<{
  * `view`, so the Records grid has the one column.
  *
  * "Other" holds only what NO grid owns: the resource types with no item list
- * (fields, tasks, notes, buckets, members, the org itself) and conditional rules,
- * which have nowhere to live in a cell. Everything a grid can express — including
+ * (tasks, notes, members, the org itself) and conditional rules, which have
+ * nowhere to live in a cell. Everything a grid can express — including
  * each area's DEFAULT, which is that area's untargeted rule — is edited in the area
  * itself, so there is exactly one place to change any given rule.
  */
@@ -226,17 +225,6 @@ const inGrid = (r: {
   condition: unknown
 }): boolean => GRIDDED.has(r.resourceType) && !r.condition && (!!r.resourceId || !!r.conceptId)
 
-/** Shown standalone — nothing else would share a heading with it. `field` used
- *  to sit in "Data" alongside Concepts/Records, but those are gridded now
- *  (each with a tab of its own), which would have left "Data" wrapping this
- *  one item for no reason: a category header earns its keep by grouping
- *  more than one thing. */
-const UNGROUPED_RESOURCE: {
-  readonly id: AccessResourceType
-  readonly label: string
-  readonly hint: string
-} = { id: "field", label: "Fields", hint: "Values on a record" }
-
 /** `role` isn't in `RESOURCE_GROUPS` — it has no picker entry, because role/rule
  *  editing is governed entirely by `configure` rather than being addable per
  *  resource (see `GRIDDED`'s doc). But an EXISTING rule on it (every managed
@@ -245,24 +233,21 @@ const UNGROUPED_RESOURCE: {
  *  which read as a duplicate heading inside the "Other" pane itself. */
 const RESOURCE_LABEL = new Map<string, string>([
   ...RESOURCE_GROUPS.flatMap((g) => g.items).map((r) => [r.id, r.label] as const),
-  [UNGROUPED_RESOURCE.id, UNGROUPED_RESOURCE.label],
   ["role", "Roles & permissions"],
 ])
 
-/** Which group a resource belongs to, or `null` for one shown standalone (see
- *  `UNGROUPED_RESOURCE`) — `groupRules` skips the header row for those instead
- *  of falling back to the generic "Other" bucket. ABSENT from this map (not
- *  even a `null` entry) still means "an unrecognised type", and that one DOES
- *  fall back to Other. `role` is the other explicit exception: see
- *  `RESOURCE_LABEL`'s doc. */
+/** Which group a resource belongs to. ABSENT from this map means "an
+ *  unrecognised type" (a stray pre-migration `field`/`bucket` row, or a newer
+ *  server's type this client doesn't know), and that falls back to "Other" in
+ *  `groupRules`. `role` is the one explicit exception: see `RESOURCE_LABEL`'s
+ *  doc. */
 const GROUP_OF = new Map<string, string | null>([
   ...RESOURCE_GROUPS.flatMap((g) => g.items.map((r) => [r.id, g.label] as const)),
-  [UNGROUPED_RESOURCE.id, null],
   ["role", "Administration"],
 ])
 
-/** Sort position within a group, mirroring the picker's order (Concepts before Records
- *  before Fields, not alphabetical) so a rule sits where the reader expects it. */
+/** Sort position within a group, mirroring the picker's order (Concepts before
+ *  Records, not alphabetical) so a rule sits where the reader expects it. */
 const RESOURCE_RANK = new Map<string, number>(
   RESOURCE_GROUPS.flatMap((g) => g.items).map((r, i) => [r.id, i] as const),
 )
@@ -295,15 +280,15 @@ const scopeLabelFor = (
 /**
  * Bucket a role's rules by resource group, dropping empty groups.
  *
- * A flat list of eleven rows made the reader scan for the row they wanted; a role's
+ * A flat list of ten rows made the reader scan for the row they wanted; a role's
  * rules are almost always "everything, everywhere", so the shape of what it grants is
  * the actual information. Groups carry a count for that reason.
  *
- * An unrecognised `resourceType` (a newer server than this client) falls into "Other"
- * rather than vanishing — a rule the UI can't name is exactly the one worth showing.
- * A resource `GROUP_OF` maps to `null` (see `UNGROUPED_RESOURCE`) gets no header row
- * at all, and leads the list — there's nothing to file it under, so it isn't buried
- * after every category either.
+ * An unrecognised `resourceType` (a newer server than this client, or a stray
+ * pre-migration `field`/`bucket` row) falls into "Other" rather than vanishing —
+ * a rule the UI can't name is exactly the one worth showing. A resource `GROUP_OF`
+ * maps to `null` gets no header row at all and leads the list — there's nothing to
+ * file it under, so it isn't buried after every category either.
  */
 const groupRules = <T extends { readonly resourceType: string }>(
   rules: ReadonlyArray<T>,
@@ -382,10 +367,10 @@ const AREA_OTHER_HINT =
  *  in two editors that disagreed about what a blank cell meant. */
 const GLOBAL_OTHER_HINT: ReactNode = (
   <>
-    Everything with no grid of its own: fields, tasks, notes, members, file buckets, the
-    organisation. A <span className="text-foreground">Deny</span> beats an Allow within THIS role. A
-    role this person holds earlier, or their personal overrides, can still override it — see their
-    access page.
+    Everything with no grid of its own: tasks, notes, members, the organisation. A{" "}
+    <span className="text-foreground">Deny</span> beats an Allow within THIS role. A role this
+    person holds earlier, or their personal overrides, can still override it — see their access
+    page.
   </>
 )
 
@@ -428,7 +413,7 @@ function OtherRulesPanel({
   const qc = useQueryClient()
   const compact = lockedType !== undefined
   const [effect, setEffect] = useState<"allow" | "deny">("allow")
-  const [resourceType, setResourceType] = useState<AccessResourceType>(lockedType ?? "field")
+  const [resourceType, setResourceType] = useState<AccessResourceType>(lockedType ?? "task")
   const [actions, setActions] = useState<ReadonlyArray<AccessActionName>>(["view"])
   // "" = every one of that type. Only concept-shaped rules can name a target here;
   // a record is picked from the record's own Share dialog, not from a role.
@@ -440,7 +425,7 @@ function OtherRulesPanel({
 
   const resetDraft = () => {
     setEffect("allow")
-    setResourceType(lockedType ?? "field")
+    setResourceType(lockedType ?? "task")
     setTargetId("")
     setActions(["view"])
     setEditingId(null)
@@ -661,17 +646,10 @@ function OtherRulesPanel({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {/* `field` (see `UNGROUPED_RESOURCE`) is deliberately NOT offered
-                        here: only `view` is ever real for it, it can only ever be a
-                        blanket org-wide toggle from this form (no per-field target),
-                        and there's no UI anywhere that explains what setting it does
-                        — a permission nobody can explain shouldn't be offerable.
-                        Existing rules on it (a preset's blanket `*` picks it up
-                        along with everything else) still display below, just via a
-                        rule this form can no longer create. Grouped, because eleven
-                        flat engine words are a lookup table, not a menu someone can
-                        scan. Gridded types are omitted here — each has its own pane
-                        for this exact shape of rule now. */}
+                    {/* Grouped, because a flat list of engine words is a lookup
+                        table, not a menu someone can scan. Gridded types are
+                        omitted here — each has its own pane for this exact
+                        shape of rule now. */}
                     {pickerGroups.map((g) => (
                       <SelectGroup key={g.label}>
                         <SelectLabel>{g.label}</SelectLabel>
@@ -892,8 +870,8 @@ const NONE_BASED_ON = "__none"
  * and the picker disagree about where a resource type lives.
  *
  * The last group is deliberately untitled: "Other" covers what no grid owns —
- * fields, tasks, notes, buckets, members, the org — so it belongs to every
- * group and therefore to none. Spacing sets it apart instead of a label.
+ * tasks, notes, members, the org — so it belongs to every group and therefore
+ * to none. Spacing sets it apart instead of a label.
  */
 const SIDEBAR_GROUPS: ReadonlyArray<{
   readonly label?: string

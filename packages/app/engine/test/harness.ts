@@ -25,11 +25,12 @@ const BlobTestLive = LocalFsBlobStore(path.join(tmpdir(), "kingsmaker-test-blobs
  * so a `member` scope with no policy sees nothing — correctly, but that is rarely
  * what a test about something else means.
  *
- * MUST track `AccessRoleService.BUILTIN_ROLES`'s `member` spec exactly — that
- * divergence (a wildcard here standing in for a curated per-type grant there) is
- * exactly what let the field-visibility bug ship unnoticed: this fixture granted
- * a narrower `view` than the real blanket rule, so no test ever exercised the
- * real rule's shape against a restricted field.
+ * MUST track `AccessRoleService.BUILTIN_ROLES`'s `member` spec exactly — a stale
+ * fixture here is what let a real field-visibility bug ship unnoticed once (a
+ * blanket grant that outranked a per-field default). `field` doesn't exist as a
+ * resource type any more (nor does `bucket` — both were removed entirely, not
+ * merely trimmed from Member's grant), so there is no longer a shape for either
+ * to drift out of sync with.
  *
  * For the five TEMPLATED types, each entry is the real blanket rule's actions
  * UNIONED with `view` — reproducing what `ensureBuiltins`'s materialization
@@ -39,13 +40,11 @@ const BlobTestLive = LocalFsBlobStore(path.join(tmpdir(), "kingsmaker-test-blobs
  * (`AutomationService.allowed`'s `fallback: true`), so an empty policy already
  * reproduces "member can read automations" correctly.
  *
- * `org`/`role`/`member`/`field` deliberately get NO rule — matching the real
- * preset exactly: the first three because only `configure` is ever decided
- * against them (which Member never holds — a rule here would silently make "an
- * ordinary member" indistinguishable from an admin, exactly the property
- * `visibility.test.ts`'s `canReadRestricted`/`org`-`configure` check exists to
- * pin); `field` because a blanket grant there is the bug this fixture exists to
- * catch, not paper over.
+ * `org`/`role`/`member` deliberately get NO rule — matching the real preset
+ * exactly: only `configure` is ever decided against them, which Member never
+ * holds — a rule here would silently make "an ordinary member" indistinguishable
+ * from an admin, exactly the property `visibility.test.ts`'s `org`-`configure`
+ * check exists to pin.
  *
  * Tests ABOUT access should build a narrower policy naming specific resources
  * instead — a blanket rule here would paper over exactly what they are checking.
@@ -58,7 +57,6 @@ const MEMBER_GRANTS: ReadonlyArray<{
   { resourceType: "record", actions: ["create", "view"] },
   { resourceType: "dashboard", actions: ["edit", "view"] },
   { resourceType: "view", actions: ["edit", "view"] },
-  { resourceType: "bucket", actions: ["create", "view"] },
   { resourceType: "task", actions: ["create", "view"] },
   { resourceType: "note", actions: ["create"] },
 ]

@@ -165,20 +165,6 @@ export const fields = pgTable(
     // can add + edit their OWN fields (e.g. a status) without touching the
     // integration's data. Drives the field-level read-only guard.
     managedBy: text("managed_by"),
-    // Who may READ this field's values BY DEFAULT: 'visible' = any member, 'admin'
-    // = owners/admins only, 'none' = nobody without an explicit rule. Mirrors
-    // `concepts.visibility` one level down, for the case where the CONCEPT must stay
-    // readable but one field must not (comp on a Person, margin on a Deal).
-    //
-    // Field access is per CONCEPT, never per record: a field is visible to a role or
-    // it isn't, the same on every row. Making the mask vary per row is the one
-    // mechanic that can erase data on an ordinary edit (see THE DATA-LOSS GUARD in
-    // engine/test/visibility.test.ts), so access rules on a field are unconditional.
-    //
-    // A real column, not a `config` key, so it can be filtered in SQL and read by
-    // the raw column joins some services use. Unknown values coerce to 'admin'
-    // (fail closed) — see toField.
-    visibility: text("visibility").notNull().default("visible"),
     // Optional display glyph (see `concepts.icon`): literal emoji or "lucide:Name".
     icon: text("icon"),
     // Display order within the concept (ascending); ties broken by name. New
@@ -884,13 +870,16 @@ export const automationRuns = pgTable(
  *
  * One mechanism for every "who may do what" question, replacing three unrelated
  * ones (concepts.visibility, fields.visibility, dashboards.owner_id as
- * personal/shared). See `engine/domain/access.ts` for the decision procedure and
- * `engine/domain/visibility.ts` for the placement constraints that still hold.
+ * personal/shared). `fields.visibility` is gone now — see `AccessResourceType`'s
+ * doc in `engine/domain/access.ts` for why field access has no per-role override
+ * left at all. See that file for the decision procedure and
+ * `engine/domain/visibility.ts` for the concept-visibility placement constraints
+ * that still hold.
  *
- * TWO LAYERS. The DEFAULT lives on the resource itself (the `visibility` columns
- * above) and answers "who sees this normally?"; `access_rules` are the EXCEPTIONS
- * layered over it. Keeping the default a column is what lets a list query filter
- * in SQL without joining rules for the common case.
+ * TWO LAYERS for a concept. The DEFAULT lives on the resource itself
+ * (`concepts.visibility`) and answers "who sees this normally?"; `access_rules`
+ * are the EXCEPTIONS layered over it. Keeping the default a column is what lets a
+ * list query filter in SQL without joining rules for the common case.
  */
 
 /**

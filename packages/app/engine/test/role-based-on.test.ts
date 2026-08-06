@@ -127,14 +127,14 @@ describe("role based-on: the write path and its guards", () => {
         const policies = yield* PolicyService
         const base = yield* roles.create({ name: "Base" })
         const child = yield* roles.create({ name: "Child" })
-        // `field` is ungridded, so a blanket (untargeted) rule is allowed —
+        // `task` isn't a TEMPLATED type, so a blanket (untargeted) rule is allowed —
         // `concept`/`record`/etc. refuse one outright (`BlanketRuleRefused`), which
         // is orthogonal to what this test is actually checking.
         yield* roles.addRule({
           roleId: base.id,
           effect: "allow",
           actions: ["view"],
-          resourceType: "field",
+          resourceType: "task",
         })
         yield* roles.assign(child.id, ACTOR)
         yield* roles.update({ id: child.id, basedOn: base.id })

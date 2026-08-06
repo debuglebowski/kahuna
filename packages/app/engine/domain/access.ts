@@ -52,16 +52,23 @@ export const ACTION_ALL = "*"
  * never be separated. `configure` on `org` still exists and still gates schema/
  * settings administration (concepts, fields, labels, integrations); it does NOT
  * cover these two any more.
+ *
+ * `field` and `bucket` deliberately do NOT appear here — both were removed
+ * entirely (not just from the Roles picker): a per-role override on either was
+ * invisible in the UI and essentially unused, and for field it was a real live
+ * footgun (a blanket `view` rule silently defeated the `admin`-only field flag,
+ * which is why that flag is gone too — see `Field` in the contract and
+ * `AccessRoleService`'s `ALL_RESOURCES`). Bucket access now has no gate beyond
+ * reaching the RPC at all, matching `DashboardService`'s existing "no admin gate"
+ * precedent for create.
  */
 export type AccessResourceType =
   | "org"
   | "concept"
   | "record"
-  | "field"
   | "dashboard"
   | "view"
   | "automation"
-  | "bucket"
   | "task"
   | "note"
   | "member"
@@ -79,7 +86,7 @@ export interface AccessResource {
   readonly type: AccessResourceType
   /** Absent for `org`, and for a "may you create ANY record here?" style question. */
   readonly id?: string
-  /** The owning concept, for `record` and `field` resources. */
+  /** The owning concept, for a `record` resource. */
   readonly conceptId?: string
 }
 

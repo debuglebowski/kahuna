@@ -127,6 +127,13 @@
       "when": 1786020204476,
       "tag": "0017_admin_field_rule_dead_weight",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1786035329793,
+      "tag": "0018_field_bucket_permissions_removed",
+      "breakpoints": true
     }
   ]
 }

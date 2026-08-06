@@ -91,9 +91,8 @@ interface RoleSpec {
  * ── THE MANAGED ROLES ────────────────────────────────────────────────────────
  *
  * Admin and `automation_full` are trivial: `everything([ACTION_ALL])` is a
- * blanket `*` on every resource type IN `ALL_RESOURCES` — see that constant's
- * doc for the one deliberate omission (`field`) — correct by construction for
- * "full access".
+ * blanket `*` on every resource type in `ALL_RESOURCES` — correct by
+ * construction for "full access".
  *
  * Member is not — its rules are curated PER RESOURCE TYPE, each entry chosen by
  * cross-referencing every `decide()`/`assertAllowed()` call site in the app for
@@ -120,16 +119,8 @@ interface RoleSpec {
  *                       `create` is ungated for EVERYONE by design (see
  *                       `DashboardService`'s header) — granting it here would be
  *                       decorative, not a widening if removed.
- *   field             → NO rule at all — this is a fix, not an omission. A
- *                       blanket `view` here (the old shape) matches every field
- *                       unconditionally and outranks `scopeHiddenFieldIds`'s
- *                       per-field fallback, silently defeating `admin`-visibility
- *                       fields for every ordinary member. Dropping it costs
- *                       nothing: `visible` fields (the overwhelming default) are
- *                       already readable via that same fallback with no rule at
- *                       all needed.
- *   bucket, task      → `create`, `view`. Both decided directly (`assertAllowed`
- *                       in `use-cases.ts`, the null-subject / widget-bucket case).
+ *   task              → `create`, `view`. Both decided directly (`assertAllowed`
+ *                       in `use-cases.ts`, the null-subject case).
  *   note              → `create` only. `view` is never decided against the bare
  *                       type — an existing note's read/write goes through its
  *                       SUBJECT record (`assertSubjectReadable`), not a `note`
@@ -148,18 +139,14 @@ interface RoleSpec {
  * granting it would be a widening. `configure` likewise, everywhere — that is the
  * entire meaning of "cannot configure".
  *
+ * `field` and `bucket` are not resource types AT ALL any more (see
+ * `AccessResourceType`'s own doc) — bucket create/view has no gate beyond
+ * reaching the RPC, and field visibility has no per-role override left to grant.
+ *
  * They are ordinary rows and fully editable. `managed` only means "seeded", which
  * buys them exactly one thing: deletion is refused, because the seed would put them
  * back. `active = false` is how one is turned off for good.
  */
-// `field` deliberately absent: full-access roles (the only consumer of this
-// list, via `everything()` below) already see every field unconditionally
-// through the org-configure privileged bypass in `scopeHiddenFieldIds` — a
-// blanket `*` rule naming `field` explicitly would be dead weight. It also
-// isn't offered as a permission in the Roles page's "Applies to" picker at
-// all any more (`field` permissions are too easy to grant without meaning to,
-// and there's no field-level redaction UI to make one legible) — see that
-// picker's comment, in Roles.tsx.
 const ALL_RESOURCES: ReadonlyArray<AccessResourceType> = [
   "org",
   "concept",
@@ -167,7 +154,6 @@ const ALL_RESOURCES: ReadonlyArray<AccessResourceType> = [
   "dashboard",
   "view",
   "automation",
-  "bucket",
   "task",
   "note",
   "member",
@@ -214,7 +200,6 @@ export const BUILTIN_ROLES: ReadonlyArray<RoleSpec> = [
       { effect: "allow", actions: ["create"], resourceType: "record" },
       { effect: "allow", actions: ["edit"], resourceType: "dashboard" },
       { effect: "allow", actions: ["edit"], resourceType: "view" },
-      { effect: "allow", actions: ["create", "view"], resourceType: "bucket" },
       { effect: "allow", actions: ["create", "view"], resourceType: "task" },
       { effect: "allow", actions: ["create"], resourceType: "note" },
     ],

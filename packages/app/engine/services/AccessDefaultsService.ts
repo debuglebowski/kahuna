@@ -40,8 +40,8 @@ import { PolicyService } from "./PolicyService"
  */
 
 /** The resource types that carry per-resource values (and so have a grid). The rest
- *  — field, bucket, task, note, member, org — keep their existing defaults and are
- *  edited as ordinary rules under "Other". */
+ *  — task, note, member, role, org — keep their existing defaults and are edited
+ *  as ordinary rules under "Other". */
 export const TEMPLATED_TYPES: ReadonlyArray<AccessResourceType> = [
   "concept",
   "record",

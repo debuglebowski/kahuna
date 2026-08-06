@@ -569,8 +569,6 @@ const HandlersLive = ServerRpcs.toLayer({
   // Not admin-gated: any member may shape a concept's default record version layout.
   setConceptRecordView: ({ id, recordView }) =>
     as<Concept>(uc.setConceptRecordView(id, recordView)),
-  setFieldVisibility: ({ id, visibility }) =>
-    adminOnFieldConcept<Field>("configure", id, uc.setFieldVisibility(id, visibility)),
   setConceptVisibility: ({ id, visibility }) =>
     adminOn<Concept>("configure", { type: "concept", id }, uc.setConceptVisibility(id, visibility)),
   setConceptTitleField: ({ id, titleFieldId }) =>

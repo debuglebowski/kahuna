@@ -8,13 +8,20 @@ import { resolvePolicy, runEngine, runEngineOrThrow, sessionScope, systemScope }
 import { createNote, createTask, listFiles, listTasks, uploadAttachment } from "./use-cases"
 
 /**
- * P8: `bucket`/`task`/`note` used to have NO access-rule gate at all for `view`/
- * `create` (org-level tasks/notes, and a widget's own file bucket) — any
- * authenticated member could do these things unconditionally. These tests prove
- * the new gate (`use-cases.ts`'s `assertAllowed`) actually refuses someone with
- * no rule for it, and that the stock Member role (now carrying an explicit `view`
- * grant via the 0015 migration / `UNTEMPLATED_VISIBLE`) still works exactly as
- * before for the common case.
+ * P8: `task`/`note` used to have NO access-rule gate at all for `view`/`create`
+ * (org-level tasks/notes) — any authenticated member could do these things
+ * unconditionally. These tests prove the gate (`use-cases.ts`'s `assertAllowed`)
+ * actually refuses someone with no rule for it, and that the stock Member role
+ * (now carrying an explicit `view` grant via the 0015 migration /
+ * `UNTEMPLATED_VISIBLE`) still works exactly as before for the common case.
+ *
+ * `bucket` used to be P8-gated the same way, but isn't any more: `bucket` was
+ * removed from `AccessResourceType` entirely (not just from Member's grant) —
+ * `uploadAttachment`/`listFiles` no longer consult a rule for it at all, so a
+ * bucket-owned upload/list is open to any authenticated actor now, matching
+ * `DashboardService`'s existing "no admin gate" precedent for create. The bucket
+ * assertions below stay (they still SUCCEED, just no longer because of a rule),
+ * except in the "refused" test, where they no longer belong.
  */
 
 const signUp = async (name: string) => {
@@ -40,7 +47,7 @@ const addMember = async (orgId: string, userId: string) => {
   await auth.api.addMember({ body: { userId, role: "member", organizationId: orgId } })
 }
 
-describe("open-types gates (P8): view/create on bucket/task/note", () => {
+describe("open-types gates (P8): view/create on task/note", () => {
   it("the stock Member role can list global tasks, create one, and use a widget bucket", async () => {
     const { orgId } = await orgWithOwner()
     const memberId = await signUp("Member")
@@ -82,24 +89,20 @@ describe("open-types gates (P8): view/create on bucket/task/note", () => {
       ["listTasks", () => runEngineOrThrow(scope, listTasks({}))],
       ["createTask", () => runEngineOrThrow(scope, createTask({ subjectId: null, title: "nope" }))],
       ["createNote", () => runEngineOrThrow(scope, createNote({ subjectId: null, body: "nope" }))],
-      [
-        "uploadAttachment",
-        () =>
-          runEngineOrThrow(
-            scope,
-            uploadAttachment(
-              { bucketId: randomUUID() },
-              "x.txt",
-              "text/plain",
-              new Uint8Array([1]),
-            ),
-          ),
-      ],
-      ["listFiles", () => runEngineOrThrow(scope, listFiles({ bucketId: randomUUID() }))],
     ]
     for (const [label, run] of denied) {
       await expect(run(), label).rejects.toThrow()
     }
+
+    // `bucket` is NOT in the denied list above — it has no gate any more (see the
+    // file's header comment), so even a bare actor with no role at all succeeds.
+    const uploaded = (await runEngineOrThrow(
+      scope,
+      uploadAttachment({ bucketId: randomUUID() }, "x.txt", "text/plain", new Uint8Array([1])),
+    )) as { filename: string }
+    expect(uploaded.filename).toBe("x.txt")
+    const files = await runEngineOrThrow(scope, listFiles({ bucketId: randomUUID() }))
+    expect(Array.isArray(files)).toBe(true)
   })
 
   it("a role granting create/edit/archive/share but NOT view (the pre-0015 shape) can create but not see", async () => {

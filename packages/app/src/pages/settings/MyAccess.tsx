@@ -29,15 +29,13 @@ const ACTIONS: ReadonlyArray<{ id: AccessActionName; label: string }> = [
 
 /** Every resource type the cascade can decide about, plain-English labels. Not
  *  imported from `Roles.tsx` (its `RESOURCE_GROUPS` is private to that page's
- *  grid, and deliberately excludes ungridded types) — this tool needs all twelve,
+ *  grid, and deliberately excludes ungridded types) — this tool needs all ten,
  *  including `role`, which is exactly what Layer 0 exists to guarantee. */
 const RESOURCE_TYPES: ReadonlyArray<{ id: AccessResourceType; label: string }> = [
   { id: "concept", label: "Concepts" },
   { id: "record", label: "Records" },
-  { id: "field", label: "Fields" },
   { id: "dashboard", label: "Dashboards" },
   { id: "view", label: "Sidebar views" },
-  { id: "bucket", label: "File buckets" },
   { id: "task", label: "Tasks" },
   { id: "note", label: "Notes" },
   { id: "automation", label: "Automations" },
