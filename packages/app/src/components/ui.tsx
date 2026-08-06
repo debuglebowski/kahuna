@@ -564,15 +564,73 @@ export function Modal({
   onClose,
   size = "default",
   actions,
+  sidebar,
   children,
 }: {
   title: ReactNode
   onClose: () => void
   size?: "default" | "wide"
-  /** Header controls, placed before the close button. */
+  /** Header controls, placed before the close button — or, with a `sidebar`,
+   *  stacked under the title in that column. */
   actions?: ReactNode
+  /**
+   * Navigation for a modal whose body has panes. It is a COLUMN OF THE FRAME,
+   * running the full height beside the title — not a rail inside the body.
+   * Placed in the body it starts below the header, and its tint then cuts a
+   * seam across the modal a third of the way down; there is no amount of
+   * padding that hides that, because the panel simply does not reach the top.
+   *
+   * Implies the `wide` frame.
+   */
+  sidebar?: ReactNode
   children: ReactNode
 }) {
+  const header = (
+    <DialogHeader
+      className={
+        // The close button is positioned absolutely at top-4 right-4, so the row
+        // has to keep clear of it — hence the right padding, and more of it when
+        // actions share the row.
+        actions ? "flex-row items-center gap-3 pr-9" : undefined
+      }
+    >
+      {/* min-w-0 so a long filename truncates instead of shoving the actions
+          under the close button. */}
+      <DialogTitle className={actions ? "min-w-0 flex-1" : undefined}>{title}</DialogTitle>
+      {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
+    </DialogHeader>
+  )
+
+  if (sidebar) {
+    return (
+      <Dialog open onOpenChange={(open) => !open && onClose()}>
+        <DialogContent
+          aria-describedby={undefined}
+          // `p-0` and `overflow-hidden`: the sidebar meets the frame's own edges
+          // and its corners are clipped to the frame's radius, so the padding
+          // belongs to each column rather than to the dialog.
+          className="flex h-[90vh] w-[90vw] max-w-none flex-row gap-0 overflow-hidden p-0 sm:max-w-none"
+        >
+          {/* TITLE, ACTIONS AND NAV IN ONE COLUMN. The title names the thing
+              being edited and the nav picks a part of it, so they belong
+              together; left in the content column the title sat above whichever
+              pane was open, implying it described that pane. What remains on the
+              right is only the pane. */}
+          <aside className="flex w-60 shrink-0 flex-col gap-5 overflow-y-auto border-r bg-muted/30 p-4">
+            <DialogHeader className="gap-1 text-left">
+              <DialogTitle className="text-base leading-tight">{title}</DialogTitle>
+            </DialogHeader>
+            {actions}
+            {sidebar}
+          </aside>
+          {/* `pr-12` at the top clears the close button, which the dialog pins to
+              its own top-right corner. */}
+          <div className="flex min-w-0 flex-1 flex-col gap-3 p-6 pr-12">{children}</div>
+        </DialogContent>
+      </Dialog>
+    )
+  }
+
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent
@@ -588,19 +646,7 @@ export function Modal({
             : "max-h-[85vh] overflow-y-auto"
         }
       >
-        <DialogHeader
-          className={
-            // The close button is positioned absolutely at top-4 right-4, so the row
-            // has to keep clear of it — hence the right padding, and more of it when
-            // actions share the row.
-            actions ? "flex-row items-center gap-3 pr-9" : undefined
-          }
-        >
-          {/* min-w-0 so a long filename truncates instead of shoving the actions
-              under the close button. */}
-          <DialogTitle className={actions ? "min-w-0 flex-1" : undefined}>{title}</DialogTitle>
-          {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
-        </DialogHeader>
+        {header}
         {children}
       </DialogContent>
     </Dialog>

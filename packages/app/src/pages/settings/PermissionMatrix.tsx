@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query"
-import { Check, Minus, X } from "lucide-react"
+import { Check, Info, Minus, TriangleAlert, X } from "lucide-react"
 import { useEffect, useState } from "react"
 import {
   Table,
@@ -10,7 +10,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { Badge, Button, Spinner } from "../../components/ui"
+import { Badge, Button, Callout, InfoHint, Spinner } from "../../components/ui"
 import { type AccessActionName, type AccessResourceType, api } from "../../lib/api"
 import { Feedback } from "./parts"
 
@@ -278,7 +278,6 @@ export function PermissionMatrix({
   defaults,
   loading,
   scopeBy = "resource",
-  note,
   resourceNoun,
   parentRules,
   parentLabel,
@@ -295,8 +294,6 @@ export function PermissionMatrix({
   loading?: boolean
   /** "concept" for the Records grid, whose rows are containers. Default "resource". */
   scopeBy?: ScopeBy
-  /** One line explaining what a cell means, when it is not self-evident. */
-  note?: string
   /** Plural noun for the RESOURCE, when it differs from the row noun — the Records
    *  grid's rows are concepts but its rules are about records, and a banner reading
    *  "covering all concepts" there would name the wrong thing. */
@@ -396,20 +393,29 @@ export function PermissionMatrix({
 
   return (
     <div className="space-y-4">
-      {note ? <p className="text-sm text-muted-foreground">{note}</p> : null}
+      {/* These two are ALERTS about live state, not description — a rule is
+          overriding cells the reader is about to edit. As muted paragraphs they
+          were indistinguishable from the pane's explanatory copy, which is
+          exactly the thing they need to outrank. */}
       {blanketDeny.size > 0 ? (
-        <p className="text-sm text-muted-foreground">
-          An untargeted <b>deny</b> rule covers {blanketDeny.size} cell
-          {blanketDeny.size > 1 ? "s" : ""} below. It blocks every row at once, so a single cell
-          can't undo it — remove it in <b>Other</b> to change that.
-        </p>
+        <Callout
+          tone="amber"
+          icon={<TriangleAlert size={14} />}
+          title={`An untargeted deny covers ${blanketDeny.size} cell${blanketDeny.size > 1 ? "s" : ""} below`}
+        >
+          It blocks every row at once, so a single cell can't undo it — remove it under{" "}
+          <b>Other rules</b> to change that.
+        </Callout>
       ) : null}
       {conditional.length > 0 ? (
-        <p className="text-sm text-muted-foreground">
-          {conditional.length} conditional rule{conditional.length > 1 ? "s" : ""} ({" "}
-          {'"records I created"'} and the like ) live in <b>Other</b> — a cell has nowhere to put a
-          condition.
-        </p>
+        <Callout
+          tone="blue"
+          icon={<Info size={14} />}
+          title={`${conditional.length} conditional rule${conditional.length > 1 ? "s" : ""} not shown here`}
+        >
+          {'"Records I created"'} and the like live under <b>Other rules</b> — a cell has nowhere to
+          put a condition.
+        </Callout>
       ) : null}
 
       <div className="overflow-x-auto">
@@ -422,7 +428,16 @@ export function PermissionMatrix({
                 them is editable. */}
             <TableRow className="border-b hover:bg-transparent">
               <TableHead className="min-w-48 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                {itemsLabel}
+                <span className="flex items-center gap-1.5">
+                  {itemsLabel}
+                  {/* The cell LEGEND. It used to sit beside the Save button as a
+                      200-character sentence, where it read as an instruction about
+                      saving rather than as what ✕ / – / ✓ mean. */}
+                  <InfoHint
+                    label="What the cells mean"
+                    text="Deny beats Allow within this role. Inherit defers to the cascade — another role held earlier, this role's `based on` chain, or the resource's own default."
+                  />
+                </span>
               </TableHead>
               {actions.map((a) => (
                 <TableHead
@@ -528,7 +543,10 @@ export function PermissionMatrix({
         </Table>
       </div>
 
-      <div className="flex items-center gap-3">
+      {/* Sticky, because the grid is as long as the org has concepts and the
+          buttons used to scroll off the bottom of it. The content column is the
+          scroll container (see RuleEditor), so this pins to the frame. */}
+      <div className="sticky bottom-0 flex items-center gap-3 border-t bg-background py-3">
         <Button size="sm" onClick={() => save.mutate()} disabled={!dirty || save.isPending}>
           {save.isPending ? "Saving…" : "Save changes"}
         </Button>
@@ -553,10 +571,7 @@ export function PermissionMatrix({
             Discard
           </Button>
         ) : null}
-        <span className="text-xs text-muted-foreground">
-          Deny beats Allow within this role. Inherit defers to the cascade — another role held
-          earlier, this role's `based on` chain, or the resource's own default.
-        </span>
+        {dirty ? <span className="text-xs text-muted-foreground">Unsaved changes</span> : null}
         <Feedback error={save.error ? (save.error as Error).message : undefined} />
       </div>
     </div>

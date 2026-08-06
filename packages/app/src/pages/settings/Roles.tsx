@@ -525,12 +525,25 @@ function OtherRulesPanel({
 
       {rules.length > 0 ? (
         <Table>
+          {/* Same header treatment as the matrix above it — quiet small-caps, no
+              fill. Two tables in one pane wearing two different header styles is
+              most of what reads as "borders everywhere". */}
           <TableHeader>
-            <TableRow>
-              <TableHead className="w-28">Effect</TableHead>
-              <TableHead>Can</TableHead>
-              {compact ? null : <TableHead>On</TableHead>}
-              <TableHead className="w-40">Scope</TableHead>
+            <TableRow className="border-b hover:bg-transparent">
+              <TableHead className="w-28 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Effect
+              </TableHead>
+              <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Can
+              </TableHead>
+              {compact ? null : (
+                <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  On
+                </TableHead>
+              )}
+              <TableHead className="w-40 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Scope
+              </TableHead>
               <TableHead className="w-12" />
             </TableRow>
           </TableHeader>
@@ -648,15 +661,17 @@ function OtherRulesPanel({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {/* Fields leads, ungrouped — see `UNGROUPED_RESOURCE`'s doc: it has
-                        no category, so it isn't nested under a heading that would
-                        only ever wrap this one item. Everything after IS grouped,
-                        because eleven flat engine words are a lookup table, not a
-                        menu someone can scan. Gridded types are omitted here — each
-                        has its own pane for this exact shape of rule now. */}
-                    <SelectItem value={UNGROUPED_RESOURCE.id}>
-                      {UNGROUPED_RESOURCE.label}
-                    </SelectItem>
+                    {/* `field` (see `UNGROUPED_RESOURCE`) is deliberately NOT offered
+                        here: only `view` is ever real for it, it can only ever be a
+                        blanket org-wide toggle from this form (no per-field target),
+                        and there's no UI anywhere that explains what setting it does
+                        — a permission nobody can explain shouldn't be offerable.
+                        Existing rules on it (a preset's blanket `*` picks it up
+                        along with everything else) still display below, just via a
+                        rule this form can no longer create. Grouped, because eleven
+                        flat engine words are a lookup table, not a menu someone can
+                        scan. Gridded types are omitted here — each has its own pane
+                        for this exact shape of rule now. */}
                     {pickerGroups.map((g) => (
                       <SelectGroup key={g.label}>
                         <SelectLabel>{g.label}</SelectLabel>
@@ -757,6 +772,145 @@ function OtherRulesPanel({
 }
 
 /**
+ * The ROLE itself — everything about it that is not a rule.
+ *
+ * Its own pane rather than a strip above the grid: name, description and `based
+ * on` belong to the role, and rendered above whichever area was open they read
+ * as properties of THAT area. It is also where `based on` stops being a lone
+ * control with nowhere to live.
+ *
+ * `saved` mirrors what the server last confirmed, because the `role` prop is a
+ * snapshot taken when the modal opened and never changes — comparing against it
+ * would leave the form permanently "dirty" after the first save.
+ */
+function GeneralPane({
+  role,
+  basedOnValue,
+  basedOnOptions,
+  onBasedOn,
+  basedOnPending,
+  basedOnError,
+  onRenamed,
+}: {
+  role: AccessRole
+  basedOnValue: string | null
+  basedOnOptions: ReadonlyArray<AccessRole>
+  onBasedOn: (next: string | null) => void
+  basedOnPending: boolean
+  basedOnError?: unknown
+  /** So the modal title follows a rename rather than showing the old name. */
+  onRenamed: (name: string) => void
+}) {
+  const qc = useQueryClient()
+  const [saved, setSaved] = useState({ name: role.name, description: role.description ?? "" })
+  const [name, setName] = useState(saved.name)
+  const [description, setDescription] = useState(saved.description)
+
+  const save = useMutation({
+    mutationFn: () =>
+      api.updateRole(role.id, {
+        name: name.trim(),
+        description: description.trim() || null,
+      }),
+    onSuccess: (updated) => {
+      setSaved({ name: updated.name, description: updated.description ?? "" })
+      onRenamed(updated.name)
+      void qc.invalidateQueries({ queryKey: ["roles"] })
+    },
+  })
+  const dirty = name.trim() !== saved.name || description.trim() !== saved.description
+
+  return (
+    <div className="max-w-xl space-y-5">
+      <Field label="Name">
+        <Input value={name} onChange={(e) => setName(e.target.value)} />
+      </Field>
+      <Field label="Description" hint="Shown under the name in the roles list.">
+        <Input
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          placeholder="What this role is for"
+        />
+      </Field>
+      {/* Chain inheritance (P6): a role's OWN rules always beat what it inherits
+          (see PolicyService's chain-depth precedence), so this adds a floor
+          under the role rather than changing anything above it. Saved on
+          change, not with the button — it rewrites the whole cascade, so it is
+          its own act. */}
+      <Field
+        label="Based on"
+        hint="Its rules apply wherever this role stays silent. This role's own rules always win."
+      >
+        <Select
+          value={basedOnValue ?? NONE_BASED_ON}
+          onValueChange={(v) => onBasedOn(v === NONE_BASED_ON ? null : v)}
+          disabled={basedOnPending}
+        >
+          <SelectTrigger className="w-72">
+            <SelectValue placeholder="Nothing" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={NONE_BASED_ON}>Nothing</SelectItem>
+            {basedOnOptions.map((r) => (
+              <SelectItem key={r.id} value={r.id}>
+                {r.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </Field>
+      <Feedback error={basedOnError ? roleMsg(basedOnError) : undefined} />
+      <div className="flex items-center gap-3 border-t pt-4">
+        <Button
+          size="sm"
+          onClick={() => save.mutate()}
+          disabled={!dirty || !name.trim() || save.isPending}
+        >
+          {save.isPending ? "Saving…" : "Save changes"}
+        </Button>
+        {dirty ? <span className="text-xs text-muted-foreground">Unsaved changes</span> : null}
+        <Feedback error={save.error ? roleMsg(save.error) : undefined} />
+      </div>
+    </div>
+  )
+}
+
+/** The rail entry for the role's own settings. */
+const GENERAL_AREA = "general" as const
+
+/** "Nothing" in the Based on picker. Radix reserves `""` for the placeholder and
+ *  throws on an empty `SelectItem` value, so no-choice rides a sentinel — the
+ *  same workaround as {@link NONE}. */
+const NONE_BASED_ON = "__none"
+
+/**
+ * The rail, in groups.
+ *
+ * The area buckets are DERIVED from `RESOURCE_GROUPS` — the same taxonomy the
+ * rule picker offers — rather than listed again here. A second hand-written
+ * grouping drifts from the first the moment either is edited, and then the rail
+ * and the picker disagree about where a resource type lives.
+ *
+ * The last group is deliberately untitled: "Other" covers what no grid owns —
+ * fields, tasks, notes, buckets, members, the org — so it belongs to every
+ * group and therefore to none. Spacing sets it apart instead of a label.
+ */
+const SIDEBAR_GROUPS: ReadonlyArray<{
+  readonly label?: string
+  readonly items: ReadonlyArray<{ readonly id: string; readonly label: string }>
+}> = [
+  { label: "Role", items: [{ id: GENERAL_AREA, label: "General" }] },
+  ...RESOURCE_GROUPS.map((g) => ({
+    label: g.label,
+    items: AREAS.filter((a) => GROUP_OF.get(a.resourceType) === g.label).map((a) => ({
+      id: a.id,
+      label: a.label,
+    })),
+  })).filter((g) => g.items.length > 0),
+  { items: [{ id: OTHER_AREA, label: "Other rules" }] },
+]
+
+/**
  * The rule editor for ONE role — grids per resource area, plus the flat "Other"
  * list for everything ungridded. Entirely role-agnostic: it takes an `AccessRole`
  * and reads/writes only through `roleId`, so it works identically whether that
@@ -774,8 +928,13 @@ export function RuleEditor({ role, onClose }: { role: AccessRole; onClose: () =>
     queryFn: () => api.listRules(role.basedOn ?? ""),
     enabled: !!role.basedOn,
   })
-  /** Which pane the rail is showing: a per-area grid, or the full rule list. */
+  /** Which pane the rail is showing: the role's own settings, a per-area grid,
+   *  or the full rule list. Opens on Concepts, not General — this modal is
+   *  reached by clicking a role to edit its RULES; the name is the rarer edit. */
   const [area, setArea] = useState<string>("concept")
+  /** Local, so the title follows a rename — `role` is a snapshot handed in when
+   *  the modal opened and never changes. */
+  const [roleName, setRoleName] = useState(role.name)
 
   // For the "Based on" picker — every OTHER role of the same kind. `listRoles`
   // already excludes personal roles (never a valid target) and this role itself
@@ -800,7 +959,6 @@ export function RuleEditor({ role, onClose }: { role: AccessRole; onClose: () =>
     (r) => r.id !== role.id && r.kind === role.kind,
   )
   const basedOnParent = (allRoles.data ?? []).find((r) => r.id === basedOnValue)
-  const NONE_BASED_ON = "__none"
 
   // Named targets for the picker AND for resolving ids in the table's Scope column.
   // Not gated on the selected type: the table needs names for rules that are already
@@ -861,79 +1019,96 @@ export function RuleEditor({ role, onClose }: { role: AccessRole; onClose: () =>
   const ungriddedRules = (rules.data ?? []).filter((r) => !GRIDDED.has(r.resourceType))
 
   return (
-    <Modal onClose={onClose} title={`Rules — ${role.name}`} size="wide">
-      {/* Chain inheritance (P6): a role's OWN rules always beat what it
-          inherits (see PolicyService's chain-depth precedence), so this adds a
-          floor under the role rather than changing anything above. */}
-      <div className="mb-4 flex items-center gap-2 border-b pb-4">
-        <span className="shrink-0 text-sm font-medium text-muted-foreground">Based on</span>
-        <Select
-          value={basedOnValue ?? NONE_BASED_ON}
-          onValueChange={(v) => basedOnMut.mutate(v === NONE_BASED_ON ? null : v)}
-        >
-          <SelectTrigger className="w-56">
-            <SelectValue placeholder="Nothing" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={NONE_BASED_ON}>Nothing</SelectItem>
-            {basedOnOptions.map((r) => (
-              <SelectItem key={r.id} value={r.id}>
-                {r.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        {basedOnParent && (
-          <span className="text-xs text-muted-foreground">
-            Inherits {basedOnParent.name}'s rules where this role stays silent.
-          </span>
-        )}
-        {basedOnMut.error && <Feedback error={basedOnMut.error} />}
-      </div>
-      <div className="flex min-h-0 gap-6">
-        {/* Area rail. The grid is per-area by necessity — one matrix over every
-            resource type at once would have no meaningful row axis — so the areas
-            become navigation rather than another dropdown. */}
-        <nav className="w-40 shrink-0 space-y-0.5 border-r pr-3">
-          {[
-            ...AREAS.map((a) => ({ id: a.id, label: a.label })),
-            { id: OTHER_AREA, label: "Other" },
-          ].map((a) => (
-            <button
-              key={a.id}
-              type="button"
-              onClick={() => setArea(a.id)}
-              className={`block w-full rounded-md px-3 py-1.5 text-left text-sm transition ${
-                area === a.id
-                  ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                  : "text-muted-foreground hover:bg-accent hover:text-foreground"
-              }`}
-            >
-              {a.label}
-            </button>
+    <Modal
+      onClose={onClose}
+      title={`Rules — ${roleName}`}
+      size="wide"
+      // Area rail. The grid is per-area by necessity — one matrix over every
+      // resource type at once would have no meaningful row axis — so the areas
+      // become navigation rather than another dropdown. It is the FRAME's
+      // sidebar, so it runs the whole height of the modal beside the title.
+      //
+      // General leads it and is separated from the rest: the panes below edit
+      // RULES, that one edits the role holding them.
+      sidebar={
+        <nav>
+          {SIDEBAR_GROUPS.map((group, i) => (
+            <div key={group.label ?? "ungrouped"} className={i > 0 ? "mt-4" : undefined}>
+              {group.label ? (
+                <div className="mb-1 px-3 text-xs font-medium text-muted-foreground/70">
+                  {group.label}
+                </div>
+              ) : null}
+              <div className="space-y-0.5">
+                {group.items.map((a) => (
+                  <button
+                    key={a.id}
+                    type="button"
+                    onClick={() => setArea(a.id)}
+                    className={`block w-full rounded-md px-3 py-1.5 text-left text-sm transition ${
+                      area === a.id
+                        ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                        : "text-muted-foreground hover:bg-accent hover:text-foreground"
+                    }`}
+                  >
+                    {a.label}
+                  </button>
+                ))}
+              </div>
+            </div>
           ))}
         </nav>
-        <div className="min-w-0 flex-1 space-y-6">
-          {current ? (
-            <>
-              <PermissionMatrix
-                // Remount per area: the grid holds a draft, and carrying one across a
-                // rail click would offer to save cells from a different resource type.
-                key={current.id}
-                roleId={role.id}
-                resourceType={current.resourceType}
-                scopeBy={current.scopeBy}
-                items={itemsFor(current).items}
-                itemsLabel={current.itemsLabel}
-                actions={ACTIONS.filter((a) => current.actions.includes(a.id))}
-                rules={rules.data ?? []}
-                defaults={(defaults.data ?? []).filter((d) => d.roleId === role.id)}
-                note={current.note}
-                resourceNoun={current.resourceNoun}
-                loading={rules.isPending || defaults.isPending || itemsFor(current).busy}
-                parentRules={role.basedOn ? parentRules.data : undefined}
-                parentLabel={basedOnParent?.name}
+      }
+    >
+      {/* `flex-1 min-h-0` + its own scroll: the wide modal is a fixed 90vh frame
+          that does NOT scroll itself, so without this a long concept list is
+          clipped rather than reachable. */}
+      <div className="flex min-h-0 flex-1 flex-col">
+        <div className="min-w-0 flex-1 space-y-6 overflow-y-auto pr-1">
+          {area === GENERAL_AREA ? (
+            <div className="space-y-3">
+              <h3 className="font-medium text-sm">General</h3>
+              <GeneralPane
+                role={role}
+                basedOnValue={basedOnValue}
+                basedOnOptions={basedOnOptions}
+                onBasedOn={(next) => basedOnMut.mutate(next)}
+                basedOnPending={basedOnMut.isPending}
+                basedOnError={basedOnMut.error}
+                onRenamed={setRoleName}
               />
+            </div>
+          ) : current ? (
+            <>
+              <div className="space-y-3">
+                {/* The pane's own title. The rail highlights the area, but the
+                    content column opened on an orphan sentence and started at a
+                    different height than the rail — so the two columns read as
+                    unrelated. The sentence is now this heading's hint. */}
+                <div className="flex items-center gap-1.5">
+                  <h3 className="font-medium text-sm">{current.label}</h3>
+                  {current.note ? (
+                    <InfoHint text={current.note} label={`${current.label} — more info`} />
+                  ) : null}
+                </div>
+                <PermissionMatrix
+                  // Remount per area: the grid holds a draft, and carrying one across a
+                  // rail click would offer to save cells from a different resource type.
+                  key={current.id}
+                  roleId={role.id}
+                  resourceType={current.resourceType}
+                  scopeBy={current.scopeBy}
+                  items={itemsFor(current).items}
+                  itemsLabel={current.itemsLabel}
+                  actions={ACTIONS.filter((a) => current.actions.includes(a.id))}
+                  rules={rules.data ?? []}
+                  defaults={(defaults.data ?? []).filter((d) => d.roleId === role.id)}
+                  resourceNoun={current.resourceNoun}
+                  loading={rules.isPending || defaults.isPending || itemsFor(current).busy}
+                  parentRules={role.basedOn ? parentRules.data : undefined}
+                  parentLabel={basedOnParent?.name}
+                />
+              </div>
               {/* Blanket/conditional rules for THIS type, inline rather than in the
                   global "Other" pane — a rule here used to show up in two editors
                   (this grid's Default row AND a separate Other list entry) that
