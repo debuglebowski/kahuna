@@ -142,6 +142,19 @@ const RESOURCE_GROUPS: ReadonlyArray<{
 interface Area {
   readonly id: string
   readonly label: string
+  /**
+   * One line under the heading: what the permissions in this pane decide.
+   *
+   * The rail entry is a single word, and a word cannot say whether the table
+   * under it governs the TYPE or the rows inside it — "Concepts" and "Records"
+   * are two panes a reader has to open before they can tell apart. Phrased as
+   * "who can …", because that is the question every one of these answers.
+   *
+   * Distinct from `note`, which stays behind the ⓘ: this says what the pane is
+   * FOR, the note warns about how it behaves. One is worth reading every visit,
+   * the other once.
+   */
+  readonly subtitle: string
   readonly resourceType: AccessResourceType
   /** "concept" when the rows are CONTAINERS rather than the resources themselves. */
   readonly scopeBy?: ScopeBy
@@ -156,6 +169,8 @@ const AREAS: ReadonlyArray<Area> = [
   {
     id: "concept",
     label: "Concepts",
+    subtitle:
+      "Who can reach the types this workspace is built from, and who can change how they are set up, archive them, or delete them along with everything inside.",
     resourceType: "concept",
     itemsLabel: "Concept",
     actions: ["view", "archive", "delete", "configure"],
@@ -164,6 +179,8 @@ const AREAS: ReadonlyArray<Area> = [
   {
     id: "record",
     label: "Records",
+    subtitle:
+      "Who can see the entries stored inside each concept. These decide the contents rather than the type, so a concept can stay reachable while the records in it are hidden.",
     resourceType: "record",
     scopeBy: "concept",
     itemsLabel: "Concept",
@@ -174,6 +191,8 @@ const AREAS: ReadonlyArray<Area> = [
   {
     id: "dashboard",
     label: "Dashboards",
+    subtitle:
+      "Who can open each dashboard, change the widgets on it, and delete it. Answered per dashboard, so a role can be given one and kept out of the rest.",
     resourceType: "dashboard",
     itemsLabel: "Dashboard",
     actions: ["view", "edit", "delete"],
@@ -182,6 +201,8 @@ const AREAS: ReadonlyArray<Area> = [
   {
     id: "view",
     label: "Sidebar views",
+    subtitle:
+      "Who can open each sidebar layout, change what it lists and in what order, and delete it. Answered per view, so a role can be limited to the ones it needs.",
     resourceType: "view",
     itemsLabel: "Sidebar view",
     actions: ["view", "edit", "delete"],
@@ -189,6 +210,8 @@ const AREAS: ReadonlyArray<Area> = [
   {
     id: "automation",
     label: "Automations",
+    subtitle:
+      "Who can see each automation, change what sets it off and what it does, and archive or delete it once it exists.",
     resourceType: "automation",
     itemsLabel: "Automation",
     actions: ["view", "edit", "archive", "delete"],
@@ -228,26 +251,15 @@ const inGrid = (r: {
 /** `role` isn't in `RESOURCE_GROUPS` — it has no picker entry, because role/rule
  *  editing is governed entirely by `configure` rather than being addable per
  *  resource (see `GRIDDED`'s doc). But an EXISTING rule on it (every managed
- *  role's preset carries one) still needs a real name and group here, or it
- *  falls into `groupRules`' fallback bucket — literally labelled "Other",
- *  which read as a duplicate heading inside the "Other" pane itself. */
+ *  role's preset carries one) still needs a real name here, or the "On" column
+ *  falls back to the raw wire word. */
 const RESOURCE_LABEL = new Map<string, string>([
   ...RESOURCE_GROUPS.flatMap((g) => g.items).map((r) => [r.id, r.label] as const),
   ["role", "Roles & permissions"],
 ])
 
-/** Which group a resource belongs to. ABSENT from this map means "an
- *  unrecognised type" (a stray pre-migration `field`/`bucket` row, or a newer
- *  server's type this client doesn't know), and that falls back to "Other" in
- *  `groupRules`. `role` is the one explicit exception: see `RESOURCE_LABEL`'s
- *  doc. */
-const GROUP_OF = new Map<string, string | null>([
-  ...RESOURCE_GROUPS.flatMap((g) => g.items.map((r) => [r.id, g.label] as const)),
-  ["role", "Administration"],
-])
-
-/** Sort position within a group, mirroring the picker's order (Concepts before
- *  Records, not alphabetical) so a rule sits where the reader expects it. */
+/** Sort position, mirroring the picker's order (Concepts before Records, not
+ *  alphabetical) so a rule sits where the reader expects it. */
 const RESOURCE_RANK = new Map<string, number>(
   RESOURCE_GROUPS.flatMap((g) => g.items).map((r, i) => [r.id, i] as const),
 )
@@ -278,46 +290,23 @@ const scopeLabelFor = (
 }
 
 /**
- * Bucket a role's rules by resource group, dropping empty groups.
+ * A role's rules in picker order, so rules of the same type sit together.
  *
- * A flat list of ten rows made the reader scan for the row they wanted; a role's
- * rules are almost always "everything, everywhere", so the shape of what it grants is
- * the actual information. Groups carry a count for that reason.
+ * No category headings any more. Once every GRIDDED type moved to its own pane
+ * the global "Other" list is at most a handful of rows across four types — and
+ * three headers over five rows is more structure than the content has. The "On"
+ * column already names each rule's type, which is what the headings were saying.
  *
  * An unrecognised `resourceType` (a newer server than this client, or a stray
- * pre-migration `field`/`bucket` row) falls into "Other" rather than vanishing —
- * a rule the UI can't name is exactly the one worth showing. A resource `GROUP_OF`
- * maps to `null` gets no header row at all and leads the list — there's nothing to
- * file it under, so it isn't buried after every category either.
+ * pre-migration `field`/`bucket` row) sorts last rather than vanishing — a rule
+ * the UI can't name is exactly the one worth showing.
  */
-const groupRules = <T extends { readonly resourceType: string }>(
+const sortRules = <T extends { readonly resourceType: string }>(
   rules: ReadonlyArray<T>,
-): ReadonlyArray<{ readonly label: string | null; readonly rules: ReadonlyArray<T> }> => {
-  const order = [...RESOURCE_GROUPS.map((g) => g.label), "Other"]
-  const byGroup = new Map<string, T[]>()
-  const ungrouped: T[] = []
-  for (const r of rules) {
-    const group = GROUP_OF.get(r.resourceType)
-    if (group === null) {
-      ungrouped.push(r)
-      continue
-    }
-    const key = group ?? "Other"
-    const list = byGroup.get(key)
-    if (list) list.push(r)
-    else byGroup.set(key, [r])
-  }
-  const grouped = order
-    .filter((label) => byGroup.has(label))
-    .map((label) => ({
-      label: label as string | null,
-      rules: [...(byGroup.get(label) ?? [])].sort(
-        (a, b) =>
-          (RESOURCE_RANK.get(a.resourceType) ?? 99) - (RESOURCE_RANK.get(b.resourceType) ?? 99),
-      ),
-    }))
-  return ungrouped.length > 0 ? [{ label: null, rules: ungrouped }, ...grouped] : grouped
-}
+): ReadonlyArray<T> =>
+  [...rules].sort(
+    (a, b) => (RESOURCE_RANK.get(a.resourceType) ?? 99) - (RESOURCE_RANK.get(b.resourceType) ?? 99),
+  )
 const ACTION_LABEL = new Map<string, string>(ACTIONS.map((a) => [a.id, a.label] as const))
 
 /**
@@ -361,18 +350,58 @@ function roleMsg(e: unknown): string {
 const AREA_OTHER_HINT =
   "Rules the grid above can't represent: untargeted (covers every one, including ones made later) or with a condition."
 
-/** The global "Other" destination's blurb — now only the types with no grid
- *  of their own. A gridded type's blanket/conditional rules moved to that
- *  type's own area (see `OtherRulesPanel`'s header) — a rule was showing up
- *  in two editors that disagreed about what a blank cell meant. */
+/** The global "Other" destination's blurb: PRECEDENCE only. What the pane
+ *  covers is now its subtitle ({@link OTHER_SUBTITLE}) — the two said the same
+ *  thing one line apart, and the half worth keeping here is the half a reader
+ *  cannot infer from a rule list. */
 const GLOBAL_OTHER_HINT: ReactNode = (
   <>
-    Everything with no grid of its own: tasks, notes, members, the organisation. A{" "}
-    <span className="text-foreground">Deny</span> beats an Allow within THIS role. A role this
+    A <span className="text-foreground">Deny</span> beats an Allow within THIS role. A role this
     person holds earlier, or their personal overrides, can still override it — see their access
     page.
   </>
 )
+
+/** {@link Area.subtitle}, for the one pane that is not an `Area`. The four types
+ *  are the COMPLETE set, not a sample — which is the one thing this pane's
+ *  reader needs, since "Other" otherwise sounds open-ended. */
+const OTHER_SUBTITLE =
+  "Who can act on everything with no table of its own: tasks, notes, members and the organisation's own settings. Written one rule at a time, since there is nothing here to lay out in a grid."
+
+/**
+ * A pane's heading — what this tab is, and one line on what it decides.
+ *
+ * Shared by all three kinds of pane (the role's own settings, an area grid, the
+ * Other list) so they open at the same height and in the same shape. Before this
+ * the content column started with whatever that pane happened to render first —
+ * a table on one, a paragraph on another — and the rail's highlight pointed at
+ * something that began differently every time you clicked.
+ */
+function PaneHeading({
+  title,
+  subtitle,
+  note,
+}: {
+  title: string
+  subtitle: string
+  /** The trap worth reading once, kept behind the ⓘ. See {@link Area.subtitle}. */
+  note?: string
+}) {
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center gap-1.5">
+        <h3 className="font-medium text-sm">{title}</h3>
+        {note ? <InfoHint text={note} label={`${title} — more info`} /> : null}
+      </div>
+      {/* `text-balance` (`text-wrap: balance`) so the two or three lines come out
+          near-equal instead of ending in one orphaned word. Safe at this length —
+          browsers stop balancing past a handful of lines, and `max-w-prose` is
+          what keeps the measure readable; balance only decides where the breaks
+          fall inside it. */}
+      <p className="max-w-prose text-sm text-balance text-muted-foreground">{subtitle}</p>
+    </div>
+  )
+}
 
 /**
  * Blanket & conditional rules — everything a grid cell cannot represent.
@@ -491,7 +520,7 @@ function OtherRulesPanel({
     items: g.items.filter((r) => !GRIDDED.has(r.id)),
   })).filter((g) => g.items.length > 0)
 
-  const rows = compact ? [{ label: null as string | null, rules }] : groupRules(rules)
+  const rows = sortRules(rules)
 
   return (
     <div className={compact ? "space-y-3" : "space-y-4"}>
@@ -505,7 +534,7 @@ function OtherRulesPanel({
           </div>
         ) : null
       ) : (
-        <p className="max-w-2xl text-sm text-muted-foreground">{GLOBAL_OTHER_HINT}</p>
+        <p className="max-w-prose text-sm text-muted-foreground">{GLOBAL_OTHER_HINT}</p>
       )}
 
       {rules.length > 0 ? (
@@ -533,65 +562,49 @@ function OtherRulesPanel({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {rows.flatMap((group) => [
-              // A group header row rather than nested tables: one set of column
-              // widths keeps Effect/Can/On/Scope aligned all the way down. The
-              // compact (locked-type) shape has exactly one group and skips it.
-              group.label ? (
-                <TableRow key={`h-${group.label}`} className="hover:bg-transparent">
-                  <TableCell
-                    colSpan={compact ? 4 : 5}
-                    className="bg-muted/40 py-2 text-xs font-medium tracking-wide text-muted-foreground"
+            {rows.map((r) => (
+              <TableRow
+                key={r.id}
+                // The whole row opens the editor; the remove button stops the event
+                // so a delete never reads as "edit this".
+                className={`cursor-pointer ${editingId === r.id ? "bg-accent" : ""}`}
+                onClick={() => startEditing(r)}
+              >
+                <TableCell>
+                  <Badge tone={r.effect === "deny" ? "red" : "green"}>
+                    {r.effect === "deny" ? "Deny" : "Allow"}
+                  </Badge>
+                </TableCell>
+                <TableCell className="font-medium text-foreground">
+                  {actionsLabel(r.actions)}
+                </TableCell>
+                {compact ? null : (
+                  <TableCell>{RESOURCE_LABEL.get(r.resourceType) ?? r.resourceType}</TableCell>
+                )}
+                <TableCell className="text-muted-foreground">
+                  {/* "Scope" answers "which ones?" — a raw `(any)` or a truncated
+                      uuid told the reader a rule was narrowed, but not to what,
+                      which is the one thing they need. */}
+                  {scopeLabel(r)}
+                </TableCell>
+                <TableCell>
+                  <IconButton
+                    aria-label={`Remove ${actionsLabel(r.actions)} on ${
+                      RESOURCE_LABEL.get(r.resourceType) ?? r.resourceType
+                    }`}
+                    title="Remove rule"
+                    variant="danger"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      remove.mutate(r.id)
+                    }}
+                    disabled={remove.isPending}
                   >
-                    {group.label}
-                    <span className="ml-2 font-normal opacity-70">{group.rules.length}</span>
-                  </TableCell>
-                </TableRow>
-              ) : null,
-              ...group.rules.map((r) => (
-                <TableRow
-                  key={r.id}
-                  // The whole row opens the editor; the remove button stops the event
-                  // so a delete never reads as "edit this".
-                  className={`cursor-pointer ${editingId === r.id ? "bg-accent" : ""}`}
-                  onClick={() => startEditing(r)}
-                >
-                  <TableCell>
-                    <Badge tone={r.effect === "deny" ? "red" : "green"}>
-                      {r.effect === "deny" ? "Deny" : "Allow"}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="font-medium text-foreground">
-                    {actionsLabel(r.actions)}
-                  </TableCell>
-                  {compact ? null : (
-                    <TableCell>{RESOURCE_LABEL.get(r.resourceType) ?? r.resourceType}</TableCell>
-                  )}
-                  <TableCell className="text-muted-foreground">
-                    {/* "Scope" answers "which ones?" — a raw `(any)` or a truncated
-                        uuid told the reader a rule was narrowed, but not to what,
-                        which is the one thing they need. */}
-                    {scopeLabel(r)}
-                  </TableCell>
-                  <TableCell>
-                    <IconButton
-                      aria-label={`Remove ${actionsLabel(r.actions)} on ${
-                        RESOURCE_LABEL.get(r.resourceType) ?? r.resourceType
-                      }`}
-                      title="Remove rule"
-                      variant="danger"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        remove.mutate(r.id)
-                      }}
-                      disabled={remove.isPending}
-                    >
-                      <X size={14} />
-                    </IconButton>
-                  </TableCell>
-                </TableRow>
-              )),
-            ])}
+                    <X size={14} />
+                  </IconButton>
+                </TableCell>
+              </TableRow>
+            ))}
           </TableBody>
         </Table>
       ) : compact ? (
@@ -799,11 +812,19 @@ function GeneralPane({
   const dirty = name.trim() !== saved.name || description.trim() !== saved.description
 
   return (
-    <div className="max-w-xl space-y-5">
-      <Field label="Name">
+    // Full width, like every other pane. The CONTROLS keep their own widths —
+    // a name input as wide as the frame is a text box you can't judge the length
+    // of — but the pane itself no longer stops two thirds of the way across and
+    // leaves the rail pointing at nothing.
+    <div className="space-y-5">
+      <Field label="Name" className="max-w-xl">
         <Input value={name} onChange={(e) => setName(e.target.value)} />
       </Field>
-      <Field label="Description" hint="Shown under the name in the roles list.">
+      <Field
+        label="Description"
+        hint="Shown under the name in the roles list."
+        className="max-w-xl"
+      >
         <Input
           value={description}
           onChange={(e) => setDescription(e.target.value)}
@@ -862,30 +883,31 @@ const GENERAL_AREA = "general" as const
 const NONE_BASED_ON = "__none"
 
 /**
- * The rail, in groups.
+ * The rail: TWO groups, cut by what a pane edits rather than by what it edits
+ * it ON.
  *
- * The area buckets are DERIVED from `RESOURCE_GROUPS` — the same taxonomy the
- * rule picker offers — rather than listed again here. A second hand-written
- * grouping drifts from the first the moment either is edited, and then the rail
- * and the picker disagree about where a resource type lives.
+ * Settings is the role itself — its name, its description, what it inherits.
+ * Permissions is every rule pane: the five area grids in escalation order, then
+ * "Other rules" for the types with no grid of their own.
  *
- * The last group is deliberately untitled: "Other" covers what no grid owns —
- * tasks, notes, members, the org — so it belongs to every group and therefore
- * to none. Spacing sets it apart instead of a label.
+ * The rule panes were previously filed under `RESOURCE_GROUPS`' own headings
+ * (Data / Workspace / Collaboration / Administration), which put four headings
+ * over six entries — the taxonomy that earns its keep in a picker of a dozen
+ * types is pure chrome over a rail this short. The one cut a reader actually
+ * makes here is "the role" vs "what it can do".
  */
 const SIDEBAR_GROUPS: ReadonlyArray<{
-  readonly label?: string
+  readonly label: string
   readonly items: ReadonlyArray<{ readonly id: string; readonly label: string }>
 }> = [
-  { label: "Role", items: [{ id: GENERAL_AREA, label: "General" }] },
-  ...RESOURCE_GROUPS.map((g) => ({
-    label: g.label,
-    items: AREAS.filter((a) => GROUP_OF.get(a.resourceType) === g.label).map((a) => ({
-      id: a.id,
-      label: a.label,
-    })),
-  })).filter((g) => g.items.length > 0),
-  { items: [{ id: OTHER_AREA, label: "Other rules" }] },
+  { label: "Settings", items: [{ id: GENERAL_AREA, label: "General" }] },
+  {
+    label: "Permissions",
+    items: [
+      ...AREAS.map((a) => ({ id: a.id, label: a.label })),
+      { id: OTHER_AREA, label: "Other rules" },
+    ],
+  },
 ]
 
 /**
@@ -1006,17 +1028,16 @@ export function RuleEditor({ role, onClose }: { role: AccessRole; onClose: () =>
       // become navigation rather than another dropdown. It is the FRAME's
       // sidebar, so it runs the whole height of the modal beside the title.
       //
-      // General leads it and is separated from the rest: the panes below edit
-      // RULES, that one edits the role holding them.
+      // Settings leads it and is separated from Permissions: everything under
+      // the second heading edits RULES, the one under the first edits the role
+      // holding them.
       sidebar={
         <nav>
           {SIDEBAR_GROUPS.map((group, i) => (
-            <div key={group.label ?? "ungrouped"} className={i > 0 ? "mt-4" : undefined}>
-              {group.label ? (
-                <div className="mb-1 px-3 text-xs font-medium text-muted-foreground/70">
-                  {group.label}
-                </div>
-              ) : null}
+            <div key={group.label} className={i > 0 ? "mt-4" : undefined}>
+              <div className="mb-1 px-3 text-xs font-medium text-muted-foreground/70">
+                {group.label}
+              </div>
               <div className="space-y-0.5">
                 {group.items.map((a) => (
                   <button
@@ -1044,8 +1065,11 @@ export function RuleEditor({ role, onClose }: { role: AccessRole; onClose: () =>
       <div className="flex min-h-0 flex-1 flex-col">
         <div className="min-w-0 flex-1 space-y-6 overflow-y-auto pr-1">
           {area === GENERAL_AREA ? (
-            <div className="space-y-3">
-              <h3 className="font-medium text-sm">General</h3>
+            <div className="space-y-4">
+              <PaneHeading
+                title="General"
+                subtitle="The role itself: what it is called, the description shown beside it in the roles list, and which other role it falls back on wherever this one says nothing."
+              />
               <GeneralPane
                 role={role}
                 basedOnValue={basedOnValue}
@@ -1058,17 +1082,12 @@ export function RuleEditor({ role, onClose }: { role: AccessRole; onClose: () =>
             </div>
           ) : current ? (
             <>
-              <div className="space-y-3">
-                {/* The pane's own title. The rail highlights the area, but the
-                    content column opened on an orphan sentence and started at a
-                    different height than the rail — so the two columns read as
-                    unrelated. The sentence is now this heading's hint. */}
-                <div className="flex items-center gap-1.5">
-                  <h3 className="font-medium text-sm">{current.label}</h3>
-                  {current.note ? (
-                    <InfoHint text={current.note} label={`${current.label} — more info`} />
-                  ) : null}
-                </div>
+              <div className="space-y-4">
+                <PaneHeading
+                  title={current.label}
+                  subtitle={current.subtitle}
+                  note={current.note}
+                />
                 <PermissionMatrix
                   // Remount per area: the grid holds a draft, and carrying one across a
                   // rail click would offer to save cells from a different resource type.
@@ -1104,11 +1123,14 @@ export function RuleEditor({ role, onClose }: { role: AccessRole; onClose: () =>
           ) : rules.isPending ? (
             <Spinner />
           ) : (
-            <OtherRulesPanel
-              roleId={role.id}
-              rules={ungriddedRules}
-              concepts={concepts.data ?? []}
-            />
+            <div className="space-y-4">
+              <PaneHeading title="Other rules" subtitle={OTHER_SUBTITLE} />
+              <OtherRulesPanel
+                roleId={role.id}
+                rules={ungriddedRules}
+                concepts={concepts.data ?? []}
+              />
+            </div>
           )}
         </div>
       </div>
@@ -1259,8 +1281,8 @@ interface RoleGroup {
  * They are NOT two levels of card, though. The managed halves are fixed by the
  * seed — two user roles and exactly one automation role, forever — so a heading,
  * a hint and a box of their own would be chrome around something that never
- * changes. A divider row inside the one card is what the rule table already does
- * with `groupRules`, for the same reason.
+ * changes. A divider row inside the one card carries the same cut for a
+ * fraction of the weight.
  */
 const SECTIONS: ReadonlyArray<{
   readonly id: string

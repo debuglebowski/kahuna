@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { Check, Info, Minus, TriangleAlert, X } from "lucide-react"
-import { useEffect, useState } from "react"
+import { type ReactNode, useEffect, useState } from "react"
 import {
   Table,
   TableBody,
@@ -205,17 +205,42 @@ export const blanketDenyCells = (
 const ICON: Record<CellState, typeof Check> = { deny: X, inherit: Minus, allow: Check }
 
 /**
- * How the SELECTED segment is painted.
+ * How the SELECTED segment is painted: a fill on all three, tinted for the two
+ * verdicts and NEUTRAL for inherit.
  *
- * Inherit gets no fill — only a darkened icon. It is the resting state of nearly
- * every cell, so giving it the same weight as Allow and Deny would fill the grid
- * with highlights and bury the handful of rows that actually decide something. The
- * eye should land on colour, and colour should mean "this role's own rule decides".
+ * Inherit went without a fill for a while, to keep the grid's resting state quiet.
+ * That cost more than it saved: once the unselected segments carry their own
+ * colour, a selected inherit differed from an unselected one only by text opacity —
+ * so the one state that means "this role has said nothing" was the one you could
+ * not read at a glance. The fill is what says SELECTED; the colour is what says
+ * which verdict. Keeping those two jobs separate is what lets inherit be plainly
+ * on without also looking like a third verdict.
  */
 const SELECTED: Record<CellState, string> = {
   allow: "bg-success/15 text-success",
   deny: "bg-destructive/15 text-destructive",
-  inherit: "text-foreground",
+  inherit: "bg-accent text-foreground",
+}
+
+/**
+ * How an UNSELECTED segment is painted: its own colour, dimmed — not grey.
+ *
+ * ✕ is red and ✓ is green whether or not they are the current answer, because the
+ * colour is what the segment MEANS, not a report of which one is on. Draining both
+ * to the same grey made a reader work out from position alone which end of the
+ * control denied, and the fill already says which is selected — a second signal was
+ * spending the one thing that carries meaning here.
+ *
+ * Inherit stays neutral even so: it is the absence of an answer, and giving it a
+ * colour of its own would make "we said nothing" look like a third verdict. Its
+ * hover is deliberately LIGHTER than its selected fill (`bg-accent/50` against
+ * `bg-accent`), so passing the cursor over the segment you already have selected
+ * doesn't read as a state change.
+ */
+const IDLE: Record<CellState, string> = {
+  allow: "text-success/50 hover:bg-success/10 hover:text-success",
+  deny: "text-destructive/50 hover:bg-destructive/10 hover:text-destructive",
+  inherit: "text-muted-foreground/50 hover:bg-accent/50 hover:text-foreground",
 }
 
 /**
@@ -252,9 +277,7 @@ function StateGroup({
                 aria-label={describe(s)}
                 onClick={() => onSelect(s.id)}
                 className={`flex size-6 items-center justify-center border-border/70 transition not-last:border-r ${
-                  on
-                    ? SELECTED[s.id]
-                    : "text-muted-foreground/40 hover:bg-accent hover:text-foreground"
+                  on ? SELECTED[s.id] : IDLE[s.id]
                 }`}
               >
                 <Icon size={14} />
@@ -287,7 +310,10 @@ export function PermissionMatrix({
   items: ReadonlyArray<MatrixItem>
   /** Singular noun for the first column header, e.g. "Concept". */
   itemsLabel: string
-  actions: ReadonlyArray<{ id: AccessActionName; label: string }>
+  /** `hint`, when given, hangs an {@link InfoHint} off the column header — the
+   *  one place a per-ACTION sentence can live in a grid, since the rows are
+   *  taken by resources. */
+  actions: ReadonlyArray<{ id: AccessActionName; label: string; hint?: ReactNode }>
   rules: ReadonlyArray<MatrixRule>
   /** This role's creation templates, filtered to nothing else. */
   defaults: ReadonlyArray<MatrixDefault>
@@ -360,6 +386,23 @@ export function PermissionMatrix({
   const setCell = (recordId: string, action: string, next: CellState) => {
     setDraft((cur) => new Map(cur).set(key(recordId, action), next))
     setDirty(true)
+  }
+
+  /** Throw the draft away and re-read the server's answer. Named rather than
+   *  inline on the Discard button, because a pane-owned bar needs to call the
+   *  same thing the button does — two implementations of "undo my edits" is how
+   *  one of them ends up forgetting to clear `dirty`. */
+  const discard = () => {
+    setDirty(false)
+    setDraft(
+      stateFrom(
+        rules,
+        defaults,
+        resourceType,
+        actions.map((a) => a.id),
+        scopeBy,
+      ),
+    )
   }
 
   // The one rule shape the grid still cannot represent — a cell has nowhere to put a
@@ -444,7 +487,10 @@ export function PermissionMatrix({
                   key={a.id}
                   className="text-center text-xs font-semibold uppercase tracking-wider text-muted-foreground"
                 >
-                  {a.label}
+                  <span className="inline-flex items-center gap-1.5">
+                    {a.label}
+                    {a.hint ? <InfoHint text={a.hint} label={`${a.label} — more info`} /> : null}
+                  </span>
                 </TableHead>
               ))}
             </TableRow>
@@ -551,23 +597,7 @@ export function PermissionMatrix({
           {save.isPending ? "Saving…" : "Save changes"}
         </Button>
         {dirty ? (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              setDirty(false)
-              setDraft(
-                stateFrom(
-                  rules,
-                  defaults,
-                  resourceType,
-                  actions.map((a) => a.id),
-                  scopeBy,
-                ),
-              )
-            }}
-            disabled={save.isPending}
-          >
+          <Button variant="outline" size="sm" onClick={discard} disabled={save.isPending}>
             Discard
           </Button>
         ) : null}
