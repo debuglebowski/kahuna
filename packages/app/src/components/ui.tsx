@@ -609,7 +609,15 @@ export function Modal({
           // `p-0` and `overflow-hidden`: the sidebar meets the frame's own edges
           // and its corners are clipped to the frame's radius, so the padding
           // belongs to each column rather than to the dialog.
-          className="flex h-[90vh] w-[90vw] max-w-none flex-row gap-0 overflow-hidden p-0 sm:max-w-none"
+          //
+          // CAPPED, unlike the plain `wide` frame. 90vw is right for an image
+          // viewer, where more pixels is more of the thing you opened it for.
+          // Here the content is a table and a column of settings, and past
+          // ~1280px the rail drifts an arm's length from the pane it controls
+          // while every row of the grid grows a lake between its label and its
+          // controls. `sm:` too — Radix's own `sm:max-w-lg` would otherwise win
+          // back at that breakpoint.
+          className="flex h-[90vh] w-[90vw] max-w-7xl flex-row gap-0 overflow-hidden p-0 sm:max-w-7xl"
         >
           {/* TITLE, ACTIONS AND NAV IN ONE COLUMN. The title names the thing
               being edited and the nav picks a part of it, so they belong
