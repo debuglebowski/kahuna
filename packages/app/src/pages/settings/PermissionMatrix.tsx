@@ -250,8 +250,12 @@ const IDLE: Record<CellState, string> = {
  * what the options are, and reaching Deny from Allow means passing THROUGH Inherit,
  * which for a heartbeat is a different (and weaker) permission. Three segments make
  * every state visible, one click away, and impossible to overshoot.
+ *
+ * Exported because the same control has to appear OUTSIDE the grid — one per
+ * question, in the sectioned layout (`PermissionsPrototype`). A second
+ * hand-rolled tri-state would be the same three states drawn two ways.
  */
-function StateGroup({
+export function StateGroup({
   state,
   onSelect,
   describe,

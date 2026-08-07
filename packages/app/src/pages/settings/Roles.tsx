@@ -41,6 +41,7 @@ import {
 } from "../../components/ui"
 import { type AccessActionName, type AccessResourceType, type AccessRole, api } from "../../lib/api"
 import { PermissionMatrix, type ScopeBy } from "./PermissionMatrix"
+import { PermissionsPrototype } from "./PermissionsPrototype"
 import { Feedback } from "./parts"
 import { SettingsHeading } from "./SettingsLayout"
 
@@ -877,6 +878,11 @@ function GeneralPane({
 /** The rail entry for the role's own settings. */
 const GENERAL_AREA = "general" as const
 
+/** The rail entry for {@link PermissionsPrototype} — a second shape for the
+ *  Concepts pane, wired to nothing. Delete this entry and the file with it once
+ *  the layout question is settled either way. */
+const PROTOTYPE_AREA = "prototype" as const
+
 /** "Nothing" in the Based on picker. Radix reserves `""` for the placeholder and
  *  throws on an empty `SelectItem` value, so no-choice rides a sentinel — the
  *  same workaround as {@link NONE}. */
@@ -908,6 +914,9 @@ const SIDEBAR_GROUPS: ReadonlyArray<{
       { id: OTHER_AREA, label: "Other rules" },
     ],
   },
+  // Scratch space, and labelled as such so nobody edits a role through it by
+  // accident. Goes away with the prototype.
+  { label: "Prototype", items: [{ id: PROTOTYPE_AREA, label: "Concepts & records" }] },
 ]
 
 /**
@@ -1012,6 +1021,10 @@ export function RuleEditor({ role, onClose }: { role: AccessRole; onClose: () =>
   }
 
   const current = AREAS.find((a) => a.id === area) ?? null
+  /** The Concepts area, for the prototype pane to borrow. Non-null by
+   *  construction — it is the first entry in `AREAS` — but read rather than
+   *  indexed so deleting the prototype needs no other change. */
+  const conceptArea = AREAS.find((a) => a.resourceType === "concept") ?? AREAS[0]!
   /** This area's blanket/conditional rules — the ones its grid can't show. */
   const otherRulesFor = (resourceType: AccessResourceType) =>
     (rules.data ?? []).filter((r) => r.resourceType === resourceType && !inGrid(r))
@@ -1078,6 +1091,21 @@ export function RuleEditor({ role, onClose }: { role: AccessRole; onClose: () =>
                 basedOnPending={basedOnMut.isPending}
                 basedOnError={basedOnMut.error}
                 onRenamed={setRoleName}
+              />
+            </div>
+          ) : area === PROTOTYPE_AREA ? (
+            // Concepts and Records as ONE pane — the prototype's whole point, so
+            // it takes the concept list and nothing else. It writes nothing, so
+            // it needs no role, no rules and no defaults.
+            <div className="space-y-4">
+              <PaneHeading
+                title="Concepts &amp; records"
+                subtitle="Who can see and change the entries stored under each type, and who can change or remove the type itself. One row per concept, covering both."
+              />
+              <PermissionsPrototype
+                items={itemsFor(conceptArea).items}
+                itemsLabel={conceptArea.itemsLabel}
+                loading={itemsFor(conceptArea).busy}
               />
             </div>
           ) : current ? (

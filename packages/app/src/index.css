@@ -47,6 +47,11 @@
   --sidebar-ring: oklch(0.708 0 0);
   /* Modal scrim: dark over the light palette, light over the dark one. */
   --overlay: oklch(0 0 0 / 50%);
+  /* Lift for a bar that floats OVER content — same inversion as the scrim, and
+     for the same reason: a black shadow is invisible against a dark surface, so
+     on the dark palette the halo is light instead. Thrown upward, because the
+     thing it has to separate from is always above it. */
+  --lift: 0 -2px 20px oklch(0 0 0 / 18%);
 }
 
 .dark {
@@ -86,6 +91,7 @@
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
   --overlay: oklch(1 0 0 / 30%);
+  --lift: 0 -2px 20px oklch(1 0 0 / 12%);
 }
 
 @theme inline {
@@ -130,6 +136,8 @@
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-overlay: var(--overlay);
+  /* `shadow-lift` — see `--lift`. */
+  --shadow-lift: var(--lift);
 }
 
 @layer base {
