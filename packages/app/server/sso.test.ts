@@ -4,7 +4,6 @@ import { describe, expect, it } from "vitest"
 import { session as sessionTable, ssoProvider } from "#db"
 import { auth } from "./auth"
 import {
-  type AuthMethods,
   domainMatches,
   emailDomain,
   passwordSignInAllowed,
@@ -14,7 +13,13 @@ import {
 import { db, pool } from "./db"
 import { createUserDirect } from "./provision"
 import { resolveOrg } from "./session"
-import { authConfigStatus, publicAuthMethods, updateAuthMethods } from "./sso"
+import {
+  authConfigStatus,
+  type PublicAuthMethods,
+  publicAuthMethods,
+  publicAuthMethodsFor,
+  updateAuthMethods,
+} from "./sso"
 
 /**
  * The per-org sign-in gates, the owner-only config surface, and the two traps
@@ -256,23 +261,54 @@ describe("auth config surface", () => {
 })
 
 describe("public sign-in methods", () => {
-  it("is readable with NO session, and leaks only booleans", async () => {
+  it("is readable with NO session, and leaks nothing but the toggles and provider id", async () => {
     const res = await publicAuthMethods()
     expect(res.status).toBe(200)
     const raw = await res.text()
-    const body = JSON.parse(raw) as AuthMethods
+    const body = JSON.parse(raw) as PublicAuthMethods
     expect(typeof body.passwordEnabled).toBe("boolean")
     expect(typeof body.ssoEnabled).toBe("boolean")
     // No issuer, client id, domain or secret — those stay admin-gated.
-    expect(Object.keys(body).sort()).toEqual(["passwordEnabled", "ssoEnabled"])
+    expect(Object.keys(body).sort()).toEqual(["passwordEnabled", "ssoEnabled", "ssoProviderId"])
   })
 
-  it("falls back to offering both when the org is ambiguous", async () => {
+  it("falls back to offering both, and no provider id, when the org is ambiguous", async () => {
     // The suite creates many orgs, so this exercises the 2+ branch: a visitor's
     // org is unknowable, and hiding a method they can use would lock them out.
-    const body = (await (await publicAuthMethods()).json()) as AuthMethods
+    const body = (await (await publicAuthMethods()).json()) as PublicAuthMethods
     expect(body.passwordEnabled).toBe(true)
     expect(body.ssoEnabled).toBe(true)
+    // Nothing to name, so the sign-in page falls back to asking for an email.
+    expect(body.ssoProviderId).toBeNull()
+  })
+
+  it("names the provider so the SSO button needs no email typed", async () => {
+    const { orgId, owner } = await orgWithOwner()
+    await insertProvider(orgId, owner.userId, "acme.test")
+    await writeAuthMethods(orgId, { passwordEnabled: false, ssoEnabled: true })
+
+    const body = await publicAuthMethodsFor(orgId)
+    expect(body.ssoEnabled).toBe(true)
+    // Must be the id the provider row actually carries: better-auth resolves the
+    // sign-in against `providerId`, so a guessed or stale value 404s the flow.
+    expect(body.ssoProviderId).toBe(`org-${orgId}`)
+    const [row] = await db
+      .select({ providerId: ssoProvider.providerId })
+      .from(ssoProvider)
+      .where(eq(ssoProvider.organizationId, orgId))
+    expect(body.ssoProviderId).toBe(row?.providerId)
+  })
+
+  it("withholds the provider id when SSO is off", async () => {
+    // Half-configured org: a provider exists but the org does not accept SSO.
+    // Handing out the id would let the page render a button the gate rejects.
+    const { orgId, owner } = await orgWithOwner()
+    await insertProvider(orgId, owner.userId, "off.test")
+    await writeAuthMethods(orgId, { passwordEnabled: true, ssoEnabled: false })
+
+    const body = await publicAuthMethodsFor(orgId)
+    expect(body.ssoEnabled).toBe(false)
+    expect(body.ssoProviderId).toBeNull()
   })
 })
 

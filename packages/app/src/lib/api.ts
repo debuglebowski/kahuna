@@ -140,6 +140,16 @@ export interface AuthMethods {
   readonly ssoEnabled: boolean
 }
 
+/**
+ * What the anonymous sign-in page gets: the toggles, plus the provider id that
+ * lets the SSO button work with nothing typed. Null means the deployment could
+ * not name a single org, and the email domain is the only routing key left. See
+ * `PublicAuthMethods` in server/sso.ts for why that id is safe to hand out.
+ */
+export interface PublicAuthMethods extends AuthMethods {
+  readonly ssoProviderId: string | null
+}
+
 export interface SsoProvider {
   readonly providerId: string
   readonly issuer: string
@@ -791,13 +801,14 @@ export const api = {
     return (await res.json()) as VersionInfo
   },
   // ── Org authentication config (SSO + sign-in methods) ───────────────────────
-  /** Unauthenticated: what the sign-in page should render. Booleans only. */
-  getPublicAuthMethods: async (): Promise<AuthMethods> => {
+  /** Unauthenticated: what the sign-in page should render. */
+  getPublicAuthMethods: async (): Promise<PublicAuthMethods> => {
     const res = await fetch("/api/auth-config/public")
     // Never block sign-in on this: a failure falls back to offering everything,
-    // which is what the page did before it asked at all.
-    if (!res.ok) return { passwordEnabled: true, ssoEnabled: true }
-    return (await res.json()) as AuthMethods
+    // which is what the page did before it asked at all. No provider id, so the
+    // SSO button asks for an email rather than guessing.
+    if (!res.ok) return { passwordEnabled: true, ssoEnabled: true, ssoProviderId: null }
+    return (await res.json()) as PublicAuthMethods
   },
   getAuthConfig: async (): Promise<AuthConfig> => {
     const res = await fetch("/api/auth-config/sso")

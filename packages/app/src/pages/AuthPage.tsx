@@ -1,6 +1,6 @@
 import { type FormEvent, useEffect, useState } from "react"
 import { Button, Card, Field, Input, Spinner } from "../components/ui"
-import type { AuthMethods } from "../lib/api"
+import type { PublicAuthMethods } from "../lib/api"
 import { api } from "../lib/api"
 import { authClient } from "../lib/auth-client"
 
@@ -25,7 +25,7 @@ import { authClient } from "../lib/auth-client"
  * behind a link rather than removed.
  */
 export function AuthPage() {
-  const [methods, setMethods] = useState<AuthMethods | null>(null)
+  const [methods, setMethods] = useState<PublicAuthMethods | null>(null)
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [error, setError] = useState<string | null>(null)
@@ -65,22 +65,34 @@ export function AuthPage() {
   }
 
   /**
-   * Hand off to the org's IdP. The provider is resolved server-side from the
-   * address's DOMAIN, so the local part is irrelevant — but asking for a full
-   * address is what people expect, and it doubles as the `login_hint`.
+   * Hand off to the org's IdP — one click, nothing typed.
+   *
+   * `ssoProviderId` names the provider outright, so better-auth needs no email
+   * to route the request. An address, if one happens to be typed, is passed as
+   * `login_hint` only: it pre-fills the IdP's own form, and is not a gate. It
+   * never was one either — the domain it carried is a company domain, and what
+   * actually decides who gets in is the IdP plus `provisionUser`'s domain check.
+   *
+   * The email path stays as the fallback for the one case with no provider id:
+   * a deployment where the org could not be resolved (see `publicAuthMethods`).
    *
    * On success this never returns: better-auth replies with a redirect the
    * client follows to the IdP.
    */
   const ssoSignIn = async () => {
-    if (!email.trim()) {
+    const hint = email.trim()
+    if (!methods?.ssoProviderId && !hint) {
       setError("Enter your email address first.")
       return
     }
     setSsoBusy(true)
     setError(null)
     try {
-      const r = await authClient.signIn.sso({ email: email.trim(), callbackURL: "/" })
+      const r = await authClient.signIn.sso(
+        methods?.ssoProviderId
+          ? { providerId: methods.ssoProviderId, loginHint: hint || undefined, callbackURL: "/" }
+          : { email: hint, callbackURL: "/" },
+      )
       if (r.error) throw new Error(r.error.message ?? "SSO is not available for this address")
     } catch (err) {
       setError((err as Error).message)
@@ -107,11 +119,19 @@ export function AuthPage() {
         <h1 className="mb-1 text-xl font-semibold tracking-tight text-foreground">Kingsmaker</h1>
         <p className="mb-4 text-sm text-muted-foreground">Sign in to your org</p>
 
-        <form onSubmit={submit} className="space-y-3">
-          <Field label="Email">
-            <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
-          </Field>
-          {passwordVisible && (
+        {/* No credential fields at all when SSO is the only way in — the button
+            below needs nothing typed, so an email box would be a dead end that
+            looks required. */}
+        {passwordVisible ? (
+          <form onSubmit={submit} className="space-y-3">
+            <Field label="Email">
+              <Input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+              />
+            </Field>
             <Field label="Password">
               <Input
                 type="password"
@@ -121,14 +141,14 @@ export function AuthPage() {
                 minLength={8}
               />
             </Field>
-          )}
-          {error && <p className="text-sm text-destructive">{error}</p>}
-          {passwordVisible && (
+            {error && <p className="text-sm text-destructive">{error}</p>}
             <Button type="submit" className="w-full" disabled={busy || ssoBusy}>
               {busy ? "…" : "Sign in"}
             </Button>
-          )}
-        </form>
+          </form>
+        ) : (
+          error && <p className="mb-3 text-sm text-destructive">{error}</p>
+        )}
 
         {methods.ssoEnabled && (
           <>
@@ -143,8 +163,8 @@ export function AuthPage() {
               type="button"
               // The only advertised method leads; alongside a password form it
               // is the alternative.
-              variant={ssoOnly && !showPasswordForm ? "default" : "outline"}
-              className={passwordVisible ? "w-full" : "mt-3 w-full"}
+              variant={passwordVisible ? "outline" : "default"}
+              className="w-full"
               disabled={busy || ssoBusy}
               onClick={ssoSignIn}
             >

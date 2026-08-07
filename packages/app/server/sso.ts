@@ -82,6 +82,42 @@ const providerPayload = async (orgId: string): Promise<ProviderPayload | null> =
   return { providerId: row.providerId, issuer: row.issuer, domain: row.domain, clientId, hasSecret }
 }
 
+export interface PublicAuthMethods extends AuthMethods {
+  /**
+   * The org's SSO provider id, or null when no single org could be resolved.
+   *
+   * Here so the sign-in page can start SSO WITH NOTHING TYPED: better-auth needs
+   * one of providerId / domain / email to pick a provider, and with one org per
+   * deployment the answer is already known — asking for an email purely to
+   * re-derive a domain we hold is a gate that buys nothing.
+   *
+   * NOT A SECRET, and not a capability. It is `org-<orgId>`, an identifier;
+   * every authorization decision takes the org from the SESSION (`resolveOrg`),
+   * and no endpoint accepts an org id from the caller. Knowing it lets an
+   * anonymous visitor kick off an OIDC redirect — which the email path already
+   * allowed, since company domains are guessable. What actually stops them is
+   * the IdP, and then `provisionUser`'s domain guard in auth.ts.
+   */
+  readonly ssoProviderId: string | null
+}
+
+/**
+ * The public payload for one known org. Split out from the handler because the
+ * test suite creates many orgs, so `publicAuthMethods` itself only ever reaches
+ * the ambiguous fallback below.
+ */
+export const publicAuthMethodsFor = async (orgId: string): Promise<PublicAuthMethods> => {
+  const methods = await readAuthMethods(orgId)
+  // Guard the UI against a half-configured org: SSO on with the provider row
+  // since deleted would render an SSO button that cannot resolve a provider.
+  const provider = methods.ssoEnabled ? await providerPayload(orgId) : null
+  return {
+    passwordEnabled: methods.passwordEnabled,
+    ssoEnabled: methods.ssoEnabled && Boolean(provider),
+    ssoProviderId: provider?.providerId ?? null,
+  }
+}
+
 /**
  * GET /api/auth-config/public — which sign-in methods to render. NO SESSION:
  * this is read by the sign-in page, before anyone is authenticated.
@@ -90,26 +126,21 @@ const providerPayload = async (orgId: string): Promise<ProviderPayload | null> =
  * `createOrgDirect` enforces one org per deployment (provision.ts), so "which
  * org?" has a single answer that does not depend on who is asking — nothing here
  * is keyed on an email address, so it cannot be used to probe whether an account
- * exists. Booleans only: the issuer, client id and domains stay behind the
- * admin-gated endpoint above.
+ * exists. The issuer, client id and domains stay behind the admin-gated endpoint
+ * above; only the toggles and the provider id come out (see `PublicAuthMethods`).
  *
  * The permissive fallback (both methods) is deliberate for 0 orgs — a
  * pre-bootstrap deployment — and for the 2+ case that only tests produce, where
  * the visitor's org is genuinely unknowable. Rendering a method the org rejects
- * costs a clear error; hiding one it accepts locks people out of the UI.
+ * costs a clear error; hiding one it accepts locks people out of the UI. That
+ * fallback carries no provider id, so the page falls back to asking for an email.
  */
 export const publicAuthMethods = async (): Promise<Response> => {
   const orgs = await db.select({ id: organization.id }).from(organization).limit(2)
-  if (orgs.length !== 1 || !orgs[0]) return json({ passwordEnabled: true, ssoEnabled: true })
-
-  const methods = await readAuthMethods(orgs[0].id)
-  // Guard the UI against a half-configured org: SSO on with the provider row
-  // since deleted would render an SSO button that cannot resolve a provider.
-  const provider = methods.ssoEnabled ? await providerPayload(orgs[0].id) : null
-  return json({
-    passwordEnabled: methods.passwordEnabled,
-    ssoEnabled: methods.ssoEnabled && Boolean(provider),
-  })
+  if (orgs.length !== 1 || !orgs[0]) {
+    return json({ passwordEnabled: true, ssoEnabled: true, ssoProviderId: null })
+  }
+  return json(await publicAuthMethodsFor(orgs[0].id))
 }
 
 /** GET /api/auth-config/sso — the whole settings page in one call. Admin-readable. */
