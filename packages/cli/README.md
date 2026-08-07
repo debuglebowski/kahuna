@@ -84,6 +84,37 @@ provider either, which is why this works where a CLI-driven SSO flow cannot.
 The credential is the browser's session, so **signing out in the browser signs
 the CLI out too**. That goes away when token credentials land.
 
+## Keeping the CLI current
+
+```bash
+km cli update            # upgrade to the newest published version
+km cli update --dry-run  # print what it would run, change nothing
+```
+
+**Why this matters more than it looks.** The CLI carries a *copy* of the wire
+contract, compiled in at build time. Against a deployment built from newer
+sources, a procedure whose shape changed fails inside a schema decode with a
+message about a field nobody typed. `km system version` detects that skew and
+says "update the CLI first"; this is how you do it.
+
+`km cli update` asks **npm** what the newest `@kingsmaker/cli` is and upgrades a
+global install in place, with no prompt. `km system version` asks your
+**deployment** what image it runs — different artifact, different registry. Set
+`KM_REGISTRY` to point at a mirror.
+
+It works out which package manager owns the install from where the binary
+actually lives (`npm`, `bun`, `pnpm`, `yarn`) and **refuses** in three cases,
+naming the command to run instead:
+
+| where it is | why it refuses |
+| --- | --- |
+| a source checkout or `npm link` | installing would write over a working tree |
+| a project dependency | it would rewrite that project's lockfile, and the CLI's CWD is not reliably that project's root |
+| an `npx` cache | it is ephemeral; there is nothing installed to update |
+
+The package manager's output goes to **stderr** with all other chatter, so
+`km cli update --json` stays parseable.
+
 ## What it cannot do yet
 
 - **Unattended CI.** A session expires, and `km auth token create` needs

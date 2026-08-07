@@ -7,6 +7,7 @@ import { attachmentCommands } from "./commands/attachment.ts"
 import { authCommands } from "./commands/auth.ts"
 import { automationCommands } from "./commands/automation.ts"
 import { bulkCommands } from "./commands/bulk.ts"
+import { cliCommands } from "./commands/cli.ts"
 import { conceptCommands } from "./commands/concept.ts"
 import { dashboardCommands } from "./commands/dashboard.ts"
 import { eventCommands } from "./commands/event.ts"
@@ -50,6 +51,7 @@ export const registry = new Registry([
   ...versionCommands,
   ...eventCommands,
   ...systemCommands,
+  ...cliCommands,
 ])
 
 /** Flags every command accepts. Command-specific options are merged on top. */
@@ -86,7 +88,7 @@ const usage = (): string => {
     "  --yes, -y         do not ask before a destructive change",
     "  --dry-run         print what would happen and write nothing",
     "",
-    "Environment: KM_HOST, KM_TOKEN, KM_NO_BROWSER, XDG_CONFIG_HOME",
+    "Environment: KM_HOST, KM_TOKEN, KM_NO_BROWSER, KM_REGISTRY, XDG_CONFIG_HOME",
   )
   return lines.join("\n")
 }

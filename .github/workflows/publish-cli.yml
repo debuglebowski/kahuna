@@ -95,6 +95,14 @@ jobs:
           npm init -y >/dev/null
           npm install /tmp/kingsmaker-cli-*.tgz
           ./node_modules/.bin/km help | grep -q "Kingsmaker command line"
+          # `cli update` is the one command that inspects its own install path,
+          # so it must be reachable in the BUNDLE and not just in source. No
+          # network: what it reports depends on what is published, and the
+          # version being packed here is never older than that, so asserting on
+          # the outcome would gate releases on registry weather. Which install
+          # layout maps to which package manager is covered by selfupdate.test.ts
+          # against real directory trees.
+          ./node_modules/.bin/km cli update --help | grep -q "cli update"
 
       - name: Publish
         if: github.event_name == 'push' || inputs.dry-run == false
