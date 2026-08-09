@@ -716,6 +716,61 @@ describe("record filter — multiple tiers (the new path)", () => {
     }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
 
+  /**
+   * THE FOLD IS ONE FUNCTION NOW, so this proves it did not lose a case.
+   *
+   * `compileTier` (fallback baked in) and `compileTierVerdict` (three-valued, chained
+   * with COALESCE) were two renderings of "deny beats allow within a tier" living in
+   * the same file, agreeing only by inspection. `foldTier` replaced both, and it still
+   * emits the cheap boolean form whenever the tail below it is a constant — which is
+   * exactly where the two used to differ.
+   *
+   * So: every shape a single tier can take, against both fallbacks, compared to
+   * `decideRecord` on real rows. Six branches, twelve assertions.
+   */
+  it.effect("the fold matches decideRecord for every tier shape and both fallbacks", () =>
+    Effect.gen(function* () {
+      const f = yield* seed()
+      const records = [
+        { recordId: f.mine.recordId, state: f.mine.state, createdBy: ACTOR },
+        { recordId: f.ownedByMe.recordId, state: f.ownedByMe.state, createdBy: OTHER },
+        { recordId: f.theirs.recordId, state: f.theirs.state, createdBy: null },
+      ]
+      const allowOne = rule({ conceptId: f.conceptId, resourceId: f.mine.recordId })
+      const denyOne = rule({
+        conceptId: f.conceptId,
+        effect: "deny",
+        resourceId: f.theirs.recordId,
+      })
+      const shapes: ReadonlyArray<{ name: string; rules: ReadonlyArray<AccessRule> }> = [
+        { name: "allow only", rules: [allowOne] },
+        { name: "deny only", rules: [denyOne] },
+        { name: "both", rules: [allowOne, denyOne] },
+      ]
+
+      for (const shape of shapes) {
+        for (const fallback of [true, false]) {
+          const p = policyOf(shape.rules)
+          const inMemory = new Set(
+            records
+              .filter((r) =>
+                decideRecord(
+                  p,
+                  "view",
+                  { type: "record", id: r.recordId, conceptId: f.conceptId },
+                  fallback,
+                  r,
+                ),
+              )
+              .map((r) => r.recordId),
+          )
+          const fromSql = yield* idsMatching(f.conceptId, p, fallback)
+          expect(fromSql, `${shape.name} / fallback=${fallback}`).toEqual(inMemory)
+        }
+      }
+    }).pipe(Effect.provide(testLayer(newOrgId()))),
+  )
+
   it.effect("SQL and the in-memory decideRecord agree on a three-tier policy", () =>
     Effect.gen(function* () {
       const f = yield* seed()

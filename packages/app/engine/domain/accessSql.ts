@@ -93,76 +93,74 @@ const compileRule = (sql: Sql, rule: AccessRule, actorId: string): Statement.Fra
   return sql`(${target} AND ${compileCondition(sql, rule.condition, actorId)})`
 }
 
+/** OR the rules of one polarity into a single predicate, or null if there are none. */
+const anyOf = (
+  sql: Sql,
+  rules: ReadonlyArray<AccessRule>,
+  actorId: string,
+): Statement.Fragment | null =>
+  rules
+    .map((r) => compileRule(sql, r, actorId))
+    .reduce((acc, p) => (acc ? sql`(${acc}) OR (${p})` : p), null as Statement.Fragment | null)
+
 /**
- * ONE TIER's contribution, in the exact shape this function has always compiled
- * to — now scoped to rules that share a precedence rather than to every matched
- * rule. This IS the fast path for the overwhelmingly common case, today:
- * everyone's rules still land in a single tier until a role gets ordered or based
- * on another, so `compileRecordFilter` calls this directly (with the REAL
- * fallback) whenever there is only one tier, producing SQL byte-identical to what
- * this function always produced.
+ * What the walk has decided so far, folding tiers from the BOTTOM up.
  *
- *   deny rules  → subtracted, ALWAYS (deny wins WITHIN the tier, and a conditional
- *                 deny narrows to the rows it names rather than being dropped)
- *   allow rules → unioned with the fallback passed in
+ * `true`/`false` are constants — every remaining tier agreed, or there were none
+ * and this is the fallback. A fragment is a per-row expression.
  */
-const compileTier = (
-  sql: Sql,
-  tier: ReadonlyArray<AccessRule>,
-  actorId: string,
-  fallback: boolean,
-): CompiledFilter => {
-  const denies = tier.filter((r) => r.effect === "deny")
-  const allows = tier.filter((r) => r.effect === "allow")
-
-  if (denies.some((r) => r.resourceId === null && r.condition === null)) return "none"
-
-  const positive = fallback
-    ? null // every row qualifies before denies are subtracted
-    : allows.length === 0
-      ? "none"
-      : allows.map((r) => compileRule(sql, r, actorId)).reduce((acc, p) => sql`(${acc} OR ${p})`)
-
-  if (positive === "none") return "none"
-
-  const negative =
-    denies.length === 0
-      ? null
-      : denies.map((r) => compileRule(sql, r, actorId)).reduce((acc, p) => sql`(${acc} OR ${p})`)
-
-  if (positive === null && negative === null) return "all"
-  if (positive === null) return sql`NOT (${negative})`
-  if (negative === null) return positive
-  return sql`(${positive}) AND NOT (${negative})`
-}
+type Tail = boolean | Statement.Fragment
 
 /**
- * One tier's verdict as a raw THREE-valued row expression: `FALSE` (this tier
- * denies the row), `TRUE` (this tier allows it), or SQL `NULL` (this tier has
- * nothing to say about it — defer to the next one). Deny beats allow within the
- * tier, same as `compileTier`, but with no fallback baked in: multiple tiers defer
- * to each other via `COALESCE`, which is SQL's native "skip the NULLs" operator —
- * exactly "the first tier with a verdict wins", with no fallback boolean smuggled
- * in ahead of time the way `compileTier`'s single-tier shape needs to.
+ * ── DENY BEATS ALLOW, IN ONE PLACE ───────────────────────────────────────────
+ *
+ * One tier folded onto whatever the tiers below it already decided. This used to be
+ * TWO functions — one that baked the fallback in for the single-tier fast path, one
+ * that emitted a three-valued `CASE` for `COALESCE` to chain — which meant the rule
+ * "deny beats allow within a tier, and a silent tier defers" was written twice, in
+ * two different shapes, in this one file. They agreed, but only by inspection.
+ *
+ * The split existed for a real reason, and it is preserved below rather than
+ * discarded: when the tail is a CONSTANT, this emits plain boolean algebra
+ * (`allow`, `NOT (deny)`, `(allow) AND NOT (deny)`) which leaves the predicates at
+ * the top level where an index can still reach them — `record_id = …` on a share,
+ * `state @>` on the GIN index. Burying those inside a `CASE` costs the plan. So the
+ * constant-tail branch is not a fast path bolted on beside the general one; it is
+ * the same fold, taking the cheaper representation when the shape allows it.
+ *
+ * A useful consequence: the LAST tier of a multi-tier walk now also gets the cheap
+ * form, since its tail is the fallback constant. That was not true before.
  */
-const compileTierVerdict = (
-  sql: Sql,
-  tier: ReadonlyArray<AccessRule>,
-  actorId: string,
-): Statement.Fragment => {
-  const denyPred = tier
-    .filter((r) => r.effect === "deny")
-    .map((r) => compileRule(sql, r, actorId))
-    .reduce((acc, p) => (acc ? sql`(${acc}) OR (${p})` : p), null as Statement.Fragment | null)
-  const allowPred = tier
-    .filter((r) => r.effect === "allow")
-    .map((r) => compileRule(sql, r, actorId))
-    .reduce((acc, p) => (acc ? sql`(${acc}) OR (${p})` : p), null as Statement.Fragment | null)
-  // A tier from `tiersOf` is never empty, so at least one of these is non-null.
-  if (denyPred && allowPred)
-    return sql`CASE WHEN ${denyPred} THEN FALSE WHEN ${allowPred} THEN TRUE END`
-  if (denyPred) return sql`CASE WHEN ${denyPred} THEN FALSE END`
-  return sql`CASE WHEN ${allowPred} THEN TRUE END`
+const foldTier = (sql: Sql, tier: ReadonlyArray<AccessRule>, actorId: string, tail: Tail): Tail => {
+  const deny = anyOf(
+    sql,
+    tier.filter((r) => r.effect === "deny"),
+    actorId,
+  )
+  const allow = anyOf(
+    sql,
+    tier.filter((r) => r.effect === "allow"),
+    actorId,
+  )
+  // `tiersOf` never yields an empty tier, so at least one side is non-null.
+
+  if (typeof tail === "boolean") {
+    // Rows this tier says nothing about fall through to a constant, so the whole
+    // thing collapses to boolean algebra.
+    if (!deny) return tail === true ? true : allow!
+    if (!allow) return tail === true ? sql`NOT (${deny})` : false
+    return tail === true ? sql`NOT (${deny})` : sql`(${allow}) AND NOT (${deny})`
+  }
+
+  // The tail is per-row, so this tier must be able to say "no verdict" for a row and
+  // defer. SQL `NULL` is that, and `COALESCE` is SQL's own "first verdict wins".
+  const verdict =
+    deny && allow
+      ? sql`CASE WHEN ${deny} THEN FALSE WHEN ${allow} THEN TRUE END`
+      : deny
+        ? sql`CASE WHEN ${deny} THEN FALSE END`
+        : sql`CASE WHEN ${allow} THEN TRUE END`
+  return sql`COALESCE(${verdict}, ${tail})`
 }
 
 /**
@@ -191,28 +189,24 @@ export const compileRecordFilter = (
   if (rules.length === 0) return fallback ? "all" : "none"
 
   const tiers = tiersOf(rules)
-  if (tiers.length === 1) return compileTier(sql, tiers[0]!, policy.actorId, fallback)
 
   // A blanket deny (no target, no condition) in the FIRST — lowest-precedence —
   // tier kills the read before any lower tier is even relevant: it is
-  // unconditionally TRUE for every row, so `COALESCE` below would land on FALSE
-  // for all of them anyway. This just lets the caller skip the query entirely,
-  // same as the single-tier fast path already did.
+  // unconditionally TRUE for every row, so the fold would land on FALSE for all of
+  // them anyway. This just lets the caller skip the query entirely.
   if (tiers[0]!.some((r) => r.effect === "deny" && r.resourceId === null && r.condition === null))
     return "none"
 
-  // MULTIPLE tiers. `COALESCE(tier0, tier1, …, tierN, fallback)` — SQL's own
-  // "first non-null wins" is exactly "the first tier with a verdict wins", so no
-  // hand-rolled three-valued logic is needed beyond `compileTierVerdict` itself.
-  // Built as nested COALESCEs (right to left) rather than one N-ary call, since the
-  // tagged-template `sql` helper composes by interpolation, not by splicing a
-  // variable-length argument list — same reasoning as `compileCondition`'s
-  // all/any folds.
-  let acc: Statement.Fragment = fallback ? sql`TRUE` : sql`FALSE`
+  // Fold from the BOTTOM tier up, starting at the fallback. Right-to-left because
+  // each tier needs to know what the ones below it already decided in order to
+  // choose its cheap constant-tail form; and because the `sql` helper composes by
+  // interpolation rather than by splicing a variable-length argument list — same
+  // reasoning as `compileCondition`'s all/any folds.
+  let acc: Tail = fallback
   for (let i = tiers.length - 1; i >= 0; i--) {
-    acc = sql`COALESCE(${compileTierVerdict(sql, tiers[i]!, policy.actorId)}, ${acc})`
+    acc = foldTier(sql, tiers[i]!, policy.actorId, acc)
   }
-  return acc
+  return acc === true ? "all" : acc === false ? "none" : acc
 }
 
 /**
