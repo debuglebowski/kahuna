@@ -36,7 +36,6 @@ const rule = (actions: ReadonlyArray<string>): AccessRule =>
   ({
     id: "r1",
     roleId: "role-admin",
-    actorId: null,
     effect: "allow",
     actions,
     resourceType: "org",
@@ -62,8 +61,10 @@ describe("the RPC fallback no longer consults the membership role", () => {
     expect(allowed(none, "delete")).toBe(false)
   })
 
-  it("a role granting `*` on the org is what makes an admin an admin", () => {
-    const asAdmin = { ...emptyPolicy("u"), rules: [rule(["*"])] }
+  it("a role granting org configure+delete is what makes an admin an admin", () => {
+    // Was `["*"]`. The wildcard is gone from the model, so "grants everything on the
+    // org" is now spelled out — which is exactly the point of removing it.
+    const asAdmin = { ...emptyPolicy("u"), rules: [rule(["configure", "delete"])] }
     expect(allowed(asAdmin, "configure")).toBe(true)
     expect(allowed(asAdmin, "delete")).toBe(true)
   })
@@ -169,14 +170,14 @@ describe("canConfigure's pure core no longer bypasses for org-configure", () => 
   })
 
   it("an owner holding a role that grants org-configure IS allowed, same as anyone", () => {
-    const withAdmin = { ...emptyPolicy("u"), rules: [rule(["*"])] }
+    const withAdmin = { ...emptyPolicy("u"), rules: [rule(["configure"])] }
     expect(decideConfigure(withAdmin, "owner", { type: "org" })).toBe(true)
   })
 
   it("a plain member is decided purely by their rules — no floor at all", () => {
     expect(decideConfigure(emptyPolicy("u"), "member", { type: "role" })).toBe(false)
     expect(decideConfigure(emptyPolicy("u"), "member", { type: "member" })).toBe(false)
-    const withAdmin = { ...emptyPolicy("u"), rules: [rule(["*"])] }
+    const withAdmin = { ...emptyPolicy("u"), rules: [rule(["configure"])] }
     expect(decideConfigure(withAdmin, "member", { type: "org" })).toBe(true)
   })
 

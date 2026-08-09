@@ -21,13 +21,26 @@
  */
 
 /** What a caller wants to do. `configure` is schema/settings administration. */
-export type AccessAction = "view" | "create" | "edit" | "archive" | "delete" | "share" | "configure"
+export type AccessAction = "view" | "create" | "edit" | "archive" | "delete" | "configure"
 
 /**
  * `archive` is soft and restorable (it also covers restore); `delete` is the
  * irreversible purge. They are separate actions so a member can tidy up without
  * being able to destroy — the split already exists in the app (see
  * `archive-delete-convention`) and this makes it grantable.
+ *
+ * `share` was here and is gone. It was a real action with a real column and not one
+ * call site anywhere decided it, so every `share` grant ever written was decoration
+ * that read as a permission. Old rows may still carry the string; `PolicyService`
+ * drops unknown action names, and migration 0022 strips them.
+ *
+ * THERE IS NO WILDCARD. A rule lists the actions it grants, exhaustively. `"*"` used
+ * to mean "every action, present and future" and was held by exactly two seeded roles
+ * (Admin, `automation_full`) — which made those two roles unrepresentable in the
+ * permissions editor, so it disabled every control and showed a banner instead. A
+ * role is now precisely the permissions it lists, with no second mechanism and no
+ * role the editor cannot edit. The cost is deliberate and one-directional: an action
+ * added in a future release grants nothing until a seed or a person grants it.
  */
 export const ACCESS_ACTIONS: ReadonlyArray<AccessAction> = [
   "view",
@@ -35,12 +48,8 @@ export const ACCESS_ACTIONS: ReadonlyArray<AccessAction> = [
   "edit",
   "archive",
   "delete",
-  "share",
   "configure",
 ]
-
-/** Wildcard in a rule's `actions` array — matches every action, present and future. */
-export const ACTION_ALL = "*"
 
 /**
  * What a rule can be about — see `AccessResource`.
@@ -112,22 +121,13 @@ export type AccessCondition =
   | { readonly kind: "all"; readonly of: ReadonlyArray<AccessCondition> }
   | { readonly kind: "any"; readonly of: ReadonlyArray<AccessCondition> }
 
-/**
- * One grant (or refusal). Attached to a role.
- *
- * `actorId` is a historical column (once a direct per-person share) that
- * `PolicyService.loadRules` no longer reads — shares were removed, since every rule
- * now coming from a role is what makes precedence a complete ordering. Kept typed
- * here because `AccessRuleRow` still selects it and old rows still carry it; a value
- * arriving here is inert, not a signal.
- */
+/** One grant (or refusal). Attached to a role. */
 export interface AccessRule {
   readonly id: string
   readonly roleId: string | null
-  readonly actorId: string | null
   readonly effect: "allow" | "deny"
-  /** Action names, or `["*"]`. Empty grants nothing. */
-  readonly actions: ReadonlyArray<AccessAction | typeof ACTION_ALL>
+  /** The actions this rule grants or refuses, exhaustively. Empty grants nothing. */
+  readonly actions: ReadonlyArray<AccessAction>
   readonly resourceType: AccessResourceType
   /** null = every resource of this type. */
   readonly resourceId: string | null
@@ -206,10 +206,41 @@ export const emptyPolicy = (actorId: string, version = 0): PolicySet => ({
  */
 export const LAYER_0_PRECEDENCE = -1
 
+/**
+ * ── WHAT IS ACTUALLY ENFORCED ────────────────────────────────────────────────
+ *
+ * Every `(resourceType, action)` pair some gate in this app really decides. Nothing
+ * else is worth granting: a rule nothing reads is not a small permission, it is a
+ * permission that reads as granted and does nothing, and the old freeform editor
+ * shipped a page full of them (`org: edit`, `member: view`, `record: delete`).
+ *
+ * This is the seed list for a role that should be able to do everything — which is
+ * what replaced the `*` wildcard. It is deliberately a fixed list rather than a
+ * cross product: adding an action to a type here is a claim that a gate decides it,
+ * and `access-enforced.test.ts` holds the permissions editor to the same list so the
+ * two cannot drift.
+ */
+export const ENFORCED_ACTIONS: Readonly<Record<AccessResourceType, ReadonlyArray<AccessAction>>> = {
+  // `configure` only — every org-level gate is `requireAdmin`, i.e. this pair.
+  org: ["configure"],
+  // `view` is the concept READ gate (`scopeConceptRead`); `archive` covers restore.
+  concept: ["view", "create", "archive", "delete", "configure"],
+  // No `delete`/`archive`: a record's lifecycle runs through its concept.
+  record: ["view", "create", "edit"],
+  dashboard: ["view", "create", "edit", "delete"],
+  view: ["view", "create", "edit", "delete"],
+  // No `create`: making an automation is gated on org-`configure`, not on this type.
+  automation: ["view", "edit", "archive", "delete"],
+  task: ["view", "create"],
+  // No `view`: there is no global note list, so nothing would ever read it.
+  note: ["create"],
+  member: ["configure"],
+  role: ["configure"],
+}
+
 const layer0Rule = (id: string, resourceType: AccessResourceType): AccessRule => ({
   id,
   roleId: null,
-  actorId: null,
   effect: "allow",
   actions: ["configure"],
   resourceType,
@@ -228,7 +259,7 @@ export const layer0Rules = (actorId: string): ReadonlyArray<AccessRule> => [
 ]
 
 const coversAction = (rule: AccessRule, action: AccessAction): boolean =>
-  rule.actions.includes(ACTION_ALL) || rule.actions.includes(action)
+  rule.actions.includes(action)
 
 /**
  * Does this rule's target cover this resource?

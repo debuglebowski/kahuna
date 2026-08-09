@@ -1,6 +1,6 @@
 import { PgClient } from "@effect/sql-pg"
 import { Effect } from "effect"
-import type { ConceptVisibility, EditReach, RecordViewLayout } from "../domain/types"
+import type { EditReach, RecordViewLayout } from "../domain/types"
 import { scopeCanReadConcept } from "../domain/visibility"
 import {
   ConceptInUse,
@@ -10,10 +10,10 @@ import {
   LabelNotFound,
   VersioningInUse,
 } from "../errors"
-import { AccessDefaultsService } from "./AccessDefaultsService"
 import { EventStore } from "./EventStore"
 import { LabelService } from "./LabelService"
 import { OrgContext } from "./OrgContext"
+import { ResourceRulesService } from "./ResourceRulesService"
 import { type ConceptRow, toConcept } from "./rows"
 
 /** Derive a stable system key from a display name (lowercase, alnum + underscore). */
@@ -28,9 +28,9 @@ const slugify = (s: string): string =>
 export class ConceptService extends Effect.Service<ConceptService>()("engine/ConceptService", {
   effect: Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
+    const resourceRules = yield* ResourceRulesService
     const events = yield* EventStore
     const labels = yield* LabelService
-    const defaults = yield* AccessDefaultsService
 
     const getByName = (name: string) =>
       Effect.gen(function* () {
@@ -163,21 +163,6 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
             VALUES (${orgId}, ${slug}, ${input.name}, ${input.pluralName?.trim() || null}, ${input.description ?? null}, ${input.icon ?? null}, ${input.color ?? null}, ${input.managedBy ?? null})
             RETURNING *`
           const concept = toConcept(rows[0]!)
-          // THE CREATION TEMPLATE, copied in the SAME transaction as the INSERT.
-          // A concept with no rules is invisible to every non-full-access role, so a
-          // crash between the two would leave a concept only admins can see — and the
-          // admin who created it would see nothing wrong. Two calls: the concept
-          // itself, and "records in this concept" (scoped by container, not by id).
-          yield* defaults.materialize({
-            resourceType: "concept",
-            resourceId: concept.id,
-            viewFor: input.access,
-          })
-          yield* defaults.materialize({
-            resourceType: "record",
-            conceptId: concept.id,
-            viewFor: input.access,
-          })
           yield* events.append({
             subjectKind: "concept",
             subjectId: concept.id,
@@ -389,39 +374,6 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
         }),
       )
 
-    /** Set who may READ this concept. A narrow setter (like `setTitleField`) rather
-     *  than part of `update()`'s batched patch: it is a security control, so it gets
-     *  its own admin-gated RPC and its own event rather than riding along with a
-     *  name/description save.
-     *
-     *  Emits `ConceptUpdated` so the client's concept cache refreshes — without it a
-     *  member's open tab would keep listing a concept the server has just started
-     *  refusing. */
-    const setVisibility = (id: string, visibility: ConceptVisibility) =>
-      sql.withTransaction(
-        Effect.gen(function* () {
-          const { orgId } = yield* OrgContext
-          yield* getById(id) // 404 if missing / cross-org
-          const rows = yield* sql<ConceptRow>`
-            UPDATE concepts SET visibility = ${visibility}
-            WHERE org_id = ${orgId} AND id = ${id} RETURNING *`
-          const row = rows[0]
-          if (!row) return yield* Effect.fail(new ConceptNotFound({ concept: id }))
-          const concept = toConcept(row)
-          yield* events.append({
-            subjectKind: "concept",
-            subjectId: concept.id,
-            eventType: "ConceptUpdated",
-            payload: {
-              _tag: "ConceptUpdated",
-              description: concept.description,
-              visibility: concept.visibility,
-            },
-          })
-          return concept
-        }),
-      )
-
     /** Archive a concept (soft, restorable): hides it from the live list but keeps
      *  the row and its fields/record versions intact. Idempotent on an archived concept. */
     const archive = (id: string) =>
@@ -503,8 +455,8 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
           // `access_rules.resource_id` has no FK — it points at any of five tables —
           // so nothing else removes these, and once every resource carries a row per
           // role, orphans load into every resolved policy forever.
-          yield* defaults.forget({ resourceType: "concept", resourceId: id })
-          yield* defaults.forget({ resourceType: "record", conceptId: id })
+          yield* resourceRules.forget({ resourceType: "concept", resourceId: id })
+          yield* resourceRules.forget({ resourceType: "record", conceptId: id })
           yield* events.append({
             subjectKind: "concept",
             subjectId: id,
@@ -521,7 +473,6 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
       getById,
       getByIdForRead,
       getBySlug,
-      setVisibility,
       list,
       update,
       setRecordView,
@@ -532,5 +483,5 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
       purge,
     } as const
   }),
-  dependencies: [AccessDefaultsService.Default, EventStore.Default, LabelService.Default],
+  dependencies: [ResourceRulesService.Default, EventStore.Default, LabelService.Default],
 }) {}

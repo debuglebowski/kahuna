@@ -129,7 +129,6 @@ export interface Concept {
   /** Who may READ this concept's records: 'visible' = any member, 'admin' =
    *  owners/admins only. Enforced in ConceptService + RecordService off
    *  `OrgContext.role`; unknown DB values coerce to 'admin' (fail closed). */
-  readonly visibility: ConceptVisibility
   /** Org-wide default record version-detail layout for this concept (a 12-col tile
    *  grid, same shape as a view-prefs custom layout); null = render the built-in
    *  default preset. Set in concept settings; every record version renders it. */
@@ -228,7 +227,6 @@ export type EditReach = "draft" | "any"
  *  it, and `scopeCanReadConcept` resolves the pair. Unknown values coerce to `admin`
  *  (fail closed) in `rows.ts`.
  *  Engine-level callers (`role: "system"` — syncs, seeds) bypass it. */
-export type ConceptVisibility = "visible" | "admin" | "none"
 
 export interface RecordVersion {
   readonly id: Id
@@ -382,7 +380,6 @@ export type EventPayload =
       readonly versioningEnabled?: boolean
       readonly editReach?: EditReach
       readonly singleRecord?: boolean
-      readonly visibility?: ConceptVisibility
       readonly staticLabelIds?: ReadonlyArray<Id>
       readonly defaultLabelIds?: ReadonlyArray<Id>
     }
@@ -411,7 +408,6 @@ export type EventPayload =
       readonly conceptId: Id
       readonly name: string
       readonly kind: string
-      readonly visibility?: ConceptVisibility
     }
   | { readonly _tag: "FieldArchived"; readonly conceptId: Id; readonly name: string }
   | { readonly _tag: "FieldRestored"; readonly conceptId: Id; readonly name: string }

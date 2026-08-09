@@ -23,7 +23,9 @@ const ACTIONS: ReadonlyArray<{ id: AccessActionName; label: string }> = [
   { id: "edit", label: "Edit" },
   { id: "archive", label: "Archive" },
   { id: "delete", label: "Delete" },
-  { id: "share", label: "Share" },
+  // `share` is deliberately absent: it is a defined action that NOTHING anywhere
+  // decides — not one call site — so asking "may I share this?" could only ever
+  // report the fallback. Old rows may still carry it; nothing consults them.
   { id: "configure", label: "Configure" },
 ]
 

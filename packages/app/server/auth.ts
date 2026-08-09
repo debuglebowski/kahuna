@@ -40,10 +40,9 @@ const ORG_SCOPED_TABLES: ReadonlyArray<string> = [
   // automations (runs reference automations)
   "automation_runs",
   "automations",
-  // access control (rules/assignments/defaults reference roles)
+  // access control (rules and assignments reference roles)
   "access_rules",
   "access_role_actors",
-  "access_defaults",
   "access_roles",
   "access_policy_versions",
   // per-user sidecars

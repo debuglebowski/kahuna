@@ -569,8 +569,6 @@ const HandlersLive = ServerRpcs.toLayer({
   // Not admin-gated: any member may shape a concept's default record version layout.
   setConceptRecordView: ({ id, recordView }) =>
     as<Concept>(uc.setConceptRecordView(id, recordView)),
-  setConceptVisibility: ({ id, visibility }) =>
-    adminOn<Concept>("configure", { type: "concept", id }, uc.setConceptVisibility(id, visibility)),
   setConceptTitleField: ({ id, titleFieldId }) =>
     adminOn<Concept>(
       "configure",
@@ -1023,26 +1021,11 @@ const HandlersLive = ServerRpcs.toLayer({
       { type: "role" },
       uc.updateRule({ ruleId, effect, actions, resourceType, resourceId, conceptId, condition }),
     ),
-  setScopedRules: ({ roleId, resourceType, scopeBy, entries }) =>
+  setRoleRules: ({ roleId, groups }) =>
     adminOn<{ readonly ok: boolean }>(
       "configure",
       { type: "role" },
-      uc.setScopedRules({ roleId, resourceType, scopeBy, entries }),
-    ),
-  listAccessDefaults: () =>
-    as<
-      ReadonlyArray<{
-        roleId: string
-        resourceType: string
-        effect: "allow" | "deny"
-        actions: ReadonlyArray<string>
-      }>
-    >(uc.listAccessDefaults),
-  setAccessDefault: ({ roleId, resourceType, allow, deny }) =>
-    adminOn<{ readonly ok: boolean }>(
-      "configure",
-      { type: "role" },
-      uc.setAccessDefault({ roleId, resourceType, allow, deny }),
+      uc.setRoleRules({ roleId, groups }),
     ),
   removeRule: ({ ruleId }) =>
     adminOn<{ readonly id: string }>("configure", { type: "role" }, uc.removeRule(ruleId)),

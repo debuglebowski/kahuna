@@ -1,7 +1,7 @@
 import { PgClient } from "@effect/sql-pg"
 import { Effect, Either } from "effect"
 import { BlobStore } from "../blob/BlobStore"
-import { decideRecord, recordRulesForConcept } from "../domain/access"
+import { decide, decideRecord, recordRulesForConcept } from "../domain/access"
 import { extractMentions, isUuid } from "../domain/mentions"
 import { isRichText, MAX_RICHTEXT_CHARS, richTextWalk } from "../domain/richtext"
 import {
@@ -15,6 +15,7 @@ import {
 import { canEditVersion, isAmendment } from "../domain/versioning"
 import { scopeCanReadConcept, scopeConceptRead } from "../domain/visibility"
 import {
+  ConceptNotFound,
   DraftAlreadyExists,
   FieldValidationError,
   IllegalTransition,
@@ -452,6 +453,31 @@ export class RecordService extends Effect.Service<RecordService>()("engine/Recor
             "conceptId" in input
               ? yield* concepts.getByIdForRead(input.conceptId)
               : yield* concepts.getByName(input.conceptName)
+          // …and then `create` on its own, decided against the CONCEPT. Reading a
+          // concept used to be the whole test, which made "may look but not add" —
+          // a perfectly ordinary thing to want from a role — inexpressible.
+          //
+          // Concept-scoped rather than untargeted, so "may add to Deals but not to
+          // Companies" is a per-row answer in the pane rather than one global yes.
+          // Fallback `false`: fail-closed, hence the seed change and backfill.
+          const scope = yield* OrgContext
+          if (
+            scope.policy &&
+            !scope.policy.unrestricted &&
+            !decide(
+              scope.policy,
+              "create",
+              { type: "record", conceptId: concept.id },
+              false,
+              // No record in hand — it does not exist yet — so a conditional grant
+              // must not read as a blanket one.
+              { unconditionalOnly: true },
+            )
+          )
+            // Same failure the read gate raises, on purpose: "you may not add here"
+            // and "there is no such concept" must be indistinguishable, or the error
+            // becomes an existence oracle for concepts the caller cannot see.
+            return yield* Effect.fail(new ConceptNotFound({ concept: concept.id }))
           // A single-record concept admits exactly one lineage. This is the guard
           // integrations hit too (they call the engine directly, bypassing the
           // use-case layer), which is why it lives here and not in a use-case.
@@ -894,19 +920,74 @@ export class RecordService extends Effect.Service<RecordService>()("engine/Recor
       })
 
     /**
+     * `edit` on one record — THE THIRD HALF of the write gate.
+     *
+     * Read no longer implies write. Until this existed, `assertRecordWritable` was
+     * two READ checks and nothing else, so any record a caller could open they could
+     * also change: the model had an `edit` action, the editor offered it, and nothing
+     * anywhere consulted it.
+     *
+     * Fallback `false`, like every other rule: silence grants nothing. That makes this
+     * fail-CLOSED, which is why it ships with a seed change and a backfill — see
+     * `BUILTIN_ROLES` and migration `0013`.
+     *
+     * Runs AFTER the two read checks and never instead of them. A record you cannot
+     * see stays unwritable whatever an edit rule says, so the failure mode is still
+     * "not found" rather than "forbidden" — a write must not become an existence
+     * oracle for a record reads refuse to confirm.
+     */
+    const assertRecordEditable = (
+      conceptId: string,
+      recordId: string,
+      failId: string,
+      knownState?: Record<string, unknown>,
+    ) =>
+      Effect.gen(function* () {
+        const scope = yield* OrgContext
+        if (!scope.policy || scope.policy.unrestricted) return
+        const rows = yield* sql<{
+          readonly created_by: string | null
+          readonly state: Record<string, unknown> | null
+        }>`
+          SELECT i.created_by,
+                 (SELECT state FROM record_versions
+                  WHERE record_id = i.id AND version_status = 'published' AND archived_at IS NULL
+                  ORDER BY version_seq DESC LIMIT 1) AS state
+          FROM records i
+          WHERE i.id = ${recordId} LIMIT 1`
+        const record = {
+          state: knownState ?? rows[0]?.state ?? {},
+          createdBy: rows[0]?.created_by ?? null,
+        }
+        if (
+          !decideRecord(
+            scope.policy,
+            "edit",
+            { type: "record", id: recordId, conceptId },
+            false,
+            record,
+          )
+        )
+          return yield* Effect.fail(new RecordVersionNotFound({ recordVersionId: failId }))
+      })
+
+    /**
      * ── THE WRITE GATE ──────────────────────────────────────────────────────
      *
-     * A caller who cannot READ a record must not be able to write it either.
+     * A caller who cannot READ a record must not be able to write it either — and,
+     * since `assertRecordEditable`, reading it is no longer enough on its own.
      *
-     * Both halves are needed, and this is why they are wrapped together rather than
+     * All three parts are needed, which is why they are wrapped together rather than
      * called separately at each mutation: `assertConceptVisible` covers the concept
-     * DEFAULT (an `admin`-only or `none` concept), while `assertRecordReadable` covers
-     * per-record rules — and it deliberately no-ops when the caller holds no record
-     * rules at all, so on its own it lets an empty-policy member through.
+     * DEFAULT (an `admin`-only or `none` concept), `assertRecordReadable` covers
+     * per-record view rules — and it deliberately no-ops when the caller holds no
+     * record rules at all, so on its own it lets an empty-policy member through — and
+     * `assertRecordEditable` decides `edit`.
      *
-     * That combination was the hole: `update` and `archive` both SUCCEEDED against a
-     * record the very same caller got `RecordVersionNotFound` for on read. Verified before
-     * and after, and pinned by "THE WRITE GATE" in test/visibility.test.ts.
+     * The first combination was the original hole: `update` and `archive` both
+     * SUCCEEDED against a record the very same caller got `RecordVersionNotFound` for
+     * on read. Verified before and after, and pinned by "THE WRITE GATE" in
+     * test/visibility.test.ts.
      *
      * Fails `RecordVersionNotFound`, like the read gates — a write must not become an
      * existence oracle for a record reads refuse to confirm.
@@ -919,6 +1000,7 @@ export class RecordService extends Effect.Service<RecordService>()("engine/Recor
     ) =>
       assertConceptVisible(conceptId, failId).pipe(
         Effect.zipRight(assertRecordReadable(conceptId, recordId, failId, knownState)),
+        Effect.zipRight(assertRecordEditable(conceptId, recordId, failId, knownState)),
       )
 
     const get = (recordVersionId: string) =>

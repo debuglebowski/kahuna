@@ -151,11 +151,42 @@ ok(
   (await asMember.call((c) => c.listRecords({ conceptId: deals.id }))).length === 3,
 )
 
+// ── RESTRICTING A CONCEPT, THE ONLY WAY LEFT ─────────────────────────────────
+// `setConceptVisibility` is gone with the `concepts.visibility` column: a concept is
+// reachable because a rule says so, full stop. Hiding one from ordinary members is
+// therefore a targeted DENY on the Member role — on the concept (so it vanishes from
+// the list) and on its records (so the rows go with it).
+const memberRoleId = (await asOwner.call((c) => c.listRoles())).find((r) => r.key === "member")!.id
+const restrict = async (conceptId: string): Promise<ReadonlyArray<string>> => {
+  const a = await asOwner.call((c) =>
+    c.addRule({
+      roleId: memberRoleId,
+      effect: "deny",
+      actions: ["view"],
+      resourceType: "concept",
+      resourceId: conceptId,
+    }),
+  )
+  const b = await asOwner.call((c) =>
+    c.addRule({
+      roleId: memberRoleId,
+      effect: "deny",
+      actions: ["view"],
+      resourceType: "record",
+      conceptId,
+    }),
+  )
+  return [a.id, b.id]
+}
+const unrestrict = async (ids: ReadonlyArray<string>) => {
+  for (const ruleId of ids) await asOwner.call((c) => c.removeRule({ ruleId }))
+}
+
 // ── restrict the concept, then give the contractor a role scoped to ONE record ──
-await asOwner.call((c) => c.setConceptVisibility({ id: deals.id, visibility: "admin" }))
+const dealsDeny = await restrict(deals.id)
 // Company is restricted TOO, so the no-cascade assertion is about the grant not
 // reaching the target — not about a concept the contractor could read anyway.
-await asOwner.call((c) => c.setConceptVisibility({ id: companies.id, visibility: "admin" }))
+await restrict(companies.id)
 ok(
   "1. a restricted concept vanishes for the member",
   !(await asMember.call((c) => c.listConcepts({}))).some((x) => x.id === deals.id),
@@ -275,7 +306,7 @@ ok(
   "10. the owner still reads everything",
   (await asOwner.call((c) => c.listRecords({ conceptId: deals.id }))).length === 3,
 )
-await asOwner.call((c) => c.setConceptVisibility({ id: deals.id, visibility: "visible" }))
+await unrestrict(dealsDeny)
 ok(
   "   un-restricting restores the plain member",
   (await asMember.call((c) => c.listRecords({ conceptId: deals.id }))).length === 3,

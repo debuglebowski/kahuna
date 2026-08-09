@@ -417,7 +417,6 @@ describe("dashboard access: rules over the owner_id default", () => {
       {
         id: "g1",
         roleId: null,
-        actorId: OTHER,
         effect: "allow",
         actions: [action],
         resourceType: "dashboard",
@@ -507,7 +506,6 @@ describe("dashboard access: rules over the owner_id default", () => {
         {
           id: "d1",
           roleId: null,
-          actorId: OTHER,
           effect: "deny",
           actions: ["view"],
           resourceType: "dashboard",

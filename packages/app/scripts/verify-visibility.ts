@@ -128,10 +128,21 @@ ok(
 )
 
 // ── restrict it ───────────────────────────────────────────────────────────────
-const restricted = await asOwner.call((c) =>
-  c.setConceptVisibility({ id: secret.id, visibility: "admin" }),
-)
-ok("owner restricts the concept", restricted.visibility === "admin", restricted.visibility)
+// A targeted DENY on the Member role — `concepts.visibility` and its setter are gone
+// (migration 0022). A concept is reachable because a rule says so, so hiding one is
+// a rule too: on the concept, so it leaves the list, and on its records with it.
+const memberRoleId = (await asOwner.call((c) => c.listRoles())).find((r) => r.key === "member")!.id
+const denyIds: Array<string> = []
+for (const spec of [
+  { resourceType: "concept" as const, resourceId: secret.id },
+  { resourceType: "record" as const, conceptId: secret.id },
+]) {
+  const r = await asOwner.call((c) =>
+    c.addRule({ roleId: memberRoleId, effect: "deny", actions: ["view"], ...spec }),
+  )
+  denyIds.push(r.id)
+}
+ok("owner restricts the concept", denyIds.length === 2)
 
 // 1. gone from the member's concept list
 const afterIds = (await asMember.call((c) => c.listConcepts({}))).map((x) => x.id)
@@ -179,7 +190,7 @@ ok(
 const ownerRows = await asOwner.call((c) => c.listRecords({ conceptId: secret.id }))
 ok("   owner still reads the value", ownerRows[0]?.state[amount.id] === "250000")
 
-await asOwner.call((c) => c.setConceptVisibility({ id: secret.id, visibility: "visible" }))
+for (const ruleId of denyIds) await asOwner.call((c) => c.removeRule({ ruleId }))
 const restoredIds = (await asMember.call((c) => c.listConcepts({}))).map((x) => x.id)
 ok("   un-restricting restores member access", restoredIds.includes(secret.id))
 const restoredDetail = await asMember.call((c) => c.getRecord({ id: openRec.id }))

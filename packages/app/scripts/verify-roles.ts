@@ -109,7 +109,18 @@ const title = await asOwner.call((c) =>
 const rec = await asOwner.call((c) =>
   c.createRecord({ conceptId: deals.id, fields: { [title.id]: "Secret" } }),
 )
-await asOwner.call((c) => c.setConceptVisibility({ id: deals.id, visibility: "admin" }))
+// A targeted DENY on the Member role. `concepts.visibility` is gone (migration 0022):
+// a concept is reachable because a rule says so, so hiding one from ordinary members
+// is a rule as well — on the concept and on its records.
+const memberRoleId = (await asOwner.call((c) => c.listRoles())).find((r) => r.key === "member")!.id
+for (const spec of [
+  { resourceType: "concept" as const, resourceId: deals.id },
+  { resourceType: "record" as const, conceptId: deals.id },
+]) {
+  await asOwner.call((c) =>
+    c.addRule({ roleId: memberRoleId, effect: "deny", actions: ["view"], ...spec }),
+  )
+}
 ok(
   "2. the member cannot see the restricted concept",
   (await asMember.code((c) => c.listRecords({ conceptId: deals.id }))) === "NOT_FOUND",

@@ -3,7 +3,6 @@ import { Effect } from "effect"
 import {
   type AccessAction,
   type AccessCondition,
-  AccessDefaultsService,
   AccessDenied,
   type AccessResource,
   type AccessResourceType,
@@ -22,7 +21,6 @@ import {
   type AutomationTrigger,
   ComputedFields,
   ConceptService,
-  type ConceptVisibility,
   type ConditionMatch,
   type DashboardBody,
   DashboardService,
@@ -489,8 +487,6 @@ export const setConceptRecordView = (
 /** Designate (or clear) a concept's title field. Rejected for a managed concept —
  *  the integration owns its title (set at provision time). */
 /** Set who may read a concept's records (admin-gated at the RPC boundary). */
-export const setConceptVisibility = (id: string, visibility: ConceptVisibility): UC<unknown> =>
-  Effect.flatMap(ConceptService, (c) => c.setVisibility(id, visibility))
 
 export const setConceptTitleField = (id: string, titleFieldId: string | null): UC<unknown> =>
   ensureUnmanagedConcept(id).pipe(
@@ -641,12 +637,19 @@ export const getField = (id: string): UC<{ readonly conceptId: string }> =>
 
 export const listViews: UC<unknown> = Effect.flatMap(SidebarViewService, (s) => s.list())
 
+/**
+ * Gated HERE and not in `SidebarViewService`, deliberately — see `createDashboard`,
+ * which has the same shape and the sharper reason.
+ */
 export const createView = (input: {
   readonly name: string
   readonly icon?: string | null
   readonly scope: "personal" | "org"
   readonly body: SidebarViewBody
-}): UC<unknown> => Effect.flatMap(SidebarViewService, (s) => s.create(input))
+}): UC<unknown> =>
+  assertAllowed("create", { type: "view" }).pipe(
+    Effect.zipRight(Effect.flatMap(SidebarViewService, (s) => s.create(input))),
+  )
 
 export const updateView = (input: {
   readonly id: string
@@ -673,6 +676,19 @@ export const listAllDashboards: UC<unknown> = Effect.flatMap(DashboardService, (
 export const listRecordDashboards = (conceptId: string): UC<unknown> =>
   Effect.flatMap(DashboardService, (s) => s.listRecordDashboards(conceptId))
 
+/**
+ * Creating a dashboard was open to anyone, at every layer, until this.
+ *
+ * THE GATE LIVES HERE, NOT IN `DashboardService`. `createConcept` builds the
+ * concept's own dashboard by calling `DashboardService.create` directly (see it
+ * above), so a gate inside the service would quietly make "create a concept" also
+ * require dashboard-create — a coupling nobody asked for and nobody would guess
+ * from the error. The use-case layer is exactly the boundary where "a person asked
+ * for a dashboard" and "a concept grew one" part company.
+ *
+ * Untargeted: a dashboard that does not exist has no id to name, so this is the
+ * blanket shape and appears as a card rather than a column.
+ */
 export const createDashboard = (input: {
   readonly name: string
   readonly icon?: string | null
@@ -680,7 +696,10 @@ export const createDashboard = (input: {
   readonly body: DashboardBody
   readonly kind?: "page" | "record"
   readonly conceptId?: string | null
-}): UC<unknown> => Effect.flatMap(DashboardService, (s) => s.create(input))
+}): UC<unknown> =>
+  assertAllowed("create", { type: "dashboard" }).pipe(
+    Effect.zipRight(Effect.flatMap(DashboardService, (s) => s.create(input))),
+  )
 
 export const updateDashboard = (input: {
   readonly id: string
@@ -1964,43 +1983,41 @@ export const updateRule = (input: {
     return { id: input.ruleId }
   })
 
-/** THE CREATION TEMPLATE for every role — what a new resource of each type grants. */
-export const listAccessDefaults: UC<unknown> = Effect.flatMap(AccessDefaultsService, (d) =>
-  d.list(),
-)
-
-/** Set one role's template for one type — allow and deny together. Empty clears
- *  that side. */
-export const setAccessDefault = (input: {
+/**
+ * What a permissions pane writes on Save — see `AccessRoleService.setRoleRules`.
+ *
+ * `org` used to be refused outright here ("org-level access can't be set from the
+ * grid"), because a bulk replace could empty the configure set in one call and the
+ * floor check did not run on this path. That refusal was a stand-in for the check,
+ * not a policy: the Organisation pane now edits org-configure like any other answer,
+ * so the real guard runs instead.
+ */
+export const setRoleRules = (input: {
   readonly roleId: string
-  readonly resourceType: AccessResourceType
-  readonly allow: ReadonlyArray<AccessAction>
-  readonly deny: ReadonlyArray<AccessAction>
-}): UC<{ readonly ok: boolean }> =>
-  Effect.flatMap(AccessDefaultsService, (d) => d.set(input)).pipe(Effect.as({ ok: true }))
-
-export const setScopedRules = (input: {
-  readonly roleId: string
-  readonly resourceType: AccessResourceType
-  readonly scopeBy?: "resource" | "concept"
-  readonly entries: ReadonlyArray<{
-    readonly resourceId: string
-    readonly allow: ReadonlyArray<AccessAction>
-    readonly deny: ReadonlyArray<AccessAction>
+  readonly groups: ReadonlyArray<{
+    readonly resourceType: AccessResourceType
+    readonly scopeBy?: "resource" | "concept"
+    readonly entries: ReadonlyArray<{
+      readonly resourceId: string | null
+      readonly allow: ReadonlyArray<AccessAction>
+      readonly deny: ReadonlyArray<AccessAction>
+    }>
   }>
 }): UC<unknown> =>
   Effect.gen(function* () {
-    // `org` has no per-record grid and is what the irreducible floor protects — a bulk
-    // replace there could empty the configure set in one call.
-    if (input.resourceType === "org")
-      return yield* Effect.fail(
-        new FieldValidationError({
-          message: "org-level access can't be set from the grid",
-          field: "resourceType",
-        }),
-      )
     const roles = yield* AccessRoleService
-    yield* roles.setScopedRules(input)
+    const org = input.groups.find((g) => g.resourceType === "org")
+    if (org) {
+      // Deny beats allow within a role, so an entry granting configure only counts
+      // while nothing in the same entry takes it back.
+      const stillGrantsConfigure = org.entries.some(
+        (e) => e.allow.includes("configure") && !e.deny.includes("configure"),
+      )
+      yield* assertFloorHolds(roles, {
+        replacingOrgRulesOn: { roleId: input.roleId, stillGrantsConfigure },
+      })
+    }
+    yield* roles.setRoleRules(input)
     return { ok: true }
   })
 
@@ -2035,9 +2052,22 @@ const assertFloorHolds = (
   change:
     | { readonly removingRoleId: string }
     | { readonly removingRuleId: string }
-    | { readonly unassigning: { readonly roleId: string; readonly userId: string } },
+    | { readonly unassigning: { readonly roleId: string; readonly userId: string } }
+    /** A pane Save that rewrites this role's `org` rules wholesale — the shape
+     *  `setRoleRules` sends. Nothing to remove by id: what matters is only whether
+     *  configure survives the replacement. */
+    | {
+        readonly replacingOrgRulesOn: {
+          readonly roleId: string
+          readonly stillGrantsConfigure: boolean
+        }
+      },
 ): UC<void> =>
   Effect.gen(function* () {
+    // A replacement that keeps configure cannot empty the set, whatever else it does —
+    // and this is the common case (every Save of an unrelated pane), so it short-circuits
+    // before the holder query rather than after it.
+    if ("replacingOrgRulesOn" in change && change.replacingOrgRulesOn.stillGrantsConfigure) return
     const holders = yield* roles.configureHolders()
     // More than one holder ⇒ no single change can empty the set.
     if (holders.length > 1) return
@@ -2073,6 +2103,20 @@ const assertFloorHolds = (
           message:
             "this rule is the only thing granting org configuration — add another before removing it",
           field: "ruleId",
+        }),
+      )
+    // Same test as `removingRuleId`, reached from the pane instead of the rule list:
+    // the last holder is about to lose configure and this role is where they had it.
+    if (
+      "replacingOrgRulesOn" in change &&
+      held.length === 1 &&
+      held[0]!.id === change.replacingOrgRulesOn.roleId
+    )
+      return yield* Effect.fail(
+        new FieldValidationError({
+          message:
+            "this role is the only thing granting org configuration — leave Configure allowed, or grant it elsewhere first",
+          field: "groups",
         }),
       )
   })
@@ -2151,19 +2195,34 @@ export const effectiveAccess = (userId: string, isOwner: boolean): UC<unknown> =
 /**
  * Mirrors the fallback each real gate uses for one resource type, so the explain
  * tool's outcome matches what actually happens rather than guessing `false`
- * everywhere. Concept / record / dashboard / view / automation reads are decided
- * ENTIRELY by explicit rules (no membership-tier fallback survives for them); every
- * other type falls back to `requireAction`'s formula — open unless the action is
- * `configure` or `delete`. See the access redesign plan's table for why the split
- * falls exactly here.
+ * everywhere.
+ *
+ * Everything with a real gate falls back CLOSED — an explicit rule is what grants
+ * it, not silence. The open branch below therefore survives only for the
+ * combinations nothing decides at all (`member`/`role`/`org` outside `configure`),
+ * where "open" is the honest report rather than a claim that something denied it.
  */
 const ALWAYS_CLOSED_RESOURCES: ReadonlySet<AccessResourceType> = new Set([
   "concept",
   "record",
   "dashboard",
   "view",
+  // `task` and `note` go through `assertAllowed`, not `requireAction` — and
+  // `assertAllowed` is `false` unconditionally. Leaving them on the open branch made
+  // this report "allowed by fallback" for `task`/`view`, `task`/`create` and
+  // `note`/`create`, the three surfaces that gate closed.
+  "task",
+  "note",
+  // `automation` joined the list when `AutomationService.allowed` stopped falling
+  // back to `true`. It was the one gate in the app where silence granted, and this
+  // explainer had to be told so; now there is nothing to except.
   "automation",
 ])
+/**
+ * (Automation WRITES remain separately hard-gated on org `configure` at the request
+ * boundary, which no automation rule can widen. This function reports the RULE
+ * decision; a caller passing it can still be refused by that gate.)
+ */
 const defaultFallbackFor = (resourceType: AccessResourceType, action: AccessAction): boolean =>
   !ALWAYS_CLOSED_RESOURCES.has(resourceType) && action !== "configure" && action !== "delete"
 

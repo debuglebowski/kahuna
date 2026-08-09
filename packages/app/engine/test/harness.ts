@@ -5,7 +5,7 @@ import { PgClient } from "@effect/sql-pg"
 import { Config, Layer } from "effect"
 import { LocalFsBlobStore } from "../blob/local"
 import type { AccessAction, AccessResourceType, AccessRule, PolicySet } from "../domain/access"
-import { emptyPolicy } from "../domain/access"
+import { emptyPolicy, unrestrictedPolicy } from "../domain/access"
 import { EngineLive } from "../layers"
 import { OrgContext, type ScopeRole } from "../services/OrgContext"
 
@@ -32,13 +32,10 @@ const BlobTestLive = LocalFsBlobStore(path.join(tmpdir(), "kingsmaker-test-blobs
  * merely trimmed from Member's grant), so there is no longer a shape for either
  * to drift out of sync with.
  *
- * For the five TEMPLATED types, each entry is the real blanket rule's actions
- * UNIONED with `view` — reproducing what `ensureBuiltins`'s materialization
- * injects into every EXISTING resource's per-resource rule (this fixture has no
- * real resource ids to scope a separate rule to, so the blanket union is the
- * accurate stand-in). `automation` gets no rule at all: reads there default OPEN
- * (`AutomationService.allowed`'s `fallback: true`), so an empty policy already
- * reproduces "member can read automations" correctly.
+ * `automation` now carries `view` like everything else. It used to carry no rule at
+ * all, because reads there defaulted OPEN — `AutomationService.allowed` fell back to
+ * `true`, the last gate in the app where silence granted. That fallback is `false`,
+ * so an empty policy no longer reproduces "a member can read automations".
  *
  * `org`/`role`/`member` deliberately get NO rule — matching the real preset
  * exactly: only `configure` is ever decided against them, which Member never
@@ -54,11 +51,16 @@ const MEMBER_GRANTS: ReadonlyArray<{
   readonly actions: ReadonlyArray<AccessAction>
 }> = [
   { resourceType: "concept", actions: ["create", "view"] },
-  { resourceType: "record", actions: ["create", "view"] },
-  { resourceType: "dashboard", actions: ["edit", "view"] },
-  { resourceType: "view", actions: ["edit", "view"] },
+  // `edit` and the two `create`s below track the four gates added alongside
+  // `RecordService.assertRecordEditable` — this list is "what the Member preset
+  // grants", so it has to move with `BUILTIN_ROLES` or every test using an ordinary
+  // member starts failing on writes the real Member can do.
+  { resourceType: "record", actions: ["create", "edit", "view"] },
+  { resourceType: "dashboard", actions: ["create", "edit", "view"] },
+  { resourceType: "view", actions: ["create", "edit", "view"] },
   { resourceType: "task", actions: ["create", "view"] },
   { resourceType: "note", actions: ["create"] },
+  { resourceType: "automation", actions: ["view"] },
 ]
 
 export const ordinaryMember = (actor: string): PolicySet => ({
@@ -67,7 +69,6 @@ export const ordinaryMember = (actor: string): PolicySet => ({
     ({ resourceType, actions }, i): AccessRule => ({
       id: `test-member-${i}`,
       roleId: "test-role",
-      actorId: null,
       effect: "allow",
       actions,
       resourceType,
@@ -78,16 +79,68 @@ export const ordinaryMember = (actor: string): PolicySet => ({
   ),
 })
 
+/**
+ * An ordinary member with one or more concepts taken away — what
+ * `concepts.visibility = 'admin'` used to express before the column was dropped
+ * (migration 0022).
+ *
+ * Two denies per concept, and both are needed: one hides the concept itself, one
+ * hides its records. `scopeConceptRead` will not let a record grant reopen a concept
+ * that was explicitly denied, but a concept deny alone leaves `recordRulesForConcept`
+ * free to answer for the rows, so the record deny is what makes the list empty rather
+ * than merely unreachable.
+ *
+ * Denies come FIRST in the array only for readability — `decide` resolves deny
+ * before allow within a tier regardless of order.
+ */
+export const memberDenied = (actor: string, ...conceptIds: ReadonlyArray<string>): PolicySet => {
+  const base = ordinaryMember(actor)
+  return {
+    ...base,
+    rules: [
+      ...conceptIds.flatMap(
+        (conceptId): ReadonlyArray<AccessRule> => [
+          {
+            id: `test-deny-concept-${conceptId}`,
+            roleId: "test-role",
+            effect: "deny",
+            actions: ["view"],
+            resourceType: "concept",
+            resourceId: conceptId,
+            conceptId: null,
+            condition: null,
+          },
+          {
+            id: `test-deny-record-${conceptId}`,
+            roleId: "test-role",
+            effect: "deny",
+            actions: ["view"],
+            resourceType: "record",
+            resourceId: null,
+            conceptId,
+            condition: null,
+          },
+        ],
+      ),
+      ...base.rules,
+    ],
+  }
+}
+
 /** A fully-provided engine layer scoped to one org (Engine + Pg + Blob + OrgContext).
  *
  *  `role` defaults to `"system"` so the existing suite keeps exercising the
  *  unfiltered engine — read visibility is asserted by tests that pass a role
  *  explicitly (`"member"` / `"admin"`), not by every test incidentally.
  *
- *  `policy` defaults to ABSENT, which now means "no rules, so nothing on the five
- *  templated types" — access fails CLOSED. `"system"` is exempt (it is the engine
- *  itself), which is why most of the suite is unaffected. A test needing a plain
- *  member should pass `ordinaryMember(actor)`. */
+ *  `policy` defaults to ABSENT, which for a person means "no rules at all" — access
+ *  fails CLOSED. A test needing a plain member should pass `ordinaryMember(actor)`.
+ *
+ *  A `"system"` scope with no policy is given `unrestrictedPolicy`, because that is
+ *  exactly what `server/runtime.ts:systemScope` builds and this fixture must not
+ *  differ from it. The engine's exemption lives in ONE place — the `unrestricted`
+ *  flag `decide()` short-circuits on — rather than being re-tested by hand at each
+ *  gate, so a system scope carrying no policy would now genuinely see nothing. */
 export const testLayer = (
   orgId: string,
   actor = "tester",
@@ -99,7 +152,12 @@ export const testLayer = (
     Layer.mergeAll(
       PgTestLive,
       BlobTestLive,
-      Layer.succeed(OrgContext, { orgId, actor, role, policy }),
+      Layer.succeed(OrgContext, {
+        orgId,
+        actor,
+        role,
+        policy: policy ?? (role === "system" ? unrestrictedPolicy(actor) : undefined),
+      }),
     ),
   )
 

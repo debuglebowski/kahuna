@@ -537,8 +537,6 @@ export const api = {
     call((c) => c.setConceptTitleField({ id, titleFieldId })),
   /** Set who may READ a concept's records. Admin-only; applied immediately (not
    *  part of the batched `updateConcept` save). */
-  setConceptVisibility: (id: string, visibility: "visible" | "admin") =>
-    call((c) => c.setConceptVisibility({ id, visibility })),
   /** Toggle single-record mode. `fields` seeds the record created when switching
    *  on — pass the concept's required-field values, or the whole call rolls back. */
   setConceptSingleRecord: (
@@ -1369,23 +1367,19 @@ export const api = {
     conceptId?: string | null
     condition?: AccessCondition | null
   }) => call((c) => c.updateRule(input)),
-  listAccessDefaults: () => call((c) => c.listAccessDefaults()),
-  setAccessDefault: (input: {
+  /** One pane's whole Save, atomically. `resourceId: null` is the "All" row. */
+  setRoleRules: (input: {
     roleId: string
-    resourceType: AccessResourceType
-    allow: ReadonlyArray<AccessActionName>
-    deny: ReadonlyArray<AccessActionName>
-  }) => call((c) => c.setAccessDefault(input)),
-  setScopedRules: (input: {
-    roleId: string
-    resourceType: AccessResourceType
-    scopeBy?: "resource" | "concept"
-    entries: ReadonlyArray<{
-      resourceId: string
-      allow: ReadonlyArray<AccessActionName>
-      deny: ReadonlyArray<AccessActionName>
+    groups: ReadonlyArray<{
+      resourceType: AccessResourceType
+      scopeBy?: "resource" | "concept"
+      entries: ReadonlyArray<{
+        resourceId: string | null
+        allow: ReadonlyArray<AccessActionName>
+        deny: ReadonlyArray<AccessActionName>
+      }>
     }>
-  }) => call((c) => c.setScopedRules(input)),
+  }) => call((c) => c.setRoleRules(input)),
   removeRule: (ruleId: string) => call((c) => c.removeRule({ ruleId })),
   /** Omit `userId` for yourself — always allowed, no `configure` needed. */
   effectiveAccess: (userId?: string) => call((c) => c.effectiveAccess({ userId })),

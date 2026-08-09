@@ -64,41 +64,20 @@ export function Concepts() {
   const refetchGraph = () => qc.invalidateQueries({ queryKey: ["conceptGraph"] })
 
   /**
-   * WHO CAN SEE IT, decided while naming it.
+   * WHO CAN SEE IT is no longer asked here.
    *
-   * A concept's readability is a value per (concept, role) — there is no longer a
-   * column or a default underneath — so something has to choose one at creation. The
-   * creation template supplies the answer, and this is the chance to differ from it
-   * before anyone sees the concept at all, which is the only moment when getting it
-   * wrong costs nothing.
+   * This dialog used to carry a checkbox per role, because a concept's readability
+   * is a value per (concept, role) and the CREATION TEMPLATE was the only way to
+   * say anything about a concept that did not exist yet — so the moment of creation
+   * was the only chance to differ from it.
    *
-   * Only `view`, and only roles that are not full-access: the rest of what a role may
-   * do comes from the template, so its write access stays consistent with everywhere
-   * else, and a create dialog does not quietly become a settings screen.
+   * Templates are gone. A role's "All concepts" answer is a real blanket rule now,
+   * and it covers concepts added later by construction, so a new concept needs
+   * nothing stamped onto it and there is no default to disagree with. Exceptions for
+   * one concept belong in Roles → Concepts & records, alongside every other
+   * per-concept answer — and properly gated on role configuration, which this
+   * dialog never was.
    */
-  const roles = useQuery({ queryKey: ["roles"], queryFn: () => api.listRoles() })
-  const accessDefaults = useQuery({
-    queryKey: ["accessDefaults"],
-    queryFn: () => api.listAccessDefaults(),
-  })
-  /** roleId → may view. Seeded from the template the first time the dialog opens. */
-  const [access, setAccess] = useState<Record<string, boolean>>({})
-  // Full-access roles are left out: they hold a blanket `*`, so "not allowed to see
-  // it" is not a state they can be in, and a disabled checkbox for each would just be
-  // noise on a create form.
-  const scopedRoles = (roles.data ?? []).filter((r) => !r.fullAccess)
-  // A deny template beats an allow one for the same role — same fold as the grid
-  // (`PermissionMatrix.stateFrom`) — so a role whose default is "deny view" reads
-  // as unchecked here even if it also somehow holds an allow row.
-  const templateView = (roleId: string) => {
-    const mine = (accessDefaults.data ?? []).filter(
-      (d) => d.roleId === roleId && d.resourceType === "concept",
-    )
-    if (mine.some((d) => d.effect === "deny" && d.actions.includes("view"))) return false
-    return mine.some((d) => d.effect === "allow" && d.actions.includes("view"))
-  }
-  const mayView = (roleId: string) => access[roleId] ?? templateView(roleId)
-
   const createConcept = useMutation({
     // New concepts start with a default color: a palette hex no live concept
     // already uses (random reuse only once all 40 are claimed).
@@ -108,12 +87,10 @@ export function Concepts() {
         randomPillColor(
           (concepts.data ?? []).flatMap((c) => (c.archivedAt || !c.color ? [] : [c.color])),
         ),
-        scopedRoles.map((r) => ({ roleId: r.id, view: mayView(r.id) })),
       ),
     onSuccess: (c) => {
       setCreatingConcept(false)
       setNewName("")
-      setAccess({})
       refetchConcepts()
       refetchGraph()
       navigate(`/settings/concepts/${c.id}`)
@@ -325,30 +302,10 @@ export function Concepts() {
               }}
               placeholder="Concept name…"
             />
-            {scopedRoles.length > 0 ? (
-              <div className="space-y-2 rounded-lg border p-3">
-                <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                  Who can see it
-                </p>
-                {scopedRoles.map((r) => (
-                  <div key={r.id} className="flex items-center gap-3 text-sm text-foreground">
-                    <Checkbox
-                      id={`can-see-${r.id}`}
-                      checked={mayView(r.id)}
-                      onCheckedChange={(v: boolean | "indeterminate") =>
-                        setAccess((cur) => ({ ...cur, [r.id]: v === true }))
-                      }
-                    />
-                    <label htmlFor={`can-see-${r.id}`} className="cursor-pointer">
-                      {r.name}
-                    </label>
-                  </div>
-                ))}
-                <p className="text-xs text-muted-foreground">
-                  Owners and admins always can. Change any of this later in Roles.
-                </p>
-              </div>
-            ) : null}
+            <p className="text-xs text-muted-foreground">
+              Who can see it follows each role's existing answer for concepts. Change it for this
+              one in Roles → Concepts &amp; records.
+            </p>
             <div className="flex gap-2">
               <Button
                 onClick={submitNewConcept}

@@ -1,13 +1,7 @@
 import { randomUUID } from "node:crypto"
 import { Effect } from "effect"
 import { describe, expect, it } from "vitest"
-import {
-  ACTION_ALL,
-  ConceptService,
-  emptyPolicy,
-  type PolicySet,
-  unrestrictedPolicy,
-} from "#engine"
+import { ConceptService, emptyPolicy, type PolicySet, unrestrictedPolicy } from "#engine"
 import { auth } from "./auth"
 import { createUserDirect } from "./provision"
 import { runEngineOrThrow, sessionScope, systemScope } from "./runtime"
@@ -49,9 +43,8 @@ const seeing = (actor: string, conceptIds: ReadonlyArray<string>): PolicySet => 
     (["concept", "record"] as const).map((resourceType, j) => ({
       id: `t${i}-${j}`,
       roleId: "test-role",
-      actorId: null,
       effect: "allow" as const,
-      actions: [ACTION_ALL],
+      actions: ["view", "create", "edit"] as const,
       resourceType,
       resourceId: resourceType === "concept" ? conceptId : null,
       conceptId: resourceType === "record" ? conceptId : null,

@@ -107,22 +107,6 @@ export class OrgScopeViolation extends Schema.TaggedError<OrgScopeViolation>()(
 ) {}
 
 /**
- * An untargeted ALLOW was refused on a type that carries per-resource values.
- *
- * A blanket allow grants every present and future resource of its type, invisibly —
- * no grid cell can show it, which is the whole reason per-resource values exist.
- * "New ones start allowed" belongs in the creation template instead, where it is
- * applied at creation and can be seen. See `assertNotBlanketAllow`.
- */
-export class BlanketRuleRefused extends Schema.TaggedError<BlanketRuleRefused>()(
-  "BlanketRuleRefused",
-  {
-    resourceType: Schema.String,
-    message: Schema.String,
-  },
-) {}
-
-/**
  * A role was offered to the wrong sort of actor — an automation role to a person, or
  * a people role to an automation. Typed rather than a die because the Roles UI can
  * surface it, and because a mis-assigned automation role is a privilege escalation
@@ -354,7 +338,6 @@ export type EngineError =
   | RelationTargetMismatch
   | RelationNotFound
   | OrgScopeViolation
-  | BlanketRuleRefused
   | AttachmentNotFound
   | AttachmentTooLarge
   | EventCorruption

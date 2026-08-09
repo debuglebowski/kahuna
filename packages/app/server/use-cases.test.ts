@@ -3,7 +3,7 @@ import type { PgClient } from "@effect/sql-pg"
 import { Effect } from "effect"
 import { describe, expect, it } from "vitest"
 import {
-  ACTION_ALL,
+  AccessRoleService,
   ConceptService,
   type EngineServices,
   emptyPolicy,
@@ -746,9 +746,8 @@ const memberSeeing = (actor: string, conceptIds: ReadonlyArray<string>): PolicyS
     (["concept", "record"] as const).map((resourceType, j) => ({
       id: `t${i}-${j}`,
       roleId: "test-role",
-      actorId: null,
       effect: "allow" as const,
-      actions: [ACTION_ALL],
+      actions: ["view", "create", "edit"] as const,
       resourceType,
       resourceId: resourceType === "concept" ? conceptId : null,
       conceptId: resourceType === "record" ? conceptId : null,
@@ -788,7 +787,6 @@ describe("writes cannot name a subject the caller may not read", () => {
         {
           id: "t-task",
           roleId: "test-role",
-          actorId: null,
           effect: "allow",
           actions: ["create"],
           resourceType: "task",
@@ -799,7 +797,6 @@ describe("writes cannot name a subject the caller may not read", () => {
         {
           id: "t-note",
           roleId: "test-role",
-          actorId: null,
           effect: "allow",
           actions: ["create"],
           resourceType: "note",
@@ -915,5 +912,198 @@ describe("the org-wide event reads don't leak restricted subjects", () => {
       ? (asPrivileged.data as ReadonlyArray<{ subjectId: string }>).map((e) => e.subjectId)
       : []
     expect(privilegedIds).toContain(f.hiddenId)
+  })
+})
+
+/**
+ * ── THE CONFIGURE FLOOR ──────────────────────────────────────────────────────
+ *
+ * `assertFloorHolds` refuses any change that would leave the org with nobody able
+ * to configure it — the one irreversible mistake this editor can make, since the
+ * fix for it is also gated on configure.
+ *
+ * It had no test at all until now, which mattered less while `setRoleRules`'
+ * predecessor sidestepped it by refusing the `org` resource type outright. The
+ * Organisation pane edits org-configure like any other answer, so the blunt refusal
+ * is gone and the real guard is load-bearing on this path.
+ */
+describe("the configure floor", () => {
+  /** An org with the builtins seeded and exactly one person holding Admin. */
+  const seedOneAdmin = async (orgId: string) =>
+    runEngineOrThrow(
+      systemScope(orgId, "seed"),
+      Effect.gen(function* () {
+        const roles = yield* AccessRoleService
+        yield* roles.ensureBuiltins
+        const admin = yield* roles.getByKey("admin")
+        yield* roles.assign(admin!.id, "user-solo")
+        return admin!
+      }),
+    )
+
+  /** The pane's Save for the Organisation tab: one blanket org entry. */
+  const saveOrgPane = (orgId: string, roleId: string, allow: ReadonlyArray<"configure">) =>
+    runEngine(
+      { orgId, actor: "user-solo", role: "member", policy: unrestrictedPolicy("user-solo") },
+      uc.setRoleRules({
+        roleId,
+        groups: [{ resourceType: "org", entries: [{ resourceId: null, allow, deny: [] }] }],
+      }),
+    )
+
+  it("refuses a Save that would take configure from the last person holding it", async () => {
+    const orgId = randomUUID()
+    const admin = await seedOneAdmin(orgId)
+
+    // Clearing Configure on the only role the only holder has empties the floor.
+    const cleared = await saveOrgPane(orgId, admin.id, [])
+    expect(cleared.ok).toBe(false)
+    expect(codeOf(cleared)).toBe("VALIDATION")
+
+    // And it really did not write: the org rule is still there.
+    const after = await runEngineOrThrow(
+      systemScope(orgId, "check"),
+      Effect.flatMap(AccessRoleService, (r) => r.rulesOf(admin.id)),
+    )
+    expect(after.some((r) => r.resourceType === "org")).toBe(true)
+  })
+
+  it("allows the same Save while Configure stays granted", async () => {
+    const orgId = randomUUID()
+    const admin = await seedOneAdmin(orgId)
+    const kept = await saveOrgPane(orgId, admin.id, ["configure"])
+    expect(kept.ok).toBe(true)
+  })
+
+  /**
+   * The guard counts HOLDERS, not roles. With a second person holding configure
+   * through another role, taking it off the first is an ordinary edit.
+   */
+  it("allows clearing configure once someone else holds it", async () => {
+    const orgId = randomUUID()
+    const admin = await seedOneAdmin(orgId)
+    await runEngineOrThrow(
+      systemScope(orgId, "seed"),
+      Effect.gen(function* () {
+        const roles = yield* AccessRoleService
+        const second = yield* roles.create({ name: "Ops" })
+        yield* roles.addRule({
+          roleId: second.id,
+          effect: "allow",
+          actions: ["configure"],
+          resourceType: "org",
+        })
+        yield* roles.assign(second.id, "user-other")
+      }),
+    )
+
+    const cleared = await saveOrgPane(orgId, admin.id, [])
+    expect(cleared.ok).toBe(true)
+  })
+})
+
+/**
+ * ── CREATING A DASHBOARD OR A SIDEBAR VIEW NEEDS PERMISSION ──────────────────
+ *
+ * Both were open to anyone, at every layer, until `createDashboard` / `createView`
+ * began deciding `create`. Untargeted, because the thing does not exist yet.
+ *
+ * THE GATE IS IN THE USE-CASE, NOT THE SERVICE, and the last case here is why:
+ * `createConcept` builds the concept's own dashboard by calling
+ * `DashboardService.create` directly. Gate the service instead and creating a
+ * concept silently starts requiring dashboard-create — a coupling no error message
+ * would ever explain.
+ */
+describe("dashboard and sidebar-view creation are gated", () => {
+  /** `concept: create` only — deliberately nothing about dashboards or views. */
+  const conceptAuthor = (actor: string): PolicySet => ({
+    ...emptyPolicy(actor),
+    rules: [
+      {
+        id: "c-create",
+        roleId: "test-role",
+        effect: "allow",
+        actions: ["create", "view"],
+        resourceType: "concept",
+        resourceId: null,
+        conceptId: null,
+        condition: null,
+      },
+    ],
+  })
+
+  const withCreate = (actor: string, resourceType: "dashboard" | "view"): PolicySet => ({
+    ...conceptAuthor(actor),
+    rules: [
+      ...conceptAuthor(actor).rules,
+      {
+        id: "d-create",
+        roleId: "test-role",
+        effect: "allow",
+        actions: ["create"],
+        resourceType,
+        resourceId: null,
+        conceptId: null,
+        condition: null,
+      },
+    ],
+  })
+
+  it("refuses both without a grant, and allows both with one", async () => {
+    const orgId = randomUUID()
+    const asRole = (policy: PolicySet) => ({
+      orgId,
+      actor: policy.actorId,
+      role: "member" as const,
+      policy,
+    })
+
+    expect(
+      (
+        await runEngine(
+          asRole(conceptAuthor("nobody")),
+          uc.createDashboard({ name: "Mine", scope: "personal", body: { children: [] } as never }),
+        )
+      ).ok,
+    ).toBe(false)
+    expect(
+      (
+        await runEngine(
+          asRole(conceptAuthor("nobody")),
+          uc.createView({ name: "Mine", scope: "personal", body: { sections: [] } as never }),
+        )
+      ).ok,
+    ).toBe(false)
+
+    expect(
+      (
+        await runEngine(
+          asRole(withCreate("maker", "dashboard")),
+          uc.createDashboard({ name: "Mine", scope: "personal", body: { children: [] } as never }),
+        )
+      ).ok,
+    ).toBe(true)
+    expect(
+      (
+        await runEngine(
+          asRole(withCreate("maker", "view")),
+          uc.createView({ name: "Mine", scope: "personal", body: { sections: [] } as never }),
+        )
+      ).ok,
+    ).toBe(true)
+  })
+
+  /**
+   * THE COUPLING THIS GATE MUST NOT CREATE. Every concept gets a dashboard on
+   * creation; that one is the system building scaffolding, not a person asking for
+   * a dashboard, and it must not need the grant.
+   */
+  it("creating a concept still works without dashboard-create", async () => {
+    const orgId = randomUUID()
+    const made = await runEngine(
+      { orgId, actor: "author", role: "member", policy: conceptAuthor("author") },
+      uc.createConcept(`Deal ${randomUUID().slice(0, 6)}`),
+    )
+    expect(made.ok).toBe(true)
   })
 })

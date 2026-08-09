@@ -1,5 +1,4 @@
 import { Layer } from "effect"
-import { AccessDefaultsService } from "./services/AccessDefaultsService"
 import { AccessRoleService } from "./services/AccessRoleService"
 import { AnnotationFieldService } from "./services/AnnotationFieldService"
 import { AnnotationService } from "./services/AnnotationService"
@@ -39,7 +38,6 @@ export const EngineLive = Layer.mergeAll(
   LabelService.Default,
   MemberService.Default,
   PolicyService.Default,
-  AccessDefaultsService.Default,
   AccessRoleService.Default,
   SidebarViewService.Default,
   DashboardService.Default,
@@ -65,7 +63,6 @@ export type EngineServices =
   | LabelService
   | MemberService
   | PolicyService
-  | AccessDefaultsService
   | AccessRoleService
   | SidebarViewService
   | DashboardService

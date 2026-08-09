@@ -11,7 +11,6 @@ import type {
   AutomationRunStatus,
   AutomationTrigger,
   Concept,
-  ConceptVisibility,
   ConditionMatch,
   Dashboard,
   DashboardBody,
@@ -61,7 +60,6 @@ export interface ConceptRow {
   readonly versioning_enabled: boolean
   readonly edit_reach: string | null
   readonly single_record: boolean
-  readonly visibility: string | null
   /** Org-wide default record version-detail layout (`{ tiles }`); null = built-in preset. */
   readonly record_view: unknown
   /** Field id used as the record version display label; null = first-text-field fallback. */
@@ -208,17 +206,6 @@ const toDashboardBody = (raw: unknown): DashboardBody => {
   }
 }
 
-/**
- * Narrow a `visibility` column to the typed union, failing CLOSED.
- *
- * Only the three known values pass through; anything else (a future 'team:eng', a
- * typo) becomes 'admin' — restrictive — rather than org-visible. Shared by concepts
- * and the raw-column read gates in Record version/RelationService, so no two paths
- * can coerce differently.
- */
-export const toVisibility = (raw: string | null): ConceptVisibility =>
-  raw === "visible" ? "visible" : raw === "none" ? "none" : "admin"
-
 export const toConcept = (r: ConceptRow): Concept => ({
   id: r.id,
   orgId: r.org_id,
@@ -237,13 +224,6 @@ export const toConcept = (r: ConceptRow): Concept => ({
   editReach: r.edit_reach === "any" ? "any" : "draft",
   singleRecord: r.single_record ?? false,
   // Same exhaustive-coercion rule as `editReach` above, but the OPPOSITE polarity:
-  // here the safe default is the RESTRICTIVE one. An older server meeting a future
-  // value (say 'team:eng') must fail CLOSED rather than treat it as org-visible.
-  //
-  // 'none' is narrower than 'admin' and must pass through as itself: coercing it to
-  // 'admin' would silently hand admins material meant to be reachable ONLY via an
-  // explicit rule (a personal dashboard, an individually-shared concept).
-  visibility: toVisibility(r.visibility),
   recordView: toInstanceViewLayout(r.record_view),
   titleFieldId: r.title_field_id,
   createdAt: r.created_at,

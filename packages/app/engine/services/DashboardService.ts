@@ -1,6 +1,6 @@
 import { PgClient } from "@effect/sql-pg"
 import { Effect } from "effect"
-import { ACTION_ALL, type AccessAction, decide } from "../domain/access"
+import { type AccessAction, decide } from "../domain/access"
 import type { DashboardBody } from "../domain/types"
 import {
   ConceptNotFound,
@@ -8,8 +8,8 @@ import {
   DashboardNotFound,
   DashboardProtected,
 } from "../errors"
-import { AccessDefaultsService } from "./AccessDefaultsService"
 import { OrgContext, type OrgScope } from "./OrgContext"
+import { ResourceRulesService } from "./ResourceRulesService"
 import { type DashboardRow, toDashboard } from "./rows"
 
 /**
@@ -32,7 +32,7 @@ export class DashboardService extends Effect.Service<DashboardService>()(
   {
     effect: Effect.gen(function* () {
       const sql = yield* PgClient.PgClient
-      const defaults = yield* AccessDefaultsService
+      const resourceRules = yield* ResourceRulesService
 
       /** Guarantee the org has at least one shared dashboard by seeding the
        *  Default if none exists. Atomic (INSERT … WHERE NOT EXISTS), so
@@ -50,14 +50,10 @@ export class DashboardService extends Effect.Service<DashboardService>()(
             WHERE org_id = ${orgId} AND owner_id IS NULL AND concept_id IS NULL
           )
           RETURNING id`
-        // RETURNING + the zero-rows branch is the whole point: this INSERT is a
-        // no-op once a shared dashboard exists, and only the run that actually
-        // seeded may materialize. Skipping this hook would leave a brand-new org's
-        // home page invisible to every member — the most visible possible form of
-        // "created but never given rules".
-        const seeded = rows[0]
-        if (seeded)
-          yield* defaults.materialize({ resourceType: "dashboard", resourceId: seeded.id })
+        // A no-op once a shared dashboard exists. Nothing to stamp on it any
+        // more: a role's blanket dashboard rule covers one made now for the same
+        // reason it covers one made next year.
+        void rows
       })
 
       /**
@@ -93,7 +89,7 @@ export class DashboardService extends Effect.Service<DashboardService>()(
             r.resourceId === id &&
             r.effect === "allow" &&
             r.condition === null &&
-            (r.actions.includes(action) || r.actions.includes(ACTION_ALL)),
+            r.actions.includes(action),
         ) ?? false
 
       /**
@@ -111,12 +107,13 @@ export class DashboardService extends Effect.Service<DashboardService>()(
       const maySee = (scope: OrgScope, r: DashboardRow, action: AccessAction = "view"): boolean =>
         isMine(scope, r.owner_id) ||
         namedGrant(scope, r.id, action) ||
+        // No `role === "system"` branch: `systemScope` carries `unrestrictedPolicy`,
+        // which `decide` short-circuits on. One exemption, expressed once.
         (r.owner_id === null &&
-          (scope.role === "system" ||
-            (scope.policy !== undefined &&
-              decide(scope.policy, action, { type: "dashboard", id: r.id }, false, {
-                unconditionalOnly: true,
-              }))))
+          scope.policy !== undefined &&
+          decide(scope.policy, action, { type: "dashboard", id: r.id }, false, {
+            unconditionalOnly: true,
+          }))
 
       /** Apply the decision to rows fetched unfiltered. Safe in memory: these queries
        *  carry no LIMIT, so dropping rows cannot skew a count or truncate a page —
@@ -225,14 +222,6 @@ export class DashboardService extends Effect.Service<DashboardService>()(
                       ${JSON.stringify(input.body)}::jsonb)
               RETURNING *`
             const dashboard = toDashboard(rows[0]!)
-            // Shared dashboards only — a personal one is governed by `owner_id`.
-            // See the same note in SidebarViewService.create for why folding
-            // ownership into per-role values would break sharing.
-            if (ownerId === null)
-              yield* defaults.materialize({
-                resourceType: "dashboard",
-                resourceId: dashboard.id,
-              })
             return dashboard
           }),
         )
@@ -301,14 +290,6 @@ export class DashboardService extends Effect.Service<DashboardService>()(
               WHERE org_id = ${orgId} AND id = ${input.id}
               RETURNING *`
             const dashboard = toDashboard(rows[0]!)
-            // Shared dashboards only — a personal one is governed by `owner_id`.
-            // See the same note in SidebarViewService.create for why folding
-            // ownership into per-role values would break sharing.
-            if (ownerId === null)
-              yield* defaults.materialize({
-                resourceType: "dashboard",
-                resourceId: dashboard.id,
-              })
             return dashboard
           }),
         )
@@ -332,7 +313,7 @@ export class DashboardService extends Effect.Service<DashboardService>()(
             yield* sql`DELETE FROM dashboards WHERE org_id = ${orgId} AND id = ${id}`
             // No FK on access_rules.resource_id (it points at any of five tables),
             // so nothing else clears these.
-            yield* defaults.forget({ resourceType: "dashboard", resourceId: id })
+            yield* resourceRules.forget({ resourceType: "dashboard", resourceId: id })
             return toDashboard(row)
           }),
         )
@@ -355,6 +336,6 @@ export class DashboardService extends Effect.Service<DashboardService>()(
 
       return { list, listAll, listRecordDashboards, create, update, remove, reorder } as const
     }),
-    dependencies: [AccessDefaultsService.Default],
+    dependencies: [ResourceRulesService.Default],
   },
 ) {}

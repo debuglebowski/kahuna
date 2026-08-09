@@ -129,38 +129,20 @@ describe("role kinds, auto-assign and deactivation", () => {
   })
 
   /**
-   * THE DEAD COLUMN GUARD. Sharing was removed — every rule now comes from a role,
+   * THE DEAD COLUMN IS GONE. Sharing was removed — every rule now comes from a role,
    * which is what makes a fixed (role position, chain depth) precedence a complete
-   * ordering. `access_rules.actor_id` stays on the table (the same rollback window
-   * earlier migrations used) but `PolicyService.loadRules` must never read it again.
-   * If this regresses, a "dead" row silently becomes live the next time someone
-   * writes one by hand, or a future migration replays old data.
+   * ordering. `access_rules.actor_id` was kept unread through a rollback window and
+   * dropped in 0022; this asserts the column itself, because a rule that cannot name
+   * a person is a stronger guarantee than one the loader merely declines to read.
    */
-  it.effect("a direct actor-scoped rule is never read, even with a role held", () => {
-    const org = newOrgId()
-    const shared = "11111111-1111-1111-1111-111111111111"
-    return Effect.gen(function* () {
-      const roles = yield* AccessRoleService
-      const policies = yield* PolicyService
+  it.effect("access_rules cannot name a person at all — the column is gone", () =>
+    Effect.gen(function* () {
       const sql = yield* PgClient.PgClient
-      yield* roles.ensureBuiltins
-
-      const member = yield* roles.getByKey("member")
-      yield* roles.assign(member!.id, PERSON)
-      const withRoleOnly = yield* policies.resolve(org, PERSON)
-      expect(withRoleOnly.rules.length).toBeGreaterThan(0)
-
-      // Written directly — the same shape a share used to write, with `actor_id`
-      // instead of `role_id` — because the column and the CHECK constraint still
-      // allow it. Nothing in the product writes this any more.
-      yield* sql`
-        INSERT INTO access_rules (org_id, actor_id, effect, actions, resource_type, resource_id)
-        VALUES (${org}, ${PERSON}, 'allow', ${["view"]}, 'record', ${shared})`
-      yield* policies.bump(org)
-
-      const after = yield* policies.resolve(org, PERSON)
-      expect(after.rules.map((r) => r.resourceId)).not.toContain(shared)
-      expect(after.rules.length).toBe(withRoleOnly.rules.length)
-    }).pipe(Effect.provide(testLayer(org, PERSON)))
-  })
+      const cols = yield* sql<{ readonly column_name: string }>`
+        SELECT column_name FROM information_schema.columns
+        WHERE table_name = 'access_rules'`
+      expect(cols.map((c) => c.column_name)).not.toContain("actor_id")
+      expect(cols.map((c) => c.column_name)).toContain("role_id")
+    }).pipe(Effect.provide(testLayer(newOrgId(), PERSON))),
+  )
 })

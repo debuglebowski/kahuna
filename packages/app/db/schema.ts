@@ -77,20 +77,6 @@ export const concepts = pgTable(
     // `versioning_enabled`, where one lineage legitimately holds N version rows.
     // Makes the concept addressable without a uuid (routed at /c/<slug>).
     singleRecord: boolean("single_record").notNull().default(false),
-    // Who may READ this concept's records BY DEFAULT: 'visible' = every member of
-    // the org, 'admin' = owners/admins only, 'none' = nobody without an explicit
-    // access rule. Named by who can see it (not "hidden"), which is why the third
-    // value slotted in without re-meaning the first two.
-    //
-    // This is the DEFAULT layer of the access model: `access_rules` are exceptions
-    // layered on top (see engine/domain/access.ts). It stays a column because it is
-    // the cheap fast path inside list SQL and answers "who sees this normally?" in
-    // one row read.
-    //
-    // Enforced INSIDE the engine — see ConceptService and the `assertConceptVisible`
-    // gate in RecordService. Unknown values coerce to 'admin' (fail CLOSED), the
-    // opposite polarity to `edit_reach`; see toConcept.
-    visibility: text("visibility").notNull().default("visible"),
     // Org-wide default detail layout for this concept's record versions: a 12-col grid
     // of tiles (`{ tiles: [...] }`), the same shape as the view-prefs custom
     // layouts. Null = render the built-in default preset. Set in concept
@@ -925,16 +911,6 @@ export const accessRoles = pgTable(
     // ASSIGNMENTS are kept, so reactivating restores exactly what was there. This is
     // what a managed role has instead of delete.
     active: boolean("active").notNull().default(true),
-    // EXEMPT FROM PER-RESOURCE VALUES. A full-access role holds one blanket
-    // `allow ['*']` per resource type and is never materialized into per-resource
-    // rules, because `*` means "every action, present and future" — expanding it
-    // freezes the role at today's action list, so an action added in a later release
-    // silently isn't granted to anyone holding it.
-    //
-    // A real column rather than `key IN ('admin','automation_full')`: the exemption is
-    // a property of the role, not of its name, and an org may want a custom role to
-    // have it.
-    fullAccess: boolean("full_access").notNull().default(false),
     position: integer("position").notNull().default(0),
     // INHERITANCE. A role may be BASED ON another; resolving it walks the chain
     // (via `access_role_actors.position`, then chain depth) so a role's own value
@@ -1007,24 +983,22 @@ export const accessRoleActors = pgTable(
  * precedence table is what makes an access model unreadable to the person editing
  * it — see `decide()`.
  *
- * `actorId` is a HISTORICAL column. A per-person share used to be this row with
- * `actor_id` set instead of `role_id`; sharing was removed — every rule now comes
- * from a role, which is what makes a fixed (role, chain) precedence a complete
- * ordering — and `PolicyService.loadRules` no longer reads it. Kept (not written,
- * not dropped) as the same rollback window earlier migrations used; the CHECK below
- * still enforces exactly one subject for any row that names one.
+ * Every rule belongs to a ROLE. The `actor_id` column (a per-person share) was kept
+ * unread through a rollback window and is dropped in 0022 — rules arriving only via
+ * roles is exactly what makes a fixed (role, chain) precedence a complete ordering.
  */
 export const accessRules = pgTable(
   "access_rules",
   {
     id: uuid("id").primaryKey().defaultRandom(),
     orgId: text("org_id").notNull(),
-    // Exactly one of these is set (CHECK below), mirroring `attachments_one_owner`.
+    // EVERY rule belongs to a role. `actor_id` (a per-person share) was dropped in
+    // 0022 along with its partial index and the one-subject CHECK — rules arriving
+    // only via roles is what makes a fixed (role, chain) precedence a total order.
     roleId: uuid("role_id").references(() => accessRoles.id, { onDelete: "cascade" }),
-    actorId: text("actor_id"),
     // 'allow' | 'deny'.
     effect: text("effect").notNull().default("allow"),
-    // Action names, or `{*}` for every action present and future. See ACCESS_ACTIONS.
+    // Action names, exhaustively — there is no wildcard. See ACCESS_ACTIONS.
     actions: text("actions").array().notNull(),
     // 'org' | 'concept' | 'record' | 'field' | 'dashboard' | 'view' | 'automation'
     // | 'bucket' | 'task' | 'note' | 'member'.
@@ -1046,63 +1020,11 @@ export const accessRules = pgTable(
   },
   (t) => [
     // The hot path: every rule applying to one actor, resolved per request via
-    // their roles. `access_rules_actor_idx` (actor_id) is unused by any read path
-    // now — it served the removed share lookup — and is left in place only because
-    // the column it partial-indexes hasn't been dropped yet either.
+    // their roles.
     index("access_rules_role_idx").on(t.orgId, t.roleId).where(sql`${t.roleId} IS NOT NULL`),
-    index("access_rules_actor_idx").on(t.orgId, t.actorId).where(sql`${t.actorId} IS NOT NULL`),
     // Rules naming one resource — what a role's "Other" rule list and the
     // permissions grid read.
     index("access_rules_resource_idx").on(t.orgId, t.resourceType, t.resourceId),
-    check("access_rules_one_subject", sql`(${t.roleId} IS NULL) <> (${t.actorId} IS NULL)`),
-  ],
-)
-
-/**
- * THE CREATION TEMPLATE: what a NEWLY created resource grants each role.
- *
- * Not a rule. Nothing in `decide()` ever reads this table — it is copied into real
- * `access_rules` rows at the moment a concept, dashboard, view or automation is
- * created, and from then on those rows are the only thing that governs access.
- *
- * WHY IT IS A SEPARATE TABLE. The obvious alternative is to keep using an untargeted
- * `access_rules` row (`resource_id IS NULL`) as "the default for this type". That is
- * what shipped first, and it is precisely the thing being removed: an untargeted rule
- * is consulted at REQUEST time, so every cell in the permissions grid had to carry an
- * "Inherit" state meaning "no rule here — something else decides". Moving the template
- * out of the rules table is what lets a grid cell show one definite value.
- *
- * `actions` may contain `*`, same as a rule, so a template can say "everything".
- *
- * A role with no row here grants nothing on new resources — the same fail-closed
- * polarity as `toVisibility` in engine/services/rows.ts.
- */
-export const accessDefaults = pgTable(
-  "access_defaults",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    orgId: text("org_id").notNull(),
-    roleId: uuid("role_id")
-      .notNull()
-      .references(() => accessRoles.id, { onDelete: "cascade" }),
-    // 'concept' | 'record' | 'dashboard' | 'view' | 'automation'. Only the five types
-    // with a grid: the rest keep their existing defaults and are edited under "Other".
-    resourceType: text("resource_type").notNull(),
-    // 'allow' | 'deny'. An empty grid cell still means the ABSENCE of an allow, not
-    // a stored deny row — deny is for the rarer case where the role needs to beat
-    // what it would otherwise inherit (`based_on`, or another role held earlier).
-    // See engine/services/AccessDefaultsService.ts.
-    effect: text("effect").notNull().default("allow"),
-    actions: text("actions").array().notNull(),
-    createdBy: text("created_by"),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-  },
-  (t) => [
-    // One row per (role, type, effect): the whole template loads in one indexed read
-    // when a resource is created.
-    uniqueIndex("access_defaults_role_type_effect_uq").on(t.roleId, t.resourceType, t.effect),
-    index("access_defaults_org_idx").on(t.orgId, t.resourceType),
   ],
 )
 

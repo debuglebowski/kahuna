@@ -28,7 +28,6 @@ export const EditReach = Schema.Literal("draft", "any")
 /** DEFAULT read reach for a concept or field: org-wide, owners/admins only, or
  *  nobody-without-an-explicit-rule. The default layer of the access model; access
  *  rules are exceptions over it. */
-export const ConceptVisibility = Schema.Literal("visible", "admin", "none")
 export type EditReach = typeof EditReach.Type
 
 const RecordVersionFields = {
@@ -129,10 +128,6 @@ export const Concept = Schema.Struct({
    *  `/c/<slug>`. Toggled ONLY via `setConceptSingleRecord` (never
    *  `updateConcept` — the toggle also creates/guards the record). */
   singleRecord: Schema.Boolean,
-  /** Who may READ this concept's records. `"admin"` means members never see it at
-   *  all — it is absent from this very list for them, so a member only ever
-   *  receives `"visible"` here. Set via `setConceptVisibility` (admin-only). */
-  visibility: ConceptVisibility,
   /** Org-wide default record version-detail layout (a 12-col tile grid); null = the
    *  built-in default preset. Set in concept settings → Layout. */
   recordView: Schema.NullOr(RecordViewLayout),
@@ -1463,15 +1458,15 @@ export type AccessResourceType = typeof AccessResourceType.Type
  */
 export const AccessResourceTypeOut = Schema.String
 
-/** A grantable action. `"*"` is deliberately NOT on the wire: a client may only ever
- *  grant named actions, so a future action is never handed out by an old dialog. */
+/** A grantable action. There is no wildcard anywhere any more — not on the wire and
+ *  not in the engine — so a rule is exactly the actions it names. `share` is gone
+ *  with it: nothing ever decided it. */
 export const AccessActionName = Schema.Literal(
   "view",
   "create",
   "edit",
   "archive",
   "delete",
-  "share",
   "configure",
 )
 export type AccessActionName = typeof AccessActionName.Type
@@ -1509,10 +1504,6 @@ export const AccessRole = Schema.Struct({
   /** False ⇒ grants nothing to anyone and is not handed out; assignments are kept,
    *  so reactivating restores exactly what was there. */
   active: Schema.Boolean,
-  /** Holds a blanket `*` and is exempt from per-resource values. The grid renders
-   *  these roles read-only, and create forms leave them out — a full-access role
-   *  cannot be "not allowed" to see something. */
-  fullAccess: Schema.Boolean,
   position: Schema.Number,
   /** The role this one inherits from — null for none. Set via `updateRole`;
    *  `updateRole`'s guards refuse a cycle, a kind mismatch, or a personal role
@@ -1653,15 +1644,6 @@ export class KingsmakerRpcs extends RpcGroup.make(
   // (the integration owns it).
   Rpc.make("setConceptTitleField", {
     payload: { id: Schema.String, titleFieldId: Schema.NullOr(Schema.String) },
-    success: Concept,
-    error: RpcError,
-  }),
-  // Set who may READ a concept's records. Admin-gated and applied immediately, NOT
-  // part of `updateConcept`'s batched patch: it is a security control, so it should
-  // not ride along with a name/description save (nor be silently re-sent by an
-  // editor that loaded the concept before the setting changed).
-  Rpc.make("setConceptVisibility", {
-    payload: { id: Schema.String, visibility: ConceptVisibility },
     success: Concept,
     error: RpcError,
   }),
@@ -2630,19 +2612,34 @@ export class KingsmakerRpcs extends RpcGroup.make(
     success: Schema.Struct({ id: Schema.String }),
     error: RpcError,
   }),
-  /** Replace every targeted rule of one resource type on a role — what the
-   *  permissions matrix writes. Blanket rules are untouched. */
-  Rpc.make("setScopedRules", {
+  /**
+   * Replace a role's rules across one or more resource types, atomically — what a
+   * permissions pane writes on Save.
+   *
+   * GROUPS, because a pane is no longer one resource type: "Concepts & records"
+   * writes both from one table and its Save must be all-or-nothing.
+   *
+   * Each group is AUTHORITATIVE for its `(resourceType, scopeBy)` shape, blanket row
+   * included — `resourceId: null` is the "All" row, meaning every resource of the
+   * type including ones created later. Conditional rules are the one thing a group
+   * never owns; the engine leaves them alone.
+   */
+  Rpc.make("setRoleRules", {
     payload: {
       roleId: Schema.String,
-      resourceType: AccessResourceType,
-      /** "concept" scopes by CONTAINER — the Records grid, whose rows are concepts. */
-      scopeBy: Schema.optional(Schema.Literal("resource", "concept")),
-      entries: Schema.Array(
+      groups: Schema.Array(
         Schema.Struct({
-          resourceId: Schema.String,
-          allow: Schema.Array(AccessActionName),
-          deny: Schema.Array(AccessActionName),
+          resourceType: AccessResourceType,
+          /** "concept" scopes by CONTAINER — the records half, whose rows are concepts. */
+          scopeBy: Schema.optional(Schema.Literal("resource", "concept")),
+          entries: Schema.Array(
+            Schema.Struct({
+              /** `null` = the blanket row. */
+              resourceId: Schema.NullOr(Schema.String),
+              allow: Schema.Array(AccessActionName),
+              deny: Schema.Array(AccessActionName),
+            }),
+          ),
         }),
       ),
     },
@@ -2652,34 +2649,6 @@ export class KingsmakerRpcs extends RpcGroup.make(
   Rpc.make("removeRule", {
     payload: { ruleId: Schema.String },
     success: Schema.Struct({ id: Schema.String }),
-    error: RpcError,
-  }),
-  /** THE CREATION TEMPLATE: what a NEWLY created resource of each type grants (or
-   *  refuses) each role. Not a rule — nothing consults it at request time; it is
-   *  copied into real rules when a concept/dashboard/view/automation is created. */
-  Rpc.make("listAccessDefaults", {
-    success: Schema.Array(
-      Schema.Struct({
-        roleId: Schema.String,
-        resourceType: AccessResourceTypeOut,
-        effect: Schema.Literal("allow", "deny"),
-        actions: Schema.Array(Schema.String),
-      }),
-    ),
-    error: RpcError,
-  }),
-  /** Set one role's template for one type — both the allow and the deny side, as
-   *  the tri-state default row edits them together. Empty `allow` clears the
-   *  allow template (a new resource then grants that role nothing by default);
-   *  empty `deny` clears the deny template. */
-  Rpc.make("setAccessDefault", {
-    payload: {
-      roleId: Schema.String,
-      resourceType: AccessResourceType,
-      allow: Schema.Array(AccessActionName),
-      deny: Schema.Array(AccessActionName),
-    },
-    success: Schema.Struct({ ok: Schema.Boolean }),
     error: RpcError,
   }),
   /** "What can this member see and do, and what grants it?" Anyone may ask about

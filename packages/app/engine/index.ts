@@ -18,7 +18,6 @@ export {
 } from "./computed/momentum"
 export {
   ACCESS_ACTIONS,
-  ACTION_ALL,
   type AccessAction,
   type AccessCondition,
   type AccessResource,
@@ -26,6 +25,7 @@ export {
   type AccessRule,
   decide,
   decideRecord,
+  ENFORCED_ACTIONS,
   type ExplainLayer,
   type ExplainResult,
   emptyPolicy,
@@ -59,16 +59,11 @@ export {
   richTextWalk,
 } from "./domain/richtext"
 export * from "./domain/types"
-export { canReadConcept, scopeCanReadConcept } from "./domain/visibility"
+export { scopeCanReadConcept } from "./domain/visibility"
 export * from "./errors"
 export { EngineLive, type EngineServices } from "./layers"
 export { foldEvents, foldUntil } from "./projection/fold"
 export { applyEvent, type FoldState } from "./projection/reducer"
-export {
-  type AccessDefault,
-  AccessDefaultsService,
-  TEMPLATED_TYPES,
-} from "./services/AccessDefaultsService"
 export { type AccessRole, AccessRoleService, BUILTIN_ROLES } from "./services/AccessRoleService"
 export {
   type AddAnnotationFieldInput,
@@ -110,8 +105,6 @@ export { PolicyService } from "./services/PolicyService"
 export { type FindRecordsInput, QueryService } from "./services/QueryService"
 export { RecordService } from "./services/RecordService"
 export { type CreateRelationInput, RelationService } from "./services/RelationService"
-// `toVisibility` only: the rest of rows.ts is row-mapping internals.
-export { toVisibility } from "./services/rows"
 export { SidebarViewService } from "./services/SidebarViewService"
 // Infrastructure
 export { healthCheck, PgLive } from "./services/Sql"

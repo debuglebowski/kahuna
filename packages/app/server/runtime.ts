@@ -107,11 +107,8 @@ export const ERROR_MAP: Record<string, { status: number; code: string }> = {
   AnnotationFieldNameConflict: { status: 409, code: "CONFLICT" },
   AnnotationFieldConfigInvalid: { status: 422, code: "FIELD_CONFIG_INVALID" },
   OrgScopeViolation: { status: 403, code: "FORBIDDEN" },
-  // Carries its own prose (see errors/index.ts) — 422, not 403: the rule is
-  // malformed for this model, not forbidden to this caller.
-  BlanketRuleRefused: { status: 422, code: "BLANKET_RULE_REFUSED" },
-  // Also prose-carrying, also 422: an automation role offered to a person is a
-  // category error, not an access decision about the caller.
+  // Prose-carrying, 422: an automation role offered to a person is a category
+  // error, not an access decision about the caller.
   RoleKindMismatch: { status: 422, code: "ROLE_KIND_MISMATCH" },
   EventCorruption: { status: 500, code: "INTERNAL" },
   // Unmapped until now, so every rejected automation reached the editor as

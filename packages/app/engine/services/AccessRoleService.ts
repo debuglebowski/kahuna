@@ -1,10 +1,9 @@
 import { PgClient } from "@effect/sql-pg"
 import { Effect } from "effect"
 import type { AccessAction, AccessCondition, AccessResourceType } from "../domain/access"
-import { ACTION_ALL } from "../domain/access"
+import { ENFORCED_ACTIONS } from "../domain/access"
 import { isAutomationActor } from "../domain/types"
-import { BlanketRuleRefused, FieldValidationError, RoleKindMismatch } from "../errors"
-import { TEMPLATED_TYPES } from "./AccessDefaultsService"
+import { FieldValidationError, RoleKindMismatch } from "../errors"
 import { EventStore } from "./EventStore"
 import { OrgContext } from "./OrgContext"
 import { PolicyService } from "./PolicyService"
@@ -26,8 +25,6 @@ export interface AccessRole {
   readonly autoAssign: boolean
   /** False ⇒ grants nothing and is not auto-assigned; assignments are kept. */
   readonly active: boolean
-  /** Holds a blanket `*`; exempt from per-resource values. See `access_roles`. */
-  readonly fullAccess: boolean
   readonly position: number
   /** The role this one inherits from — null for none. `PolicyService.loadRules`
    *  walks this chain to add depth to precedence; `update`'s cycle guard is what
@@ -44,14 +41,13 @@ interface AccessRoleRow {
   readonly kind: string
   readonly auto_assign: boolean
   readonly active: boolean
-  readonly full_access: boolean
   readonly position: number
   readonly based_on: string | null
 }
 
 /** Every SELECT reads the same shape — one place to change when a column lands. */
 const ROLE_COLUMNS =
-  "id, key, name, description, managed, kind, auto_assign, active, full_access, position, based_on"
+  "id, key, name, description, managed, kind, auto_assign, active, position, based_on"
 
 const toRole = (r: AccessRoleRow): AccessRole => ({
   id: r.id,
@@ -64,7 +60,6 @@ const toRole = (r: AccessRoleRow): AccessRole => ({
   kind: r.kind === "automation" ? "automation" : "user",
   autoAssign: r.auto_assign,
   active: r.active,
-  fullAccess: r.full_access,
   position: r.position,
   basedOn: r.based_on,
 })
@@ -72,7 +67,7 @@ const toRole = (r: AccessRoleRow): AccessRole => ({
 /** A rule to seed with a managed role. */
 interface RuleSpec {
   readonly effect: "allow" | "deny"
-  readonly actions: ReadonlyArray<AccessAction | typeof ACTION_ALL>
+  readonly actions: ReadonlyArray<AccessAction>
   readonly resourceType: AccessResourceType
 }
 
@@ -90,11 +85,16 @@ interface RoleSpec {
 /**
  * ── THE MANAGED ROLES ────────────────────────────────────────────────────────
  *
- * Admin and `automation_full` are trivial: `everything([ACTION_ALL])` is a
- * blanket `*` on every resource type in `ALL_RESOURCES` — correct by
- * construction for "full access".
+ * Admin and `automation_full` used to hold `everything([ACTION_ALL])` — one blanket
+ * `*` per resource type. That was the only thing in the model that was not simply a
+ * list of permissions, and it cost more than it bought: the permissions editor could
+ * not represent it, so it disabled every control on those two roles and showed a
+ * banner instead. Both now seed from {@link ENFORCED_ACTIONS}, the same list the
+ * editor renders, so they are ordinary editable roles that happen to start with
+ * everything. The trade is stated on `ACCESS_ACTIONS`: a future action must be added
+ * to that map, or these two silently stop covering it.
  *
- * Member is not — its rules are curated PER RESOURCE TYPE, each entry chosen by
+ * Member is different — its rules are curated PER RESOURCE TYPE, each entry chosen by
  * cross-referencing every `decide()`/`assertAllowed()` call site in the app for
  * what actually consults a rule on that type. A grant that nothing ever decides
  * is not a smaller version of "reproduce today's behaviour" — it is decoration
@@ -125,15 +125,14 @@ interface RoleSpec {
  *                       type — an existing note's read/write goes through its
  *                       SUBJECT record (`assertSubjectReadable`), not a `note`
  *                       rule; there is no global note list, unlike tasks.
- *   org, role, member,
- *   automation        → NO rule. Every action ever decided against the first
- *                       three is `configure` (member never holds it, by design —
- *                       "cannot configure"). Automation's writes are RPC-boundary
- *                       admin-gated unconditionally (`rpc.ts`'s `admin<Automation>`
- *                       wrapper) regardless of any per-automation rule, and its
- *                       reads default OPEN (`AutomationService.allowed`'s
- *                       `fallback: true` — "reads are member-visible" by design),
- *                       so a rule here is doubly inert for Member specifically.
+ *   automation        → `view` only. Reads used to come free from a `fallback: true`
+ *                       that is now `false`, so this line is what keeps the list
+ *                       visible. Writes stay withheld: they are RPC-boundary
+ *                       admin-gated as well (`rpc.ts`'s `admin<Automation>` wrapper),
+ *                       which Member never passes.
+ *   org, role, member → NO rule. Every action ever decided against the three is
+ *                       `configure` (member never holds it, by design — "cannot
+ *                       configure").
  *
  * `delete` is withheld everywhere — already admin-gated at the RPC boundary, so
  * granting it would be a widening. `configure` likewise, everywhere — that is the
@@ -160,10 +159,17 @@ const ALL_RESOURCES: ReadonlyArray<AccessResourceType> = [
   "role",
 ]
 
-const everything = (
-  actions: ReadonlyArray<AccessAction | typeof ACTION_ALL>,
-): ReadonlyArray<RuleSpec> =>
-  ALL_RESOURCES.map((resourceType) => ({ effect: "allow" as const, actions, resourceType }))
+/**
+ * Every permission that exists, as rules — one per resource type, listing exactly
+ * what a gate decides for it. This is what "full access" means now that there is no
+ * wildcard to say it in one token.
+ */
+const everything = (): ReadonlyArray<RuleSpec> =>
+  ALL_RESOURCES.map((resourceType) => ({
+    effect: "allow" as const,
+    actions: ENFORCED_ACTIONS[resourceType],
+    resourceType,
+  }))
 
 /**
  * There is deliberately NO `owner` role. Owner is a membership flag carrying the
@@ -181,7 +187,7 @@ export const BUILTIN_ROLES: ReadonlyArray<RoleSpec> = [
     position: 1,
     kind: "user",
     autoAssign: false,
-    rules: everything([ACTION_ALL]),
+    rules: everything(),
   },
   {
     key: "member",
@@ -196,12 +202,34 @@ export const BUILTIN_ROLES: ReadonlyArray<RoleSpec> = [
     // join path reads, so an org can move it to a role of its own making.
     autoAssign: true,
     rules: [
-      { effect: "allow", actions: ["create"], resourceType: "concept" },
-      { effect: "allow", actions: ["create"], resourceType: "record" },
-      { effect: "allow", actions: ["edit"], resourceType: "dashboard" },
-      { effect: "allow", actions: ["edit"], resourceType: "view" },
+      // `view` IS HERE NOW, and used to be conspicuously absent.
+      //
+      // It came from the creation TEMPLATE instead (`access_defaults`), which
+      // `ensureBuiltins` stamped with `view` unioned in — so a Member could read a
+      // concept because a per-resource rule was minted at the moment that concept was
+      // created, not because the role said so. Retiring the template moves the grant
+      // to where it always belonged: one blanket rule meaning "every concept,
+      // including ones added later", which is what the pane's All row shows.
+      //
+      // Historically the presets withheld a blanket `view` deliberately — it used to
+      // outrank the `visibility` column. That column is gone; read access IS the rule.
+      { effect: "allow", actions: ["create", "view"], resourceType: "concept" },
+      // `edit` joined `create` here when records stopped being writable purely
+      // because they were readable (`RecordService.assertRecordEditable`). Both fail
+      // closed, so without this line a Member can open a record and change nothing.
+      { effect: "allow", actions: ["create", "edit", "view"], resourceType: "record" },
+      // Likewise `create`: making a dashboard or a sidebar view was ungated at every
+      // layer until `use-cases.createDashboard` / `createView` began deciding it.
+      { effect: "allow", actions: ["create", "edit", "view"], resourceType: "dashboard" },
+      { effect: "allow", actions: ["create", "edit", "view"], resourceType: "view" },
       { effect: "allow", actions: ["create", "view"], resourceType: "task" },
       { effect: "allow", actions: ["create"], resourceType: "note" },
+      // `view` only, and it is not decoration: automations used to be readable by
+      // every member through `AutomationService.allowed`'s `fallback: true`, and that
+      // fallback is now `false`. Without this line a Member stops seeing the
+      // automations list entirely. The three write actions stay withheld — they are
+      // org-`configure` gated at the boundary as well, which Member never holds.
+      { effect: "allow", actions: ["view"], resourceType: "automation" },
     ],
   },
   {
@@ -215,7 +243,7 @@ export const BUILTIN_ROLES: ReadonlyArray<RoleSpec> = [
     position: 3,
     kind: "automation",
     autoAssign: true,
-    rules: everything([ACTION_ALL]),
+    rules: everything(),
   },
 ]
 
@@ -285,46 +313,30 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
        * release adding a preset must be able to add just that one.
        */
       const ensureBuiltins = Effect.gen(function* () {
-        const { orgId, actor } = yield* OrgContext
+        // No `actor`: it was only ever stamped on the `access_defaults` rows this
+        // used to write. The rules below carry no `created_by` — they are the seed,
+        // not somebody's edit.
+        const { orgId } = yield* OrgContext
         let seeded = 0
         for (const spec of BUILTIN_ROLES) {
           const existing = yield* getByKey(spec.key)
           if (existing) continue
-          // A preset holding `*` is FULL ACCESS: it keeps one blanket rule per type
-          // and is exempt from per-resource values, because `*` means "every action,
-          // present and future" and materializing it would freeze the role at
-          // today's action list. See `access_roles.full_access`.
-          const fullAccess = spec.rules.some((r) => r.actions.includes(ACTION_ALL))
+          // No `full_access` any more: every preset is now just its rules, including
+          // the two that grant everything. See `BUILTIN_ROLES`.
           const inserted = yield* sql<{ readonly id: string }>`
             INSERT INTO access_roles
-              (org_id, key, name, description, managed, kind, auto_assign, full_access,
-               position)
+              (org_id, key, name, description, managed, kind, auto_assign, position)
             VALUES (${orgId}, ${spec.key}, ${spec.name}, ${spec.description}, true,
-                    ${spec.kind}, ${spec.autoAssign}, ${fullAccess}, ${spec.position})
+                    ${spec.kind}, ${spec.autoAssign}, ${spec.position})
             RETURNING id`
           const roleId = inserted[0]!.id
-          // THE CREATION TEMPLATE for this preset: what a newly created concept,
-          // dashboard, view or automation grants it. Full-access roles get none —
-          // their blanket `*` already covers everything, materialized or not.
-          //
-          // `view` IS ADDED HERE and is not in the preset's rules. That is not an
-          // oversight being papered over — the presets deliberately withhold a blanket
-          // `view` (it used to outrank the `visibility` column, which is what THE
-          // BLANKET-VIEW GUARD pinned). With the column gone, read access IS the rule,
-          // so a template without `view` means every concept created from then on is
-          // invisible to members, forever, with nothing on screen to explain it.
-          if (!fullAccess) {
-            for (const rule of spec.rules) {
-              if (rule.effect !== "allow" || !TEMPLATED_TYPES.includes(rule.resourceType)) continue
-              const actions = [...new Set<string>([...rule.actions, "view"])]
-              yield* sql`
-                INSERT INTO access_defaults
-                  (org_id, role_id, resource_type, effect, actions, created_by)
-                VALUES (${orgId}, ${roleId}, ${rule.resourceType}, 'allow',
-                        ${actions}, ${actor})
-                ON CONFLICT (role_id, resource_type, effect) DO NOTHING`
-            }
-          }
+          // NO CREATION TEMPLATE. This used to stamp an `access_defaults` row per
+          // templated allow rule, with `view` unioned in, and that injection was what
+          // actually granted Member read access — the preset's own rules withheld it.
+          // A template only ever reaches resources created after it exists, which is
+          // not what "all concepts" means to anyone reading it, so the grant moved
+          // into the rules themselves (see `BUILTIN_ROLES`) and the whole mechanism
+          // went with it.
           for (const rule of spec.rules) {
             // The array is passed RAW, not through `sql.json`: `actions` is a
             // `text[]` column, and the driver serializes a JS array as a Postgres
@@ -423,7 +435,7 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
           const { orgId } = yield* OrgContext
           const rows = yield* sql<AccessRoleRow>`
             SELECT r.id, r.key, r.name, r.description, r.managed, r.kind, r.auto_assign,
-                   r.active, r.full_access, r.position, r.based_on
+                   r.active, r.position, r.based_on
             FROM access_roles r
             JOIN access_role_actors a ON a.role_id = r.id AND a.org_id = r.org_id
             WHERE r.org_id = ${orgId} AND a.actor_id = ${actorId} AND r.personal_for IS NULL
@@ -541,13 +553,16 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
             RETURNING ${sql.unsafe(ROLE_COLUMNS)}`
           const role = toRole(rows[0]!)
           if (input.startFrom) {
-            // Rules first, then templates: the new role sees what the source sees
-            // today AND starts new resources the same way. Conditional rules copy
-            // too — they are as much a part of "what this role is" as the rest.
+            // Every rule, conditional ones included — they are as much a part of
+            // "what this role is" as the rest. There is no template to copy
+            // alongside them any more: a blanket rule already covers resources made
+            // later, which is what the template used to be for.
             //
-            // A full-access source is NOT copied wholesale: `full_access` is a
-            // property of the role, and silently minting a second one from a name in
-            // a dropdown is not something a create form should be able to do.
+            // Copying Admin is now an ordinary copy, and allowed: with the wildcard
+            // gone its rules are just a long list of allows, so "start from Admin and
+            // take things away" is a reasonable thing to want and produces a role that
+            // is fully editable afterwards. It used to be refused because the source
+            // carried `*`, which the editor could not then represent.
             yield* sql`
               INSERT INTO access_rules
                 (org_id, role_id, effect, actions, resource_type, resource_id, concept_id,
@@ -556,13 +571,6 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
                      concept_id, condition, ${actor}
                 FROM access_rules
                WHERE org_id = ${orgId} AND role_id = ${input.startFrom}`
-            yield* sql`
-              INSERT INTO access_defaults
-                (org_id, role_id, resource_type, effect, actions, created_by)
-              SELECT org_id, ${role.id}, resource_type, effect, actions, ${actor}
-                FROM access_defaults
-               WHERE org_id = ${orgId} AND role_id = ${input.startFrom}
-              ON CONFLICT (role_id, resource_type, effect) DO NOTHING`
           }
           yield* events.append({
             subjectKind: "accessRole",
@@ -823,50 +831,24 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
 
       /** Add a rule to a role. */
       /**
-       * ── THE BLANKET GUARD ────────────────────────────────────────────────────
+       * ── THE BLANKET GUARD IS GONE ────────────────────────────────────────────
        *
-       * Refuse an untargeted ALLOW on a type that carries per-resource values.
+       * An untargeted ALLOW on a templated type used to be refused
+       * (`BlanketRuleRefused`), on the grounds that it silently granted every present
+       * AND FUTURE resource of that type in a way no grid cell could show. That
+       * reasoning was about the GRID, not about the model: the rule was always the
+       * honest way to say "all of them", and the editor simply had nowhere to put it.
        *
-       * This replaces THE BLANKET-VIEW GUARD, which used to be a test asserting the
-       * Member preset grants no blanket `view`. That test protected a real property —
-       * read access is never granted wholesale by accident — and the property still
-       * matters, but its old subject is gone: read access IS rules now, so a blanket
-       * allow is no longer "outranking the visibility column", it is silently
-       * granting every present AND FUTURE resource of that type, invisibly, in a way
-       * no grid cell can show.
+       * The editor now has a place — the "All" row, which is that rule and says so.
+       * So the guard was refusing the one shape its replacement is built to write,
+       * and `access_defaults` (the template it pointed people at) is retired: a
+       * template only reaches resources created AFTER it exists, which is not what
+       * "all concepts" means to anyone reading it.
        *
-       * The template (`access_defaults`) is how "new ones start allowed" is said, and
-       * it is applied at creation where it can be seen. Full-access roles are exempt:
-       * a blanket `*` is exactly what they are.
-       *
-       * Deny is unaffected — a blanket deny is a legitimate, and legible, hard block.
+       * `addRule` therefore has no guard left. The floor check in `use-cases.ts`
+       * (`assertFloorHolds`) is unaffected — it protects org configuration, which is
+       * a different property and still runs on every narrowing path.
        */
-      const assertNotBlanketAllow = (input: {
-        readonly roleId: string
-        readonly effect: "allow" | "deny"
-        readonly resourceType: AccessResourceType
-        readonly resourceId?: string | null
-        readonly conceptId?: string | null
-      }) =>
-        Effect.gen(function* () {
-          if (input.effect !== "allow") return
-          if (input.resourceId || input.conceptId) return
-          if (!TEMPLATED_TYPES.includes(input.resourceType)) return
-          const { orgId } = yield* OrgContext
-          const rows = yield* sql<{ readonly full_access: boolean }>`
-            SELECT full_access FROM access_roles
-            WHERE org_id = ${orgId} AND id = ${input.roleId} LIMIT 1`
-          if (rows[0]?.full_access) return
-          return yield* Effect.fail(
-            new BlanketRuleRefused({
-              resourceType: input.resourceType,
-              message:
-                `A rule covering every ${input.resourceType} at once can't be shown in the ` +
-                `grid. Set the default for new ones instead, or name a specific one.`,
-            }),
-          )
-        })
-
       const addRule = (input: {
         readonly roleId: string
         readonly effect: "allow" | "deny"
@@ -877,7 +859,6 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
         readonly condition?: AccessCondition | null
       }) =>
         Effect.gen(function* () {
-          yield* assertNotBlanketAllow(input)
           const { orgId, actor } = yield* OrgContext
           const rows = yield* sql<{ readonly id: string }>`
             INSERT INTO access_rules
@@ -983,88 +964,128 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
         }).pipe(Effect.orDie)
 
       /**
-       * Replace every TARGETED rule of one resource type on a role, in one transaction.
+       * Replace a role's rules for one or more resource types, in ONE transaction.
        *
-       * This is what the permissions matrix writes. Setting a whole column means
-       * touching every row, and doing that as N add/update/remove round-trips would be
-       * both chatty and non-atomic — a half-applied column is a permissions bug, not a
-       * cosmetic one. So the client sends the desired state and this reconciles.
+       * This is what a permissions pane writes. Setting a whole pane means touching
+       * every row of every column, and doing that as N add/update/remove round-trips
+       * would be both chatty and non-atomic — a half-applied pane is a permissions
+       * bug, not a cosmetic one. So the client sends the desired state and this
+       * reconciles.
        *
-       * ONLY rules with a `resource_id` are replaced. Blanket rules (`resource_id IS
-       * NULL`) are left alone: they are not represented in the grid, so treating their
-       * absence from the payload as "delete them" would silently drop access the matrix
-       * never showed. The UI surfaces them separately.
+       * ── WHY GROUPS ───────────────────────────────────────────────────────────
        *
-       * `org` is refused outright — org-level configure is what the irreducible floor
-       * protects, and it has no place in a per-record grid.
+       * A pane is no longer one resource type. "Concepts & records" writes `record`
+       * rules (its first column group) and `concept` rules (its second) from a single
+       * table, and its Save has to be atomic across both — a save that applied the
+       * record half and dropped the concept half would leave a role holding an access
+       * set nobody chose. One call, one transaction, N groups.
+       *
+       * ── WHAT A GROUP OWNS ────────────────────────────────────────────────────
+       *
+       * Everything of that `(resourceType, scopeBy)` shape, INCLUDING the blanket row
+       * (`resourceId: null`) — which is the point. The "All" row of the table is that
+       * rule, so the pane must be able to clear it as well as write it. This is the
+       * change from the old `setScopedRules`, which deliberately never touched blanket
+       * rules because the grid had no way to show one.
+       *
+       * That makes each group's payload AUTHORITATIVE for its shape. A pane that
+       * renders only some of a type's actions must still send the ones it doesn't
+       * render, or saving will drop them — see `fold.ts` on the client, which carries
+       * unmanaged actions through untouched.
+       *
+       * ── WHAT A GROUP DOES NOT OWN ────────────────────────────────────────────
+       *
+       * - The other scope column. `record` rules scoped by `concept_id` and by
+       *   `resource_id` are different grants over the same uuid; each group clears
+       *   only its own, or saving one pane would silently wipe the other.
+       * - CONDITIONAL rules (`condition IS NOT NULL`). No cell can express a
+       *   condition, so no save can be authoritative about one. Without the
+       *   `condition IS NULL` filter a save silently destroys them — and since the
+       *   editor no longer lists conditional rules at all, that destruction would be
+       *   both silent and unrecoverable.
+       *
+       * `org` is still refused at the use-case layer, where the configure floor lives.
        */
-      const setScopedRules = (input: {
+      const setRoleRules = (input: {
         readonly roleId: string
-        readonly resourceType: AccessResourceType
-        /**
-         * Which column the entry id lands in.
-         *
-         * "resource" — the record itself (a concept, a dashboard).
-         * "concept"  — the CONTAINER. Used by the Records grid, whose rows are
-         *              concepts but whose rules mean "records IN this concept", which
-         *              the model expresses as `concept_id` with a null `resource_id`.
-         *              The two are different grants over the same id and must not be
-         *              written to the same column.
-         */
-        readonly scopeBy?: "resource" | "concept"
-        readonly entries: ReadonlyArray<{
-          readonly resourceId: string
-          readonly allow: ReadonlyArray<AccessAction>
-          readonly deny: ReadonlyArray<AccessAction>
+        readonly groups: ReadonlyArray<{
+          readonly resourceType: AccessResourceType
+          /**
+           * Which column an entry id lands in.
+           *
+           * "resource" — the resource itself (a concept, a dashboard).
+           * "concept"  — the CONTAINER. Used by the records half of the Concepts &
+           *              records pane, whose rows are concepts but whose rules mean
+           *              "records IN this concept", which the model expresses as
+           *              `concept_id` with a null `resource_id`.
+           */
+          readonly scopeBy?: "resource" | "concept"
+          readonly entries: ReadonlyArray<{
+            /** `null` = the blanket row: every resource of this type, including ones
+             *  created later. */
+            readonly resourceId: string | null
+            readonly allow: ReadonlyArray<AccessAction>
+            readonly deny: ReadonlyArray<AccessAction>
+          }>
         }>
       }) =>
         sql
           .withTransaction(
             Effect.gen(function* () {
               const { orgId, actor } = yield* OrgContext
-              const byConcept = input.scopeBy === "concept"
-              // Delete only the column this grid owns, so the concept-scoped and
-              // resource-scoped grids over the same type never clobber each other.
-              yield* byConcept
-                ? sql`
-                    DELETE FROM access_rules
-                    WHERE org_id = ${orgId} AND role_id = ${input.roleId}
-                      AND resource_type = ${input.resourceType}
-                      AND concept_id IS NOT NULL AND resource_id IS NULL`
-                : sql`
-                    DELETE FROM access_rules
-                    WHERE org_id = ${orgId} AND role_id = ${input.roleId}
-                      AND resource_type = ${input.resourceType}
-                      AND resource_id IS NOT NULL`
-              for (const e of input.entries) {
-                // One row per (record, effect), holding that effect's action set —
-                // the shape the grid reads back cell by cell.
-                for (const [effect, actions] of [
-                  ["allow", e.allow],
-                  ["deny", e.deny],
-                ] as const) {
-                  if (actions.length === 0) continue
-                  yield* sql`
-                    INSERT INTO access_rules
-                      (org_id, role_id, effect, actions, resource_type, resource_id,
-                       concept_id, created_by)
-                    VALUES (${orgId}, ${input.roleId}, ${effect}, ${[...actions]},
-                            ${input.resourceType},
-                            ${byConcept ? null : e.resourceId},
-                            ${byConcept ? e.resourceId : null},
-                            ${actor})`
+              for (const g of input.groups) {
+                const byConcept = g.scopeBy === "concept"
+                // `condition IS NULL` on both branches — see the doc above; this is the
+                // difference between "replace what the pane shows" and "replace what
+                // the pane shows, plus anything it couldn't".
+                yield* byConcept
+                  ? // Concept-scoped rows AND the blanket row, which for this shape is
+                    // simply "both id columns null". Per-RESOURCE rules of the same type
+                    // (`resource_id IS NOT NULL`) belong to the other column and survive.
+                    sql`
+                      DELETE FROM access_rules
+                      WHERE org_id = ${orgId} AND role_id = ${input.roleId}
+                        AND resource_type = ${g.resourceType}
+                        AND resource_id IS NULL
+                        AND condition IS NULL`
+                  : // Resource-scoped rows AND the blanket row. `concept_id IS NULL`
+                    // keeps this off the concept-scoped column of the same type.
+                    sql`
+                      DELETE FROM access_rules
+                      WHERE org_id = ${orgId} AND role_id = ${input.roleId}
+                        AND resource_type = ${g.resourceType}
+                        AND concept_id IS NULL
+                        AND condition IS NULL`
+                for (const e of g.entries) {
+                  // One row per (target, effect), holding that effect's action set —
+                  // the shape the pane reads back cell by cell.
+                  for (const [effect, actions] of [
+                    ["allow", e.allow],
+                    ["deny", e.deny],
+                  ] as const) {
+                    if (actions.length === 0) continue
+                    yield* sql`
+                      INSERT INTO access_rules
+                        (org_id, role_id, effect, actions, resource_type, resource_id,
+                         concept_id, created_by)
+                      VALUES (${orgId}, ${input.roleId}, ${effect}, ${[...actions]},
+                              ${g.resourceType},
+                              ${byConcept ? null : e.resourceId},
+                              ${byConcept ? e.resourceId : null},
+                              ${actor})`
+                  }
                 }
+                yield* events.append({
+                  subjectKind: "accessRole",
+                  subjectId: input.roleId,
+                  eventType: "AccessRulesReplaced",
+                  payload: {
+                    _tag: "AccessRulesReplaced",
+                    resourceType: g.resourceType,
+                    records: g.entries.length,
+                  } as never,
+                })
               }
-              yield* events.append({
-                subjectKind: "accessRole",
-                subjectId: input.roleId,
-                eventType: "AccessRulesReplaced",
-                payload: {
-                  _tag: "AccessRulesReplaced",
-                  resourceType: input.resourceType,
-                  records: input.entries.length,
-                } as never,
-              })
               yield* policies.bump(orgId)
             }),
           )
@@ -1100,6 +1121,18 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
        *
        * Deliberately computed from the RULES rather than from membership roles: once
        * presets are editable, "is an owner" no longer implies "can configure".
+       *
+       * ── ORG-TYPED RULES ONLY ─────────────────────────────────────────────────
+       *
+       * The type test used to be `resource_type = 'org' OR resource_id IS NULL`. The
+       * second half was harmless while blanket rules were rare — the only ones that
+       * existed were the wildcard presets, and those carry an org rule anyway — but
+       * every pane's "All" row is a blanket rule now. Left as it was, a role with
+       * blanket `configure` on CONCEPTS would count as an org-configure holder,
+       * inflating the count and letting the last real holder be removed.
+       *
+       * `coversResource` never matches a concept rule against `{type:"org"}`, so the
+       * resource type is the whole test.
        */
       const configureHolders = () =>
         Effect.gen(function* () {
@@ -1113,7 +1146,8 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
               -- An inactive role grants nothing, so its holders are not holders.
               AND ro.active = true
               AND r.effect = 'allow'
-              AND (r.resource_type = 'org' OR r.resource_id IS NULL)
+              -- ORG-TYPED ONLY -- see the doc above.
+              AND r.resource_type = 'org'
               AND ('configure' = ANY(r.actions) OR '*' = ANY(r.actions))
               -- A human, not an automation or connector: a bot holding configure does
               -- not keep the org administrable by a person.
@@ -1140,7 +1174,7 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
         rulesOf: rulesOf,
         addRule,
         updateRule,
-        setScopedRules,
+        setRoleRules,
         getRule,
         removeRule,
         configureHolders,

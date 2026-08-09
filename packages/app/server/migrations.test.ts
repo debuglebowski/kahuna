@@ -160,13 +160,15 @@ describe("migrations", () => {
     const first = await inspect(url)
 
     // Exact count, not a truthiness check: a partially-applied baseline would
-    // pass `> 0`. 67 tables + the instance_state_readable view.
+    // pass `> 0`. 66 tables + the instance_state_readable view.
     // (56 + automations + automation_runs from 0001, + the four access-control
     // tables from 0004: access_roles, access_role_actors, access_rules,
     // access_policy_versions, + bauth_sso_provider and org_auth_settings from
-    // 0005, + org_integration_settings from 0006, + mentions from 0007,
-    // + access_defaults from 0008.)
-    expect(first.tableCount).toBe(68)
+    // 0005, + org_integration_settings from 0006, + mentions from 0007.
+    // `access_defaults` arrived in 0008 and was dropped again in 0020 — the "All"
+    // row of a permissions pane is a real blanket rule, which is what the template
+    // was standing in for.)
+    expect(first.tableCount).toBe(67)
     expect(first.hasAuthTable).toBe(true)
     expect(first.hasEngineTable).toBe(true)
     expect(first.ledgerRows).toBe(EXPECTED_LEDGER_ROWS)

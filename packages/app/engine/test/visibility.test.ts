@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto"
 import { describe, expect, it } from "@effect/vitest"
 import { Effect } from "effect"
 import { type AccessRule, emptyPolicy, type PolicySet, unrestrictedPolicy } from "../domain/access"
-import { canReadConcept } from "../domain/visibility"
 import { ConceptService } from "../services/ConceptService"
 import { FieldService } from "../services/FieldService"
 import type { OrgContext } from "../services/OrgContext"
@@ -31,17 +30,10 @@ const seedRestricted = () =>
       conceptId: concept.id,
       fields: { [field.id]: "9000" },
     })
-    yield* concepts.setVisibility(concept.id, "admin")
     return { conceptId: concept.id, slug: concept.slug, recordVersion: inst, fieldId: field.id }
   })
 
 describe("concept read visibility", () => {
-  it("canReadConcept: the OLD tier answer, kept only for the migration proof", () => {
-    expect(canReadConcept("visible", "member")).toBe(true)
-    expect(canReadConcept("admin", "member")).toBe(false)
-    expect(canReadConcept("admin", "owner")).toBe(true)
-  })
-
   it("a member cannot list, read, search or version-list a restricted concept", async () => {
     const orgId = newOrgId()
     const seeded = await Effect.runPromise(
@@ -129,7 +121,6 @@ describe("concept read visibility", () => {
           listed: (yield* concepts.list()).map((c) => c.id),
           rows: (yield* query.findRecords({ conceptId: open.conceptId })).length,
           value: (yield* recordVersions.get(open.recordVersionId)).state[open.fieldId],
-          visibility: (yield* concepts.getByIdForRead(open.conceptId)).visibility,
         }
       }).pipe(
         Effect.provide(testLayer(orgId, "member-user", "member", ordinaryMember("member-user"))),
@@ -138,7 +129,6 @@ describe("concept read visibility", () => {
     expect(seen.listed).toContain(open.conceptId)
     expect(seen.rows).toBe(1)
     expect(seen.value).toBe("hello")
-    expect(seen.visibility).toBe("visible")
   })
 
   it("a member cannot create a relation INTO a restricted concept", async () => {
@@ -158,7 +148,6 @@ describe("concept read visibility", () => {
           config: { target: secret.id },
         })
         const openRec = yield* recordVersions.create({ conceptId: open.id, fields: {} })
-        yield* concepts.setVisibility(secret.id, "admin")
         return { fieldId: link.id, fromId: openRec.id, toRecordId: secretRec.recordId }
       }).pipe(Effect.provide(testLayer(orgId, "seed", "system"))),
     )
@@ -192,36 +181,6 @@ describe("concept read visibility", () => {
     )
     expect(allowed.id).toBeTruthy()
   })
-
-  it("an unknown visibility value in the DB fails CLOSED", async () => {
-    // The opposite polarity to `editReach`, so it is worth pinning: an older server
-    // meeting a future value must restrict, not publish.
-    const orgId = newOrgId()
-    const created = await Effect.runPromise(
-      Effect.gen(function* () {
-        const concepts = yield* ConceptService
-        return yield* concepts.create({ name: `Future ${randomUUID().slice(0, 6)}` })
-      }).pipe(Effect.provide(testLayer(orgId, "seed", "system"))),
-    )
-    const { PgClient } = await import("@effect/sql-pg")
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        const sql = yield* PgClient.PgClient
-        yield* sql`UPDATE concepts SET visibility = 'team:eng' WHERE id = ${created.id}`
-      }).pipe(Effect.provide(testLayer(orgId, "seed", "system"))),
-    )
-    const asMember = await Effect.runPromise(
-      Effect.gen(function* () {
-        const concepts = yield* ConceptService
-        return {
-          listed: (yield* concepts.list()).map((c) => c.id),
-          byId: yield* Effect.either(concepts.getByIdForRead(created.id)),
-        }
-      }).pipe(Effect.provide(testLayer(orgId, "member-user", "member"))),
-    )
-    expect(asMember.listed).not.toContain(created.id)
-    expect(asMember.byId._tag).toBe("Left")
-  })
 })
 
 /**
@@ -238,7 +197,6 @@ describe("access rules over the visibility default", () => {
   const BASE: AccessRule = {
     id: "r1",
     roleId: null,
-    actorId: "tester",
     effect: "allow",
     actions: ["view"],
     resourceType: "concept",
@@ -273,8 +231,6 @@ describe("access rules over the visibility default", () => {
         const concepts = yield* ConceptService
         const open = yield* concepts.create({ name: `Open ${randomUUID().slice(0, 6)}` })
         const shut = yield* concepts.create({ name: `Shut ${randomUUID().slice(0, 6)}` })
-        yield* concepts.setVisibility(open.id, "admin")
-        yield* concepts.setVisibility(shut.id, "admin")
         return { open: open.id, shut: shut.id }
       }).pipe(Effect.provide(testLayer(orgId))),
     )
@@ -318,13 +274,16 @@ describe("access rules over the visibility default", () => {
     expect(await readOutcome(conceptId, layer)).toBe("not-found")
   })
 
-  it("'none' is readable by nobody by default — not even an owner", async () => {
+  // Was "'none' is readable by nobody" — that column is gone. The property survives
+  // it and is now the model's whole premise: with no rule naming a concept, NOBODY
+  // reaches it, and an owner is not an exception (Layer 0 covers roles and members
+  // only). An explicit rule is the only way in.
+  it("a concept no rule names is readable by nobody — not even an owner", async () => {
     const orgId = newOrgId()
     const conceptId = await Effect.runPromise(
       Effect.gen(function* () {
         const concepts = yield* ConceptService
         const c = yield* concepts.create({ name: `Locked ${randomUUID().slice(0, 6)}` })
-        yield* concepts.setVisibility(c.id, "none")
         return c.id
       }).pipe(Effect.provide(testLayer(orgId))),
     )
@@ -364,7 +323,6 @@ describe("THE WRITE GATE: no writing what you cannot read", () => {
         conceptId: concept.id,
         fields: { [field.id]: "original" },
       })
-      yield* concepts.setVisibility(concept.id, "admin")
       return { conceptId: concept.id, fieldId: field.id, inst }
     })
 
@@ -458,5 +416,150 @@ describe("THE WRITE GATE: no writing what you cannot read", () => {
       ).pipe(Effect.provide(testLayer(orgId, "member-1", "member", ordinaryMember("member-1")))),
     )
     expect(edited.state[open.fieldId]).toBe("b")
+  })
+})
+
+/**
+ * ── READ NO LONGER IMPLIES WRITE ────────────────────────────────────────────
+ *
+ * The gate above answers "can you write what you cannot read?" — no. This one
+ * answers the question it left open: given that you CAN read it, may you change it?
+ *
+ * Until `assertRecordEditable` existed the answer was always yes. `record`/`edit`
+ * was in the action vocabulary, offered by the rule editor, written to the database
+ * and consulted by nothing, so "may look, may not touch" — an ordinary thing to want
+ * from a role — could be configured and had no effect whatsoever.
+ *
+ * Both cases below hold `view` and differ ONLY in `edit`, which is the whole point:
+ * a fix that over-reached and keyed off visibility again would pass the first and
+ * fail the second.
+ */
+describe("record edit is decided separately from record view", () => {
+  /** A visible concept with one record — nothing restricted anywhere. */
+  const seedOpen = () =>
+    Effect.gen(function* () {
+      const concepts = yield* ConceptService
+      const fields = yield* FieldService
+      const recordVersions = yield* RecordService
+      const concept = yield* concepts.create({ name: `Open ${randomUUID().slice(0, 6)}` })
+      const field = yield* fields.addField({ conceptId: concept.id, name: "T", kind: "text" })
+      const inst = yield* recordVersions.create({
+        conceptId: concept.id,
+        fields: { [field.id]: "original" },
+      })
+      return { conceptId: concept.id, fieldId: field.id, inst }
+    })
+
+  /** A policy granting exactly `actions` on `record`, blanket. */
+  const holding = (
+    actor: string,
+    actions: ReadonlyArray<"view" | "edit" | "create">,
+  ): PolicySet => ({
+    ...emptyPolicy(actor),
+    rules: [
+      {
+        id: "r-concept",
+        roleId: "test-role",
+        effect: "allow",
+        actions: ["view"],
+        resourceType: "concept",
+        resourceId: null,
+        conceptId: null,
+        condition: null,
+      },
+      {
+        id: "r-record",
+        roleId: "test-role",
+        effect: "allow",
+        actions,
+        resourceType: "record",
+        resourceId: null,
+        conceptId: null,
+        condition: null,
+      },
+    ] satisfies ReadonlyArray<AccessRule>,
+  })
+
+  it("a reader without `edit` can open a record but not change it", async () => {
+    const orgId = newOrgId()
+    const f = await Effect.runPromise(seedOpen().pipe(Effect.provide(testLayer(orgId))))
+    const asReader = testLayer(orgId, "reader", "member", holding("reader", ["view"]))
+
+    // The read succeeds — this is not the old "cannot see it" case.
+    const read = await Effect.runPromise(
+      Effect.flatMap(RecordService, (i) => i.get(f.inst.id)).pipe(Effect.provide(asReader)),
+    )
+    expect(read.state[f.fieldId]).toBe("original")
+
+    const wrote = await Effect.runPromise(
+      Effect.flatMap(RecordService, (i) =>
+        i.update({
+          recordVersionId: f.inst.id,
+          expectedVersion: f.inst.version,
+          patch: { [f.fieldId]: "TAMPERED" },
+        }),
+      ).pipe(
+        Effect.provide(asReader),
+        Effect.map(() => "succeeded"),
+        Effect.catchAll(() => Effect.succeed("blocked")),
+      ),
+    )
+    expect(wrote).toBe("blocked")
+
+    // THE PROOF, same as the write gate's: a refusal that still wrote would satisfy
+    // every assertion above.
+    const after = await Effect.runPromise(
+      Effect.flatMap(RecordService, (i) => i.get(f.inst.id)).pipe(Effect.provide(testLayer(orgId))),
+    )
+    expect(after.state[f.fieldId]).toBe("original")
+  })
+
+  it("the same reader with `edit` can change it", async () => {
+    const orgId = newOrgId()
+    const f = await Effect.runPromise(seedOpen().pipe(Effect.provide(testLayer(orgId))))
+    const edited = await Effect.runPromise(
+      Effect.flatMap(RecordService, (i) =>
+        i.update({
+          recordVersionId: f.inst.id,
+          expectedVersion: f.inst.version,
+          patch: { [f.fieldId]: "changed" },
+        }),
+      ).pipe(
+        Effect.provide(testLayer(orgId, "editor", "member", holding("editor", ["view", "edit"]))),
+      ),
+    )
+    expect(edited.state[f.fieldId]).toBe("changed")
+  })
+
+  /**
+   * `create` is decided against the CONCEPT, not the record — the record does not
+   * exist yet — which is what lets it be a per-concept column rather than one
+   * workspace-wide yes.
+   */
+  it("a reader without `create` cannot add a record to a concept they can see", async () => {
+    const orgId = newOrgId()
+    const f = await Effect.runPromise(seedOpen().pipe(Effect.provide(testLayer(orgId))))
+
+    const blocked = await Effect.runPromise(
+      Effect.flatMap(RecordService, (i) =>
+        i.create({ conceptId: f.conceptId, fields: { [f.fieldId]: "new" } }),
+      ).pipe(
+        Effect.provide(testLayer(orgId, "reader", "member", holding("reader", ["view"]))),
+        Effect.map(() => "succeeded"),
+        Effect.catchAll(() => Effect.succeed("blocked")),
+      ),
+    )
+    expect(blocked).toBe("blocked")
+
+    const allowed = await Effect.runPromise(
+      Effect.flatMap(RecordService, (i) =>
+        i.create({ conceptId: f.conceptId, fields: { [f.fieldId]: "new" } }),
+      ).pipe(
+        Effect.provide(testLayer(orgId, "author", "member", holding("author", ["view", "create"]))),
+        Effect.map(() => "succeeded"),
+        Effect.catchAll(() => Effect.succeed("blocked")),
+      ),
+    )
+    expect(allowed).toBe("succeeded")
   })
 })

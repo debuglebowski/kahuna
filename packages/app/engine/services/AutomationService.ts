@@ -13,9 +13,9 @@ import type {
   SidebarCondition,
 } from "../domain/types"
 import { AutomationInvalid, AutomationNotFound } from "../errors"
-import { AccessDefaultsService } from "./AccessDefaultsService"
 import { EventStore } from "./EventStore"
 import { OrgContext, type OrgScope } from "./OrgContext"
+import { ResourceRulesService } from "./ResourceRulesService"
 import { type AutomationRow, type AutomationRunRow, toAutomation, toAutomationRun } from "./rows"
 
 /** Trigger kinds this build accepts. Append-only — a stored row with an unknown
@@ -343,28 +343,32 @@ export class AutomationService extends Effect.Service<AutomationService>()(
   {
     effect: Effect.gen(function* () {
       const sql = yield* PgClient.PgClient
+      const resourceRules = yield* ResourceRulesService
       const events = yield* EventStore
-      const defaults = yield* AccessDefaultsService
 
       /**
        * The exception layer for ONE automation.
        *
-       * Unlike dashboards and views, an automation has no owner column, so its DEFAULT
-       * is simply what the RPC boundary already allowed: reads are open to any member,
-       * writes are `configure`-gated there. Rules therefore NARROW — a deny hides or
-       * freezes a single automation for a role, while an allow on a resource that is
-       * already readable is a no-op. That asymmetry is the model working as designed
-       * (rules are exceptions over defaults), and it is what the grid's Inherit state
-       * means for this area.
+       * FALLBACK `false`, like every other gate in the app. It was `true` — the last
+       * place in the model where silence GRANTED — which made this the one area where
+       * an Allow did nothing and only a Deny bit, so the same Inherit cell meant the
+       * opposite of what it meant on every other tab. Migration 0022 grants what that
+       * default was silently providing (`view` to every role, plus the three write
+       * actions to roles that hold org-`configure`), so no one loses an automation they
+       * could reach before.
+       *
+       * Writes are STILL additionally hard-gated on org-`configure` at the RPC boundary
+       * (`rpc.ts`'s `admin<Automation>` wrapper). That gate is unchanged and no rule
+       * here can widen it — an automation rule can only narrow what it already allows.
        *
        * `unconditionalOnly`: automations carry no record state for a condition to read.
        */
       const allowed = (scope: OrgScope, id: string, action: AccessAction): boolean =>
         scope.policy
-          ? decide(scope.policy, action, { type: "automation", id }, true, {
+          ? decide(scope.policy, action, { type: "automation", id }, false, {
               unconditionalOnly: true,
             })
-          : true
+          : false
 
       const list = (opts: { readonly includeArchived?: boolean } = {}) =>
         Effect.gen(function* () {
@@ -441,11 +445,6 @@ export class AutomationService extends Effect.Service<AutomationService>()(
                 ${nextRunAt}, ${actor})
               RETURNING *`
             const automation = toAutomation(rows[0]!)
-            // Per-role values, from the template, in the creating transaction.
-            yield* defaults.materialize({
-              resourceType: "automation",
-              resourceId: automation.id,
-            })
             yield* events.append({
               subjectKind: "automation",
               subjectId: automation.id,
@@ -613,7 +612,7 @@ export class AutomationService extends Effect.Service<AutomationService>()(
               payload: { _tag: "AutomationDeleted" },
             })
             yield* sql`DELETE FROM automations WHERE org_id = ${orgId} AND id = ${id}`
-            yield* defaults.forget({ resourceType: "automation", resourceId: id })
+            yield* resourceRules.forget({ resourceType: "automation", resourceId: id })
             return automation
           }),
         )
@@ -749,7 +748,7 @@ export class AutomationService extends Effect.Service<AutomationService>()(
         setNextRun,
       } as const
     }),
-    dependencies: [AccessDefaultsService.Default, EventStore.Default],
+    dependencies: [ResourceRulesService.Default, EventStore.Default],
   },
 ) {}
 

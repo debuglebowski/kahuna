@@ -1,47 +1,22 @@
 import type { OrgScope } from "../services/OrgContext"
 import { decide, recordRulesForConcept, rulesFor } from "./access"
-import type { ConceptVisibility } from "./types"
 
 /**
  * Read-visibility predicates. Pure, so they are unit-testable without a database
  * and usable from both the engine services and the use-case boundary.
  *
- * ── HOW THE TWO LAYERS COMPOSE ───────────────────────────────────────────────
+ * ── THERE IS ONLY ONE LAYER NOW ──────────────────────────────────────────────
  *
- * The `visibility` column is the DEFAULT: who may read this normally, decided by
- * role. `access_rules` are EXCEPTIONS over that default, and `decide()` resolves
- * the pair — deny beats everything, then an explicit allow, then the default.
+ * This file used to compose two: a `concepts.visibility` column holding the DEFAULT
+ * ("who reads this normally, by role") with `access_rules` as exceptions layered
+ * over it. The column is gone — dropped in migration 0022, after a long stretch in
+ * which nothing consulted it at request time — along with `canReadConcept`, the
+ * role-tier answer it fed.
  *
- * So the role-only functions below are not dead: they compute the DEFAULT that
- * `decide()` falls back to. Keeping them separate is what makes the access model a
- * strict superset of today's behaviour rather than a replacement for it — an org
- * with no rules behaves exactly as it did.
- *
- * The privilege order is deliberately explicit rather than a rank comparison: a
- * new role must be classified here on purpose, not inherit access by sorting
- * above "member".
+ * A concept is readable because a RULE says so, full stop. That is why everything
+ * below fails closed on an absent policy rather than falling through to a default:
+ * there is no longer a default to fall through to.
  */
-
-/**
- * The OLD default answer for a concept: may this role read one with this visibility?
- *
- * No longer consulted at request time — concept access is now an explicit rule per
- * (concept, role), and `scopeConceptRead` fails closed without one. This survives
- * ONLY so `scripts/backfill-access-values.ts` and its proof can compute what access
- * used to answer, which is how the migration proves it changed nothing. It goes when
- * the `visibility` column does.
- *
- * `role` is a bare `string`, not `ScopeRole`: the value it cares about most is
- * `"admin"`, which membership no longer has. A historical answer has to keep
- * accepting historical inputs.
- */
-export const canReadConcept = (visibility: ConceptVisibility, role: string): boolean =>
-  // The old ROLE predicate, inlined. It is not `canReadRestricted` any more: that one
-  // moved onto the rules, and this function's only job is to reproduce what the
-  // membership tier answered BEFORE it did. Sharing an implementation would mean the
-  // proof drifts with the thing it is proving.
-  visibility === "visible" ||
-  (visibility !== "none" && (role === "owner" || role === "admin" || role === "system"))
 
 /**
  * ── THE CONCEPT READ DECISION ────────────────────────────────────────────────
@@ -68,10 +43,12 @@ export interface ConceptReadDecision {
 }
 
 export const scopeConceptRead = (scope: OrgScope, conceptId: string): ConceptReadDecision => {
-  // The engine itself — migrations, seeds, the decay tick — is exempt. It is the ONLY
-  // exemption: `sessionScope`'s type makes "system" unreachable from a request, so
-  // this cannot be claimed over HTTP.
-  if (scope.role === "system") return { reachable: true, recordsByDefault: true }
+  // NO `scope.role === "system"` BRANCH, deliberately. The engine's exemption is
+  // carried by `unrestrictedPolicy`, which `decide()` honours on its first line, and
+  // `systemScope` is the only thing that ever sets `role: "system"` — so a hand-rolled
+  // check here was the same exemption written a second way, free to drift from the
+  // first. One exemption, in one place.
+  //
   // FAIL CLOSED. There is no `visibility` column behind this any more: a concept is
   // readable because a rule says so, full stop. An absent policy therefore grants
   // nothing rather than falling through to a default.

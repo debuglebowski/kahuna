@@ -134,6 +134,34 @@
       "when": 1786035329793,
       "tag": "0018_field_bucket_permissions_removed",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1786135743202,
+      "tag": "0019_record_write_and_create_gates",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1786137971687,
+      "tag": "0020_retire_access_defaults",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1786138875814,
+      "tag": "0021_blanket_gate_grants_fix",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1786295364366,
+      "tag": "0022_retire_wildcard_and_close_automations",
+      "breakpoints": true
     }
   ]
 }

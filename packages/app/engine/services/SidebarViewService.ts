@@ -1,10 +1,10 @@
 import { PgClient } from "@effect/sql-pg"
 import { Effect } from "effect"
-import { ACTION_ALL, type AccessAction, decide } from "../domain/access"
+import { type AccessAction, decide } from "../domain/access"
 import type { SidebarViewBody } from "../domain/types"
 import { SidebarViewNotFound, SidebarViewProtected } from "../errors"
-import { AccessDefaultsService } from "./AccessDefaultsService"
 import { OrgContext, type OrgScope } from "./OrgContext"
+import { ResourceRulesService } from "./ResourceRulesService"
 import { type SidebarViewRow, toSidebarView } from "./rows"
 
 /**
@@ -20,7 +20,7 @@ export class SidebarViewService extends Effect.Service<SidebarViewService>()(
   {
     effect: Effect.gen(function* () {
       const sql = yield* PgClient.PgClient
-      const defaults = yield* AccessDefaultsService
+      const resourceRules = yield* ResourceRulesService
 
       /** Guarantee the org has at least one shared view by seeding the Default
        *  if none exists: an untitled section holding the global nav records, then
@@ -47,10 +47,9 @@ export class SidebarViewService extends Effect.Service<SidebarViewService>()(
             SELECT 1 FROM sidebar_views WHERE org_id = ${orgId} AND owner_id IS NULL
           )
           RETURNING id`
-        // Only the run that actually seeded may materialize — see the same note in
-        // DashboardService.ensureDefault.
-        const seeded = rows[0]
-        if (seeded) yield* defaults.materialize({ resourceType: "view", resourceId: seeded.id })
+        // A no-op once a shared view exists. Nothing to stamp on it any more —
+        // see the same note in DashboardService.ensureDefault.
+        void rows
       })
 
       /**
@@ -75,7 +74,7 @@ export class SidebarViewService extends Effect.Service<SidebarViewService>()(
             r.resourceId === id &&
             r.effect === "allow" &&
             r.condition === null &&
-            (r.actions.includes(action) || r.actions.includes(ACTION_ALL)),
+            r.actions.includes(action),
         ) ?? false
 
       /** Ownership first and unoverridable; a shared view is governed by rules. Same
@@ -88,12 +87,12 @@ export class SidebarViewService extends Effect.Service<SidebarViewService>()(
       ): boolean =>
         isMine(scope, ownerId) ||
         namedGrant(scope, id, action) ||
+        // No `role === "system"` branch — see the note in DashboardService.
         (ownerId === null &&
-          (scope.role === "system" ||
-            (scope.policy !== undefined &&
-              decide(scope.policy, action, { type: "view", id }, false, {
-                unconditionalOnly: true,
-              }))))
+          scope.policy !== undefined &&
+          decide(scope.policy, action, { type: "view", id }, false, {
+            unconditionalOnly: true,
+          }))
 
       /** Resolve one view for a write, honouring both layers. A rule granting `edit`
        *  on someone else's personal view must be reachable, so the default cannot stay
@@ -144,12 +143,6 @@ export class SidebarViewService extends Effect.Service<SidebarViewService>()(
                     ${JSON.stringify(input.body)}::jsonb)
             RETURNING *`
           const view = toSidebarView(rows[0]!)
-          // Only a SHARED view gets per-role values. A personal one is governed by
-          // `owner_id` — ownership is per-actor and orthogonal to roles, and writing
-          // deny-for-every-role here would make sharing it impossible later, since a
-          // deny beats the actor grant that a share writes.
-          if (ownerId === null)
-            yield* defaults.materialize({ resourceType: "view", resourceId: view.id })
           return view
         })
 
@@ -200,7 +193,7 @@ export class SidebarViewService extends Effect.Service<SidebarViewService>()(
             yield* sql`DELETE FROM sidebar_views WHERE org_id = ${orgId} AND id = ${id}`
             // No FK on access_rules.resource_id (it points at any of five tables),
             // so nothing else clears these.
-            yield* defaults.forget({ resourceType: "view", resourceId: id })
+            yield* resourceRules.forget({ resourceType: "view", resourceId: id })
             return toSidebarView(row)
           }),
         )
@@ -223,6 +216,6 @@ export class SidebarViewService extends Effect.Service<SidebarViewService>()(
 
       return { list, create, update, remove, reorder } as const
     }),
-    dependencies: [AccessDefaultsService.Default],
+    dependencies: [ResourceRulesService.Default],
   },
 ) {}

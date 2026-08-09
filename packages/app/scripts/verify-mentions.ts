@@ -144,8 +144,40 @@ ok(
   before[0]?.subtitle ?? "null",
 )
 
+// `setConceptVisibility` is gone with the `concepts.visibility` column — a concept is
+// reachable because a rule says so. Restricting one is a targeted DENY on the Member
+// role, covering both the concept and its records.
+const memberRoleId = (await asOwner.call((c) => c.listRoles())).find((r) => r.key === "member")!.id
+const denied = new Map<string, ReadonlyArray<string>>()
+const restrict = async (conceptId: string) => {
+  const a = await asOwner.call((c) =>
+    c.addRule({
+      roleId: memberRoleId,
+      effect: "deny",
+      actions: ["view"],
+      resourceType: "concept",
+      resourceId: conceptId,
+    }),
+  )
+  const b = await asOwner.call((c) =>
+    c.addRule({
+      roleId: memberRoleId,
+      effect: "deny",
+      actions: ["view"],
+      resourceType: "record",
+      conceptId,
+    }),
+  )
+  denied.set(conceptId, [a.id, b.id])
+}
+const unrestrict = async (conceptId: string) => {
+  for (const ruleId of denied.get(conceptId) ?? [])
+    await asOwner.call((c) => c.removeRule({ ruleId }))
+  denied.delete(conceptId)
+}
+
 // ── restrict ──────────────────────────────────────────────────────────────────
-await asOwner.call((c) => c.setConceptVisibility({ id: secret.id, visibility: "admin" }))
+await restrict(secret.id)
 
 // ── 2. the link goes inert, and leaks nothing ─────────────────────────────────
 const after = await asMember.call((c) => c.resolveMentions({ refs: target }))
@@ -182,7 +214,7 @@ const ownerView = await asOwner.call((c) => c.resolveMentions({ refs: target }))
 ok("5. owner still resolves it", ownerView[0]?.href !== null, ownerView[0]?.href ?? "null")
 ok("   …with the real label", ownerView[0]?.label === SECRET_LABEL, ownerView[0]?.label ?? "null")
 
-await asOwner.call((c) => c.setConceptVisibility({ id: secret.id, visibility: "visible" }))
+await unrestrict(secret.id)
 const restored = await asMember.call((c) => c.resolveMentions({ refs: target }))
 ok(
   "   un-restricting RESTORES the member's link",
@@ -206,13 +238,13 @@ ok(
   baseline[0]?.conceptName ?? "null",
 )
 
-await asOwner.call((c) => c.setConceptVisibility({ id: open.id, visibility: "admin" }))
+await restrict(open.id)
 const hidden = await asMember.call((c) => c.listBacklinks({ recordId: secretRec.recordId }))
 ok("   restricting the SOURCE drops the row entirely", hidden.length === 0, `n=${hidden.length}`)
 ok("   …with no placeholder naming it", !JSON.stringify(hidden).includes(open.name))
 const ownerLinks = await asOwner.call((c) => c.listBacklinks({ recordId: secretRec.recordId }))
 ok("   …while the owner still sees it", ownerLinks.length === 1, `n=${ownerLinks.length}`)
-await asOwner.call((c) => c.setConceptVisibility({ id: open.id, visibility: "visible" }))
+await unrestrict(open.id)
 
 // ── 7. the `@` picker's record search, and what it refuses to show ───────────
 const hits = await asMember.call((c) =>
@@ -226,7 +258,7 @@ ok(
 const bare = await asMember.call((c) => c.searchMentionableRecords({ query: "   " }))
 ok("   a bare/blank query scans nothing", bare.length === 0, `n=${bare.length}`)
 
-await asOwner.call((c) => c.setConceptVisibility({ id: secret.id, visibility: "admin" }))
+await restrict(secret.id)
 const restrictedHits = await asMember.call((c) =>
   c.searchMentionableRecords({ query: SECRET_LABEL.slice(0, 6) }),
 )
@@ -236,7 +268,7 @@ ok(
   `n=${restrictedHits.length}`,
 )
 ok("   …with its label absent entirely", !JSON.stringify(restrictedHits).includes(SECRET_LABEL))
-await asOwner.call((c) => c.setConceptVisibility({ id: secret.id, visibility: "visible" }))
+await unrestrict(secret.id)
 
 // ── a page mention is server-null by design (resolved client-side) ────────────
 const page = await asMember.call((c) =>

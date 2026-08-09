@@ -445,17 +445,33 @@ describe("org isolation", () => {
 describe("per-automation access rules", () => {
   const ACTOR = "user-dana"
 
+  /**
+   * A role that may do everything with automations, EXCEPT the named actions on one
+   * of them. The blanket allow is not scaffolding: `AutomationService.allowed` used
+   * to fall back to `true`, so a lone deny was enough to express "all but this one".
+   * With the fallback closed, a policy holding only a deny denies everything, and
+   * these tests would pass for the wrong reason — `shown` would be invisible too.
+   */
   const denyOn = (automationId: string, actions: ReadonlyArray<AccessAction>) => ({
     ...emptyPolicy(ACTOR),
     rules: [
       {
         id: "r1",
-        roleId: null,
-        actorId: ACTOR,
+        roleId: "test-role",
         effect: "deny" as const,
         actions,
         resourceType: "automation" as const,
         resourceId: automationId,
+        conceptId: null,
+        condition: null,
+      },
+      {
+        id: "r2",
+        roleId: "test-role",
+        effect: "allow" as const,
+        actions: ["view", "edit", "archive", "delete"] as ReadonlyArray<AccessAction>,
+        resourceType: "automation" as const,
+        resourceId: null,
         conceptId: null,
         condition: null,
       },

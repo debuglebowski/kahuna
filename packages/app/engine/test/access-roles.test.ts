@@ -28,10 +28,14 @@ describe("role reads", () => {
       const member = yield* roles.getByKey("member")
       yield* roles.assign(admin!.id, ACTOR)
 
-      // The managed roles disagree on `full_access`, so a dropped column cannot pass
-      // by coincidentally matching the default.
-      expect(admin!.fullAccess).toBe(true)
-      expect(member!.fullAccess).toBe(false)
+      // The managed roles disagree on how MUCH they grant, so a seed that silently
+      // stopped writing rules cannot pass by coincidence. `full_access` used to be
+      // the discriminator; it is gone, because Admin is now just a role holding more
+      // rules than Member rather than a role with a special flag.
+      const adminRules = yield* roles.rulesOf(admin!.id)
+      const memberRules = yield* roles.rulesOf(member!.id)
+      expect(adminRules.length).toBeGreaterThan(memberRules.length)
+      expect(adminRules.flatMap((r) => r.actions)).not.toContain("*")
 
       const listed = (yield* roles.list()).find((r) => r.id === admin!.id)
       const held = yield* roles.rolesOf(ACTOR)

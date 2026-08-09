@@ -124,7 +124,7 @@ describe("open-types gates (P8): view/create on task/note", () => {
         yield* roles.addRule({
           roleId: role.id,
           effect: "allow",
-          actions: ["create", "edit", "archive", "share"],
+          actions: ["create", "edit", "archive"],
           resourceType: "task",
         })
         yield* roles.assign(role.id, userId)

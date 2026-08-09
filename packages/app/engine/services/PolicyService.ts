@@ -1,7 +1,6 @@
 import { PgClient } from "@effect/sql-pg"
 import { Effect, Ref } from "effect"
 import {
-  ACTION_ALL,
   type AccessAction,
   type AccessCondition,
   type AccessResourceType,
@@ -15,7 +14,6 @@ import {
 interface AccessRuleRow {
   readonly id: string
   readonly role_id: string | null
-  readonly actor_id: string | null
   readonly effect: string
   readonly actions: ReadonlyArray<string>
   readonly resource_type: string
@@ -73,26 +71,15 @@ const toCondition = (raw: unknown): AccessCondition | null => {
   }
 }
 
-const KNOWN_ACTIONS = new Set<string>([
-  "view",
-  "create",
-  "edit",
-  "archive",
-  "delete",
-  "share",
-  "configure",
-])
+const KNOWN_ACTIONS = new Set<string>(["view", "create", "edit", "archive", "delete", "configure"])
 
 const toRule = (r: AccessRuleRow): AccessRule => ({
   id: r.id,
   roleId: r.role_id,
-  actorId: r.actor_id,
   // Fail CLOSED on an unrecognised effect: anything that isn't exactly "allow"
   // is a deny, matching the polarity of `visibility`'s coercion in rows.ts.
   effect: r.effect === "allow" ? "allow" : "deny",
-  actions: r.actions.filter(
-    (a): a is AccessAction | typeof ACTION_ALL => a === ACTION_ALL || KNOWN_ACTIONS.has(a),
-  ),
+  actions: r.actions.filter((a): a is AccessAction => KNOWN_ACTIONS.has(a)),
   resourceType: r.resource_type as AccessResourceType,
   resourceId: r.resource_id,
   conceptId: r.concept_id,
@@ -152,11 +139,10 @@ export class PolicyService extends Effect.Service<PolicyService>()("engine/Polic
      * Every rule applying to `actorId`, via their roles — each carrying the
      * PRECEDENCE it resolves at (see `AccessRule.precedence` / `decide`).
      *
-     * `r.actor_id` (a direct share) is deliberately NOT read here any more. Shares
-     * were removed — every rule now comes from a role, which is what makes a fixed
-     * (role position, chain depth) precedence a complete ordering. The column stays
-     * on `access_rules` and is not written to, the same rollback window earlier
-     * migrations used; it is dropped in a later release.
+     * EVERY rule comes from a role. `access_rules.actor_id` (a direct per-person
+     * share) was kept unread through a rollback window and is now dropped outright —
+     * rules arriving only via roles is precisely what makes a fixed (role position,
+     * chain depth) precedence a complete ordering.
      *
      * ── WHAT MAKES DEACTIVATION REAL ─────────────────────────────────────────
      *
@@ -207,7 +193,7 @@ export class PolicyService extends Effect.Service<PolicyService>()("engine/Polic
         best AS (
           SELECT role_id, MIN(precedence) AS precedence FROM chain GROUP BY role_id
         )
-        SELECT r.id, r.role_id, r.actor_id, r.effect, r.actions,
+        SELECT r.id, r.role_id, r.effect, r.actions,
                r.resource_type, r.resource_id, r.concept_id, r.condition,
                b.precedence
         FROM best b

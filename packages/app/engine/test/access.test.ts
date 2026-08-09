@@ -1,10 +1,12 @@
 import { describe, expect, it } from "@effect/vitest"
 import {
   ACCESS_ACTIONS,
+  type AccessAction,
   type AccessCondition,
   type AccessRule,
   decide,
   decideRecord,
+  ENFORCED_ACTIONS,
   emptyPolicy,
   explainDecision,
   matchesCondition,
@@ -27,7 +29,6 @@ const ACTOR = "user-1"
 const rule = (over: Partial<AccessRule> = {}): AccessRule => ({
   id: over.id ?? "r1",
   roleId: over.roleId ?? "role-1",
-  actorId: over.actorId ?? null,
   effect: over.effect ?? "allow",
   actions: over.actions ?? ["view"],
   resourceType: over.resourceType ?? "concept",
@@ -92,10 +93,18 @@ describe("access decisions", () => {
     ).toBe(true)
   })
 
-  it("the wildcard action covers every action, including ones added later", () => {
-    const p = policy([rule({ actions: ["*"] })])
+  it("THERE IS NO WILDCARD — a rule grants exactly the actions it names", () => {
+    // `["*"]` used to match every action, present and future. It is now an unknown
+    // string like any other, so a rule carrying it grants nothing at all. This is the
+    // property that makes every role representable in the permissions editor.
+    const p = policy([rule({ actions: ["*" as unknown as AccessAction] })])
     for (const action of ACCESS_ACTIONS)
-      expect(decide(p, action, { type: "concept", id: "c1" }, false)).toBe(true)
+      expect(decide(p, action, { type: "concept", id: "c1" }, false)).toBe(false)
+
+    const named = policy([rule({ actions: ["view", "edit"] })])
+    expect(decide(named, "view", { type: "concept", id: "c1" }, false)).toBe(true)
+    expect(decide(named, "edit", { type: "concept", id: "c1" }, false)).toBe(true)
+    expect(decide(named, "delete", { type: "concept", id: "c1" }, false)).toBe(false)
   })
 
   it("archive and delete are separately grantable", () => {
@@ -106,22 +115,15 @@ describe("access decisions", () => {
   })
 
   it("a concept-scoped record rule covers that concept's records only", () => {
-    // How "may share any Deal" is expressed without a rule per deal.
-    const p = policy([rule({ actions: ["share"], resourceType: "record", conceptId: "deals" })])
-    expect(decide(p, "share", { type: "record", id: "i1", conceptId: "deals" }, false)).toBe(true)
-    expect(decide(p, "share", { type: "record", id: "i2", conceptId: "people" }, false)).toBe(false)
+    // How "may edit any Deal" is expressed without a rule per deal.
+    const p = policy([rule({ actions: ["edit"], resourceType: "record", conceptId: "deals" })])
+    expect(decide(p, "edit", { type: "record", id: "i1", conceptId: "deals" }, false)).toBe(true)
+    expect(decide(p, "edit", { type: "record", id: "i2", conceptId: "people" }, false)).toBe(false)
   })
 
   it("an unrestricted policy bypasses everything, including denies", () => {
     const p: PolicySet = { ...unrestrictedPolicy("seed"), rules: [rule({ effect: "deny" })] }
     expect(decide(p, "delete", { type: "concept", id: "c1" }, false)).toBe(true)
-  })
-
-  it("a role rule and a direct share are the same mechanism", () => {
-    const viaRole = policy([rule({ roleId: "role-1", actorId: null, resourceId: "c1" })])
-    const viaShare = policy([rule({ roleId: null, actorId: ACTOR, resourceId: "c1" })])
-    const q = { type: "concept", id: "c1" } as const
-    expect(decide(viaRole, "view", q, false)).toBe(decide(viaShare, "view", q, false))
   })
 
   it("rulesFor ignores rules about other actions or resource types", () => {
@@ -185,60 +187,86 @@ describe("access conditions", () => {
 describe("the presets are reasonable — every grant is decided somewhere", () => {
   const byKey = (key: string) => BUILTIN_ROLES.find((r) => r.key === key)!
 
-  it("THE NO-DEAD-GRANTS GUARD: member holds no rule on org/role/member/automation", () => {
+  it("THE NO-DEAD-GRANTS GUARD: member holds no rule on org/role/member", () => {
     // Every action ever decided against org/role/member is `configure`, which
     // member never holds — so any OTHER grant there is inert and misleads the
-    // Roles page. Automation's writes are RPC-boundary admin-gated regardless of
-    // any rule. `field` isn't a resource type at all any more, so it isn't in
+    // Roles page. `field` isn't a resource type at all any more, so it isn't in
     // this list either — there's nothing left for member to hold a rule ON.
     const memberTypes = new Set(byKey("member").rules.map((r) => r.resourceType))
-    for (const t of ["org", "role", "member", "automation"] as const)
+    for (const t of ["org", "role", "member"] as const)
       expect(memberTypes.has(t), `member should hold no rule on ${t}`).toBe(false)
+
+    // `automation` LEFT this list. It used to belong here because reads defaulted
+    // open and writes were admin-gated, making any member rule doubly inert. The
+    // read default is now closed, so `view` is load-bearing — and the three write
+    // actions stay withheld, which is what this half still guards.
+    const automation = byKey("member").rules.filter((r) => r.resourceType === "automation")
+    expect(automation.flatMap((r) => r.actions)).toEqual(["view"])
   })
 
   it("member's view grants match exactly what's decided per type", () => {
-    // concept/record/dashboard/view have no `view` in the BLANKET rule — reading an
-    // EXISTING one comes from the separate per-resource rule materialized at
-    // creation (`ensureBuiltins`'s injection), not from this row. `task` DOES
-    // decide `view` directly against the bare type, so it carries it here.
+    // `view` is IN the blanket rules now for the four types that decide it. It used
+    // to be withheld here and injected into the creation TEMPLATE instead, so a
+    // member could read a concept only because a per-resource rule was minted when
+    // that concept was created. With the template retired the grant lives where it
+    // is read from, and covers concepts made later for the same reason.
+    //
+    // `note` stays out: there is no global note list, so nothing anywhere decides
+    // `view` against a bare `note` — a grant here would be a rule with no reader.
     const viewOn = (t: string) =>
       new Set(
         byKey("member")
           .rules.filter((r) => r.resourceType === t)
           .flatMap((r) => r.actions),
       ).has("view")
-    for (const t of ["concept", "record", "dashboard", "view", "note"])
-      expect(viewOn(t), `member should NOT grant view on ${t}`).toBe(false)
-    expect(viewOn("task"), "member should grant view on task").toBe(true)
+    for (const t of ["concept", "record", "dashboard", "view", "task"])
+      expect(viewOn(t), `member should grant view on ${t}`).toBe(true)
+    expect(viewOn("note"), "member should NOT grant view on note").toBe(false)
   })
 
-  it("member holds create on the five types that need it, and nothing wider", () => {
+  it("member holds create and edit on the types that need them, and nothing wider", () => {
     const actionsOn = (t: string) =>
       new Set(
         byKey("member")
           .rules.filter((r) => r.resourceType === t)
           .flatMap((r) => r.actions),
       )
-    expect(actionsOn("concept")).toEqual(new Set(["create"]))
-    expect(actionsOn("record")).toEqual(new Set(["create"]))
-    expect(actionsOn("dashboard")).toEqual(new Set(["edit"]))
-    expect(actionsOn("view")).toEqual(new Set(["edit"]))
+    expect(actionsOn("concept")).toEqual(new Set(["create", "view"]))
+    // `edit` on record, and `create` on dashboard/view, joined the preset when those
+    // four actions stopped being decided by nothing — see `assertRecordEditable` and
+    // `use-cases.createDashboard`. All four fail closed, so a preset without them is
+    // a Member who can open a record and change nothing, and cannot make a dashboard.
+    // `view` joined them when the creation template retired: see the test above.
+    expect(actionsOn("record")).toEqual(new Set(["create", "edit", "view"]))
+    expect(actionsOn("dashboard")).toEqual(new Set(["create", "edit", "view"]))
+    expect(actionsOn("view")).toEqual(new Set(["create", "edit", "view"]))
     expect(actionsOn("task")).toEqual(new Set(["create", "view"]))
     expect(actionsOn("note")).toEqual(new Set(["create"]))
     // Neither is granted anywhere: both are admin-gated at the RPC boundary today.
     const all = new Set(byKey("member").rules.flatMap((r) => r.actions))
     expect(all.has("delete")).toBe(false)
     expect(all.has("configure")).toBe(false)
-    // `share` is a defined action nothing anywhere ever decides — dead by design,
-    // so the preset never grants it.
-    expect(all.has("share")).toBe(false)
+    // `share` was a defined action nothing anywhere ever decided. It is not an
+    // action any more — removed from the union entirely, so there is nothing to
+    // withhold.
+    expect(ACCESS_ACTIONS as ReadonlyArray<string>).not.toContain("share")
   })
 
-  it("Admin holds the wildcard, so restricted reads still work for it", () => {
-    // Only Admin, because there is no Owner ROLE: an owner is a membership flag
-    // whose session resolves unrestricted, which no rule can grant or take away.
-    const actions = new Set(byKey("admin").rules.flatMap((r) => r.actions))
-    expect(actions.has("*")).toBe(true)
+  it("Admin grants every enforced action EXPLICITLY, with no wildcard", () => {
+    // What replaced `*`. Admin is now an ordinary editable role that happens to start
+    // with everything, so the seed has to name every pair `ENFORCED_ACTIONS` lists —
+    // and a future action added there must be added here too, or Admin silently stops
+    // covering it. That is the whole cost of removing the wildcard, made executable.
+    for (const rule of byKey("admin").rules) {
+      expect(rule.actions as ReadonlyArray<string>).not.toContain("*")
+      expect([...rule.actions].sort()).toEqual([...ENFORCED_ACTIONS[rule.resourceType]].sort())
+    }
+    // Every enforced resource type is covered, not just the ones that happen to be there.
+    const seeded = new Set(byKey("admin").rules.map((r) => r.resourceType))
+    for (const type of Object.keys(ENFORCED_ACTIONS)) expect(seeded.has(type as never)).toBe(true)
+
+    // Still only Admin: there is no Owner ROLE — an owner is a membership flag whose
+    // Layer 0 floor no rule can grant or take away.
     expect(BUILTIN_ROLES.some((r) => r.key === "owner")).toBe(false)
   })
 
@@ -408,11 +436,11 @@ describe("explainDecision — decide's traceable twin", () => {
   it("two roles sharing a precedence are BOTH named — a tier is not one role", () => {
     // Per-person role ORDER isn't wired yet (P5), so every role sits at its
     // default position and two DIFFERENT roles can land in the same tier. Only
-    // one of them (Admin, via `*`) actually grants `configure` here; the point is
+    // one of them (the admin-ish role) actually grants `configure` here; the point is
     // that `roleIds` still names both — collapsing to one would blame whichever
     // rule happened to come first for a decision the other role had no part in.
     const p = policy([
-      rule({ id: "admin-rule", roleId: "role-admin", actions: ["*"] }),
+      rule({ id: "admin-rule", roleId: "role-admin", actions: ["configure"] }),
       rule({ id: "member-rule", roleId: "role-member", actions: ["edit"] }),
     ])
     const r = explainDecision(p, "configure", q, false)

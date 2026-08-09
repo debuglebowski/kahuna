@@ -28,7 +28,6 @@ const ACTIONS: ReadonlyArray<AccessActionName> = [
   "edit",
   "archive",
   "delete",
-  "share",
   "configure",
 ]
 

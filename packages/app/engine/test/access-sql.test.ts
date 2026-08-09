@@ -36,7 +36,6 @@ const OTHER = "user-bob"
 const rule = (over: Partial<AccessRule>): AccessRule => ({
   id: over.id ?? randomUUID(),
   roleId: over.roleId ?? null,
-  actorId: over.actorId ?? ACTOR,
   effect: over.effect ?? "allow",
   actions: over.actions ?? ["view"],
   resourceType: over.resourceType ?? "record",
@@ -276,11 +275,14 @@ describe("policy loading", () => {
       const after = yield* policies.resolve(org, ACTOR)
       expect(after.version).toBeGreaterThan(before.version)
       expect(after.rules.length).toBeGreaterThan(0)
-      // The seeded Member role grants only what's actually decided somewhere —
-      // see `AccessRoleService.BUILTIN_ROLES`'s header. `task` gets an explicit
-      // `view` (decided directly); `concept`'s blanket rule does NOT — reading an
-      // EXISTING concept comes from the separate per-resource rule materialized
-      // at creation time (none was created here), not from this blanket row.
+      // The seeded Member role grants only what's actually decided somewhere — see
+      // `AccessRoleService.BUILTIN_ROLES`'s header.
+      //
+      // `concept` carries `view` in its BLANKET rule now, and used not to: reading an
+      // existing concept came from a per-resource rule materialized at creation from
+      // the template, so a role assigned before any concept existed resolved to no
+      // concept-view at all. Retiring the template moved the grant into the rule,
+      // which is why it is present here with nothing yet created.
       const actions = new Set(after.rules.flatMap((r) => r.actions))
       const taskActions = new Set(
         after.rules.filter((r) => r.resourceType === "task").flatMap((r) => r.actions),
@@ -289,7 +291,7 @@ describe("policy loading", () => {
         after.rules.filter((r) => r.resourceType === "concept").flatMap((r) => r.actions),
       )
       expect(taskActions.has("view")).toBe(true)
-      expect(conceptActions.has("view")).toBe(false)
+      expect(conceptActions.has("view")).toBe(true)
       expect(actions.has("create")).toBe(true)
       expect(actions.has("edit")).toBe(true)
       // No type grants `archive` any more — the one case that did (concept-schema
@@ -304,34 +306,38 @@ describe("policy loading", () => {
   /**
    * THE SCOPE-COLUMN GUARD.
    *
-   * The Records grid's rows are CONCEPTS — a cell there means "records in this
-   * concept", stored as `concept_id`. The Concepts grid writes `resource_id` for the
-   * same uuid. They are different grants, so each grid must own exactly one column:
-   * if `setScopedRules` wrote (or deleted) the wrong one, saving one grid would
-   * silently wipe the other's rules for the same concept.
+   * The records half of the Concepts & records pane has rows that are CONCEPTS — a
+   * cell there means "records in this concept", stored as `concept_id`. The concept
+   * half writes `resource_id` for the same uuid. They are different grants, so each
+   * group must own exactly one column: if `setRoleRules` wrote (or deleted) the wrong
+   * one, saving would silently wipe the other's rules for the same concept.
    */
-  it.effect("scopeBy keeps the concept-scoped and resource-scoped grids apart", () =>
+  it.effect("scopeBy keeps the concept-scoped and resource-scoped columns apart", () =>
     Effect.gen(function* () {
       const roles = yield* AccessRoleService
       const role = yield* roles.create({ name: "Grid" })
       const conceptId = randomUUID()
 
-      yield* roles.setScopedRules({
+      // One call, both groups — the shape a merged pane sends.
+      yield* roles.setRoleRules({
         roleId: role.id,
-        resourceType: "record",
-        scopeBy: "concept",
-        entries: [{ resourceId: conceptId, allow: ["view"], deny: [] }],
-      })
-      yield* roles.setScopedRules({
-        roleId: role.id,
-        resourceType: "concept",
-        entries: [{ resourceId: conceptId, allow: ["view"], deny: [] }],
+        groups: [
+          {
+            resourceType: "record",
+            scopeBy: "concept",
+            entries: [{ resourceId: conceptId, allow: ["view"], deny: [] }],
+          },
+          {
+            resourceType: "concept",
+            entries: [{ resourceId: conceptId, allow: ["view"], deny: [] }],
+          },
+        ],
       })
 
       const rules = yield* roles.rulesOf(role.id)
       const recordRule = rules.find((r) => r.resourceType === "record")
       const conceptRule = rules.find((r) => r.resourceType === "concept")
-      // Both survived: the concept write did not delete the record-scoped row.
+      // Both survived: the concept group did not delete the record-scoped row.
       expect(recordRule).toBeDefined()
       expect(conceptRule).toBeDefined()
       // …and each landed in its own column.
@@ -340,8 +346,11 @@ describe("policy loading", () => {
       expect(conceptRule!.resourceId).toBe(conceptId)
       expect(conceptRule!.conceptId).toBeNull()
 
-      // Clearing one grid clears only its own column.
-      yield* roles.setScopedRules({ roleId: role.id, resourceType: "concept", entries: [] })
+      // Clearing one group clears only its own column.
+      yield* roles.setRoleRules({
+        roleId: role.id,
+        groups: [{ resourceType: "concept", entries: [] }],
+      })
       const left = yield* roles.rulesOf(role.id)
       expect(left.filter((r) => r.resourceType === "concept").length).toBe(0)
       expect(left.filter((r) => r.resourceType === "record").length).toBe(1)
@@ -349,17 +358,17 @@ describe("policy loading", () => {
   )
 
   /**
-   * ── THE BLANKET GUARD ──────────────────────────────────────────────────────
+   * ── THE BLANKET ROW ────────────────────────────────────────────────────────
    *
-   * Successor to THE BLANKET-VIEW GUARD, which asserted the Member preset grants no
-   * blanket `view`. That test protected a property worth keeping — read access is
-   * never granted wholesale by accident — but its subject is gone: read access IS
-   * rules now, so a blanket allow no longer "outranks the visibility column". What it
-   * does instead is grant every present AND FUTURE resource of its type, invisibly,
-   * in a way no grid cell can show. So it is refused at the write, not caught by a
-   * test on one preset.
+   * An untargeted allow used to be REFUSED on these five types (`BlanketRuleRefused`),
+   * on the grounds that it granted every present and future resource invisibly. The
+   * objection was to the grid, which had no cell for it — not to the rule, which is
+   * the only honest way to say "all of them, including ones added later".
+   *
+   * The pane's "All" row is that rule and says so, so the refusal is gone and this
+   * test is its inverse: the rule round-trips, for every type that used to refuse it.
    */
-  it.effect("an untargeted allow is refused on a type with per-resource values", () =>
+  it.effect("a blanket allow round-trips on every formerly-templated type", () =>
     Effect.gen(function* () {
       const roles = yield* AccessRoleService
       const role = yield* roles.create({ name: "Sales" })
@@ -371,21 +380,95 @@ describe("policy loading", () => {
         "view",
         "automation",
       ] as const) {
-        const err = yield* roles
-          .addRule({ roleId: role.id, effect: "allow", actions: ["view"], resourceType })
-          .pipe(Effect.flip)
-        expect(err._tag, resourceType).toBe("BlanketRuleRefused")
+        const added = yield* roles.addRule({
+          roleId: role.id,
+          effect: "allow",
+          actions: ["view"],
+          resourceType,
+        })
+        expect(added.id, resourceType).toBeTruthy()
       }
 
-      // Naming ONE resource is fine — that is the whole point.
-      const ok = yield* roles.addRule({
+      const blanket = (yield* roles.rulesOf(role.id)).filter(
+        (r) => r.resourceId === null && r.conceptId === null,
+      )
+      expect(blanket.length).toBe(5)
+    }).pipe(Effect.provide(testLayer(newOrgId()))),
+  )
+
+  /** The "All" row through the PANE's own write path, not `addRule`. */
+  it.effect("setRoleRules writes and clears the blanket row", () =>
+    Effect.gen(function* () {
+      const roles = yield* AccessRoleService
+      const role = yield* roles.create({ name: "Everyone" })
+      const conceptId = randomUUID()
+
+      yield* roles.setRoleRules({
+        roleId: role.id,
+        groups: [
+          {
+            resourceType: "concept",
+            entries: [
+              // The All row…
+              { resourceId: null, allow: ["view"], deny: [] },
+              // …and one exception under it.
+              { resourceId: conceptId, allow: [], deny: ["delete"] },
+            ],
+          },
+        ],
+      })
+
+      const rules = yield* roles.rulesOf(role.id)
+      const all = rules.find((r) => r.resourceId === null && r.conceptId === null)
+      expect(all).toBeDefined()
+      expect(all!.effect).toBe("allow")
+      expect(all!.actions).toContain("view")
+      expect(rules.find((r) => r.resourceId === conceptId)!.effect).toBe("deny")
+
+      // The group owns the blanket row too, so an empty payload clears it — this is
+      // exactly what the old `setScopedRules` refused to do.
+      yield* roles.setRoleRules({
+        roleId: role.id,
+        groups: [{ resourceType: "concept", entries: [] }],
+      })
+      expect(
+        (yield* roles.rulesOf(role.id)).filter((r) => r.resourceType === "concept").length,
+      ).toBe(0)
+    }).pipe(Effect.provide(testLayer(newOrgId()))),
+  )
+
+  /**
+   * CONDITIONAL RULES SURVIVE A SAVE.
+   *
+   * No cell can express a condition, so no pane can be authoritative about one. The
+   * DELETE used not to filter on `condition`, which quietly destroyed them on every
+   * save — survivable while the old "Other rules" list at least showed them, and not
+   * survivable now that it is gone.
+   */
+  it.effect("a conditional rule is not destroyed by a pane save", () =>
+    Effect.gen(function* () {
+      const roles = yield* AccessRoleService
+      const role = yield* roles.create({ name: "Authors" })
+      const conceptId = randomUUID()
+
+      yield* roles.addRule({
         roleId: role.id,
         effect: "allow",
         actions: ["view"],
-        resourceType: "concept",
-        resourceId: randomUUID(),
+        resourceType: "record",
+        conceptId,
+        condition: { kind: "actorIs", who: "creator" },
       })
-      expect(ok).toBeTruthy()
+
+      // A save that clears every record rule the pane can see.
+      yield* roles.setRoleRules({
+        roleId: role.id,
+        groups: [{ resourceType: "record", scopeBy: "concept", entries: [] }],
+      })
+
+      const left = yield* roles.rulesOf(role.id)
+      expect(left.length).toBe(1)
+      expect(left[0]!.condition).not.toBeNull()
     }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
 
@@ -404,20 +487,20 @@ describe("policy loading", () => {
   )
 
   /**
-   * THE WILDCARD EXEMPTION. Owner/Admin hold `*`, which means "every action, present
-   * and future". They are `full_access` and are therefore the one kind of role a
-   * blanket allow is correct for — and materialization skips them, so the wildcard is
-   * never expanded into a frozen list of today's actions.
+   * THERE IS NO WILDCARD LEFT. Admin used to hold `*` and be exempt from
+   * materialization because of it. It now seeds an explicit rule per resource type
+   * (`ENFORCED_ACTIONS`), so this asserts the absence — and that adding a narrower
+   * rule alongside still leaves the seeded one intact.
    */
-  it.effect("a full-access role keeps its wildcard and may still hold a blanket rule", () =>
+  it.effect("Admin seeds explicit actions, never a wildcard", () =>
     Effect.gen(function* () {
       const roles = yield* AccessRoleService
       yield* roles.ensureBuiltins
       const admin = yield* roles.getByKey("admin")
       const before = (yield* roles.rulesOf(admin!.id)).filter((r) => r.resourceType === "concept")
-      expect(before.some((r) => r.actions.includes("*"))).toBe(true)
+      expect(before.flatMap((r) => r.actions)).not.toContain("*")
+      expect(before.some((r) => r.actions.includes("view"))).toBe(true)
 
-      // Exempt from the guard: a blanket allow is exactly what full access IS.
       const id = yield* roles.addRule({
         roleId: admin!.id,
         effect: "allow",
@@ -426,8 +509,11 @@ describe("policy loading", () => {
       })
       expect(id).toBeTruthy()
 
+      // Both rules stand: adding a narrower one alongside the seeded one neither
+      // replaces nor merges it. `addRule` appends; only `setRoleRules` replaces.
       const after = (yield* roles.rulesOf(admin!.id)).filter((r) => r.resourceType === "concept")
-      expect(after.some((r) => r.actions.includes("*"))).toBe(true)
+      expect(after.flatMap((r) => r.actions)).not.toContain("*")
+      expect(after.length).toBe(before.length + 1)
     }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
 
@@ -465,7 +551,6 @@ describe("record-level access, end to end", () => {
       {
         id: randomUUID(),
         roleId: null,
-        actorId: SHAREE,
         effect: "allow",
         actions: ["view"],
         resourceType: "record",
@@ -479,9 +564,6 @@ describe("record-level access, end to end", () => {
   it.effect("a restricted concept + one share = exactly that record, and it opens", () =>
     Effect.gen(function* () {
       const f = yield* seed()
-      const concepts = yield* ConceptService
-      // 'admin' default: a member sees no records of this concept at all…
-      yield* concepts.setVisibility(f.conceptId, "admin")
       const policy = shareOf(f.theirs.recordId, f.conceptId)
 
       // …except the one shared with them. THE LIST half.
@@ -521,14 +603,11 @@ describe("record-level access, end to end", () => {
       // fetch the 2 newest rows and then drop the ones the caller can't see — so a
       // caller entitled to 3 records would get 0-2 of them depending on ordering.
       const f = yield* seed()
-      const concepts = yield* ConceptService
-      yield* concepts.setVisibility(f.conceptId, "admin")
       const policy: PolicySet = {
         ...emptyPolicy(SHAREE),
         rules: [f.mine, f.ownedByMe, f.theirs].map((r) => ({
           id: randomUUID(),
           roleId: null,
-          actorId: SHAREE,
           effect: "allow" as const,
           actions: ["view" as const],
           resourceType: "record" as const,
@@ -561,7 +640,6 @@ describe("record-level access, end to end", () => {
       const concepts = yield* ConceptService
       const recordVersions = yield* RecordService
       yield* concepts.update({ id: f.conceptId, description: null, versioningEnabled: true })
-      yield* concepts.setVisibility(f.conceptId, "admin")
       const policy = shareOf(f.theirs.recordId, f.conceptId)
 
       const before = yield* Effect.provideService(
