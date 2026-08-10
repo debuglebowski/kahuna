@@ -130,6 +130,27 @@ export const parseFieldAssignments = (
   return out
 }
 
+/** Splits repeated `--flag key=value` occurrences into pairs. `raw` is
+ *  whatever `parseArgs` produced for a `{multiple: true}` string option:
+ *  undefined (never passed), a single string (passed once), or an array
+ *  (passed more than once) — node collapses the single-occurrence case rather
+ *  than always returning a one-element array. Shared by any command with a
+ *  repeated `--flag key=value` option (field config, dashboard widget/group
+ *  `--set`). */
+export const parseKeyValuePairs = (
+  raw: unknown,
+  shape: string,
+): ReadonlyArray<[string, string]> => {
+  if (raw === undefined) return []
+  const list = Array.isArray(raw) ? raw : [raw]
+  return list.map((entry) => {
+    const s = String(entry)
+    const eq = s.indexOf("=")
+    if (eq === -1) throw new CliError(`Expected ${shape}, got "${s}".`, EXIT.usage)
+    return [s.slice(0, eq), s.slice(eq + 1)] as [string, string]
+  })
+}
+
 const coerce = (field: Field, text: string): unknown => {
   // An explicit empty value clears the field, for every kind. `--field x=` is
   // the only way to say "unset" without a separate flag.

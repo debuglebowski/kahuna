@@ -16,6 +16,7 @@ import { noteCommands } from "./commands/note.ts"
 import { organizationCommands } from "./commands/organization.ts"
 import { recordCommands } from "./commands/record.ts"
 import { relationCommands } from "./commands/relation.ts"
+import { sidebarCommands } from "./commands/sidebar.ts"
 import { systemCommands } from "./commands/system.ts"
 import { taskCommands } from "./commands/task.ts"
 import { versionCommands } from "./commands/version.ts"
@@ -48,6 +49,7 @@ export const registry = new Registry([
   ...labelCommands,
   ...recordCommands,
   ...relationCommands,
+  ...sidebarCommands,
   ...versionCommands,
   ...eventCommands,
   ...systemCommands,

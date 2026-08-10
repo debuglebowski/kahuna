@@ -4,7 +4,7 @@ import { CliError, EXIT } from "../errors.ts"
 import { requireConfirmation } from "../mutate.ts"
 import { note, printOne, printRows } from "../output.ts"
 import type { Command } from "../registry.ts"
-import { conceptContext, findConcept, findField } from "../resolve.ts"
+import { conceptContext, findConcept, findField, parseKeyValuePairs } from "../resolve.ts"
 import { type Api, makeRuntime } from "../transport.ts"
 
 const withApi = async <T>(f: (api: Api) => Promise<T>): Promise<T> => {
@@ -33,6 +33,72 @@ const KINDS: ReadonlyArray<FieldKind> = [
   "money",
   "richtext",
 ]
+
+/** Flags shared by `concept field add` and `concept field update` for the
+ *  parts of `FieldConfig` beyond options/required/unique: relation shape,
+ *  multi-value, text/number format, and enum presentation/workflow. Kept in
+ *  one place so both commands validate and merge identically. */
+const FIELD_CONFIG_OPTIONS = {
+  cardinality: { type: "string" as const },
+  "inverse-name": { type: "string" as const },
+  "inverse-plural-name": { type: "string" as const },
+  multiple: { type: "boolean" as const },
+  format: { type: "string" as const },
+  "option-color": { type: "string" as const, multiple: true },
+  transition: { type: "string" as const, multiple: true },
+}
+
+/** Overlays `--cardinality`/`--inverse-name`/`--inverse-plural-name`/
+ *  `--multiple`/`--format`/`--option-color`/`--transition` onto a field
+ *  `config` object, IN PLACE. `config` must already hold whatever should
+ *  survive untouched (the empty object on `add`, the existing field's config
+ *  spread onto a fresh object on `update`) — this only ever adds or replaces
+ *  the specific keys a flag was given for, same merge discipline as the
+ *  options/required/unique flags each caller applies around this call.
+ *  `optionColors`/`transitions` are themselves maps, so a repeated flag here
+ *  merges into the existing map rather than replacing it wholesale — the same
+ *  reasoning one level down. */
+const applyFieldConfigFlags = (
+  config: Record<string, unknown>,
+  flags: Record<string, string | boolean | Array<string | boolean> | undefined>,
+): void => {
+  const cardinality = flags.cardinality as string | undefined
+  if (cardinality !== undefined) {
+    if (cardinality !== "one" && cardinality !== "many") {
+      throw new CliError("--cardinality takes one or many.", EXIT.usage)
+    }
+    config.cardinality = cardinality
+  }
+  if (flags["inverse-name"] !== undefined) config.inverseName = flags["inverse-name"]
+  if (flags["inverse-plural-name"] !== undefined) {
+    config.inversePluralName = flags["inverse-plural-name"]
+  }
+  if (flags.multiple) config.multiple = true
+  if (flags.format !== undefined) config.format = flags.format
+
+  const colorPairs = parseKeyValuePairs(flags["option-color"], "option=hex")
+  if (colorPairs.length > 0) {
+    const optionColors: Record<string, string> = {
+      ...(config.optionColors as Record<string, string> | undefined),
+    }
+    for (const [option, hex] of colorPairs) optionColors[option] = hex
+    config.optionColors = optionColors
+  }
+
+  const transitionPairs = parseKeyValuePairs(flags.transition, "from=to,to2")
+  if (transitionPairs.length > 0) {
+    const transitions: Record<string, ReadonlyArray<string>> = {
+      ...(config.transitions as Record<string, ReadonlyArray<string>> | undefined),
+    }
+    for (const [from, toList] of transitionPairs) {
+      transitions[from] = toList
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
+    }
+    config.transitions = transitions
+  }
+}
 
 export const conceptCommands: ReadonlyArray<Command> = [
   {
@@ -281,7 +347,7 @@ export const conceptCommands: ReadonlyArray<Command> = [
     path: "concept field add",
     summary: "Add a field to a concept",
     usage:
-      "concept field add <concept> --name <n> --kind <kind> [--options a,b,c] [--target <concept>] [--required] [--unique]",
+      "concept field add <concept> --name <n> --kind <kind> [--options a,b,c] [--target <concept>] [--cardinality one|many] [--inverse-name <n>] [--inverse-plural-name <n>] [--multiple] [--format <fmt>] [--option-color <opt>=<hex>]... [--transition <from>=<to,to2>]... [--required] [--unique]",
     options: {
       name: { type: "string" },
       kind: { type: "string" },
@@ -290,6 +356,7 @@ export const conceptCommands: ReadonlyArray<Command> = [
       required: { type: "boolean" },
       unique: { type: "boolean" },
       icon: { type: "string" },
+      ...FIELD_CONFIG_OPTIONS,
     },
     run: async (ctx) => {
       const [target] = ctx.args
@@ -318,6 +385,7 @@ export const conceptCommands: ReadonlyArray<Command> = [
         }
         if (ctx.flags.required) config.requirement = "required"
         if (ctx.flags.unique) config.unique = true
+        applyFieldConfigFlags(config, ctx.flags)
         if (kind === "relation") {
           // A relation field is the TYPE of an edge, and it is useless without a
           // target — refuse now rather than create a field nothing can point at.
@@ -353,13 +421,14 @@ export const conceptCommands: ReadonlyArray<Command> = [
     path: "concept field update",
     summary: "Rename a field or change its config",
     usage:
-      "concept field update <concept> <field> [--name <n>] [--options a,b,c] [--required] [--unique]",
+      "concept field update <concept> <field> [--name <n>] [--options a,b,c] [--cardinality one|many] [--inverse-name <n>] [--inverse-plural-name <n>] [--multiple] [--format <fmt>] [--option-color <opt>=<hex>]... [--transition <from>=<to,to2>]... [--required] [--unique]",
     options: {
       name: { type: "string" },
       options: { type: "string" },
       required: { type: "boolean" },
       unique: { type: "boolean" },
       icon: { type: "string" },
+      ...FIELD_CONFIG_OPTIONS,
     },
     run: async (ctx) => {
       const [target, fieldName] = ctx.args
@@ -379,6 +448,7 @@ export const conceptCommands: ReadonlyArray<Command> = [
         }
         if (ctx.flags.required) config.requirement = "required"
         if (ctx.flags.unique) config.unique = true
+        applyFieldConfigFlags(config, ctx.flags)
 
         if (ctx.flags["dry-run"]) {
           note(`Would update field "${field.name}" on "${concept.name}".`)

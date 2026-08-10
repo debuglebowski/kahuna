@@ -539,19 +539,77 @@ const main = async (): Promise<void> => {
   const dashboards = await km("dashboard", "list", "--json")
   check("dashboard list", dashboards.code === 0, dashboards.stderr)
   const dashNames = JSON.parse(dashboards.stdout) as Array<{ name: string }>
-  if (dashNames[0]) {
-    const tplPath = path.join(configHome, "dash.json")
-    const exported = await km("dashboard", "export", dashNames[0].name, "--out", tplPath)
-    check("dashboard export writes a template", exported.code === 0, exported.stderr)
-    const tpl = JSON.parse(readFileSync(tplPath, "utf8")) as Record<string, unknown>
-    check(
-      "the template carries a body but NOT the source id",
-      "body" in tpl && !("id" in tpl),
-      Object.keys(tpl).join(","),
-    )
 
-    const cloned = await km("dashboard", "create", tplPath, "--name", `Clone ${stamp}`)
-    check("dashboard create from the template", cloned.code === 0, cloned.stderr)
+  const dashCreated = await km("dashboard", "create", `CLI Test ${stamp}`)
+  check("dashboard create (empty)", dashCreated.code === 0, dashCreated.stderr)
+
+  const groupAdd = await km(
+    "dashboard",
+    "group",
+    "add",
+    `CLI Test ${stamp}`,
+    "--direction",
+    "col",
+    "--label",
+    "Section",
+  )
+  check("dashboard group add", groupAdd.code === 0, groupAdd.stderr)
+
+  const widgetAdd = await km(
+    "dashboard",
+    "widget",
+    "add",
+    `CLI Test ${stamp}`,
+    "--type",
+    "note",
+    "--parent",
+    "Section",
+    "--title",
+    "Hello",
+  )
+  check("dashboard widget add", widgetAdd.code === 0, widgetAdd.stderr)
+
+  const widgetList = await km("dashboard", "widget", "list", `CLI Test ${stamp}`, "--json")
+  check("dashboard widget list", widgetList.code === 0, widgetList.stderr)
+  const nodes = JSON.parse(widgetList.stdout) as Array<{ type: string; id: string }>
+  const widget = nodes.find((n) => n.type === "note")
+  check("the added widget is listed", widget !== undefined, widgetList.stdout)
+
+  if (widget) {
+    const widgetGet = await km(
+      "dashboard",
+      "widget",
+      "get",
+      `CLI Test ${stamp}`,
+      widget.id,
+      "--json",
+    )
+    check("dashboard widget get", widgetGet.code === 0, widgetGet.stderr)
+
+    const widgetSet = await km(
+      "dashboard",
+      "widget",
+      "set",
+      `CLI Test ${stamp}`,
+      widget.id,
+      "--set",
+      "padding=0",
+    )
+    check("dashboard widget set", widgetSet.code === 0, widgetSet.stderr)
+
+    const widgetRemove = await km("dashboard", "widget", "remove", `CLI Test ${stamp}`, widget.id)
+    check("dashboard widget remove", widgetRemove.code === 0, widgetRemove.stderr)
+  }
+
+  if (dashNames[0]) {
+    const duplicated = await km(
+      "dashboard",
+      "create",
+      `Clone ${stamp}`,
+      "--from",
+      dashNames[0].name,
+    )
+    check("dashboard create --from", duplicated.code === 0, duplicated.stderr)
     const after = JSON.parse((await km("dashboard", "list", "--json")).stdout) as Array<{
       name: string
     }>
@@ -561,19 +619,26 @@ const main = async (): Promise<void> => {
       String(after.length),
     )
     check(
-      "dashboard delete --yes",
+      "dashboard delete --yes (clone)",
       (await km("dashboard", "delete", `Clone ${stamp}`, "--yes")).code === 0,
     )
   }
 
-  const bodyless = path.join(configHome, "empty.json")
-  writeFileSync(bodyless, "{}")
-  const noBody = await km("dashboard", "create", bodyless, "--name", "X")
-  check(
-    "a definition with no body is refused with a hint",
-    noBody.code === 2 && noBody.stderr.includes("export"),
-    noBody.stderr,
+  const renamed = await km(
+    "dashboard",
+    "update",
+    `CLI Test ${stamp}`,
+    "--name",
+    `CLI Test Renamed ${stamp}`,
   )
+  check("dashboard update", renamed.code === 0, renamed.stderr)
+  check(
+    "dashboard delete --yes (renamed)",
+    (await km("dashboard", "delete", `CLI Test Renamed ${stamp}`, "--yes")).code === 0,
+  )
+
+  const noName = await km("dashboard", "create")
+  check("dashboard create with no name is refused", noName.code === 2, noName.stderr)
 
   const automations = await km("automation", "list", "--json")
   check("automation list", automations.code === 0, automations.stderr)
