@@ -25,6 +25,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { APP_NAME, IS_DEV } from "../lib/appEnv"
 import {
   conceptsCollection,
   KEY,
@@ -250,6 +251,13 @@ export function Layout({ children }: { children: ReactNode }) {
                   <ChevronLeft size={18} />
                 </IconButton>
               )}
+              {/* The rail has no wordmark to qualify, so the marker stands alone —
+                  collapsing the sidebar must not hide which environment this is. */}
+              {IS_DEV && (
+                <span className="rounded-sm bg-warning/15 px-1 py-0.5 text-[9px] font-semibold tracking-wide text-warning uppercase">
+                  dev
+                </span>
+              )}
             </div>
             <nav
               key={inSettings ? "__settings__" : activeView.id}
@@ -313,8 +321,13 @@ export function Layout({ children }: { children: ReactNode }) {
               <div className="flex items-center gap-2">
                 <img src="/favicon.svg" alt="" className="size-5 shrink-0 rounded-full" />
                 <span className="text-base font-semibold tracking-tight text-sidebar-foreground">
-                  Kingsmaker
+                  {APP_NAME}
                 </span>
+                {IS_DEV && (
+                  <span className="rounded-sm bg-warning/15 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-warning uppercase">
+                    dev
+                  </span>
+                )}
               </div>
               <div className="flex items-center gap-0.5">
                 <IconButton
