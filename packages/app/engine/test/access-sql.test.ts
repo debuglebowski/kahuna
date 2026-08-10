@@ -234,6 +234,77 @@ describe("record filter compiles to SQL", () => {
     }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
 
+  /**
+   * NON-EMPTY all/any, which the case above does not reach.
+   *
+   * The empty folds are the interesting EDGE (vacuous truth), but they exercise none
+   * of the recursion: every child compiles through `compileCondition` again and folds
+   * with `AND`/`OR`, and the in-memory twin does the same with `every`/`some`. That
+   * is where a drift between the two would actually live, and until this test it was
+   * the one condition shape never compared across the pair.
+   */
+  it.effect("nested all / any agree with the in-memory evaluator", () =>
+    Effect.gen(function* () {
+      const f = yield* seed()
+      const records = [
+        { recordId: f.mine.recordId, state: f.mine.state, createdBy: ACTOR },
+        { recordId: f.ownedByMe.recordId, state: f.ownedByMe.state, createdBy: OTHER },
+        { recordId: f.theirs.recordId, state: f.theirs.state, createdBy: null },
+      ]
+      const iCreatedIt: AccessCondition = { kind: "actorIs", who: "creator" }
+      const iAmNamed: AccessCondition = { kind: "fieldIs", fieldId: f.ownerFieldId }
+      const isActive: AccessCondition = { kind: "where", state: { [f.stageFieldId]: "active" } }
+
+      // EVERY case carries its expected set. Comparing the two implementations to
+      // each other is necessary but not sufficient — they can agree on the wrong
+      // answer, and a cross-check that only pins agreement would pass right through
+      // that. The fixture makes each case land on a different set:
+      //   mine       created by ACTOR, stage active, owner unset
+      //   ownedByMe  created by OTHER, stage won,    owner = ACTOR
+      //   theirs     created by nobody, stage active, owner = OTHER
+      const cases: ReadonlyArray<{
+        name: string
+        condition: AccessCondition
+        expected: ReadonlyArray<string>
+      }> = [
+        {
+          name: "all of two",
+          condition: { kind: "all", of: [iCreatedIt, isActive] },
+          expected: [f.mine.recordId],
+        },
+        {
+          name: "any of two",
+          condition: { kind: "any", of: [iCreatedIt, iAmNamed] },
+          expected: [f.mine.recordId, f.ownedByMe.recordId],
+        },
+        {
+          name: "any containing an all",
+          condition: { kind: "any", of: [{ kind: "all", of: [iCreatedIt, isActive] }, iAmNamed] },
+          expected: [f.mine.recordId, f.ownedByMe.recordId],
+        },
+        {
+          name: "all containing an any",
+          // `ownedByMe` is excluded by the outer AND (stage is "won"), which is what
+          // makes this differ from the case above rather than restating it.
+          condition: { kind: "all", of: [{ kind: "any", of: [iCreatedIt, iAmNamed] }, isActive] },
+          expected: [f.mine.recordId],
+        },
+      ]
+
+      for (const c of cases) {
+        const fromSql = yield* idsMatching(
+          f.conceptId,
+          policyOf([rule({ conceptId: f.conceptId, condition: c.condition })]),
+          false,
+        )
+        expect(fromSql, `${c.name} — SQL vs in-memory`).toEqual(
+          idsMatchingInMemory(records, c.condition),
+        )
+        expect([...fromSql].sort(), `${c.name} — the answer itself`).toEqual([...c.expected].sort())
+      }
+    }).pipe(Effect.provide(testLayer(newOrgId()))),
+  )
+
   it.effect("empty all / empty any compile to the same polarity they evaluate to", () =>
     Effect.gen(function* () {
       const f = yield* seed()
