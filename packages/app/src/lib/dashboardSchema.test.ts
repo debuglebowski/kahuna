@@ -1,4 +1,4 @@
-import { DashboardBody, DashboardWidget } from "@kingsmaker/contract"
+import { DashboardBody, DashboardWidget } from "@alltinghq/contract"
 import { Schema } from "effect"
 import { describe, expect, it } from "vitest"
 import {

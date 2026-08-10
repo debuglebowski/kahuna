@@ -1,4 +1,4 @@
-import type { Field, RecordVersion } from "@kingsmaker/contract"
+import type { Field, RecordVersion } from "@alltinghq/contract"
 import { describe, expect, it } from "vitest"
 import { recordLabel } from "./recordLabel"
 

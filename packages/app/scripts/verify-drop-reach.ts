@@ -13,9 +13,9 @@
  * alone. Reuses the bucket suite's setup shape. */
 import { spawn } from "node:child_process"
 import { rmSync, unlinkSync, writeFileSync } from "node:fs"
+import { AlltingRpcs } from "@alltinghq/contract"
 import { FetchHttpClient } from "@effect/platform"
 import { RpcClient, RpcSerialization } from "@effect/rpc"
-import { KingsmakerRpcs } from "@kingsmaker/contract"
 import { Context, Effect, Layer, ManagedRuntime } from "effect"
 // The editor's own factory, so this tests the default a person actually gets.
 import { newWidget } from "../src/lib/dashboards"
@@ -412,7 +412,7 @@ const ProtocolLive = RpcClient.layerProtocolHttp({ url: `${API}/api/rpc` }).pipe
   Layer.provide(CookieFetch),
   Layer.provide(RpcSerialization.layerNdjson),
 )
-const makeClient = RpcClient.make(KingsmakerRpcs)
+const makeClient = RpcClient.make(AlltingRpcs)
 type Client = Effect.Effect.Success<typeof makeClient>
 class ApiClient extends Context.Tag("verify-drop/ApiClient")<ApiClient, Client>() {}
 const runtime = ManagedRuntime.make(

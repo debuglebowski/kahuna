@@ -15,9 +15,10 @@
  * Defaults to the throwaway stack (API :3199) so a run can't disturb the
  * slay-managed one; point API/ORIGIN at :3100/:5100 to verify the managed stack.
  */
+
+import { AlltingRpcs } from "@alltinghq/contract"
 import { FetchHttpClient } from "@effect/platform"
 import { RpcClient, RpcSerialization } from "@effect/rpc"
-import { KingsmakerRpcs } from "@kingsmaker/contract"
 import { Context, Effect, Layer, ManagedRuntime } from "effect"
 import { provisionVerifyIdentity } from "./verify-session"
 
@@ -73,7 +74,7 @@ const ProtocolLive = RpcClient.layerProtocolHttp({ url: `${API}/api/rpc` }).pipe
   Layer.provide(CookieFetch),
   Layer.provide(RpcSerialization.layerNdjson),
 )
-const makeClient = RpcClient.make(KingsmakerRpcs)
+const makeClient = RpcClient.make(AlltingRpcs)
 type Client = Effect.Effect.Success<typeof makeClient>
 class ApiClient extends Context.Tag("verify/ApiClient")<ApiClient, Client>() {}
 const runtime = ManagedRuntime.make(

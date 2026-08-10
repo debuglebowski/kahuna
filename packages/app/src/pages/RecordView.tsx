@@ -1,4 +1,4 @@
-import type { RecordDetail } from "@kingsmaker/contract"
+import type { RecordDetail } from "@alltinghq/contract"
 import { useLiveQuery } from "@tanstack/react-db"
 import { useMutation, useQuery } from "@tanstack/react-query"
 import {

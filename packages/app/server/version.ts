@@ -6,7 +6,7 @@ import { retryDelayMs } from "./integrations/http"
  * Two halves, and only the first is load-bearing:
  *
  *   - `CURRENT_VERSION` is stamped into the image at build time (Dockerfile
- *     `ARG KINGSMAKER_VERSION` -> `ENV`). Outside a container it is `"dev"`.
+ *     `ARG ALLTING_VERSION` -> `ENV`). Outside a container it is `"dev"`.
  *     Support conversations start with knowing this, so it is reported to every
  *     member regardless of the check below.
  *   - The periodic check asks the REGISTRY what tags exist and compares. It is
@@ -32,10 +32,10 @@ import { retryDelayMs } from "./integrations/http"
  */
 
 /** Stamped by the Dockerfile; `dev` for a source checkout. */
-export const CURRENT_VERSION = process.env.KINGSMAKER_VERSION?.trim() || "dev"
+export const CURRENT_VERSION = process.env.ALLTING_VERSION?.trim() || "dev"
 
 /** `owner/name` of the image to poll. Override for a fork or a mirror. */
-const REPOSITORY = process.env.KINGSMAKER_IMAGE_REPO?.trim() || "debuglebowski/kingsmaker"
+const REPOSITORY = process.env.ALLTING_IMAGE_REPO?.trim() || "debuglebowski/allting"
 
 const CHECK_INTERVAL_MS = Number(process.env.UPDATE_CHECK_INTERVAL_MS ?? 3_600_000)
 

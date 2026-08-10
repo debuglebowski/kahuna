@@ -14,7 +14,7 @@ import {
   unrestrictedPolicy,
 } from "#engine"
 import { runEngine, runEngineOrThrow, systemScope } from "./runtime"
-import { seedKingsmaker } from "./seed/seed"
+import { seedAllting } from "./seed/seed"
 import * as uc from "./use-cases"
 import {
   addField,
@@ -80,7 +80,7 @@ type FieldRow = { id: string; name: string; kind: string }
 describe("use-cases (UI backbone)", () => {
   it("builds a graph from generic primitives, keyed by field id, and surfaces it", async () => {
     const org = randomUUID()
-    await run(org, seedKingsmaker)
+    await run(org, seedAllting)
 
     // The app identifies concepts + fields by id; resolve seeded names → ids.
     const concepts = (await run(org, listConcepts())) as ReadonlyArray<{ id: string; name: string }>
@@ -373,7 +373,7 @@ describe("managed concepts: field-level read-only guard", () => {
   it("locks synced fields + record lifecycle, but allows user fields + their values", async () => {
     const org = randomUUID()
     const scope = systemScope(org, "u")
-    await run(org, seedKingsmaker)
+    await run(org, seedAllting)
 
     // Simulate a connector sync: a managed concept + one integration-owned field
     // (the sync path goes straight through the engine, bypassing the guard).
@@ -445,7 +445,7 @@ describe("managed concepts: field-level read-only guard", () => {
   it("leaves unmanaged concepts fully editable (no false positives)", async () => {
     const org = randomUUID()
     const scope = systemScope(org, "u")
-    await run(org, seedKingsmaker)
+    await run(org, seedAllting)
 
     const concept = (await run(org, createConcept("Widget"))) as WithId
     const field = (await run(
@@ -472,7 +472,7 @@ describe("managed concepts: field-level read-only guard", () => {
 describe("single-record concepts (use-case layer)", () => {
   it("toggling single-record on creates the record and resolves it with full detail", async () => {
     const org = randomUUID()
-    await run(org, seedKingsmaker)
+    await run(org, seedAllting)
 
     const concept = (await run(org, createConcept("Org Profile"))) as WithId
     const field = (await run(
@@ -524,7 +524,7 @@ describe("single-record concepts (use-case layer)", () => {
 
   it("resolves a VERSIONED concept's record while it is still an unpublished draft", async () => {
     const org = randomUUID()
-    await run(org, seedKingsmaker)
+    await run(org, seedAllting)
 
     // The regression this guards: a draft is invisible to every head-only query,
     // so a naive listRecords[0] resolution renders "no record" for the very
@@ -554,7 +554,7 @@ describe("single-record concepts (use-case layer)", () => {
   it("refuses the toggle on a managed concept (the integration owns its records)", async () => {
     const org = randomUUID()
     const scope = systemScope(org, "u")
-    await run(org, seedKingsmaker)
+    await run(org, seedAllting)
 
     const concept = await run(
       org,
@@ -570,7 +570,7 @@ describe("single-record concepts (use-case layer)", () => {
   it("surfaces SINGLE_RECORD_CONFLICT (not a 500) when the concept already has two records", async () => {
     const org = randomUUID()
     const scope = systemScope(org, "u")
-    await run(org, seedKingsmaker)
+    await run(org, seedAllting)
 
     const concept = (await run(org, createConcept("Team"))) as WithId
     await run(org, createRecord(concept.id, {}))
@@ -585,7 +585,7 @@ describe("single-record concepts (use-case layer)", () => {
   it("rolls the flag back when a required field is missing from the toggle payload", async () => {
     const org = randomUUID()
     const scope = systemScope(org, "u")
-    await run(org, seedKingsmaker)
+    await run(org, seedAllting)
 
     const concept = (await run(org, createConcept("Settings"))) as WithId
     await run(
@@ -636,7 +636,7 @@ describe("single-record concepts (use-case layer)", () => {
   // undeletable forever.
   it("deleting a single-record concept takes its record with it", async () => {
     const org = randomUUID()
-    await run(org, seedKingsmaker)
+    await run(org, seedAllting)
 
     const concept = (await run(org, createConcept("Org Profile"))) as WithId
     await run(org, setConceptSingleRecord(concept.id, true))
@@ -652,7 +652,7 @@ describe("single-record concepts (use-case layer)", () => {
 
   it("keeps the concept AND its record when a relation still points at the record", async () => {
     const org = randomUUID()
-    await run(org, seedKingsmaker)
+    await run(org, seedAllting)
 
     // A relation into the sole record is exactly what block-never-cascade exists
     // to protect: forcing the delete through would orphan the edge. `RecordVersionInUse`
@@ -689,7 +689,7 @@ describe("single-record concepts (use-case layer)", () => {
 
   it("deletes every version of the record, so a versioned concept purges too", async () => {
     const org = randomUUID()
-    await run(org, seedKingsmaker)
+    await run(org, seedAllting)
 
     // A versioned lineage holds N record version rows for ONE record. Purging only the
     // resolved head would leave the others behind and `ConceptInUse` would refuse

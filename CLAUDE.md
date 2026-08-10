@@ -1,4 +1,4 @@
-# Kingsmaker
+# Allting
 
 A Bun workspace. The root holds only config, the Docker/deploy files, and
 `scripts/snapshot.sh` — no runtime dependencies of its own.
@@ -11,8 +11,8 @@ packages/app          THE DEPLOYMENT — private, never published
   src                 React SPA
   scripts             one-off backfills + end-to-end verify drivers
 
-packages/contract     the typed wire schema — @kingsmaker/contract
-packages/cli          the `km` command line — @kingsmaker/cli, published to npm
+packages/contract     the typed wire schema — @alltinghq/contract
+packages/cli          the `allt` command line — @alltinghq/cli, published to npm
 ```
 
 `#engine` / `#db` resolve through the `imports` field in
@@ -27,7 +27,7 @@ is what `5f3b4f6` collapsed, and re-splitting reintroduces the failure where two
 interleaved journals let the migrator skip a whole set and still exit 0.
 
 **The contract is a package, not a folder.** Server, SPA and (soon) the CLI all
-import `@kingsmaker/contract`, so it has exactly one owner. Consumed as
+import `@alltinghq/contract`, so it has exactly one owner. Consumed as
 TypeScript source with no build step, like `#engine`. Typechecked on its own
 (`tsc -p packages/contract` runs first) so a contract error is reported against
 the contract rather than whichever consumer tripped over it.
@@ -64,7 +64,7 @@ bun run db:generate  # generate a migration from a schema change
 bun run db:check     # validate snapshots + duplicate journal ids
 
 bun run health       # DB connectivity probe
-bun run seed         # seed the Kingsmaker schema into an org
+bun run seed         # seed the Allting schema into an org
 bun run snapshot     # export/import a named dev DB + blob snapshot
 ```
 

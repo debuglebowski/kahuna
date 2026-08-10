@@ -37,7 +37,7 @@ import { BLOB_CONFORMANCE_CASES } from "../engine/blob/conformance"
 import { AzureBlobStore } from "./blob-azure"
 
 describe("local driver", async () => {
-  const dir = await mkdtemp(path.join(tmpdir(), "kingsmaker-blob-conformance-"))
+  const dir = await mkdtemp(path.join(tmpdir(), "allting-blob-conformance-"))
   const layer = LocalFsBlobStore(dir)
   for (const c of BLOB_CONFORMANCE_CASES) it(c.name, () => c.run(layer))
 })

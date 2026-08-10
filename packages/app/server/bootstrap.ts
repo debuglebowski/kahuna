@@ -57,7 +57,7 @@ export type BootstrapResult =
 const MIN_PASSWORD_LENGTH = 8
 
 /** Default org name. Renameable in Settings; override with INITIAL_ORG_NAME. */
-const DEFAULT_ORG_NAME = "Kingsmaker"
+const DEFAULT_ORG_NAME = "Allting"
 
 /**
  * Read the bootstrap config from the environment. Null when NEITHER half is set —
@@ -119,7 +119,7 @@ export const bootstrapInitialAdmin = async (
   const created = await createUserDirect({ email: config.email, password: config.password })
 
   // Via the endpoint, not an insert: `afterCreateOrganization` is what seeds the
-  // org with the Kingsmaker concepts (see auth.ts).
+  // org with the Allting concepts (see auth.ts).
   const org = await createOrgDirect({
     userId: created.userId,
     name: config.orgName,

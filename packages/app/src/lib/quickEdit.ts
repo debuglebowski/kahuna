@@ -8,7 +8,7 @@ import { useEffect, useState } from "react"
  */
 
 const storageKey = (conceptId: string) => `kqe:${conceptId}`
-const EVENT = "kingsmaker:quick-edit"
+const EVENT = "allting:quick-edit"
 
 export function useQuickEdit(conceptId: string): [boolean, (v: boolean) => void] {
   const [on, setOn] = useState(false)

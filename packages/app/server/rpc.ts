@@ -1,9 +1,7 @@
-import { Etag, FileSystem, HttpPlatform, Path } from "@effect/platform"
-import { RpcMiddleware, RpcSerialization, RpcServer } from "@effect/rpc"
-import type { PgClient } from "@effect/sql-pg"
 import {
   type AccessRole,
   type AccessRule,
+  AlltingRpcs,
   type AnnotationField,
   type Attachment,
   type Automation,
@@ -18,7 +16,6 @@ import {
   type ExplainAccess,
   type Field,
   type GraphLayout,
-  KingsmakerRpcs,
   type KmRecord,
   type Label,
   type MentionRef,
@@ -34,7 +31,10 @@ import {
   type TaskPriority,
   type TaskStatus,
   type TaskSubjectRef,
-} from "@kingsmaker/contract"
+} from "@alltinghq/contract"
+import { Etag, FileSystem, HttpPlatform, Path } from "@effect/platform"
+import { RpcMiddleware, RpcSerialization, RpcServer } from "@effect/rpc"
+import type { PgClient } from "@effect/sql-pg"
 import { Effect, Layer } from "effect"
 import {
   type AccessAction,
@@ -66,13 +66,10 @@ const LIST_RECORDS_LIMIT = 50_000
  * Per-request auth: derive OrgContext (org_id + actor) from the session cookie
  * in the request headers. Provided to every handler; fails the RPC otherwise.
  */
-export class AuthMiddleware extends RpcMiddleware.Tag<AuthMiddleware>()(
-  "kingsmaker/AuthMiddleware",
-  {
-    provides: OrgContext,
-    failure: RpcError,
-  },
-) {}
+export class AuthMiddleware extends RpcMiddleware.Tag<AuthMiddleware>()("allting/AuthMiddleware", {
+  provides: OrgContext,
+  failure: RpcError,
+}) {}
 
 const AuthMiddlewareLive = Layer.succeed(AuthMiddleware, (options) =>
   Effect.gen(function* () {
@@ -533,7 +530,7 @@ async function assertDeactivatable(orgId: string, actor: string, userId: string)
   }
 }
 
-const ServerRpcs = KingsmakerRpcs.middleware(AuthMiddleware)
+const ServerRpcs = AlltingRpcs.middleware(AuthMiddleware)
 
 const HandlersLive = ServerRpcs.toLayer({
   listConcepts: ({ includeArchived, withCounts }) =>

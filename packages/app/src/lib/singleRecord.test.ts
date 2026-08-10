@@ -1,4 +1,4 @@
-import type { Concept } from "@kingsmaker/contract"
+import type { Concept } from "@alltinghq/contract"
 import { describe, expect, it } from "vitest"
 import { conceptBySlug } from "./singleRecord"
 

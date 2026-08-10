@@ -1,7 +1,7 @@
 /**
  * Every way this CLI can fail, mapped to an exit code a script can branch on.
  *
- * The codes are a contract with whoever writes `km … || handle $?`, so they are
+ * The codes are a contract with whoever writes `allt … || handle $?`, so they are
  * enumerated here rather than invented per command. Anything unmapped is 1 —
  * "it failed" — never 0.
  */
@@ -19,7 +19,7 @@ export type ExitCode = (typeof EXIT)[keyof typeof EXIT]
 
 /** A failure with a message meant for a human and a code meant for a script. */
 export class CliError extends Error {
-  /** Exit status for `km ... || handle $?`. */
+  /** Exit status for `allt ... || handle $?`. */
   readonly exitCode: ExitCode
   /** What to try instead. Printed on its own line, so it can be skipped. */
   readonly hint: string | undefined
@@ -83,15 +83,15 @@ const MESSAGES: Record<string, string> = {
 }
 
 const HINTS: Record<string, string> = {
-  UNAUTHENTICATED: "Run `km auth login` first.",
+  UNAUTHENTICATED: "Run `allt auth login` first.",
   NO_ACTIVE_ORG: "Ask an administrator to add you to the organization.",
   VERSION_CONFLICT: "Re-run the command; it re-reads before writing.",
   CONCEPT_IN_USE: "Delete or archive its records first, or archive the concept instead.",
   FIELD_IN_USE: "Archive the field instead — archiving keeps the data and is reversible.",
   VERSIONING_IN_USE: "Publish or discard the open drafts first.",
-  VERSION_FROZEN: "Open a new draft: `km record version create <id>`.",
-  DRAFT_EXISTS: "Publish or discard it: `km record version publish|discard <id>`.",
-  ILLEGAL_TRANSITION: "`km concept get <concept>` shows the field's allowed values.",
+  VERSION_FROZEN: "Open a new draft: `allt record version create <id>`.",
+  DRAFT_EXISTS: "Publish or discard it: `allt record version publish|discard <id>`.",
+  ILLEGAL_TRANSITION: "`allt concept get <concept>` shows the field's allowed values.",
 }
 
 /** HTTP status → exit code. The server speaks status; scripts want a code. */

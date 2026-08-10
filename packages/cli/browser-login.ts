@@ -30,11 +30,11 @@ interface DeviceStart {
 /** Open a URL without a dependency. Failure is fine — the URL is printed, which
  *  is what a headless or ssh session needs anyway. */
 const openBrowser = (url: string): void => {
-  // KM_NO_BROWSER exists because the end-to-end driver runs this command for
+  // ALLT_NO_BROWSER exists because the end-to-end driver runs this command for
   // real, and without it every test run spawns a browser tab on whoever's
   // machine is running the suite. The URL is always printed, so suppressing the
   // launch costs nothing.
-  if (process.env.KM_NO_BROWSER) return
+  if (process.env.ALLT_NO_BROWSER) return
   const command =
     process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open"
   try {
@@ -70,7 +70,7 @@ export const browserLogin = async (host: string): Promise<BrowserLoginResult> =>
     throw new CliError(
       `This deployment does not support browser sign-in (HTTP ${started.status}).`,
       EXIT.failed,
-      "It may be older than the CLI. `km auth login --email …` still works.",
+      "It may be older than the CLI. `allt auth login --email …` still works.",
     )
   }
   const device = (await started.json()) as DeviceStart
@@ -107,13 +107,13 @@ export const browserLogin = async (host: string): Promise<BrowserLoginResult> =>
     throw new CliError(
       "The sign-in request expired or was refused.",
       EXIT.unauthenticated,
-      "Run `km auth login --browser` again.",
+      "Run `allt auth login --browser` again.",
     )
   }
 
   throw new CliError(
     "Timed out waiting for approval.",
     EXIT.failed,
-    "Run `km auth login --browser` again, or sign in with `--email`.",
+    "Run `allt auth login --browser` again, or sign in with `--email`.",
   )
 }

@@ -23,7 +23,7 @@ permissions:
 
 jobs:
   publish:
-    name: publish @kingsmaker/cli
+    name: publish @alltinghq/cli
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -89,12 +89,12 @@ jobs:
       - name: Verify the bundle
         run: |
           set -eux
-          node packages/cli/dist/index.js help | grep -q "Kingsmaker command line"
-          npm pack --workspace @kingsmaker/cli --pack-destination /tmp
+          node packages/cli/dist/index.js help | grep -q "Allting command line"
+          npm pack --workspace @alltinghq/cli --pack-destination /tmp
           mkdir -p /tmp/km-verify && cd /tmp/km-verify
           npm init -y >/dev/null
-          npm install /tmp/kingsmaker-cli-*.tgz
-          ./node_modules/.bin/km help | grep -q "Kingsmaker command line"
+          npm install /tmp/alltinghq-cli-*.tgz
+          ./node_modules/.bin/allt help | grep -q "Allting command line"
           # `cli update` is the one command that inspects its own install path,
           # so it must be reachable in the BUNDLE and not just in source. No
           # network: what it reports depends on what is published, and the
@@ -102,10 +102,10 @@ jobs:
           # the outcome would gate releases on registry weather. Which install
           # layout maps to which package manager is covered by selfupdate.test.ts
           # against real directory trees.
-          ./node_modules/.bin/km cli update --help | grep -q "cli update"
+          ./node_modules/.bin/allt cli update --help | grep -q "cli update"
 
       - name: Publish
         if: github.event_name == 'push' || inputs.dry-run == false
-        run: npm publish --workspace @kingsmaker/cli
+        run: npm publish --workspace @alltinghq/cli
         # No NODE_AUTH_TOKEN: the OIDC token above IS the credential. Provenance
         # is attached automatically for a public repository and public package.

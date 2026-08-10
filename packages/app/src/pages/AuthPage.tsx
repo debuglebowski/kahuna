@@ -116,7 +116,7 @@ export function AuthPage() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-muted/40">
       <Card className="w-full max-w-sm p-6">
-        <h1 className="mb-1 text-xl font-semibold tracking-tight text-foreground">Kingsmaker</h1>
+        <h1 className="mb-1 text-xl font-semibold tracking-tight text-foreground">Allting</h1>
         <p className="mb-4 text-sm text-muted-foreground">Sign in to your org</p>
 
         {/* No credential fields at all when SSO is the only way in — the button

@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs"
-import type { Concept, Field, RecordVersion } from "@kingsmaker/contract"
+import type { Concept, Field, RecordVersion } from "@alltinghq/contract"
 import { requireSession } from "../config.ts"
 import { csvToObjects } from "../csv.ts"
 import { CliError, EXIT } from "../errors.ts"

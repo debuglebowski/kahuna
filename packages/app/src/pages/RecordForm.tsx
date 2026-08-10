@@ -1,4 +1,4 @@
-import { LABELS_KEY } from "@kingsmaker/contract"
+import { LABELS_KEY } from "@alltinghq/contract"
 import { useQuery } from "@tanstack/react-query"
 import { Check, Plus, X } from "lucide-react"
 import { useMemo, useState } from "react"

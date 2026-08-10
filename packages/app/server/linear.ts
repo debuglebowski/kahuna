@@ -388,7 +388,7 @@ async function statusPayload(req: Request) {
 
 export const linearStatus = (req: Request) => statusPayload(req)
 
-// ── Kingsmaker concept mirror (Phase 1) ────────────────────────────────────────
+// ── Allting concept mirror (Phase 1) ────────────────────────────────────────
 
 /** Linear's stable workflow-state taxonomy — a closed set, so it maps cleanly
  *  onto a KM `enum` field (which a Kanban widget groups into columns). Issue

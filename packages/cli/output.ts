@@ -2,7 +2,7 @@
  * How results reach the terminal.
  *
  * ONE RULE ABOVE ALL: data on stdout, everything else on stderr. Progress
- * notes, warnings and errors go to stderr so `km record list x --json | jq`
+ * notes, warnings and errors go to stderr so `allt record list x --json | jq`
  * never has to filter our chatter out of its input.
  */
 export type Format = "table" | "json" | "csv"

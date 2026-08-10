@@ -37,7 +37,7 @@ services:
       start_period: 10s
 
   app:
-    image: ${KINGSMAKER_IMAGE:-ghcr.io/debuglebowski/kingsmaker:latest}
+    image: ${ALLTING_IMAGE:-ghcr.io/debuglebowski/allting:latest}
     restart: unless-stopped
     env_file: .env.production
     environment:

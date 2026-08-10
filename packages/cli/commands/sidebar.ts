@@ -1,4 +1,4 @@
-import type { SidebarSection, SidebarView } from "@kingsmaker/contract"
+import type { SidebarSection, SidebarView } from "@alltinghq/contract"
 import { requireSession } from "../config.ts"
 import { CliError, EXIT } from "../errors.ts"
 import { note, printOne, printRows } from "../output.ts"
@@ -45,7 +45,7 @@ const findView = async (api: Api, name: string): Promise<SidebarView> => {
     partial.length > 1 ? EXIT.usage : EXIT.notFound,
     partial.length > 1
       ? partial.map((v) => `  ${v.name}`).join("\n")
-      : "Run `km sidebar view list`.",
+      : "Run `allt sidebar view list`.",
   )
 }
 

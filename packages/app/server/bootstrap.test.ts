@@ -41,7 +41,7 @@ describe("initial admin bootstrap", () => {
       expect(readInitialAdminEnv()).toEqual({
         email: "admin@test.dev",
         password: "password12345",
-        orgName: "Kingsmaker",
+        orgName: "Allting",
       })
 
       process.env.INITIAL_ORG_NAME = "Acme"
@@ -86,7 +86,7 @@ describe("initial admin bootstrap", () => {
         bootstrapInitialAdmin({
           email: `short-${randomUUID()}@test.dev`,
           password: "short",
-          orgName: "Kingsmaker",
+          orgName: "Allting",
         }),
       ).rejects.toThrow(/at least 8 characters/)
     })
@@ -109,8 +109,8 @@ describe("initial admin bootstrap", () => {
       // not need an INITIAL_ADMIN_NAME variable.
       const org = await auth.api.createOrganization({
         body: {
-          name: "Kingsmaker",
-          slug: makeOrgSlug("Kingsmaker"),
+          name: "Allting",
+          slug: makeOrgSlug("Allting"),
           userId: created.userId,
         },
       })
@@ -140,8 +140,8 @@ describe("initial admin bootstrap", () => {
 
     it("generates a unique slug per call from the same org name", async () => {
       const { makeOrgSlug } = await import("./provision")
-      expect(makeOrgSlug("Kingsmaker")).toMatch(/^kingsmaker-[a-z0-9]{1,5}$/)
-      expect(makeOrgSlug("Kingsmaker")).not.toBe(makeOrgSlug("Kingsmaker"))
+      expect(makeOrgSlug("Allting")).toMatch(/^allting-[a-z0-9]{1,5}$/)
+      expect(makeOrgSlug("Allting")).not.toBe(makeOrgSlug("Allting"))
       // Punctuation-only names still produce a valid slug.
       expect(makeOrgSlug("!!!")).toMatch(/^org-[a-z0-9]{1,5}$/)
     })

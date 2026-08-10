@@ -49,7 +49,7 @@ export interface ConceptSpec {
 }
 
 /**
- * The Kingsmaker application model — a documentation-centric CRM + compliance
+ * The Allting application model — a documentation-centric CRM + compliance
  * setup, defined entirely as data over the general engine. The runner folds it
  * into create-concept / add-field calls (event-sourced).
  *
@@ -65,7 +65,7 @@ export interface ConceptSpec {
  *   Agreement      -signed_by-> CompanyContact
  *   Task           -for->       Company
  */
-export const kingsmakerSpec: ReadonlyArray<ConceptSpec> = [
+export const alltingSpec: ReadonlyArray<ConceptSpec> = [
   {
     name: "Company",
     pluralName: "Companies",

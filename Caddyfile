@@ -9,7 +9,7 @@
 	email admin@example.com
 }
 
-kingsmaker.example.com {
+allting.example.com {
 	# 25MB is the engine's MAX_UPLOAD_BYTES; a tighter proxy limit turns a valid
 	# upload into an opaque 413 that never reaches the engine's own check, so
 	# leave headroom for multipart overhead.

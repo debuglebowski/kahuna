@@ -42,7 +42,7 @@ function VersionCard() {
                   <strong>{v.data.latest}</strong> is available.{" "}
                   <a
                     className="underline underline-offset-2"
-                    href="https://github.com/debuglebowski/kingsmaker/releases"
+                    href="https://github.com/debuglebowski/allting/releases"
                     target="_blank"
                     rel="noreferrer noopener"
                   >

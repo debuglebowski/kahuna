@@ -3,7 +3,7 @@ import path from "node:path"
 import { CliError, EXIT } from "./errors.ts"
 
 /**
- * Is a newer `km` published, and what would install it?
+ * Is a newer `allt` published, and what would install it?
  *
  * WHY THIS EXISTS AT ALL: the CLI carries a COPY of the wire contract, compiled
  * in at build time. Against a deployment built from newer sources, a procedure
@@ -20,11 +20,11 @@ import { CliError, EXIT } from "./errors.ts"
  */
 
 /** The published name. Used in the registry URL and in every install command. */
-export const PACKAGE = "@kingsmaker/cli"
+export const PACKAGE = "@alltinghq/cli"
 
 /** Overridable for a corporate mirror; npm's public registry otherwise. */
 export const registryBase = (): string =>
-  (process.env.KM_REGISTRY || "https://registry.npmjs.org").replace(/\/+$/, "")
+  (process.env.ALLT_REGISTRY || "https://registry.npmjs.org").replace(/\/+$/, "")
 
 /**
  * Parse `1.2.3` / `v1.2.3` into comparable parts. Anything with a prerelease or
@@ -80,7 +80,7 @@ export const latestVersion = async (): Promise<string> => {
     throw new CliError(
       `Cannot reach the npm registry at ${registryBase()} (${e instanceof Error ? e.message : String(e)}).`,
       EXIT.failed,
-      "Check your network, or point KM_REGISTRY at a mirror.",
+      "Check your network, or point ALLT_REGISTRY at a mirror.",
     )
   }
   if (!res.ok) {
@@ -97,7 +97,7 @@ export const latestVersion = async (): Promise<string> => {
 }
 
 /**
- * How this copy of `km` was installed — which decides what can replace it, and
+ * How this copy of `allt` was installed — which decides what can replace it, and
  * whether replacing it is our business at all.
  *
  * `bun`/`pnpm`/`yarn`/`npm` are global installs: this command owns them and

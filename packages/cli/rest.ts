@@ -40,7 +40,7 @@ const request = async (
     throw new CliError(
       `Cannot reach ${host} (${e instanceof Error ? e.message : String(e)}).`,
       EXIT.failed,
-      "Check the host with `km profile list`, or pass --host.",
+      "Check the host with `allt profile list`, or pass --host.",
     )
   }
 }

@@ -30,19 +30,19 @@ const prompt = async (question: string, secret = false): Promise<string> => {
 /**
  * WHICH DEPLOYMENT, and never guessed.
  *
- * `--host`, then KM_HOST, then whatever a previous sign-in stored. If none of
+ * `--host`, then ALLT_HOST, then whatever a previous sign-in stored. If none of
  * those know, ask — and if there is nobody to ask, fail. This used to fall
  * through to `http://localhost:3100`, so someone with a remote deployment was
  * asked for their password by a CLI quietly aiming at their own laptop.
  */
 const resolveHost = async (flagHost: string | undefined): Promise<string> => {
-  const known = flagHost ?? process.env.KM_HOST ?? loadConfig().host
+  const known = flagHost ?? process.env.ALLT_HOST ?? loadConfig().host
   if (known) return stripSlash(known)
   if (!process.stdin.isTTY) {
     throw new CliError(
       "No deployment configured.",
       EXIT.usage,
-      "Pass --host <url>, or set KM_HOST.",
+      "Pass --host <url>, or set ALLT_HOST.",
     )
   }
   const asked = await prompt("Deployment URL: ")
@@ -77,7 +77,7 @@ export const authCommands: ReadonlyArray<Command> = [
       // so the interactive path stays the default and is never echoed.
       const password =
         (ctx.flags.password as string | undefined) ??
-        process.env.KM_PASSWORD ??
+        process.env.ALLT_PASSWORD ??
         (await prompt("Password: ", true))
 
       if (!email || !password) {
@@ -99,7 +99,7 @@ export const authCommands: ReadonlyArray<Command> = [
         await signOut({ host: config.host, cookie: config.cookie })
       }
       // Keep the host — only the credential goes. Dropping it too would make the
-      // next `km auth login` ask for the deployment URL again.
+      // next `allt auth login` ask for the deployment URL again.
       saveConfig({ host: config.host })
       note("Signed out.")
     },

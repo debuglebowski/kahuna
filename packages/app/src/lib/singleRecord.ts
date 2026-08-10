@@ -12,7 +12,7 @@
  * `getSingleRecord` (which uses `singleRecordOf`, not `listRecords[0]`).
  */
 
-import type { Concept, RecordDetail } from "@kingsmaker/contract"
+import type { Concept, RecordDetail } from "@alltinghq/contract"
 import { useLiveQuery } from "@tanstack/react-db"
 import { KEY, singleRecordOfConcept, useRegisterCollection } from "./collections"
 

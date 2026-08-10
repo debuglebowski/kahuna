@@ -2,7 +2,7 @@ import { Rpc, RpcGroup } from "@effect/rpc"
 import { Schema } from "effect"
 
 /**
- * The Kingsmaker RPC contract — the single typed source of truth shared by the
+ * The Allting RPC contract — the single typed source of truth shared by the
  * server (handlers) and the browser client. Imports ONLY effect + @effect/rpc,
  * so it is safe to bundle into the client (no engine / node deps).
  */
@@ -1585,7 +1585,7 @@ export const ExplainAccess = Schema.Struct({
 })
 export type ExplainAccess = Schema.Schema.Type<typeof ExplainAccess>
 
-export class KingsmakerRpcs extends RpcGroup.make(
+export class AlltingRpcs extends RpcGroup.make(
   Rpc.make("listConcepts", {
     payload: {
       includeArchived: Schema.optional(Schema.Boolean),

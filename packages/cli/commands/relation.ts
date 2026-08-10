@@ -71,7 +71,7 @@ export const relationCommands: ReadonlyArray<Command> = [
         throw new CliError(
           "Which link?",
           EXIT.usage,
-          "`km record relation list <id>` prints the relation ids.",
+          "`allt record relation list <id>` prints the relation ids.",
         )
       }
       await withApi(async (api) => {

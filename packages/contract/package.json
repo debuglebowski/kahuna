@@ -1,7 +1,8 @@
 {
-  "name": "@kingsmaker/contract",
+  "name": "@alltinghq/contract",
   "version": "0.0.9",
-  "description": "The Kingsmaker RPC contract \u2014 the typed wire schema shared by the server, the SPA and the CLI.",
+  "private": true,
+  "description": "The Allting RPC contract \u2014 the typed wire schema shared by the server, the SPA and the CLI.",
   "type": "module",
   "exports": {
     ".": "./contract.ts"

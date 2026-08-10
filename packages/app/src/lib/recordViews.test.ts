@@ -1,4 +1,4 @@
-import type { Concept, RecordViewLayout } from "@kingsmaker/contract"
+import type { Concept, RecordViewLayout } from "@alltinghq/contract"
 import { describe, expect, it } from "vitest"
 import { conceptRecordView, DEFAULT_VIEW, RECORD_VIEWS, sanitizeTiles } from "./recordViews"
 

@@ -21,7 +21,7 @@ describe("--version", () => {
   it("prints the bare version on stdout and exits 0", async () => {
     const { code, out } = await capture(["--version"])
     expect(code).toBe(EXIT.ok)
-    // Bare, so `km --version` is greppable and quotable in a bug report —
+    // Bare, so `allt --version` is greppable and quotable in a bug report —
     // no prefix, no banner, nothing to strip.
     expect(out).toBe(`${pkg.version}\n`)
   })
@@ -34,7 +34,7 @@ describe("--version", () => {
     // The point of the command: it works on a machine that has never signed in,
     // which is exactly the machine someone is debugging when they ask for it.
     const saved = { ...process.env }
-    for (const k of ["KM_HOST", "KM_PROFILE", "KM_TOKEN"]) delete process.env[k]
+    for (const k of ["ALLT_HOST", "ALLT_PROFILE", "ALLT_TOKEN"]) delete process.env[k]
     process.env.XDG_CONFIG_HOME = "/nonexistent-on-purpose"
     try {
       const { code, out } = await capture(["--version"])
@@ -50,7 +50,7 @@ describe("help", () => {
   it("is what a bare invocation gets", async () => {
     const { code, out } = await capture([])
     expect(code).toBe(EXIT.ok)
-    expect(out).toContain("km <noun>")
+    expect(out).toContain("allt <noun>")
   })
 
   it("lists --version among the global flags", async () => {

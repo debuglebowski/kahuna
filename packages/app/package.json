@@ -1,9 +1,9 @@
 {
-  "name": "@kingsmaker/app",
+  "name": "@alltinghq/app",
   "version": "0.0.9",
   "private": true,
   "license": "MIT",
-  "description": "The Kingsmaker deployment: Bun server, React SPA, domain engine and the one migration set.",
+  "description": "The Allting deployment: Bun server, React SPA, domain engine and the one migration set.",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -39,7 +39,7 @@
     "@effect/sql": "0.51.1",
     "@effect/sql-pg": "0.52.1",
     "@fontsource-variable/geist": "^5.2.9",
-    "@kingsmaker/contract": "workspace:*",
+    "@alltinghq/contract": "workspace:*",
     "@tanstack/db": "0.6.8",
     "@tanstack/query-db-collection": "1.0.39",
     "@tanstack/react-db": "0.1.86",

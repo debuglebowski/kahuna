@@ -1,4 +1,4 @@
-import type { Concept, Field, RecordVersion } from "@kingsmaker/contract"
+import type { Concept, Field, RecordVersion } from "@alltinghq/contract"
 import { describe, expect, it } from "vitest"
 import { EXIT } from "./errors.ts"
 import { findConcept, findField, labelOf, parseFieldAssignments } from "./resolve.ts"

@@ -15,9 +15,10 @@
  * Defaults to the throwaway stack (API :3199) so a run can't disturb the
  * slay-managed one; point API/ORIGIN at :3100/:5100 to verify the managed stack.
  */
+
+import { AlltingRpcs } from "@alltinghq/contract"
 import { FetchHttpClient } from "@effect/platform"
 import { RpcClient, RpcSerialization } from "@effect/rpc"
-import { KingsmakerRpcs } from "@kingsmaker/contract"
 import { Context, Effect, Layer, ManagedRuntime } from "effect"
 import { auth } from "../server/auth"
 import { createUserDirect } from "../server/provision"
@@ -64,7 +65,7 @@ const clientFor = (cookie: string) => {
     Layer.provide(CookieFetch),
     Layer.provide(RpcSerialization.layerNdjson),
   )
-  const make = RpcClient.make(KingsmakerRpcs)
+  const make = RpcClient.make(AlltingRpcs)
   type C = Effect.Effect.Success<typeof make>
   class Tag extends Context.Tag(`verify/Api-${cookie.slice(0, 8)}`)<Tag, C>() {}
   const rt = ManagedRuntime.make(Layer.scoped(Tag, make).pipe(Layer.provide(Protocol)))

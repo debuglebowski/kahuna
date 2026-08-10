@@ -25,7 +25,7 @@ describe("failure normalisation", () => {
   it("translates a known server code and carries its status", () => {
     const f = toFailure({ code: "UNAUTHENTICATED", message: "", status: 401 })
     expect(f.message).toBe("Not signed in.")
-    expect(f.hint).toBe("Run `km auth login` first.")
+    expect(f.hint).toBe("Run `allt auth login` first.")
     expect(f.exitCode).toBe(EXIT.unauthenticated)
   })
 

@@ -1,10 +1,10 @@
 {
-  "name": "@kingsmaker/cli",
+  "name": "@alltinghq/cli",
   "version": "0.0.9",
-  "description": "The Kingsmaker command line \u2014 km.",
+  "description": "The Allting command line \u2014 allt.",
   "type": "module",
   "bin": {
-    "km": "./dist/index.js"
+    "allt": "./dist/index.js"
   },
   "engines": {
     "node": ">=20"
@@ -19,7 +19,7 @@
   "devDependencies": {
     "@effect/platform": "0.96.1",
     "@effect/rpc": "0.75.1",
-    "@kingsmaker/contract": "workspace:*",
+    "@alltinghq/contract": "workspace:*",
     "@types/node": "25.9.2",
     "effect": "3.21.3",
     "vitest": "3.2.6"
@@ -32,11 +32,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/debuglebowski/kingsmaker.git",
+    "url": "https://github.com/debuglebowski/allting.git",
     "directory": "packages/cli"
   },
   "keywords": [
-    "kingsmaker",
+    "allting",
     "cli"
   ],
   "publishConfig": {

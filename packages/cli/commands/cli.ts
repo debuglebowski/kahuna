@@ -15,11 +15,11 @@ import {
 } from "../selfupdate.ts"
 
 /**
- * `km cli update` — upgrade THIS binary.
+ * `allt cli update` — upgrade THIS binary.
  *
- * The noun split, restated because it is easy to get backwards: `km system *`
- * asks the DEPLOYMENT about itself, `km cli *` and `--version` are about the
- * command line in your hand. `km system version` reports the server image from
+ * The noun split, restated because it is easy to get backwards: `allt system *`
+ * asks the DEPLOYMENT about itself, `allt cli *` and `--version` are about the
+ * command line in your hand. `allt system version` reports the server image from
  * GHCR; this reports the npm package.
  *
  * The decisions all live in selfupdate.ts so they can be tested without a
@@ -31,7 +31,7 @@ import {
  *
  * STDOUT GOES TO FD 2, deliberately. output.ts opens with "data on stdout,
  * everything else on stderr", and npm's progress chatter is not data — inherited
- * onto our stdout it would sit inside `km cli update --json` and break every
+ * onto our stdout it would sit inside `allt cli update --json` and break every
  * consumer piping us to jq. The child still writes to a real terminal, so an
  * interactive run looks exactly the same.
  */
@@ -124,7 +124,7 @@ export const cliCommands: ReadonlyArray<Command> = [
       // `current` above is the version that RAN this command; the process still
       // holds the old bundle in memory. Saying which version is now on disk
       // avoids the "it says 0.0.8, did it work?" question.
-      if (ctx.format !== "json") note(`Updated to ${latest}. Run \`km --version\` to confirm.`)
+      if (ctx.format !== "json") note(`Updated to ${latest}. Run \`allt --version\` to confirm.`)
     },
   },
 ]

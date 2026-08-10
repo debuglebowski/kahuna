@@ -1,4 +1,4 @@
-import type { Concept, Field, RecordVersion } from "@kingsmaker/contract"
+import type { Concept, Field, RecordVersion } from "@alltinghq/contract"
 import { CliError, EXIT } from "./errors.ts"
 import type { Api } from "./transport.ts"
 

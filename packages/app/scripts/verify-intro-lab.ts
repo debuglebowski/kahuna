@@ -1,4 +1,4 @@
-/* Headless-Chrome CDP driver: verifies the Kingsmaker /intro-lab page.
+/* Headless-Chrome CDP driver: verifies the Allting /intro-lab page.
  * Launches an isolated headless Chrome (temp profile), signs up a throwaway
  * account, plays each intro, captures timed screenshots + console output. */
 import { spawn } from "node:child_process"
@@ -7,7 +7,7 @@ import { provisionVerifyIdentity } from "./verify-session"
 
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 const BASE = "http://localhost:5100"
-const OUT = "/Users/Kalle/dev/projects/kingsmaker/screenshots/intro-lab"
+const OUT = "/Users/Kalle/dev/projects/allting/screenshots/intro-lab"
 const PROFILE = `/tmp/intro-lab-profile-${process.pid}`
 
 mkdirSync(OUT, { recursive: true })

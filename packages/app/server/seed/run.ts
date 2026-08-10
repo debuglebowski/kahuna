@@ -1,9 +1,9 @@
 import "../env" // Load repo-root .env before the engine reads DATABASE_URL.
 import { runEngineOrThrow, systemScope } from "../runtime"
-import { seedKingsmaker } from "./seed"
+import { seedAllting } from "./seed"
 
 /**
- * CLI: `bun server/seed/run.ts <orgId>` — seed the Kingsmaker schema into an org.
+ * CLI: `bun server/seed/run.ts <orgId>` — seed the Allting schema into an org.
  * The org id is a BetterAuth organization.id (Tier-0). Safe to re-run.
  */
 const orgId = process.argv[2] ?? process.env.SEED_ORG_ID
@@ -12,6 +12,6 @@ if (!orgId) {
   process.exit(1)
 }
 
-const result = await runEngineOrThrow(systemScope(orgId, "system"), seedKingsmaker)
+const result = await runEngineOrThrow(systemScope(orgId, "system"), seedAllting)
 console.log(`Seeded ${result.concepts} concepts into org ${orgId}`)
 process.exit(0)

@@ -12,9 +12,10 @@
  *   5. A preset role cannot be deleted (the seed would silently re-create it).
  *   6. The effective-access report is self-serve for yourself, gated for others.
  */
+
+import { AlltingRpcs } from "@alltinghq/contract"
 import { FetchHttpClient } from "@effect/platform"
 import { RpcClient, RpcSerialization } from "@effect/rpc"
-import { KingsmakerRpcs } from "@kingsmaker/contract"
 import { Context, Effect, Layer, ManagedRuntime } from "effect"
 import { auth } from "../server/auth"
 import { pool } from "../server/db"
@@ -60,7 +61,7 @@ const clientFor = (cookie: string) => {
     Layer.provide(CookieFetch),
     Layer.provide(RpcSerialization.layerNdjson),
   )
-  const make = RpcClient.make(KingsmakerRpcs)
+  const make = RpcClient.make(AlltingRpcs)
   type C = Effect.Effect.Success<typeof make>
   class Tag extends Context.Tag(`verify/Roles-${cookie.slice(0, 12)}`)<Tag, C>() {}
   const rt = ManagedRuntime.make(Layer.scoped(Tag, make).pipe(Layer.provide(Protocol)))

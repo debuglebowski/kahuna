@@ -14,7 +14,7 @@ export const PgTestLive = PgClient.layerConfig({
   url: Config.redacted("TEST_DATABASE_URL"),
 })
 
-const BlobTestLive = LocalFsBlobStore(path.join(tmpdir(), "kingsmaker-test-blobs"))
+const BlobTestLive = LocalFsBlobStore(path.join(tmpdir(), "allting-test-blobs"))
 
 /**
  * A policy standing in for AN ORDINARY MEMBER of a live org.

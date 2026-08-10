@@ -10,12 +10,12 @@
  *
  * Bring the stack up with a stamped image and a repo that has real release tags:
  *
- *   docker build --build-arg KINGSMAKER_VERSION=0.1.0 -t kingsmaker:vtest .
+ *   docker build --build-arg ALLTING_VERSION=0.1.0 -t allting:vtest .
  *   docker run -d --name vtest-app -p 3199:3100 \
  *     -e DATABASE_URL=... -e BETTER_AUTH_SECRET=... \
  *     -e BETTER_AUTH_URL=http://localhost:3199 \
- *     -e KINGSMAKER_IMAGE_REPO=astral-sh/uv \
- *     kingsmaker:vtest
+ *     -e ALLTING_IMAGE_REPO=astral-sh/uv \
+ *     allting:vtest
  *
  * Mirrors scripts/verify-bucket-ui.ts. */
 import { spawn } from "node:child_process"
@@ -234,7 +234,7 @@ if (api.updateAvailable) {
 // Lives in the sidebar footer above the identity block, on every page — so check
 // it somewhere other than settings.
 await send("Page.navigate", { url: `${BASE}/` }, sessionId)
-await until("app shell loaded", 30000, async () => (await text()).includes("Kingsmaker"))
+await until("app shell loaded", 30000, async () => (await text()).includes("Allting"))
 
 const noticeSel = 'aside button[aria-label^="New version"]'
 if (api.updateAvailable) {

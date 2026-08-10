@@ -9,9 +9,9 @@ let dir: string
 const env = { ...process.env }
 
 beforeEach(() => {
-  dir = mkdtempSync(path.join(tmpdir(), "km-config-"))
+  dir = mkdtempSync(path.join(tmpdir(), "allt-config-"))
   process.env.XDG_CONFIG_HOME = dir
-  for (const k of ["KM_HOST", "KM_TOKEN"]) delete process.env[k]
+  for (const k of ["ALLT_HOST", "ALLT_TOKEN"]) delete process.env[k]
 })
 afterEach(() => {
   process.env = { ...env }
@@ -50,15 +50,15 @@ describe("which deployment", () => {
     expect(requireHost()).toBe("https://prod")
   })
 
-  it("lets KM_HOST override without touching the file", () => {
+  it("lets ALLT_HOST override without touching the file", () => {
     saveConfig({ host: "https://prod" })
-    process.env.KM_HOST = "https://staging"
+    process.env.ALLT_HOST = "https://staging"
     expect(requireHost()).toBe("https://staging")
     expect(loadConfig().host).toBe("https://prod")
   })
 
   it("strips a trailing slash, so URLs never double up", () => {
-    process.env.KM_HOST = "https://staging/"
+    process.env.ALLT_HOST = "https://staging/"
     expect(requireHost()).toBe("https://staging")
   })
 

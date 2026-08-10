@@ -6,7 +6,7 @@ import type { Format } from "./output.ts"
  *
  * THE GRAMMAR, restated because the parser depends on it:
  *
- *   km <noun> [<sub-noun>] <verb> [target] [--flags]
+ *   allt <noun> [<sub-noun>] <verb> [target] [--flags]
  *
  * The first token after a noun is a verb or a sub-noun — NEVER an id. That is
  * what lets dispatch match the longest known path and treat everything after it
@@ -26,9 +26,9 @@ export interface CommandContext {
 export interface Command {
   /** Space-separated path, e.g. "record relation add". */
   readonly path: string
-  /** One line, shown in `km help`. */
+  /** One line, shown in `allt help`. */
   readonly summary: string
-  /** Usage line shown on a usage error, without the leading `km`. */
+  /** Usage line shown on a usage error, without the leading `allt`. */
   readonly usage?: string
   /** Command-specific flags, merged with the global set. */
   readonly options?: ParseArgsConfig["options"]
