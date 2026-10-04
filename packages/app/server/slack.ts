@@ -849,9 +849,11 @@ export async function listSlackChannels(req: Request) {
   return json({ channels: rows })
 }
 
-/** Generic "post to a channel" endpoint — the seam the deferred automation action will reuse. */
+/** Admin-only: posts as the org's BOT, so it must not be open to any member.
+ *  (`post-as-me` below posts as the caller's own Slack identity.)
+ *  Generic "post to a channel" endpoint — the seam the deferred automation action will reuse. */
 export async function postSlackMessageForRequest(req: Request) {
-  const org = await resolveOrg(req)
+  const org = await resolveAdmin(req)
   if (!org.ok) return json({ error: org.code }, org.status)
   const connection = await connectionForOrg(org.orgId)
   if (connection?.status !== "connected") return json({ error: "NO_SLACK_CONNECTION" }, 404)

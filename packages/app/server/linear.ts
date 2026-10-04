@@ -824,7 +824,7 @@ export async function linearIssueIdForRecordVersion(
 }
 
 export async function updateLinearIssueForRequest(req: Request, issueId: string) {
-  const org = await resolveOrg(req)
+  const org = await resolveAdmin(req)
   if (!org.ok) return json({ error: org.code }, org.status)
   const connection = await connectionForOrg(org.orgId)
   if (connection?.status !== "connected") return json({ error: "NO_LINEAR_CONNECTION" }, 404)
@@ -851,7 +851,7 @@ export async function updateLinearIssueForRequest(req: Request, issueId: string)
 }
 
 export async function closeLinearIssueForRequest(req: Request, issueId: string) {
-  const org = await resolveOrg(req)
+  const org = await resolveAdmin(req)
   if (!org.ok) return json({ error: org.code }, org.status)
   const connection = await connectionForOrg(org.orgId)
   if (connection?.status !== "connected") return json({ error: "NO_LINEAR_CONNECTION" }, 404)
