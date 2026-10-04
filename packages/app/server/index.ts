@@ -6,7 +6,7 @@ import { startAutomationRunner, startAutomationScheduleTick } from "./automation
 import { startDecayTick } from "./decay-tick"
 import { startGoogleWatchRenewal } from "./google"
 import { withApiSecurityHeaders, withAppSecurityHeaders } from "./headers"
-import { handleApi, isBetterAuthPath } from "./router"
+import { handleApi, isBetterAuthPath, isBlockedSsoPath } from "./router"
 import { rpcHandler } from "./rpc"
 import { AppRuntime } from "./runtime"
 import { installGracefulShutdown } from "./shutdown"
@@ -46,6 +46,7 @@ const server = Bun.serve({
     // BetterAuth's own endpoints. Prefix-matched on a path boundary, NOT a bare
     // `startsWith("/api/auth")` — that also captures `/api/auth-config/*` (see
     // `isBetterAuthPath`).
+    if (isBlockedSsoPath(url.pathname)) return secure(new Response("Not found", { status: 404 }))
     if (isBetterAuthPath(url.pathname)) return secure(await auth.handler(req))
 
     // Typed RPC endpoint (the application API).

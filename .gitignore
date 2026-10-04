@@ -4,6 +4,12 @@ node_modules/
 dist/
 build/
 .env
+.env.*
+!.env*.example
+*.pem
+*.key
+*.dump
+*.sql.gz
 *.local
 *.log
 .blobstore/

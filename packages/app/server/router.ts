@@ -18,7 +18,7 @@ import {
   enrichForRequest as enrichClayForRequest,
   handleClayCallback,
 } from "./clay"
-import { devicePage, pollDevice, startDevice } from "./cli-auth"
+import { approveDevice, devicePage, pollDevice, startDevice } from "./cli-auth"
 import { db, pool } from "./db"
 import {
   disconnectGoogle,
@@ -178,6 +178,25 @@ const uploadRoute = async (req: Request, owner: UploadOwner): Promise<Response> 
 export const isBetterAuthPath = (pathname: string): boolean =>
   pathname === "/api/auth" || pathname.startsWith("/api/auth/")
 
+/**
+ * The SSO plugin's provider-management endpoints. The browser never needs them:
+ * providers are configured through `server/sso.ts` (owner-only), which calls
+ * `auth.api` in-process. Left reachable over HTTP, `/sso/register` lets ANY
+ * signed-in user register their own OIDC provider. Sign-in and the callbacks
+ * (`/sign-in/sso`, `/sso/callback/*`) stay open.
+ */
+const SSO_MANAGEMENT = [
+  "register",
+  "update-provider",
+  "delete-provider",
+  "providers",
+  "get-provider",
+]
+export const isBlockedSsoPath = (pathname: string): boolean =>
+  SSO_MANAGEMENT.some(
+    (e) => pathname === `/api/auth/sso/${e}` || pathname.startsWith(`/api/auth/sso/${e}/`),
+  )
+
 export const handleApi = async (req: Request): Promise<Response | null> => {
   const url = new URL(req.url)
   const p = url.pathname
@@ -214,7 +233,8 @@ export const handleApi = async (req: Request): Promise<Response | null> => {
     // The device flow: the CLI starts one and polls; the person approves in any
     // browser, on any machine. Nothing is redirected to a loopback address, so
     // this works over ssh and from a phone.
-    // GET approves — opening the link the CLI printed is the confirmation.
+    // GET only shows the code; approval is the same-origin POST.
+    if (seg[2] === "device" && seg[3] === "approve" && m === "POST") return approveDevice(req)
     if (seg[2] === "device" && !seg[3] && m === "GET") return devicePage(req)
     if (seg[2] === "device" && !seg[3] && m === "POST") return startDevice(req)
     if (seg[2] === "device" && seg[3] === "poll" && m === "POST") return pollDevice(req)

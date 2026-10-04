@@ -6,6 +6,12 @@ dist
 build
 .git
 .env
+.env.*
+**/.env
+**/.env.*
+**/.blobstore
+**/snapshots
+**/screenshots
 *.local
 *.log
 .blobstore

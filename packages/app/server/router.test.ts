@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest"
 import { auth } from "./auth"
 import { pool } from "./db"
 import { createUserDirect } from "./provision"
-import { handleApi, isBetterAuthPath } from "./router"
+import { handleApi, isBetterAuthPath, isBlockedSsoPath } from "./router"
 import { runEngineOrThrow, systemScope } from "./runtime"
 import { deactivateMember, listDeactivatedMembers } from "./use-cases"
 
@@ -309,5 +309,14 @@ describe("path ownership: BetterAuth vs the app router", () => {
     const res = await handleApi(new Request(`http://localhost${path}`, { headers: owner.headers }))
     expect(res?.status).toBe(200)
     expect((await res?.json()) as { canEdit?: boolean }).toMatchObject({ canEdit: true })
+  })
+})
+
+describe("SSO provider management over HTTP", () => {
+  it("is blocked, while sign-in and callbacks stay reachable", () => {
+    for (const p of ["register", "update-provider", "delete-provider", "providers", "get-provider"])
+      expect(isBlockedSsoPath(`/api/auth/sso/${p}`)).toBe(true)
+    expect(isBlockedSsoPath("/api/auth/sign-in/sso")).toBe(false)
+    expect(isBlockedSsoPath("/api/auth/sso/callback/org-1")).toBe(false)
   })
 })

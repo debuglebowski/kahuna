@@ -1,3 +1,4 @@
+# LOCAL DEVELOPMENT ONLY: trivial credentials, loopback-bound. For a real deploy use docker-compose.prod.yml.
 services:
   postgres:
     image: postgres:16-alpine
@@ -8,7 +9,7 @@ services:
       POSTGRES_PASSWORD: kahuna
       POSTGRES_DB: kahuna
     ports:
-      - "5544:5432"
+      - "127.0.0.1:5544:5432"
     volumes:
       - kahuna_pgdata:/var/lib/postgresql/data
     healthcheck:

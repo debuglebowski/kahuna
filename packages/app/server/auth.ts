@@ -107,11 +107,15 @@ const isProd = process.env.NODE_ENV === "production"
  * fail the boot instead of starting up insecure. Mirrors the same rule
  * `integrations/crypto.ts` applies to the token-encryption key.
  */
+const DEV_SECRET = "dev-secret-change-me"
 const authSecret = (): string => {
   const secret = process.env.BETTER_AUTH_SECRET
-  if (secret) return secret
-  if (isProd) throw new Error("BETTER_AUTH_SECRET must be set in production")
-  return "dev-secret-change-me"
+  if (isProd) {
+    if (!secret) throw new Error("BETTER_AUTH_SECRET must be set in production")
+    if (secret === DEV_SECRET || secret.length < 32)
+      throw new Error("BETTER_AUTH_SECRET is the published placeholder or shorter than 32 chars")
+  }
+  return secret || DEV_SECRET
 }
 const envOrigins = (process.env.TRUSTED_ORIGINS ?? "")
   .split(",")
