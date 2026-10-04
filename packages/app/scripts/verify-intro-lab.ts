@@ -7,7 +7,7 @@ import { provisionVerifyIdentity } from "./verify-session"
 
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 const BASE = "http://localhost:5100"
-const OUT = "/Users/Kalle/dev/projects/kahuna/screenshots/intro-lab"
+const OUT = process.env.OUT_DIR ?? new URL("../../../screenshots/intro-lab", import.meta.url).pathname
 const PROFILE = `/tmp/intro-lab-profile-${process.pid}`
 
 mkdirSync(OUT, { recursive: true })
