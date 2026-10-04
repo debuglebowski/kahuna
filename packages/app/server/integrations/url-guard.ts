@@ -1,4 +1,6 @@
 import { lookup } from "node:dns/promises"
+import http from "node:http"
+import https from "node:https"
 import { isIP } from "node:net"
 
 /**
@@ -30,13 +32,12 @@ import { isIP } from "node:net"
  * cannot import this file — and that one is UX, not the security boundary. This
  * is the security boundary.
  *
- * A TOCTOU window remains between resolve and connect (classic DNS rebinding).
- * `resolvePublicUrl` hands back a vetted address for a caller that wants to pin
- * it, but `fetchGuardedJson` does NOT — it re-dials the hostname, so the window
- * is real. Closing it needs a custom dispatcher that connects to the pinned IP
- * while sending `Host:` for the original name. What IS live is `redirect:
- * "manual"`: a permitted host 302'ing to the metadata IP is the easiest bypass of
- * all, and that one is closed.
+ * DNS rebinding (a name that resolves publicly at check time and privately at
+ * connect time) is closed by `guardedFetch`: it dials the address that
+ * `resolvePublicUrl` vetted, through `node:http(s)` with a pinned `lookup`, while
+ * Host/SNI/certificate validation still use the original hostname. Redirects are
+ * never followed (`redirect: "manual"` semantics): a permitted host 302'ing to the
+ * metadata IP is the easiest bypass of all.
  */
 
 /** Private, loopback, link-local and other non-routable ranges. */
@@ -288,28 +289,97 @@ export const resolvePublicUrl = async (raw: string): Promise<{ url: URL; address
   return { url, address: addresses[0]!.address }
 }
 
+const MAX_RESPONSE_BYTES = 10 * 1024 * 1024
+
 /**
- * POST JSON to a user-supplied URL with the SSRF guard applied.
- *
- * `redirect: "manual"` is load-bearing, not tidiness: without it a permitted host
- * can 302 to the metadata service and `fetch` follows it after our checks are
- * done. A redirect is reported as a failed delivery rather than chased.
- *
- * The vetted address from `resolvePublicUrl` is deliberately unused: `fetch` has
- * no connect-time hook, so dialing it would mean a custom dispatcher. The
- * rebinding window that leaves open is documented at the top of this file.
+ * `fetch` for a URL a user supplied, with the SSRF guard applied and the
+ * connection pinned to the vetted address (see the header). Redirects are
+ * returned as-is, never followed. Bodies must be strings.
  */
-export const fetchGuardedJson = async (
+export const guardedFetch = async (
+  raw: string,
+  init: {
+    method?: string
+    headers?: HeadersInit
+    body?: string | null
+    timeoutMs?: number
+    signal?: AbortSignal | null
+  } = {},
+): Promise<Response> => {
+  const { url, address } = await resolvePublicUrl(raw)
+  const headers: Record<string, string> = {}
+  new Headers(init.headers).forEach((v, k) => {
+    headers[k] = v
+  })
+  // Explicit Host + SNI: Bun's https client only honours the pinned `lookup`
+  // reliably when both are spelled out (verified on Bun 1.3 and Node 24).
+  headers.host = url.host
+  const family = isIP(address) === 6 ? 6 : 4
+  const mod = url.protocol === "https:" ? https : http
+  const signals = [AbortSignal.timeout(init.timeoutMs ?? 10_000)]
+  if (init.signal) signals.push(init.signal)
+
+  return new Promise<Response>((resolve, reject) => {
+    const req = mod.request(
+      {
+        protocol: url.protocol,
+        // The original name: Host header, TLS SNI and certificate checks all use it.
+        hostname: url.hostname.replace(/^\[|\]$/g, ""),
+        port: url.port || (url.protocol === "https:" ? 443 : 80),
+        servername: isIP(url.hostname.replace(/^\[|\]$/g, "")) === 0 ? url.hostname : undefined,
+        path: `${url.pathname}${url.search}`,
+        method: init.method ?? "GET",
+        headers,
+        signal: AbortSignal.any(signals),
+        // ...while the socket goes to the vetted address, whatever DNS says now.
+        lookup: (_host: string, opts: { all?: boolean }, cb: (...a: unknown[]) => void) => {
+          if (opts?.all) cb(null, [{ address, family }])
+          else cb(null, address, family)
+        },
+      } as http.RequestOptions,
+      (res) => {
+        const chunks: Buffer[] = []
+        let size = 0
+        res.on("data", (c: Buffer) => {
+          size += c.length
+          if (size > MAX_RESPONSE_BYTES) {
+            req.destroy(new Error("response too large"))
+            return
+          }
+          chunks.push(c)
+        })
+        res.on("error", reject)
+        res.on("end", () => {
+          const h = new Headers()
+          for (const [k, v] of Object.entries(res.headers)) {
+            if (Array.isArray(v)) for (const x of v) h.append(k, x)
+            else if (v !== undefined) h.set(k, v)
+          }
+          const status = res.statusCode ?? 502
+          const nullBody = status === 204 || status === 205 || status === 304
+          resolve(new Response(nullBody ? null : Buffer.concat(chunks), { status, headers: h }))
+        })
+      },
+    )
+    req.on("error", reject)
+    if (init.body) req.write(init.body)
+    req.end()
+  })
+}
+
+/**
+ * POST JSON to a user-supplied URL with the SSRF guard applied and the
+ * connection pinned. A redirect is reported as a failed delivery rather than
+ * chased.
+ */
+export const fetchGuardedJson = (
   raw: string,
   body: unknown,
   init: { timeoutMs?: number } = {},
-): Promise<Response> => {
-  const { url } = await resolvePublicUrl(raw)
-  return fetch(url, {
+): Promise<Response> =>
+  guardedFetch(raw, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
-    redirect: "manual",
-    signal: AbortSignal.timeout(init.timeoutMs ?? 10_000),
+    timeoutMs: init.timeoutMs,
   })
-}

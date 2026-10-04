@@ -8,6 +8,7 @@ import { decryptToken, encryptToken, secretMatches } from "./integrations/crypto
 import { connectorFailure, publicConnectorError } from "./integrations/errors"
 import { sleepBeforeRetry } from "./integrations/http"
 import { connectionForOrgIn } from "./integrations/rows"
+import { guardedFetch } from "./integrations/url-guard"
 import { resolvePolicy, runEngine, sessionScope, systemScope } from "./runtime"
 import { resolveAdmin, resolveOrg } from "./session"
 import { createRecord, getRecord, updateRecord } from "./use-cases"
@@ -53,7 +54,14 @@ type ClayFetch = (
   input: Parameters<typeof fetch>[0],
   init?: Parameters<typeof fetch>[1],
 ) => Promise<Response>
-let clayFetch: ClayFetch = fetch
+// The table webhook URL is admin-supplied, so it goes through the SSRF guard
+// (pinned connection, no redirects) rather than bare `fetch`.
+let clayFetch: ClayFetch = (input, init) =>
+  guardedFetch(String(input), {
+    method: init?.method,
+    headers: init?.headers,
+    body: typeof init?.body === "string" ? init.body : undefined,
+  })
 
 export const setClayFetchForTest = (next: ClayFetch) => {
   clayFetch = next

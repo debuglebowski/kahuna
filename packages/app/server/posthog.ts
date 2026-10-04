@@ -8,6 +8,7 @@ import { decryptToken, encryptToken, webhookTokenFrom } from "./integrations/cry
 import { connectorFailure, publicConnectorError } from "./integrations/errors"
 import { sleepBeforeRetry } from "./integrations/http"
 import { connectionForOrgIn } from "./integrations/rows"
+import { guardedFetch } from "./integrations/url-guard"
 import { resolveAdmin, resolveOrg } from "./session"
 
 /**
@@ -45,7 +46,19 @@ type PosthogFetch = (
   input: Parameters<typeof fetch>[0],
   init?: Parameters<typeof fetch>[1],
 ) => Promise<Response>
-let posthogFetch: PosthogFetch = fetch
+// us/eu presets are our own constants; any other host was typed by an admin, so
+// it goes through the SSRF guard (pinned connection, no redirects).
+const PRESET_ORIGINS = new Set(Object.values(REGION_HOSTS))
+let posthogFetch: PosthogFetch = (input, init) => {
+  const target = String(input)
+  if (PRESET_ORIGINS.has(new URL(target).origin)) return fetch(input, init)
+  return guardedFetch(target, {
+    method: init?.method,
+    headers: init?.headers,
+    body: typeof init?.body === "string" ? init.body : undefined,
+    signal: init?.signal,
+  })
+}
 
 export const setPosthogFetchForTest = (next: PosthogFetch) => {
   posthogFetch = next

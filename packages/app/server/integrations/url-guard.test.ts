@@ -184,3 +184,10 @@ describe("url-guard DNS resolution", () => {
     expect(isBlockedAddress(address)).toBe(false)
   })
 })
+
+describe("guardedFetch", () => {
+  it("refuses a loopback target before opening any socket", async () => {
+    const { guardedFetch } = await import("./url-guard")
+    await expect(guardedFetch("http://127.0.0.1:1/")).rejects.toThrow(/routable|non-public/)
+  })
+})
