@@ -18,7 +18,7 @@ import { defineConfig } from "vitest/config"
 if (process.env.TEST_DATABASE_URL) {
   process.env.TEST_DATABASE_URL = process.env.TEST_DATABASE_URL.replace(
     /\/[^/]*$/,
-    "/kingsmaker_test_web",
+    "/kahuna_test_web",
   )
   process.env.DATABASE_URL = process.env.TEST_DATABASE_URL
 }

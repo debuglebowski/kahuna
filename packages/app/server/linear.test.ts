@@ -447,7 +447,7 @@ describe("Linear integration", () => {
   })
 })
 
-describe("Linear → Allting concept mirror (Phase 1)", () => {
+describe("Linear → Kahuna concept mirror (Phase 1)", () => {
   const oldEnv = { ...process.env }
 
   beforeEach(() => {

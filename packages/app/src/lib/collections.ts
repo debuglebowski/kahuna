@@ -13,7 +13,7 @@ import type {
   Task,
   TaskPriority,
   TaskStatus,
-} from "@alltinghq/contract"
+} from "@kahunalabs/contract"
 import { createCollection } from "@tanstack/db"
 import { queryCollectionOptions } from "@tanstack/query-db-collection"
 import { useEffect } from "react"

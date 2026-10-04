@@ -104,7 +104,7 @@ describe("effectiveAccess: rules tagged with the layer they resolve in", () => {
 describe("explainAccess: the ordered trace behind one decision", () => {
   it("org-configure: only Admin's tier shows — Member holds no rule on `org` at all", async () => {
     // The founding owner holds BOTH roles today — Member from auto-assign, Admin
-    // from `seedAllting`. Member's preset carries no `org` rule whatsoever (see
+    // from `seedKahuna`. Member's preset carries no `org` rule whatsoever (see
     // `AccessRoleService.BUILTIN_ROLES`'s header — every action ever decided
     // against `org` is `configure`, which Member never holds), so it never
     // appears in this trace at all, not even silently.

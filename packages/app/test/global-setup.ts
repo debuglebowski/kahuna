@@ -28,7 +28,7 @@ export default async function setup(): Promise<void> {
   if (!testUrl) throw new Error("TEST_DATABASE_URL must be set (see .env)")
   const testName = new URL(testUrl).pathname.replace(/^\//, "")
   const adminUrl = new URL(testUrl)
-  adminUrl.pathname = "/kingsmaker"
+  adminUrl.pathname = "/kahuna"
 
   const admin = new Client({ connectionString: adminUrl.toString() })
   await admin.connect()

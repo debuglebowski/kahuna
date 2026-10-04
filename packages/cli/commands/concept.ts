@@ -1,4 +1,4 @@
-import type { FieldKind } from "@alltinghq/contract"
+import type { FieldKind } from "@kahunalabs/contract"
 import { requireSession } from "../config.ts"
 import { CliError, EXIT } from "../errors.ts"
 import { requireConfirmation } from "../mutate.ts"

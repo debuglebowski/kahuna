@@ -1,4 +1,4 @@
-import { DashboardBody } from "@alltinghq/contract"
+import { DashboardBody } from "@kahunalabs/contract"
 import { Schema } from "effect"
 import { describe, expect, it } from "vitest"
 import {

@@ -1033,7 +1033,7 @@ export async function handleSlashCommand(req: Request) {
   // Generic ephemeral ack — deep KM verb handling is deferred.
   return json({
     response_type: "ephemeral",
-    text: `Received \`${command}${text ? ` ${text}` : ""}\`. Allting actions are coming soon.`,
+    text: `Received \`${command}${text ? ` ${text}` : ""}\`. Kahuna actions are coming soon.`,
   })
 }
 

@@ -1,10 +1,10 @@
 {
-  "name": "@alltinghq/cli",
+  "name": "@kahunalabs/cli",
   "version": "0.0.9",
-  "description": "The Allting command line \u2014 allt.",
+  "description": "The Kahuna command line \u2014 kahuna.",
   "type": "module",
   "bin": {
-    "allt": "./dist/index.js"
+    "kahuna": "./dist/index.js"
   },
   "engines": {
     "node": ">=20"
@@ -19,7 +19,7 @@
   "devDependencies": {
     "@effect/platform": "0.96.1",
     "@effect/rpc": "0.75.1",
-    "@alltinghq/contract": "workspace:*",
+    "@kahunalabs/contract": "workspace:*",
     "@types/node": "25.9.2",
     "effect": "3.21.3",
     "vitest": "3.2.6"
@@ -32,11 +32,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/debuglebowski/allting.git",
+    "url": "https://github.com/debuglebowski/kahuna.git",
     "directory": "packages/cli"
   },
   "keywords": [
-    "allting",
+    "kahuna",
     "cli"
   ],
   "publishConfig": {

@@ -13,7 +13,7 @@ import { runEngineOrThrow } from "../runtime"
 
 /**
  * Reusable foundation for surfacing external (integration-synced) records inside
- * Allting as ordinary concept record versions — so the EXISTING generic dashboard
+ * Kahuna as ordinary concept record versions — so the EXISTING generic dashboard
  * widgets (List/Kanban/Calendar) can render them with no widget changes.
  *
  * Connectors run as plain async/SQL code OUTSIDE an HTTP request, so engine

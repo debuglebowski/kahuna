@@ -103,7 +103,7 @@ const EMBER_ALPHA = [0.32, 0.52, 0.78]
 // ─────────────────────────────────────────────────────────────────────────────
 // WORDMARK
 // ─────────────────────────────────────────────────────────────────────────────
-const LETTERS = Array.from("KINGSMAKER", (ch, i) => ({ ch, key: `${i}${ch}` }))
+const LETTERS = Array.from("KAHUNA", (ch, i) => ({ ch, key: `${i}${ch}` }))
 const MID = (LETTERS.length - 1) / 2
 const TYPE = {
   spreadEm: 0.3, // extra per-letter tracking that tightens to 0

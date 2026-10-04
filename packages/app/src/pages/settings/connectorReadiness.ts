@@ -94,7 +94,7 @@ export const readinessFor = (
       title: `Slack hasn't granted ${need.scope}`,
       // The re-authorize wording matters: the scope is in our request list, so
       // "connected" looks fine — it is the workspace's stored grant that is old.
-      detail: `Reconnect Slack to add it. Workspaces that installed Allting before ${need.scope} was introduced keep their original permissions until someone re-authorizes.`,
+      detail: `Reconnect Slack to add it. Workspaces that installed Kahuna before ${need.scope} was introduced keep their original permissions until someone re-authorizes.`,
       linkToSettings: true,
     }
   }

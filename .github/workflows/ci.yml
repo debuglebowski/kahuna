@@ -22,20 +22,20 @@ jobs:
       postgres:
         image: postgres:16-alpine
         env:
-          POSTGRES_USER: kingsmaker
-          POSTGRES_PASSWORD: kingsmaker
-          POSTGRES_DB: kingsmaker
+          POSTGRES_USER: kahuna
+          POSTGRES_PASSWORD: kahuna
+          POSTGRES_DB: kahuna
         ports:
           - 5544:5432
         options: >-
-          --health-cmd "pg_isready -U kingsmaker -d kingsmaker"
+          --health-cmd "pg_isready -U kahuna -d kahuna"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20
     env:
       # The suites create/drop their own test databases off this connection.
-      DATABASE_URL: postgresql://kingsmaker:kingsmaker@localhost:5544/kingsmaker
-      TEST_DATABASE_URL: postgresql://kingsmaker:kingsmaker@localhost:5544/kingsmaker_test
+      DATABASE_URL: postgresql://kahuna:kahuna@localhost:5544/kahuna
+      TEST_DATABASE_URL: postgresql://kahuna:kahuna@localhost:5544/kahuna_test
       # integrationSettings.test.ts encrypts a token, and crypto.ts refuses to do
       # that under the published `dev-secret-change-me` placeholder. A local
       # checkout picks a key up from the root `.env`, which does not exist here —
@@ -77,7 +77,7 @@ jobs:
       - run: bun run cli:build
       - run: node packages/cli/dist/index.js help
 
-      # PACK AND INSTALL IT, do not just run the file. `node_modules/.bin/allt` is
+      # PACK AND INSTALL IT, do not just run the file. `node_modules/.bin/kahuna` is
       # a SYMLINK, and an entrypoint check comparing argv[1] to import.meta.url
       # is false through a symlink — the CLI then exits 0 having printed
       # nothing, which every script reads as success. Running dist/index.js
@@ -87,12 +87,12 @@ jobs:
       - name: install the packed tarball and run the binary
         run: |
           set -eux
-          npm pack --workspace @alltinghq/cli --pack-destination /tmp
+          npm pack --workspace @kahunalabs/cli --pack-destination /tmp
           mkdir -p /tmp/km-install && cd /tmp/km-install
           npm init -y >/dev/null
-          npm install /tmp/alltinghq-cli-*.tgz
-          out=$(./node_modules/.bin/allt help)
-          echo "$out" | grep -q "Allting command line"
+          npm install /tmp/kahunalabs-cli-*.tgz
+          out=$(./node_modules/.bin/kahuna help)
+          echo "$out" | grep -q "Kahuna command line"
 
       # Includes server/migrations.test.ts, which drives the real `drizzle-kit`
       # deploy path against an empty scratch database and asserts completeness,
@@ -158,9 +158,9 @@ jobs:
         with:
           context: .
           load: true
-          tags: allting:ci
+          tags: kahuna:ci
           build-args: |
-            ALLTING_VERSION=${{ steps.version.outputs.value }}
+            KAHUNA_VERSION=${{ steps.version.outputs.value }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -173,14 +173,14 @@ jobs:
           set -euo pipefail
           docker network create ci-net
           docker run -d --name ci-pg --network ci-net \
-            -e POSTGRES_USER=kingsmaker -e POSTGRES_PASSWORD=ci \
-            -e POSTGRES_DB=kingsmaker postgres:16-alpine
+            -e POSTGRES_USER=kahuna -e POSTGRES_PASSWORD=ci \
+            -e POSTGRES_DB=kahuna postgres:16-alpine
           for _ in $(seq 1 40); do
-            docker exec ci-pg pg_isready -U kingsmaker -d kingsmaker && break
+            docker exec ci-pg pg_isready -U kahuna -d kahuna && break
             sleep 2
           done
 
-          DB="postgresql://allting:ci@ci-pg:5432/kingsmaker"
+          DB="postgresql://kahuna:ci@ci-pg:5432/kahuna"
 
           echo "::group::migrate"
           # BETTER_AUTH_SECRET, on a step that only migrates: the entrypoint's
@@ -193,18 +193,18 @@ jobs:
           docker run --rm --network ci-net \
             -e DATABASE_URL="$DB" \
             -e BETTER_AUTH_SECRET=ci-secret-not-for-real-use-000000 \
-            allting:ci migrate
+            kahuna:ci migrate
           echo "::endgroup::"
 
           # Assert against the DATABASE, not the migrate exit code: the bug this
           # guards against exited 0 while applying nothing. With one migration set
           # the ledger count no longer distinguishes which half landed, so probe
           # both an auth table and an engine table directly.
-          rows=$(docker exec ci-pg psql -U kingsmaker -d kingsmaker -tAc \
+          rows=$(docker exec ci-pg psql -U kahuna -d kahuna -tAc \
             "select count(*) from drizzle.__drizzle_migrations")
-          bauth=$(docker exec ci-pg psql -U kingsmaker -d kingsmaker -tAc \
+          bauth=$(docker exec ci-pg psql -U kahuna -d kahuna -tAc \
             "select count(*) from information_schema.tables where table_schema='public' and table_name='bauth_user'")
-          events=$(docker exec ci-pg psql -U kingsmaker -d kingsmaker -tAc \
+          events=$(docker exec ci-pg psql -U kahuna -d kahuna -tAc \
             "select count(*) from information_schema.tables where table_schema='public' and table_name='events'")
           expected=$(jq '.entries | length' packages/app/db/migrations/meta/_journal.json)
           echo "ledger=$rows/$expected bauth_user=$bauth events=$events"
@@ -216,7 +216,7 @@ jobs:
             -e DATABASE_URL="$DB" \
             -e BETTER_AUTH_SECRET=ci-secret-not-for-real-use-000000 \
             -e BETTER_AUTH_URL=http://localhost:3100 \
-            allting:ci
+            kahuna:ci
 
           # -s without -S: connection-refused retries while the server boots are
           # expected, so don't print them. The `if` keeps `set -e` from aborting.
@@ -285,6 +285,6 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            ALLTING_VERSION=${{ steps.version.outputs.value }}
+            KAHUNA_VERSION=${{ steps.version.outputs.value }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

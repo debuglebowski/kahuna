@@ -24,29 +24,28 @@ export interface Config {
 }
 
 /**
- * XDG first, then `~/.config`. Not `~/.allting`: a user who has set
+ * XDG first, then `~/.config`. Not `~/.kahuna`: a user who has set
  * XDG_CONFIG_HOME has said where config belongs, and ignoring that scatters
  * state they expect to be able to back up or wipe in one place.
  */
 export const configDir = (): string =>
-  path.join(process.env.XDG_CONFIG_HOME || path.join(homedir(), ".config"), "allting")
+  path.join(process.env.XDG_CONFIG_HOME || path.join(homedir(), ".config"), "kahuna")
 
 export const configPath = (): string => path.join(configDir(), "config.json")
 
 /**
- * Where config lived while this CLI was `km` under the Kingsmaker name. READ
- * as a fallback, never written: someone who reinstalls across the rename keeps
- * their session instead of silently landing back on the sign-in prompt.
+ * Where config lived under earlier names (`allting`, and before that
+ * `kingsmaker` when this CLI was `km`). READ as a fallback, never written:
+ * someone who reinstalls across a rename keeps their session instead of
+ * silently landing back on the sign-in prompt.
  */
-const legacyConfigPath = (): string =>
-  path.join(
-    process.env.XDG_CONFIG_HOME || path.join(homedir(), ".config"),
-    "kingsmaker",
-    "config.json",
+const legacyConfigPaths = (): string[] =>
+  ["allting", "kingsmaker"].map((name) =>
+    path.join(process.env.XDG_CONFIG_HOME || path.join(homedir(), ".config"), name, "config.json"),
   )
 
 export const loadConfig = (): Config => {
-  for (const file of [configPath(), legacyConfigPath()]) {
+  for (const file of [configPath(), ...legacyConfigPaths()]) {
     try {
       return JSON.parse(readFileSync(file, "utf8")) as Config
     } catch (e) {
@@ -58,7 +57,7 @@ export const loadConfig = (): Config => {
         throw new CliError(
           `${file} is not valid JSON.`,
           EXIT.failed,
-          "Fix or delete the file, then run `allt auth login` again.",
+          "Fix or delete the file, then run `kahuna auth login` again.",
         )
       }
     }
@@ -85,16 +84,16 @@ export const stripSlash = (url: string): string => url.replace(/\/+$/, "")
  * quietly aiming at their own laptop, and found out when the connection failed.
  * An unconfigured CLI now says so instead of guessing.
  *
- * `ALLT_HOST` wins over the stored host, so CI can point at another deployment
+ * `KAHUNA_HOST` wins over the stored host, so CI can point at another deployment
  * without writing to disk.
  */
 export const requireHost = (config: Config = loadConfig()): string => {
-  const host = process.env.ALLT_HOST ?? config.host
+  const host = process.env.KAHUNA_HOST ?? config.host
   if (!host) {
     throw new CliError(
       "No deployment configured.",
       EXIT.usage,
-      "Run `allt auth login --host <url>`, or set ALLT_HOST.",
+      "Run `kahuna auth login --host <url>`, or set KAHUNA_HOST.",
     )
   }
   return stripSlash(host)
@@ -111,7 +110,7 @@ export const requireSession = (): Session => {
   const config = loadConfig()
   const host = requireHost(config)
   if (!config.cookie) {
-    throw new CliError("Not signed in.", EXIT.unauthenticated, "Run `allt auth login` first.")
+    throw new CliError("Not signed in.", EXIT.unauthenticated, "Run `kahuna auth login` first.")
   }
   return { host, cookie: config.cookie, email: config.email }
 }

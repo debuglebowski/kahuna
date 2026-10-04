@@ -1,4 +1,4 @@
-import { DashboardBody as DashboardBodySchema } from "@alltinghq/contract"
+import { DashboardBody as DashboardBodySchema } from "@kahunalabs/contract"
 import { Schema } from "effect"
 import { describe, expect, it } from "vitest"
 import type { Dashboard } from "./api"

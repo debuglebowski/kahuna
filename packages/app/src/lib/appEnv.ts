@@ -17,7 +17,7 @@
 export const IS_DEV = Boolean(import.meta.env.DEV)
 
 /** The product wordmark, unqualified. */
-export const APP_NAME = "Allting"
+export const APP_NAME = "Kahuna"
 
 /**
  * The browser tab title. index.html carries the plain name as its pre-boot

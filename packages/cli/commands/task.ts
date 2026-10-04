@@ -1,4 +1,4 @@
-import type { Task, TaskStatus } from "@alltinghq/contract"
+import type { Task, TaskStatus } from "@kahunalabs/contract"
 import { requireSession } from "../config.ts"
 import { CliError, EXIT } from "../errors.ts"
 import { requireConfirmation, withVersion } from "../mutate.ts"
@@ -9,7 +9,7 @@ import { type Api, makeRuntime } from "../transport.ts"
 /**
  * Tasks are global AND record-scoped: `listTasks` takes an optional subject, so
  * `--record` is a filter rather than a different noun. THE SUBJECT IS THE
- * LINEAGE id (the `record` column of `allt record list`), not the version id —
+ * LINEAGE id (the `record` column of `kahuna record list`), not the version id —
  * an annotation belongs to the record, not to one version of it. `task status` and
  * `task priority` are the catalogues those tasks point at — sub-nouns, because
  * they belong to tasks and to nothing else.

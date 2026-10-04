@@ -1,4 +1,4 @@
-import { LABELS_KEY } from "@alltinghq/contract"
+import { LABELS_KEY } from "@kahunalabs/contract"
 import type { Field, RecordVersion, SidebarCondition } from "./api"
 import { isRichTextValue, richTextPlain } from "./richtext"
 

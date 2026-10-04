@@ -10,10 +10,9 @@
       },
     },
     "packages/app": {
-      "name": "@alltinghq/app",
+      "name": "@kahunalabs/app",
       "version": "0.0.9",
       "dependencies": {
-        "@alltinghq/contract": "workspace:*",
         "@azure/identity": "^4.13.1",
         "@azure/storage-blob": "^12.33.0",
         "@better-auth/sso": "1.6.14",
@@ -27,6 +26,7 @@
         "@effect/sql": "0.51.1",
         "@effect/sql-pg": "0.52.1",
         "@fontsource-variable/geist": "^5.2.9",
+        "@kahunalabs/contract": "workspace:*",
         "@tanstack/db": "0.6.8",
         "@tanstack/query-db-collection": "1.0.39",
         "@tanstack/react-db": "0.1.86",
@@ -79,22 +79,22 @@
       },
     },
     "packages/cli": {
-      "name": "@alltinghq/cli",
+      "name": "@kahunalabs/cli",
       "version": "0.0.9",
       "bin": {
-        "allt": "./dist/index.js",
+        "kahuna": "./dist/index.js",
       },
       "devDependencies": {
-        "@alltinghq/contract": "workspace:*",
         "@effect/platform": "0.96.1",
         "@effect/rpc": "0.75.1",
+        "@kahunalabs/contract": "workspace:*",
         "@types/node": "25.9.2",
         "effect": "3.21.3",
         "vitest": "3.2.6",
       },
     },
     "packages/contract": {
-      "name": "@alltinghq/contract",
+      "name": "@kahunalabs/contract",
       "version": "0.0.9",
       "peerDependencies": {
         "@effect/rpc": "0.75.1",
@@ -103,12 +103,6 @@
     },
   },
   "packages": {
-    "@alltinghq/app": ["@alltinghq/app@workspace:packages/app"],
-
-    "@alltinghq/cli": ["@alltinghq/cli@workspace:packages/cli"],
-
-    "@alltinghq/contract": ["@alltinghq/contract@workspace:packages/contract"],
-
     "@authenio/xml-encryption": ["@authenio/xml-encryption@2.0.2", "", { "dependencies": { "@xmldom/xmldom": "^0.8.6", "escape-html": "^1.0.3", "xpath": "0.0.32" } }, "sha512-cTlrKttbrRHEw3W+0/I609A2Matj5JQaRvfLtEIGZvlN0RaPi+3ANsMeqAyCAVlH/lUIW2tmtBlSMni74lcXeg=="],
 
     "@azure/abort-controller": ["@azure/abort-controller@2.2.0", "", { "dependencies": { "tslib": "^2.6.2" } }, "sha512-fNAjWnA/nZ2jz31kxR/AqRaUT8ewHBw/WuBIosK0moMy1C9e5ValbDfFdIxJzVOOYaYkV/b2F1S4H/aHiqfVQg=="],
@@ -290,6 +284,12 @@
     "@jridgewell/sourcemap-codec": ["@jridgewell/sourcemap-codec@1.5.5", "", {}, "sha512-cYQ9310grqxueWbl+WuIUIaiUaDcj7WOq5fVhEljNVgRfOUhY9fy2zTvfoqWsnebh8Sl70VScFbICvJnLKB0Og=="],
 
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.31", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.1.0", "@jridgewell/sourcemap-codec": "^1.4.14" } }, "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw=="],
+
+    "@kahunalabs/app": ["@kahunalabs/app@workspace:packages/app"],
+
+    "@kahunalabs/cli": ["@kahunalabs/cli@workspace:packages/cli"],
+
+    "@kahunalabs/contract": ["@kahunalabs/contract@workspace:packages/contract"],
 
     "@msgpackr-extract/msgpackr-extract-darwin-arm64": ["@msgpackr-extract/msgpackr-extract-darwin-arm64@3.0.4", "", { "os": "darwin", "cpu": "arm64" }, "sha512-LCkGo6JDfaBhgST7UpPWgNgLINpcpabaHfyz5OBx75nUYxBsaEPxjnyNjWpeb/xBup/682QnBfRBy2/LvPutZQ=="],
 

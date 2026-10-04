@@ -1,8 +1,9 @@
+import { FetchHttpClient } from "@effect/platform"
+import { RpcClient, RpcSerialization } from "@effect/rpc"
 import {
   type AccessActionName,
   type AccessCondition,
   type AccessResourceType,
-  AlltingRpcs,
   type AutomationAction,
   type AutomationTrigger,
   type DashboardBody,
@@ -10,6 +11,7 @@ import {
   type FieldConfig,
   type FieldKind,
   type GraphLayout,
+  KahunaRpcs,
   type MentionTarget,
   type RecordViewLayout,
   type RecordViewPrefsBody,
@@ -17,9 +19,7 @@ import {
   type SidebarCondition,
   type SidebarViewBody,
   type TaskStatusCategory,
-} from "@alltinghq/contract"
-import { FetchHttpClient } from "@effect/platform"
-import { RpcClient, RpcSerialization } from "@effect/rpc"
+} from "@kahunalabs/contract"
 import { Context, Effect, Layer, ManagedRuntime } from "effect"
 
 export type {
@@ -81,7 +81,7 @@ export type {
   TaskStatusCategory,
   TaskSubjectRef,
   VersionStatus,
-} from "@alltinghq/contract"
+} from "@kahunalabs/contract"
 
 /** Who a new upload belongs to: a record, or a Files widget's own bucket
  *  (`shared: false` hides it from org-scope widgets). Mirrors the engine's
@@ -111,10 +111,10 @@ const ProtocolLive = RpcClient.layerProtocolHttp({ url: "/api/rpc" }).pipe(
   Layer.provide(RpcSerialization.layerNdjson),
 )
 
-const makeClient = RpcClient.make(AlltingRpcs)
+const makeClient = RpcClient.make(KahunaRpcs)
 type Client = Effect.Effect.Success<typeof makeClient>
 
-class ApiClient extends Context.Tag("allting/ApiClient")<ApiClient, Client>() {}
+class ApiClient extends Context.Tag("kahuna/ApiClient")<ApiClient, Client>() {}
 
 const runtime = ManagedRuntime.make(
   Layer.scoped(ApiClient, makeClient).pipe(Layer.provide(ProtocolLive)),

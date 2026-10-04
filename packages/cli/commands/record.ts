@@ -1,4 +1,4 @@
-import type { Concept, Field, RecordVersion } from "@alltinghq/contract"
+import type { Concept, Field, RecordVersion } from "@kahunalabs/contract"
 import { requireSession } from "../config.ts"
 import { CliError, EXIT } from "../errors.ts"
 import { requireConfirmation, withVersion } from "../mutate.ts"

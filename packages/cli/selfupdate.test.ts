@@ -55,7 +55,7 @@ describe("classifying an install", () => {
   let root: string
 
   beforeEach(() => {
-    root = mkdtempSync(path.join(tmpdir(), "allt-install-"))
+    root = mkdtempSync(path.join(tmpdir(), "kahuna-install-"))
   })
 
   /** Materialise a real tree — `classifyInstall` stats the filesystem. */
@@ -75,7 +75,7 @@ describe("classifying an install", () => {
   }
 
   const NM = "node_modules"
-  const PKG = path.join("@alltinghq", "cli")
+  const PKG = path.join("@kahunalabs", "cli")
 
   it("calls a checkout or a linked build 'source'", () => {
     // No node_modules segment anywhere. This is what `npm link` looks like once
@@ -107,7 +107,7 @@ describe("classifying an install", () => {
       "5",
       NM,
       ".pnpm",
-      "@alltinghq+cli@1.0.0",
+      "@kahunalabs+cli@1.0.0",
       NM,
       PKG,
     ])
@@ -132,27 +132,27 @@ describe("classifying an install", () => {
 
   it("calls a pnpm PROJECT dependency 'local', not a global install", () => {
     // THE nesting trap. Measuring from the LAST node_modules lands inside
-    // `.pnpm/@alltinghq+cli@1.0.0`, which holds no package.json and so reads as
-    // an npm global root — and `allt cli update` would then run `npm install -g`
+    // `.pnpm/@kahunalabs+cli@1.0.0`, which holds no package.json and so reads as
+    // an npm global root — and `kahuna cli update` would then run `npm install -g`
     // for someone who never installed globally.
-    const file = layout(["project", NM, ".pnpm", "@alltinghq+cli@1.0.0", NM, PKG], ["project"])
+    const file = layout(["project", NM, ".pnpm", "@kahunalabs+cli@1.0.0", NM, PKG], ["project"])
     expect(classifyInstall(file)).toBe("local")
   })
 })
 
 describe("the install command", () => {
   it("is the global-install form for each manager", () => {
-    expect(renderCommand(updateArgv("npm"))).toBe("npm install -g @alltinghq/cli@latest")
-    expect(renderCommand(updateArgv("bun"))).toBe("bun add -g @alltinghq/cli@latest")
-    expect(renderCommand(updateArgv("pnpm"))).toBe("pnpm add -g @alltinghq/cli@latest")
-    expect(renderCommand(updateArgv("yarn"))).toBe("yarn global add @alltinghq/cli@latest")
+    expect(renderCommand(updateArgv("npm"))).toBe("npm install -g @kahunalabs/cli@latest")
+    expect(renderCommand(updateArgv("bun"))).toBe("bun add -g @kahunalabs/cli@latest")
+    expect(renderCommand(updateArgv("pnpm"))).toBe("pnpm add -g @kahunalabs/cli@latest")
+    expect(renderCommand(updateArgv("yarn"))).toBe("yarn global add @kahunalabs/cli@latest")
   })
 
   it("pins @latest rather than a computed version", () => {
     // The registry decided what `latest` is; restating the number here would let
     // the two disagree if a publish landed between the check and the install.
     for (const kind of ["npm", "bun", "pnpm", "yarn"] as const) {
-      expect(updateArgv(kind).args.at(-1)).toBe("@alltinghq/cli@latest")
+      expect(updateArgv(kind).args.at(-1)).toBe("@kahunalabs/cli@latest")
     }
   })
 })
@@ -167,7 +167,7 @@ describe("refusing", () => {
   })
 
   it("points a project dependency at its own project, not at -g", () => {
-    expect(refusal("local").hint).toContain("npm install @alltinghq/cli@latest")
+    expect(refusal("local").hint).toContain("npm install @kahunalabs/cli@latest")
     expect(refusal("local").hint).not.toContain("-g")
   })
 })
@@ -184,16 +184,16 @@ describe("asking the registry", () => {
     // A scoped name is ONE path segment to this API — unencoded, the slash makes
     // it a 404 against a package called "cli" under an org route.
     expect(String(fetchSpy.mock.calls[0]?.[0])).toBe(
-      "https://registry.npmjs.org/@alltinghq%2Fcli/latest",
+      "https://registry.npmjs.org/@kahunalabs%2Fcli/latest",
     )
   })
 
-  it("honours ALLT_REGISTRY, trailing slash and all", async () => {
-    process.env.ALLT_REGISTRY = "https://npm.internal.example.com/"
+  it("honours KAHUNA_REGISTRY, trailing slash and all", async () => {
+    process.env.KAHUNA_REGISTRY = "https://npm.internal.example.com/"
     const fetchSpy = respond({ version: "1.0.0" })
     await latestVersion()
     expect(String(fetchSpy.mock.calls[0]?.[0])).toBe(
-      "https://npm.internal.example.com/@alltinghq%2Fcli/latest",
+      "https://npm.internal.example.com/@kahunalabs%2Fcli/latest",
     )
   })
 
@@ -209,7 +209,7 @@ describe("asking the registry", () => {
   })
 
   it("fails when the body carries no version", async () => {
-    respond({ name: "@alltinghq/cli" })
+    respond({ name: "@kahunalabs/cli" })
     await expect(latestVersion()).rejects.toThrow(/no version/)
   })
 })

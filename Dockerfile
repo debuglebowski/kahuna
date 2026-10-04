@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-# Allting — single-process image: Bun serves auth + RPC + SSE + the built SPA.
+# Kahuna — single-process image: Bun serves auth + RPC + SSE + the built SPA.
 #
 # The engine (`packages/app/engine`) has NO build step: it's consumed as TypeScript
 # source through the `#engine` subpath import, so the runtime ships Bun + the TS
@@ -23,7 +23,7 @@
 # ---- deps + build ----------------------------------------------------------
 FROM oven/bun:1.3.6-alpine AS build
 
-WORKDIR /srv/allting
+WORKDIR /srv/kahuna
 
 # THE WHOLE `packages` TREE, not a hand-listed set of manifests.
 #
@@ -51,7 +51,7 @@ RUN bun run build
 # ---- production dependencies ----------------------------------------------
 FROM oven/bun:1.3.6-alpine AS prod-deps
 
-WORKDIR /srv/allting
+WORKDIR /srv/kahuna
 
 # Same reasoning as the build stage: the tree, not a list.
 COPY package.json bun.lock ./
@@ -62,20 +62,20 @@ RUN bun install --frozen-lockfile --production
 # ---- runtime ---------------------------------------------------------------
 FROM oven/bun:1.3.6-alpine AS runtime
 
-WORKDIR /srv/allting
+WORKDIR /srv/kahuna
 
 # What build is this? Passed by CI from the git tag / ref. Without it the server
 # reports `dev` and never claims an update is available — a source checkout has
 # no version to compare against. Declared AFTER the build stages on purpose: a
 # version bump must not invalidate the `bun install` or `vite build` cache.
-ARG ALLTING_VERSION=dev
-LABEL org.opencontainers.image.version="${ALLTING_VERSION}"
-LABEL org.opencontainers.image.source="https://github.com/debuglebowski/allting"
+ARG KAHUNA_VERSION=dev
+LABEL org.opencontainers.image.version="${KAHUNA_VERSION}"
+LABEL org.opencontainers.image.source="https://github.com/debuglebowski/kahuna"
 
 ENV NODE_ENV=production \
     PORT=3100 \
     # Read by server/version.ts and reported at /api/version.
-    ALLTING_VERSION=${ALLTING_VERSION} \
+    KAHUNA_VERSION=${KAHUNA_VERSION} \
     # Absolute, and outside the source tree: BLOB_LOCAL_DIR is resolved relative
     # to the process CWD, so a relative default would silently follow whatever
     # directory the process was launched from. Mount a volume here.
@@ -90,42 +90,42 @@ RUN apk add --no-cache tini
 # entries: biome + typescript, the tooling the root scripts run). Copying only
 # the root, as this did when the repo had a single manifest, produces an image
 # whose every runtime dependency is missing.
-COPY --from=prod-deps /srv/allting/node_modules ./node_modules
-COPY --from=prod-deps /srv/allting/packages/app/node_modules ./packages/app/node_modules
+COPY --from=prod-deps /srv/kahuna/node_modules ./node_modules
+COPY --from=prod-deps /srv/kahuna/packages/app/node_modules ./packages/app/node_modules
 # `packages/app/package.json` carries the `imports` map (#engine, #db) that every
 # server module resolves through, so it is required at RUNTIME, not just at build
 # time. The root manifest comes too: it defines the workspace the node_modules
 # symlinks were built against.
-COPY --from=build /srv/allting/package.json /srv/allting/bun.lock ./
-COPY --from=build /srv/allting/tsconfig.base.json /srv/allting/tsconfig.json ./
-COPY --from=build /srv/allting/packages/app/package.json ./packages/app/
-COPY --from=build /srv/allting/packages/app/tsconfig.json ./packages/app/
-COPY --from=build /srv/allting/packages/app/drizzle.config.ts ./packages/app/
+COPY --from=build /srv/kahuna/package.json /srv/kahuna/bun.lock ./
+COPY --from=build /srv/kahuna/tsconfig.base.json /srv/kahuna/tsconfig.json ./
+COPY --from=build /srv/kahuna/packages/app/package.json ./packages/app/
+COPY --from=build /srv/kahuna/packages/app/tsconfig.json ./packages/app/
+COPY --from=build /srv/kahuna/packages/app/drizzle.config.ts ./packages/app/
 
 # `engine/` is the domain core (TS source, imported as `#engine`); `db/` holds the
 # drizzle schema AND the migrations that `migrate` applies.
 #
-# `packages/contract` is the RPC contract, imported as `@alltinghq/contract`. It
+# `packages/contract` is the RPC contract, imported as `@kahunalabs/contract`. It
 # is resolved through a node_modules SYMLINK that `bun install` created in the
 # prod-deps stage pointing at `../../packages/contract` — so the directory must
 # land at exactly that path or every server module fails to import at boot.
-COPY --from=build /srv/allting/packages/contract ./packages/contract
-COPY --from=build /srv/allting/packages/app/engine ./packages/app/engine
-COPY --from=build /srv/allting/packages/app/db ./packages/app/db
-COPY --from=build /srv/allting/packages/app/server ./packages/app/server
-COPY --from=build /srv/allting/packages/app/scripts ./packages/app/scripts
-COPY --from=build /srv/allting/packages/app/dist ./packages/app/dist
+COPY --from=build /srv/kahuna/packages/contract ./packages/contract
+COPY --from=build /srv/kahuna/packages/app/engine ./packages/app/engine
+COPY --from=build /srv/kahuna/packages/app/db ./packages/app/db
+COPY --from=build /srv/kahuna/packages/app/server ./packages/app/server
+COPY --from=build /srv/kahuna/packages/app/scripts ./packages/app/scripts
+COPY --from=build /srv/kahuna/packages/app/dist ./packages/app/dist
 
 # The automation runner evaluates conditions with the SAME matcher the client
 # filters with (`server/automations.ts` -> `../src/lib/conditions`), so these two
 # client modules are runtime server code despite living under src/. Both are pure
 # (no React/DOM) and `conditions`' only other runtime import is
-# `@alltinghq/contract`, copied above — its `./api` import is type-only and erases.
+# `@kahunalabs/contract`, copied above — its `./api` import is type-only and erases.
 #
 # Without them the server does not boot AT ALL: `Cannot find module
 # '../src/lib/conditions'`, thrown at import time before anything listens.
-COPY --from=build /srv/allting/packages/app/src/lib/conditions.ts ./packages/app/src/lib/
-COPY --from=build /srv/allting/packages/app/src/lib/richtext.ts ./packages/app/src/lib/
+COPY --from=build /srv/kahuna/packages/app/src/lib/conditions.ts ./packages/app/src/lib/
+COPY --from=build /srv/kahuna/packages/app/src/lib/richtext.ts ./packages/app/src/lib/
 
 # A .dockerignore slip or a bad COPY would otherwise surface as `migrate` cheerily
 # applying zero migrations at deploy time. Fail the build instead.
@@ -139,7 +139,7 @@ RUN test -f packages/app/db/migrations/0000_baseline.sql \
 # drizzle-orm version mismatch). A migrate command must never depend on network
 # access.
 #
-# PLACED AFTER the source COPYs on purpose: `@alltinghq/contract` is a symlink
+# PLACED AFTER the source COPYs on purpose: `@kahunalabs/contract` is a symlink
 # into `packages/contract`, so resolving it earlier tests a link whose target has
 # not been copied yet and fails on an image that is fine.
 #
@@ -153,7 +153,7 @@ RUN test -f packages/app/db/migrations/0000_baseline.sql \
 # path test was only guessing at.
 RUN set -eux; \
     test -x packages/app/node_modules/.bin/drizzle-kit; \
-    test -e packages/app/node_modules/@alltinghq/contract/contract.ts; \
+    test -e packages/app/node_modules/@kahunalabs/contract/contract.ts; \
     cd packages/app && ./node_modules/.bin/drizzle-kit --version
 
 

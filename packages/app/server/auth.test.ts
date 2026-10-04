@@ -7,7 +7,7 @@ import { ConceptService, FieldService, RecordService } from "#engine"
 import { auth, ORG_SCOPED_TABLES } from "./auth"
 import { createUserDirect } from "./provision"
 import { runEngineOrThrow, systemScope } from "./runtime"
-import { seedAllting } from "./seed/seed"
+import { seedKahuna } from "./seed/seed"
 import { runScoped } from "./session"
 
 /** Convert a Set-Cookie response header into a request Cookie header. */
@@ -48,7 +48,7 @@ describe("tier 0 (BetterAuth) + scoping", () => {
 
   it("an authenticated member runs engine ops scoped to their org", async () => {
     const { headers, orgId } = await signUpAndOrg()
-    await runEngineOrThrow(systemScope(orgId, "system"), seedAllting)
+    await runEngineOrThrow(systemScope(orgId, "system"), seedKahuna)
     const req = new Request("http://localhost/api/concepts", { headers })
     const result = await runScoped(req, listConcepts)
     expect(result.ok).toBe(true)
@@ -58,7 +58,7 @@ describe("tier 0 (BetterAuth) + scoping", () => {
   it("org A cannot see org B's recordVersions (404 via session scope)", async () => {
     const a = await signUpAndOrg()
     const b = await signUpAndOrg()
-    await runEngineOrThrow(systemScope(a.orgId, "system"), seedAllting)
+    await runEngineOrThrow(systemScope(a.orgId, "system"), seedKahuna)
     const created = await runEngineOrThrow(
       systemScope(a.orgId, "system"),
       Effect.flatMap(RecordService, (i) => i.create({ conceptName: "Company", fields: {} })),
@@ -74,7 +74,7 @@ describe("tier 0 (BetterAuth) + scoping", () => {
 
   it("deleting an org purges its engine data (beforeDeleteOrganization hook)", async () => {
     const { headers, orgId } = await signUpAndOrg()
-    await runEngineOrThrow(systemScope(orgId, "system"), seedAllting)
+    await runEngineOrThrow(systemScope(orgId, "system"), seedKahuna)
     await runEngineOrThrow(
       systemScope(orgId, "system"),
       Effect.flatMap(RecordService, (i) => i.create({ conceptName: "Company", fields: {} })),
@@ -90,7 +90,7 @@ describe("tier 0 (BetterAuth) + scoping", () => {
 
   it("an illegal Agreement status transition surfaces as 422 ILLEGAL_TRANSITION", async () => {
     const a = await signUpAndOrg()
-    await runEngineOrThrow(systemScope(a.orgId, "system"), seedAllting)
+    await runEngineOrThrow(systemScope(a.orgId, "system"), seedKahuna)
     // Resolve the seeded Agreement.status field id, then create a draft agreement.
     const { recordVersionId, statusId } = await runEngineOrThrow(
       systemScope(a.orgId, "system"),

@@ -3,7 +3,7 @@ import { Pool } from "pg"
 import * as schema from "#db"
 
 const connectionString =
-  process.env.DATABASE_URL ?? "postgresql://kingsmaker:kingsmaker@localhost:5544/kingsmaker"
+  process.env.DATABASE_URL ?? "postgresql://kahuna:kahuna@localhost:5544/kahuna"
 
 /**
  * Shared pg pool + Drizzle client for BetterAuth (same Postgres as the engine).

@@ -16,7 +16,7 @@
   "include": [
     "src",
     "server",
-    // No "rpc" — the wire contract is its own package (`@alltinghq/contract`,
+    // No "rpc" — the wire contract is its own package (`@kahunalabs/contract`,
     // typechecked by `tsc -p packages/contract`), so that server, SPA and CLI
     // all consume one owner by name instead of by relative path.
     "engine",

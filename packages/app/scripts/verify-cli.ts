@@ -8,7 +8,7 @@ import { promisify } from "node:util"
 import { provisionVerifyIdentity } from "./verify-session"
 
 /**
- * End-to-end driver for the `allt` CLI, against a LIVE server.
+ * End-to-end driver for the `kahuna` CLI, against a LIVE server.
  *
  * Runs the BUILT BUNDLE with plain `node`, not the TypeScript source with Bun —
  * that is the artifact users get, and the difference is not cosmetic: syntax
@@ -29,7 +29,7 @@ const CLI = path.resolve(import.meta.dirname, "../../cli/dist/index.js")
 
 let passed = 0
 let failed = 0
-const configHome = mkdtempSync(path.join(tmpdir(), "allt-verify-"))
+const configHome = mkdtempSync(path.join(tmpdir(), "kahuna-verify-"))
 
 interface Result {
   readonly code: number
@@ -38,10 +38,10 @@ interface Result {
 }
 
 /** Run the CLI and capture everything a script would see. */
-const allt = async (...args: ReadonlyArray<string>): Promise<Result> => {
+const kahuna = async (...args: ReadonlyArray<string>): Promise<Result> => {
   try {
     const { stdout, stderr } = await exec("node", [CLI, ...args], {
-      env: { ...process.env, XDG_CONFIG_HOME: configHome, ALLT_HOST: API },
+      env: { ...process.env, XDG_CONFIG_HOME: configHome, KAHUNA_HOST: API },
       maxBuffer: 32 * 1024 * 1024,
     })
     return { code: 0, stdout, stderr }
@@ -66,8 +66,8 @@ const main = async (): Promise<void> => {
 
   // Fail early and clearly if the bundle was never built: an ENOENT from `node`
   // deep inside a later assertion reads like a CLI bug.
-  const probe = await allt("help")
-  if (probe.code !== 0 || !probe.stdout.includes("Allting")) {
+  const probe = await kahuna("help")
+  if (probe.code !== 0 || !probe.stdout.includes("Kahuna")) {
     console.error(`Cannot run ${CLI}. Build it first: bun run cli:build`)
     process.exit(2)
   }
@@ -76,20 +76,20 @@ const main = async (): Promise<void> => {
   console.log(`identity: ${id.email}\n`)
 
   console.log("auth")
-  check("health before sign-in", (await allt("system", "health")).code === 0)
-  const whoamiBefore = await allt("auth", "whoami")
+  check("health before sign-in", (await kahuna("system", "health")).code === 0)
+  const whoamiBefore = await kahuna("auth", "whoami")
   check("whoami exits 3 when signed out", whoamiBefore.code === 3, whoamiBefore.stderr)
 
-  const login = await allt("auth", "login", "--email", id.email, "--password", id.password)
+  const login = await kahuna("auth", "login", "--email", id.email, "--password", id.password)
   check("login succeeds", login.code === 0, login.stderr)
-  const whoami = await allt("auth", "whoami", "--json")
+  const whoami = await kahuna("auth", "whoami", "--json")
   check("whoami succeeds once signed in", whoami.code === 0, whoami.stderr)
 
   console.log("\nrecords")
-  const list = await allt("record", "list", "company", "--json")
+  const list = await kahuna("record", "list", "company", "--json")
   check("record list <concept>", list.code === 0, list.stderr)
 
-  const created = await allt(
+  const created = await kahuna(
     "record",
     "create",
     "company",
@@ -102,11 +102,11 @@ const main = async (): Promise<void> => {
   check("create returns an id", Boolean(recordId), created.stdout)
 
   if (recordId) {
-    const got = await allt("record", "get", recordId, "--json")
+    const got = await kahuna("record", "get", recordId, "--json")
     const row = got.code === 0 ? (JSON.parse(got.stdout) as Record<string, unknown>) : {}
     check("record get returns the value just written", row.name === "Verify Industries", got.stdout)
 
-    const updated = await allt(
+    const updated = await kahuna(
       "record",
       "update",
       recordId,
@@ -115,45 +115,45 @@ const main = async (): Promise<void> => {
       "--json",
     )
     check("record update (read-then-write, expectedVersion)", updated.code === 0, updated.stderr)
-    const after = await allt("record", "get", recordId, "--json")
+    const after = await kahuna("record", "get", recordId, "--json")
     check(
       "the update is visible on re-read",
       (JSON.parse(after.stdout) as { name?: string }).name === "Verify Holdings",
       after.stdout,
     )
 
-    const search = await allt("record", "search", "company", "Verify", "--json")
+    const search = await kahuna("record", "search", "company", "Verify", "--json")
     check(
       "record search finds it",
       search.code === 0 && search.stdout.includes(recordId),
       search.stderr || search.stdout,
     )
 
-    const dry = await allt("record", "delete", recordId, "--dry-run")
+    const dry = await kahuna("record", "delete", recordId, "--dry-run")
     check("record delete --dry-run writes nothing", dry.code === 0, dry.stderr)
-    const stillThere = await allt("record", "get", recordId, "--json")
+    const stillThere = await kahuna("record", "get", recordId, "--json")
     check("record survives the dry run", stillThere.code === 0)
 
-    const unconfirmed = await allt("record", "delete", recordId)
+    const unconfirmed = await kahuna("record", "delete", recordId)
     check(
       "record delete without --yes REFUSES (exit 2)",
       unconfirmed.code === 2,
       unconfirmed.stderr,
     )
 
-    check("record archive", (await allt("record", "archive", recordId)).code === 0)
-    check("record restore", (await allt("record", "restore", recordId)).code === 0)
+    check("record archive", (await kahuna("record", "archive", recordId)).code === 0)
+    check("record restore", (await kahuna("record", "restore", recordId)).code === 0)
 
-    const deleted = await allt("record", "delete", recordId, "--yes")
+    const deleted = await kahuna("record", "delete", recordId, "--yes")
     check("record delete --yes purges", deleted.code === 0, deleted.stderr)
-    const gone = await allt("record", "get", recordId, "--json")
+    const gone = await kahuna("record", "get", recordId, "--json")
     check("the record is gone afterwards", gone.code !== 0, gone.stdout)
   }
 
   console.log("\nschema")
   const stamp = Date.now()
   const conceptName = `CliVendor${stamp}`
-  const madeConcept = await allt(
+  const madeConcept = await kahuna(
     "concept",
     "create",
     conceptName,
@@ -163,7 +163,7 @@ const main = async (): Promise<void> => {
   check("concept create", madeConcept.code === 0, madeConcept.stderr)
 
   const slug = conceptName.toLowerCase()
-  const addedField = await allt(
+  const addedField = await kahuna(
     "concept",
     "field",
     "add",
@@ -174,7 +174,7 @@ const main = async (): Promise<void> => {
     "text",
   )
   check("concept field add", addedField.code === 0, addedField.stderr)
-  const addedEnum = await allt(
+  const addedEnum = await kahuna(
     "concept",
     "field",
     "add",
@@ -188,7 +188,7 @@ const main = async (): Promise<void> => {
   )
   check("concept field add --kind enum --options", addedEnum.code === 0, addedEnum.stderr)
 
-  const relNoTarget = await allt(
+  const relNoTarget = await kahuna(
     "concept",
     "field",
     "add",
@@ -199,17 +199,17 @@ const main = async (): Promise<void> => {
     "relation",
   )
   check("a relation field without --target is refused", relNoTarget.code === 2, relNoTarget.stderr)
-  const badKind = await allt("concept", "field", "add", slug, "--name", "x", "--kind", "wormhole")
+  const badKind = await kahuna("concept", "field", "add", slug, "--name", "x", "--kind", "wormhole")
   check(
     "an unknown field kind lists the real ones",
     badKind.code === 2 && badKind.stderr.includes("richtext"),
     badKind.stderr,
   )
 
-  const titled = await allt("concept", "update", slug, "--title-field", "title")
+  const titled = await kahuna("concept", "update", slug, "--title-field", "title")
   check("concept update --title-field", titled.code === 0, titled.stderr)
 
-  const shown = await allt("concept", "get", slug, "--json")
+  const shown = await kahuna("concept", "get", slug, "--json")
   const conceptJson = shown.code === 0 ? JSON.parse(shown.stdout) : {}
   check(
     "concept get reports the fields just added",
@@ -219,14 +219,14 @@ const main = async (): Promise<void> => {
 
   // A record in the new concept proves the schema is real, and that the title
   // field is what the label resolves through.
-  const rec = await allt("record", "create", slug, "--field", "title=First", "--json")
+  const rec = await kahuna("record", "create", slug, "--field", "title=First", "--json")
   check("a record can be created in the new concept", rec.code === 0, rec.stderr)
   const recRow = rec.code === 0 ? JSON.parse(rec.stdout) : {}
   check("the title field becomes the record's label", recRow.label === "First", rec.stdout)
 
-  const reordered = await allt("concept", "field", "reorder", slug, "stage")
+  const reordered = await kahuna("concept", "field", "reorder", slug, "stage")
   check("concept field reorder", reordered.code === 0, reordered.stderr)
-  const afterOrder = await allt("concept", "field", "list", slug, "--json")
+  const afterOrder = await kahuna("concept", "field", "list", slug, "--json")
   check(
     "the named field moved to the front, the rest kept their order",
     JSON.parse(afterOrder.stdout)[0]?.name === "stage",
@@ -234,13 +234,13 @@ const main = async (): Promise<void> => {
   )
 
   const labelName = `cli-label-${stamp}`
-  check("label create", (await allt("label", "create", labelName)).code === 0)
-  const labels = await allt("label", "list", "--json")
+  check("label create", (await kahuna("label", "create", labelName)).code === 0)
+  const labels = await kahuna("label", "list", "--json")
   check("label list shows it", labels.stdout.includes(labelName), labels.stdout.slice(0, 200))
-  check("label archive", (await allt("label", "archive", labelName)).code === 0)
-  check("label delete --yes", (await allt("label", "delete", labelName, "--yes")).code === 0)
+  check("label archive", (await kahuna("label", "archive", labelName)).code === 0)
+  check("label delete --yes", (await kahuna("label", "delete", labelName, "--yes")).code === 0)
 
-  const conceptUnconfirmed = await allt("concept", "delete", slug)
+  const conceptUnconfirmed = await kahuna("concept", "delete", slug)
   check(
     "concept delete without --yes REFUSES",
     conceptUnconfirmed.code === 2,
@@ -250,7 +250,7 @@ const main = async (): Promise<void> => {
   // BLOCK, NOT CASCADE. The concept still holds the record created above, and
   // the server refuses rather than taking it with it — the CLI must say what is
   // in the way and what to do, not print a bare CONCEPT_IN_USE.
-  const inUse = await allt("concept", "delete", slug, "--yes")
+  const inUse = await kahuna("concept", "delete", slug, "--yes")
   check(
     "deleting a concept that still has records is refused (exit 6) and explained",
     inUse.code === 6 &&
@@ -259,19 +259,19 @@ const main = async (): Promise<void> => {
     inUse.stderr,
   )
 
-  if (recRow.id) await allt("record", "delete", String(recRow.id), "--yes")
+  if (recRow.id) await kahuna("record", "delete", String(recRow.id), "--yes")
   check(
     "concept delete --yes purges once it is empty",
-    (await allt("concept", "delete", slug, "--yes")).code === 0,
+    (await kahuna("concept", "delete", slug, "--yes")).code === 0,
   )
 
   console.log("\nbulk in and out")
   const bulkName = `CliBulk${stamp}`
   const bulkSlug = bulkName.toLowerCase()
-  await allt("concept", "create", bulkName)
-  await allt("concept", "field", "add", bulkSlug, "--name", "code", "--kind", "text")
-  await allt("concept", "field", "add", bulkSlug, "--name", "seats", "--kind", "number")
-  await allt("concept", "update", bulkSlug, "--title-field", "code")
+  await kahuna("concept", "create", bulkName)
+  await kahuna("concept", "field", "add", bulkSlug, "--name", "code", "--kind", "text")
+  await kahuna("concept", "field", "add", bulkSlug, "--name", "seats", "--kind", "number")
+  await kahuna("concept", "update", bulkSlug, "--title-field", "code")
 
   const csvPath = path.join(configHome, "import.csv")
   // Deliberately awkward data: a comma, a doubled quote, an embedded newline
@@ -281,22 +281,22 @@ const main = async (): Promise<void> => {
     "code,seats\n" + "A-1,10\n" + '"B, the ""second""",20\n' + '"C\nmultiline",\n',
   )
 
-  const dryImport = await allt("record", "import", bulkSlug, csvPath, "--dry-run")
+  const dryImport = await kahuna("record", "import", bulkSlug, csvPath, "--dry-run")
   check(
     "import --dry-run reports counts and writes nothing",
     dryImport.code === 0 && dryImport.stderr.includes("3 created"),
     dryImport.stderr,
   )
-  const afterDry = await allt("record", "list", bulkSlug, "--json")
+  const afterDry = await kahuna("record", "list", bulkSlug, "--json")
   check(
     "nothing was written by the dry run",
     JSON.parse(afterDry.stdout).length === 0,
     afterDry.stdout,
   )
 
-  const imported = await allt("record", "import", bulkSlug, csvPath)
+  const imported = await kahuna("record", "import", bulkSlug, csvPath)
   check("record import creates the rows", imported.code === 0, imported.stderr)
-  const listed = JSON.parse((await allt("record", "list", bulkSlug, "--json")).stdout) as Array<
+  const listed = JSON.parse((await kahuna("record", "list", bulkSlug, "--json")).stdout) as Array<
     Record<string, unknown>
   >
   check("all three rows landed", listed.length === 3, JSON.stringify(listed).slice(0, 200))
@@ -318,13 +318,13 @@ const main = async (): Promise<void> => {
 
   // Re-importing with --key must UPDATE, not duplicate.
   writeFileSync(csvPath, "code,seats\nA-1,99\n")
-  const reimported = await allt("record", "import", bulkSlug, csvPath, "--key", "code")
+  const reimported = await kahuna("record", "import", bulkSlug, csvPath, "--key", "code")
   check(
     "re-import with --key updates instead of duplicating",
     reimported.code === 0 && reimported.stderr.includes("1 updated"),
     reimported.stderr,
   )
-  const afterKey = JSON.parse((await allt("record", "list", bulkSlug, "--json")).stdout) as Array<
+  const afterKey = JSON.parse((await kahuna("record", "list", bulkSlug, "--json")).stdout) as Array<
     Record<string, unknown>
   >
   check("still three records, not four", afterKey.length === 3, String(afterKey.length))
@@ -336,27 +336,27 @@ const main = async (): Promise<void> => {
 
   const badHeader = path.join(configHome, "bad.csv")
   writeFileSync(badHeader, "code,nonexistent\nX,1\n")
-  const badImport = await allt("record", "import", bulkSlug, badHeader)
+  const badImport = await kahuna("record", "import", bulkSlug, badHeader)
   check(
     "an unknown column FAILS rather than importing without it",
     badImport.code === 5 && badImport.stderr.includes("nonexistent"),
     badImport.stderr,
   )
 
-  const exported = await allt("record", "export", bulkSlug, "--csv")
+  const exported = await kahuna("record", "export", bulkSlug, "--csv")
   check(
     "record export emits the field names as columns",
     exported.code === 0 && exported.stdout.startsWith("id,code,seats"),
     exported.stdout.slice(0, 120),
   )
 
-  const exportAllCsv = await allt("record", "export", "--all-concepts", "--csv")
+  const exportAllCsv = await kahuna("record", "export", "--all-concepts", "--csv")
   check(
     "--all-concepts with --csv is refused with a reason",
     exportAllCsv.code === 2 && exportAllCsv.stderr.includes("different columns"),
     exportAllCsv.stderr,
   )
-  const exportAll = await allt("record", "export", "--all-concepts", "--json")
+  const exportAll = await kahuna("record", "export", "--all-concepts", "--json")
   check(
     "--all-concepts --json bundles every concept",
     exportAll.code === 0 && Object.keys(JSON.parse(exportAll.stdout)).length > 1,
@@ -368,21 +368,21 @@ const main = async (): Promise<void> => {
   // record, and passing the version id is exactly the mistake the column exists
   // to prevent.
   const anchorRecord = (
-    JSON.parse((await allt("record", "list", bulkSlug, "--json")).stdout) as Array<{
+    JSON.parse((await kahuna("record", "list", bulkSlug, "--json")).stdout) as Array<{
       id: string
       record: string
     }>
   )[0]?.record
   check("a record to hang annotations on", Boolean(anchorRecord))
 
-  const statuses = await allt("task", "status", "list", "--json")
+  const statuses = await kahuna("task", "status", "list", "--json")
   check("task status list", statuses.code === 0, statuses.stderr)
   const firstStatus = (JSON.parse(statuses.stdout) as Array<{ name: string }>)[0]?.name ?? ""
 
-  const madeTask = await allt("task", "create", "Ship the CLI", "--record", String(anchorRecord))
+  const madeTask = await kahuna("task", "create", "Ship the CLI", "--record", String(anchorRecord))
   check("task create on a record", madeTask.code === 0, madeTask.stderr)
   const tasks = JSON.parse(
-    (await allt("task", "list", "--record", String(anchorRecord), "--json")).stdout,
+    (await kahuna("task", "list", "--record", String(anchorRecord), "--json")).stdout,
   ) as Array<Record<string, unknown>>
   check("task list --record finds it", tasks.length === 1, JSON.stringify(tasks).slice(0, 200))
   const taskId = String(tasks[0]?.id ?? "")
@@ -390,7 +390,7 @@ const main = async (): Promise<void> => {
   if (taskId && firstStatus) {
     // Four procedures behind one command, each bumping expectedVersion — the
     // case that fails if they are batched instead of re-read between.
-    const multi = await allt(
+    const multi = await kahuna(
       "task",
       "update",
       taskId,
@@ -403,7 +403,7 @@ const main = async (): Promise<void> => {
     )
     check("task update changes title AND status in one command", multi.code === 0, multi.stderr)
     const after = JSON.parse(
-      (await allt("task", "list", "--record", String(anchorRecord), "--json")).stdout,
+      (await kahuna("task", "list", "--record", String(anchorRecord), "--json")).stdout,
     ) as Array<Record<string, unknown>>
     check("the title changed", after[0]?.title === "Ship it", JSON.stringify(after).slice(0, 200))
     check(
@@ -412,12 +412,12 @@ const main = async (): Promise<void> => {
       JSON.stringify(after).slice(0, 200),
     )
 
-    check("task archive", (await allt("task", "archive", taskId)).code === 0)
-    check("task restore", (await allt("task", "restore", taskId)).code === 0)
-    check("task delete --yes", (await allt("task", "delete", taskId, "--yes")).code === 0)
+    check("task archive", (await kahuna("task", "archive", taskId)).code === 0)
+    check("task restore", (await kahuna("task", "restore", taskId)).code === 0)
+    check("task delete --yes", (await kahuna("task", "delete", taskId, "--yes")).code === 0)
   }
 
-  const madeNote = await allt(
+  const madeNote = await kahuna(
     "note",
     "create",
     "A note from the CLI",
@@ -426,10 +426,10 @@ const main = async (): Promise<void> => {
   )
   check("note create", madeNote.code === 0, madeNote.stderr)
   const notes = JSON.parse(
-    (await allt("note", "list", "--record", String(anchorRecord), "--json")).stdout,
+    (await kahuna("note", "list", "--record", String(anchorRecord), "--json")).stdout,
   ) as Array<Record<string, unknown>>
   check("note list --record finds it", notes.length === 1, JSON.stringify(notes).slice(0, 200))
-  const noteListNoRecord = await allt("note", "list")
+  const noteListNoRecord = await kahuna("note", "list")
   check(
     "note list without a record explains WHY it cannot",
     noteListNoRecord.code === 2 && noteListNoRecord.stderr.includes("subject"),
@@ -441,9 +441,15 @@ const main = async (): Promise<void> => {
   const uploadPath = path.join(configHome, "attach.txt")
   const payload = `bytes ${stamp}\nsecond line\n`
   writeFileSync(uploadPath, payload)
-  const uploaded = await allt("attachment", "upload", uploadPath, "--record", String(anchorRecord))
+  const uploaded = await kahuna(
+    "attachment",
+    "upload",
+    uploadPath,
+    "--record",
+    String(anchorRecord),
+  )
   check("attachment upload", uploaded.code === 0, uploaded.stderr)
-  const bothOwners = await allt(
+  const bothOwners = await kahuna(
     "attachment",
     "upload",
     uploadPath,
@@ -455,7 +461,7 @@ const main = async (): Promise<void> => {
   check("--record AND --bucket together is refused", bothOwners.code === 2, bothOwners.stderr)
 
   const files = JSON.parse(
-    (await allt("attachment", "list", "--record", String(anchorRecord), "--json")).stdout,
+    (await kahuna("attachment", "list", "--record", String(anchorRecord), "--json")).stdout,
   ) as Array<Record<string, unknown>>
   check("attachment list shows it", files.length === 1, JSON.stringify(files).slice(0, 200))
   const fileId = String(files[0]?.id ?? "")
@@ -467,7 +473,7 @@ const main = async (): Promise<void> => {
 
   if (fileId) {
     const outPath = path.join(configHome, "downloaded.txt")
-    const down = await allt("attachment", "download", fileId, "--out", outPath)
+    const down = await kahuna("attachment", "download", fileId, "--out", outPath)
     check("attachment download", down.code === 0, down.stderr)
     check(
       "the downloaded bytes are IDENTICAL to what was uploaded",
@@ -476,12 +482,12 @@ const main = async (): Promise<void> => {
     )
     check(
       "attachment delete --yes",
-      (await allt("attachment", "delete", fileId, "--yes")).code === 0,
+      (await kahuna("attachment", "delete", fileId, "--yes")).code === 0,
     )
   }
 
   console.log("\naccess, organization, dashboards, automations")
-  const whole = await allt("access", "check", "--json")
+  const whole = await kahuna("access", "check", "--json")
   check("access check with no question gives the whole picture", whole.code === 0, whole.stderr)
   const picture = whole.code === 0 ? JSON.parse(whole.stdout) : {}
   check(
@@ -491,7 +497,7 @@ const main = async (): Promise<void> => {
   )
 
   // The identity provisioned for this run owns its org, so the answer is known.
-  const explained = await allt(
+  const explained = await kahuna(
     "access",
     "check",
     "--action",
@@ -516,46 +522,46 @@ const main = async (): Promise<void> => {
     Array.isArray(trace.layers) && trace.layers.length > 0,
     explained.stdout.slice(0, 300),
   )
-  const table = await allt("access", "check", "--action", "configure", "--resource", "org")
+  const table = await kahuna("access", "check", "--action", "configure", "--resource", "org")
   check(
     "the trace renders as a table with a decided marker",
     table.stdout.includes("decided") || table.stdout.includes("ALLOWED"),
     table.stdout.slice(0, 300),
   )
 
-  const badAction = await allt("access", "check", "--action", "levitate", "--resource", "org")
+  const badAction = await kahuna("access", "check", "--action", "levitate", "--resource", "org")
   check(
     "an unknown action lists the real ones",
     badAction.code === 2 && badAction.stderr.includes("configure"),
     badAction.stderr,
   )
-  const halfQuestion = await allt("access", "check", "--action", "view")
+  const halfQuestion = await kahuna("access", "check", "--action", "view")
   check("--action without --resource is refused", halfQuestion.code === 2, halfQuestion.stderr)
 
-  const roles = await allt("access", "role", "list", "--json")
+  const roles = await kahuna("access", "role", "list", "--json")
   check("access role list", roles.code === 0, roles.stderr)
   const roleNames = (JSON.parse(roles.stdout) as Array<{ name: string }>).map((r) => r.name)
   check("the seeded roles are there", roleNames.length > 0, roleNames.join(","))
-  const holders = await allt("access", "role", "holders", roleNames[0] ?? "")
+  const holders = await kahuna("access", "role", "holders", roleNames[0] ?? "")
   check("access role holders", holders.code === 0, holders.stderr)
 
-  const members = await allt("organization", "member", "list", "--json")
+  const members = await kahuna("organization", "member", "list", "--json")
   check("organization member list", members.code === 0, members.stderr)
-  const noSuchAccount = await allt("organization", "member", "add", `ghost-${stamp}@example.test`)
+  const noSuchAccount = await kahuna("organization", "member", "add", `ghost-${stamp}@example.test`)
   check(
     "adding an unprovisioned account explains that sign-up is closed",
     noSuchAccount.code === 5 && noSuchAccount.stderr.includes("provisioned"),
     noSuchAccount.stderr,
   )
 
-  const dashboards = await allt("dashboard", "list", "--json")
+  const dashboards = await kahuna("dashboard", "list", "--json")
   check("dashboard list", dashboards.code === 0, dashboards.stderr)
   const dashNames = JSON.parse(dashboards.stdout) as Array<{ name: string }>
 
-  const dashCreated = await allt("dashboard", "create", `CLI Test ${stamp}`)
+  const dashCreated = await kahuna("dashboard", "create", `CLI Test ${stamp}`)
   check("dashboard create (empty)", dashCreated.code === 0, dashCreated.stderr)
 
-  const groupAdd = await allt(
+  const groupAdd = await kahuna(
     "dashboard",
     "group",
     "add",
@@ -567,7 +573,7 @@ const main = async (): Promise<void> => {
   )
   check("dashboard group add", groupAdd.code === 0, groupAdd.stderr)
 
-  const widgetAdd = await allt(
+  const widgetAdd = await kahuna(
     "dashboard",
     "widget",
     "add",
@@ -581,14 +587,14 @@ const main = async (): Promise<void> => {
   )
   check("dashboard widget add", widgetAdd.code === 0, widgetAdd.stderr)
 
-  const widgetList = await allt("dashboard", "widget", "list", `CLI Test ${stamp}`, "--json")
+  const widgetList = await kahuna("dashboard", "widget", "list", `CLI Test ${stamp}`, "--json")
   check("dashboard widget list", widgetList.code === 0, widgetList.stderr)
   const nodes = JSON.parse(widgetList.stdout) as Array<{ type: string; id: string }>
   const widget = nodes.find((n) => n.type === "note")
   check("the added widget is listed", widget !== undefined, widgetList.stdout)
 
   if (widget) {
-    const widgetGet = await allt(
+    const widgetGet = await kahuna(
       "dashboard",
       "widget",
       "get",
@@ -598,7 +604,7 @@ const main = async (): Promise<void> => {
     )
     check("dashboard widget get", widgetGet.code === 0, widgetGet.stderr)
 
-    const widgetSet = await allt(
+    const widgetSet = await kahuna(
       "dashboard",
       "widget",
       "set",
@@ -609,12 +615,18 @@ const main = async (): Promise<void> => {
     )
     check("dashboard widget set", widgetSet.code === 0, widgetSet.stderr)
 
-    const widgetRemove = await allt("dashboard", "widget", "remove", `CLI Test ${stamp}`, widget.id)
+    const widgetRemove = await kahuna(
+      "dashboard",
+      "widget",
+      "remove",
+      `CLI Test ${stamp}`,
+      widget.id,
+    )
     check("dashboard widget remove", widgetRemove.code === 0, widgetRemove.stderr)
   }
 
   if (dashNames[0]) {
-    const duplicated = await allt(
+    const duplicated = await kahuna(
       "dashboard",
       "create",
       `Clone ${stamp}`,
@@ -622,7 +634,7 @@ const main = async (): Promise<void> => {
       dashNames[0].name,
     )
     check("dashboard create --from", duplicated.code === 0, duplicated.stderr)
-    const after = JSON.parse((await allt("dashboard", "list", "--json")).stdout) as Array<{
+    const after = JSON.parse((await kahuna("dashboard", "list", "--json")).stdout) as Array<{
       name: string
     }>
     check(
@@ -632,11 +644,11 @@ const main = async (): Promise<void> => {
     )
     check(
       "dashboard delete --yes (clone)",
-      (await allt("dashboard", "delete", `Clone ${stamp}`, "--yes")).code === 0,
+      (await kahuna("dashboard", "delete", `Clone ${stamp}`, "--yes")).code === 0,
     )
   }
 
-  const renamed = await allt(
+  const renamed = await kahuna(
     "dashboard",
     "update",
     `CLI Test ${stamp}`,
@@ -646,25 +658,25 @@ const main = async (): Promise<void> => {
   check("dashboard update", renamed.code === 0, renamed.stderr)
   check(
     "dashboard delete --yes (renamed)",
-    (await allt("dashboard", "delete", `CLI Test Renamed ${stamp}`, "--yes")).code === 0,
+    (await kahuna("dashboard", "delete", `CLI Test Renamed ${stamp}`, "--yes")).code === 0,
   )
 
-  const noName = await allt("dashboard", "create")
+  const noName = await kahuna("dashboard", "create")
   check("dashboard create with no name is refused", noName.code === 2, noName.stderr)
 
-  const automations = await allt("automation", "list", "--json")
+  const automations = await kahuna("automation", "list", "--json")
   check("automation list", automations.code === 0, automations.stderr)
 
   console.log("\nbrowser login (device flow)")
-  // The whole flow WITHOUT a browser: start `allt auth login --browser`, read the
+  // The whole flow WITHOUT a browser: start `kahuna auth login --browser`, read the
   // link it prints, and open it the way a signed-in browser would. Opening it IS
   // the approval — there is nothing to type — so this is the real sequence, and
   // the one that works over ssh.
   const blHome = path.join(configHome, "browser")
   const child = spawn("node", [CLI, "auth", "login", "--browser"], {
-    // ALLT_NO_BROWSER: this driver runs the real command, and without it every run
+    // KAHUNA_NO_BROWSER: this driver runs the real command, and without it every run
     // opens a tab on the machine running the tests.
-    env: { ...process.env, XDG_CONFIG_HOME: blHome, ALLT_HOST: API, ALLT_NO_BROWSER: "1" },
+    env: { ...process.env, XDG_CONFIG_HOME: blHome, KAHUNA_HOST: API, KAHUNA_NO_BROWSER: "1" },
   })
   let stderrBuf = ""
   child.stderr.on("data", (d: Buffer) => {
@@ -725,7 +737,7 @@ const main = async (): Promise<void> => {
   check("the CLI notices and exits 0", blExit === 0, stderrBuf.slice(-300))
 
   const afterBrowser = await exec("node", [CLI, "concept", "list", "--json"], {
-    env: { ...process.env, XDG_CONFIG_HOME: blHome, ALLT_HOST: API },
+    env: { ...process.env, XDG_CONFIG_HOME: blHome, KAHUNA_HOST: API },
   }).catch((e: unknown) => ({ stdout: "", stderr: String(e) }))
   check(
     "the stored credential authenticates a later command",
@@ -737,13 +749,13 @@ const main = async (): Promise<void> => {
   check("the link cannot be used twice", replay.status === 400, String(replay.status))
 
   console.log("\nerrors and exit codes")
-  const badConcept = await allt("record", "list", "nonexistent-concept")
+  const badConcept = await kahuna("record", "list", "nonexistent-concept")
   check("unknown concept exits 5", badConcept.code === 5, badConcept.stderr)
 
   // "compan" matches Company, CompanyContact and CompanyNote in a seeded org,
   // so this asserts the REFUSAL: guessing one would silently list the wrong
   // concept's records.
-  const ambiguous = await allt("record", "list", "compan")
+  const ambiguous = await kahuna("record", "list", "compan")
   check(
     "an ambiguous prefix is refused with the candidates named",
     ambiguous.code === 2 &&
@@ -751,20 +763,20 @@ const main = async (): Promise<void> => {
       ambiguous.stderr.includes("matches 3"),
     ambiguous.stderr,
   )
-  const exact = await allt("record", "list", "company", "--json")
+  const exact = await kahuna("record", "list", "company", "--json")
   check("an exact slug still resolves past the ambiguity", exact.code === 0, exact.stderr)
 
-  const badField = await allt("record", "create", "company", "--field", "nope=x")
+  const badField = await kahuna("record", "create", "company", "--field", "nope=x")
   check("unknown field exits 5", badField.code === 5, badField.stderr)
 
-  const badFlag = await allt("record", "list", "company", "--jsno")
+  const badFlag = await kahuna("record", "list", "company", "--jsno")
   check("a typo'd flag is a usage error, not silently ignored", badFlag.code === 2, badFlag.stderr)
 
-  const unknown = await allt("record", "frobnicate")
+  const unknown = await kahuna("record", "frobnicate")
   check("unknown command exits 2", unknown.code === 2, unknown.stderr)
 
   console.log("\noutput discipline")
-  const json = await allt("record", "list", "company", "--json")
+  const json = await kahuna("record", "list", "company", "--json")
   check(
     "--json puts ONLY data on stdout",
     (() => {
@@ -778,7 +790,7 @@ const main = async (): Promise<void> => {
     json.stdout.slice(0, 200),
   )
 
-  const csv = await allt("record", "list", "company", "--csv")
+  const csv = await kahuna("record", "list", "company", "--csv")
   check(
     "--csv emits a header row",
     csv.code === 0 && (csv.stdout.split("\n")[0]?.includes("id") ?? false),

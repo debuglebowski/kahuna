@@ -1,4 +1,4 @@
-import type { Concept, Field, RecordVersion } from "@alltinghq/contract"
+import type { Concept, Field, RecordVersion } from "@kahunalabs/contract"
 import { describe, expect, it } from "vitest"
 import { EXIT } from "./errors.ts"
 import { findConcept, findField, labelOf, parseFieldAssignments } from "./resolve.ts"

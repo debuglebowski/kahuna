@@ -79,10 +79,10 @@ const server = Bun.serve({
     if (await file.exists()) return secure(new Response(file))
     const index = Bun.file(path.join(DIST, "index.html"))
     if (await index.exists()) return secure(new Response(index))
-    return secure(new Response("Allting — run `vite build` to serve the SPA.", { status: 200 }))
+    return secure(new Response("Kahuna — run `vite build` to serve the SPA.", { status: 200 }))
   },
 })
 
 installGracefulShutdown(server)
 
-console.log(`Allting ${CURRENT_VERSION} listening on http://localhost:${server.port}`)
+console.log(`Kahuna ${CURRENT_VERSION} listening on http://localhost:${server.port}`)

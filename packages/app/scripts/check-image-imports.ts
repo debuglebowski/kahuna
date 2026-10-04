@@ -13,7 +13,7 @@
  * environment: it reads files and resolves paths, nothing more.
  *
  * Scope is deliberately FIRST-PARTY ONLY — relative specifiers, the `#engine` /
- * `#db` subpath imports, and `@alltinghq/*` workspace packages (our own source
+ * `#db` subpath imports, and `@kahunalabs/*` workspace packages (our own source
  * behind a package name; see `resolveWorkspace`). Other bare specifiers
  * (`effect`, `better-auth`) are the package manager's problem, and `bun build`
  * proved a poor proxy for all of this: it descends
@@ -60,14 +60,14 @@ if (Object.keys(IMPORT_MAP).length === 0) {
  * First-party workspace packages. These LOOK like third-party bare specifiers,
  * so the "bare = the package manager's problem" rule below would skip them — but
  * they are our own source, shipped by their own `COPY`, and a missing one breaks
- * boot exactly like a missing relative import. `@alltinghq/contract` is the
+ * boot exactly like a missing relative import. `@kahunalabs/contract` is the
  * case that matters: every server module imports it.
  *
  * Resolved through the workspace directory rather than the node_modules symlink,
  * so this reports the real path when the link exists but its target was never
  * copied into the image.
  */
-const WORKSPACE_SCOPE = "@alltinghq/"
+const WORKSPACE_SCOPE = "@kahunalabs/"
 const resolveWorkspace = (spec: string): string | null => {
   const rest = spec.slice(WORKSPACE_SCOPE.length) // "contract" | "contract/x"
   const [pkg, ...sub] = rest.split("/")

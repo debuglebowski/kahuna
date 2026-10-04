@@ -4,7 +4,7 @@ import type {
   DashboardGroup,
   DashboardNode,
   DashboardWidget,
-} from "@alltinghq/contract"
+} from "@kahunalabs/contract"
 import { requireSession } from "../config.ts"
 import { CliError, EXIT } from "../errors.ts"
 import { requireConfirmation } from "../mutate.ts"
@@ -216,7 +216,7 @@ const requireTreeBody = (dashboard: Dashboard): TreeBody => {
     throw new CliError(
       `"${dashboard.name}" hasn't been opened in the app since before widget editing existed.`,
       EXIT.usage,
-      "Open it once in Allting to migrate its layout, then retry.",
+      "Open it once in Kahuna to migrate its layout, then retry.",
     )
   }
   return dashboard.body as TreeBody
@@ -260,7 +260,7 @@ const findNode = (flat: ReadonlyArray<FlatNode>, ref: string): FlatNode => {
     partial.length > 1 ? EXIT.usage : EXIT.notFound,
     partial.length > 1
       ? partial.map((f) => `  ${f.label ?? "(untitled)"}  [${f.type}]  ${f.id}`).join("\n")
-      : "Run `allt dashboard widget list <dashboard>`.",
+      : "Run `kahuna dashboard widget list <dashboard>`.",
   )
 }
 
@@ -404,7 +404,7 @@ const runNodeSet = async (
       throw new CliError(
         `"${ref}" is a ${isGroup ? "group" : "widget"}, not a ${expect}.`,
         EXIT.usage,
-        `Use \`allt dashboard ${isGroup ? "group" : "widget"} set\` instead.`,
+        `Use \`kahuna dashboard ${isGroup ? "group" : "widget"} set\` instead.`,
       )
     }
     const nextBody: TreeBody = {

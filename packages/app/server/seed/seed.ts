@@ -9,7 +9,7 @@ import {
   TaskStatusService,
 } from "#engine"
 import { conceptDashboardSeed } from "../use-cases"
-import { alltingSpec, type ConceptSpec, defaultTaskPriorities, defaultTaskStatuses } from "./spec"
+import { type ConceptSpec, defaultTaskPriorities, defaultTaskStatuses, kahunaSpec } from "./spec"
 
 /** Get a concept by name, creating it if absent (idempotent). */
 const ensureConcept = (concepts: ConceptService, spec: ConceptSpec) =>
@@ -26,13 +26,13 @@ const ensureConcept = (concepts: ConceptService, spec: ConceptSpec) =>
   )
 
 /**
- * Seed the Allting concepts + fields for the current org (OrgContext).
+ * Seed the Kahuna concepts + fields for the current org (OrgContext).
  * Two passes: create every concept first, then add fields — so `relation`
  * fields can resolve their `targetName` to a concept id. Idempotent: re-running
  * skips concepts/fields that already exist, and every create flows through the
  * engine's event-sourced append path.
  */
-export const seedAllting = Effect.gen(function* () {
+export const seedKahuna = Effect.gen(function* () {
   const concepts = yield* ConceptService
   const fields = yield* FieldService
   const taskStatuses = yield* TaskStatusService
@@ -65,7 +65,7 @@ export const seedAllting = Effect.gen(function* () {
   yield* taskPriorities.ensureDefaults(defaultTaskPriorities)
 
   const idByName = new Map<string, string>()
-  for (const spec of alltingSpec) {
+  for (const spec of kahunaSpec) {
     const concept = yield* ensureConcept(concepts, spec)
     idByName.set(spec.name, concept.id)
   }
@@ -75,7 +75,7 @@ export const seedAllting = Effect.gen(function* () {
   // are the org's own business.
   const existingDashboards = yield* dashboards.list()
   const dashNames = new Set(existingDashboards.map((d) => d.name))
-  for (const spec of alltingSpec) {
+  for (const spec of kahunaSpec) {
     if (dashNames.has(spec.name)) continue
     yield* dashboards.create({
       name: spec.name,
@@ -85,7 +85,7 @@ export const seedAllting = Effect.gen(function* () {
     })
   }
 
-  for (const spec of alltingSpec) {
+  for (const spec of kahunaSpec) {
     const conceptId = idByName.get(spec.name)!
     const existing = yield* fields.listFields(conceptId)
     const have = new Set(existing.map((f) => f.name))
@@ -105,5 +105,5 @@ export const seedAllting = Effect.gen(function* () {
     }
   }
 
-  return { concepts: alltingSpec.length }
+  return { concepts: kahunaSpec.length }
 })

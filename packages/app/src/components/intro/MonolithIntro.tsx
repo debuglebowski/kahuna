@@ -4,7 +4,7 @@ import type { IntroProps } from "./types"
 /**
  * MONOLITH — WebGL throne-room intro (~4.3s including the final release).
  *
- * A dark hall. Volumetric god-rays sweep an obsidian slab; the KINGSMAKER
+ * A dark hall. Volumetric god-rays sweep an obsidian slab; the KAHUNA
  * wordmark is etched into its face and legible only where light crosses it.
  * The main beam locks on, the etching floods with light, and a radial
  * whiteout hands the frame to the app.
@@ -323,7 +323,7 @@ void main() {
  * Wordmark texture: R = crisp glyphs, G = pre-blurred glow (single texture)
  * ------------------------------------------------------------------------ */
 
-/** White-on-transparent KINGSMAKER — evenly tracked, centered as a whole, Geist 600. */
+/** White-on-transparent KAHUNA — evenly tracked, centered as a whole, Geist 600. */
 function drawGlyphCanvas(): HTMLCanvasElement | null {
   const cv = document.createElement("canvas")
   cv.width = TEX_W
@@ -334,7 +334,7 @@ function drawGlyphCanvas(): HTMLCanvasElement | null {
   ctx.textBaseline = "middle"
   ctx.textAlign = "left"
 
-  const word = "KINGSMAKER"
+  const word = "KAHUNA"
   const trackingEm = 0.34
   const maxWidth = TEX_W - 280
   const gaps = word.length - 1
@@ -749,7 +749,7 @@ export function MonolithIntro({ onDone }: IntroProps) {
             textShadow: "0 0 28px rgba(255,250,238,0.4), 0 0 90px rgba(255,250,238,0.18)",
           }}
         >
-          KINGSMAKER
+          KAHUNA
         </span>
       </div>
 

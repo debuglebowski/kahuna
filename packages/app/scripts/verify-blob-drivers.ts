@@ -62,7 +62,7 @@ const runDriver = async (name: string, layer: Layer.Layer<BlobStore>) => {
 // --- local -----------------------------------------------------------------
 await runDriver(
   "local",
-  LocalFsBlobStore(await mkdtemp(path.join(tmpdir(), "allting-blob-verify-"))),
+  LocalFsBlobStore(await mkdtemp(path.join(tmpdir(), "kahuna-blob-verify-"))),
 )
 
 // --- azure -----------------------------------------------------------------

@@ -4,7 +4,7 @@ import { resolveOrg } from "./session"
 /**
  * Device flow for the CLI — RFC 8628 in shape, minus the OAuth scaffolding.
  *
- *   1. `allt auth login --browser` asks for a device code and prints a URL.
+ *   1. `kahuna auth login --browser` asks for a device code and prints a URL.
  *   2. The person opens it in ANY browser, on any machine, and signs in however
  *      this deployment allows. Opening the link IS the approval — there is
  *      nothing to type.
@@ -76,7 +76,7 @@ const normalise = (raw: string): string =>
 const shell = (body: string, status = 200): Response =>
   new Response(
     `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">` +
-      `<title>Allting CLI</title>` +
+      `<title>Kahuna CLI</title>` +
       `<style>body{font:16px/1.6 system-ui,sans-serif;margin:0;display:grid;place-items:center;min-height:100vh;padding:24px;color:#15181d;background:#f1f2f5}` +
       `main{max-width:26rem;width:100%}h1{font-size:1.25rem;margin:0 0 .25rem}p{margin:.4rem 0;color:#4b525d}` +
       `input{font:inherit;font-family:ui-monospace,monospace;font-size:1.5rem;letter-spacing:.12em;text-align:center;text-transform:uppercase;width:100%;box-sizing:border-box;padding:.6rem;margin:1rem 0 .75rem;border:1px solid #c3c8d1;border-radius:6px;background:#fff;color:inherit}` +
@@ -143,7 +143,7 @@ export const devicePage = async (request: Request): Promise<Response> => {
 
   if (!submitted) {
     return shell(
-      `<h1>Nothing to authorise</h1><p>Open the link your terminal printed, or run <code>allt auth login --browser</code> again.</p>`,
+      `<h1>Nothing to authorise</h1><p>Open the link your terminal printed, or run <code>kahuna auth login --browser</code> again.</p>`,
       400,
     )
   }
@@ -154,7 +154,7 @@ export const devicePage = async (request: Request): Promise<Response> => {
     // Deliberately the same answer for "no such code" and "already used": a
     // stale link in someone's history learns nothing about what is live.
     return shell(
-      `<h1>That link is no longer valid</h1><p>It may have expired, or already been used. Run <code>allt auth login --browser</code> again.</p>`,
+      `<h1>That link is no longer valid</h1><p>It may have expired, or already been used. Run <code>kahuna auth login --browser</code> again.</p>`,
       400,
     )
   }

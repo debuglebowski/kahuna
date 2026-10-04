@@ -1,6 +1,6 @@
-import { AlltingRpcs } from "@alltinghq/contract"
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "@effect/platform"
 import { RpcClient, RpcSerialization } from "@effect/rpc"
+import { KahunaRpcs } from "@kahunalabs/contract"
 import { Cause, Context, Effect, Exit, Layer, ManagedRuntime } from "effect"
 import type { Session } from "./config.ts"
 import { CliError, EXIT } from "./errors.ts"
@@ -19,15 +19,15 @@ import { CliError, EXIT } from "./errors.ts"
  * `transformClient`.
  */
 const authHeaders = (session: Session): Record<string, string> => {
-  // ALLT_TOKEN is read here so CI can pass a credential without a config file.
+  // KAHUNA_TOKEN is read here so CI can pass a credential without a config file.
   // Bearer support is stubbed deliberately: the API-key plugin is not installed
   // server-side yet (`auth token create` is a later phase), so a token today
   // would be silently ignored. Fail loudly instead of pretending.
-  if (process.env.ALLT_TOKEN) {
+  if (process.env.KAHUNA_TOKEN) {
     throw new CliError(
-      "ALLT_TOKEN is set, but this deployment has no API-key support yet.",
+      "KAHUNA_TOKEN is set, but this deployment has no API-key support yet.",
       EXIT.usage,
-      "Use `allt auth login` for now; token credentials arrive with `allt auth token create`.",
+      "Use `kahuna auth login` for now; token credentials arrive with `kahuna auth token create`.",
     )
   }
   // `origin` for the same reason rest.ts sends it: anything that reaches
@@ -54,9 +54,9 @@ export const makeRuntime = (session: Session) => {
     transformClient: HttpClient.mapRequest(HttpClientRequest.setHeaders(headers)),
   }).pipe(Layer.provide(FetchHttpClient.layer), Layer.provide(RpcSerialization.layerNdjson))
 
-  const make = RpcClient.make(AlltingRpcs)
+  const make = RpcClient.make(KahunaRpcs)
   type Client = Effect.Effect.Success<typeof make>
-  class ApiClient extends Context.Tag("allting/cli/ApiClient")<ApiClient, Client>() {}
+  class ApiClient extends Context.Tag("kahuna/cli/ApiClient")<ApiClient, Client>() {}
 
   const runtime = ManagedRuntime.make(Layer.scoped(ApiClient, make).pipe(Layer.provide(protocol)))
 

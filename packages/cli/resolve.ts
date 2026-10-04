@@ -1,4 +1,4 @@
-import type { Concept, Field, RecordVersion } from "@alltinghq/contract"
+import type { Concept, Field, RecordVersion } from "@kahunalabs/contract"
 import { CliError, EXIT } from "./errors.ts"
 import type { Api } from "./transport.ts"
 

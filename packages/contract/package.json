@@ -1,8 +1,8 @@
 {
-  "name": "@alltinghq/contract",
+  "name": "@kahunalabs/contract",
   "version": "0.0.9",
   "private": true,
-  "description": "The Allting RPC contract \u2014 the typed wire schema shared by the server, the SPA and the CLI.",
+  "description": "The Kahuna RPC contract \u2014 the typed wire schema shared by the server, the SPA and the CLI.",
   "type": "module",
   "exports": {
     ".": "./contract.ts"

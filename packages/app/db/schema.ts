@@ -661,7 +661,7 @@ export const annotations = pgTable(
  * names, colors and order). `category` ("todo" | "active" | "done") carries the
  * *semantics* — completion and grouping key off it, never off the renameable
  * `name` (per the no-name-special-casing rule). `is_default` marks the status a
- * new task gets. Seeded for every org by `seedAllting`. Soft-deleted so an
+ * new task gets. Seeded for every org by `seedKahuna`. Soft-deleted so an
  * archived status's id stays resolvable for historical tasks.
  */
 export const taskStatuses = pgTable(
@@ -693,7 +693,7 @@ export const taskStatuses = pgTable(
  * colors and order). The `task_statuses` shape minus category/is_default: a
  * priority carries no semantics beyond its position (lower = more urgent), and
  * a new task starts with NO priority (`annotations.priority_id` null). Seeded
- * for every org by `seedAllting`. Soft-deleted like statuses.
+ * for every org by `seedKahuna`. Soft-deleted like statuses.
  */
 export const taskPriorities = pgTable(
   "task_priorities",

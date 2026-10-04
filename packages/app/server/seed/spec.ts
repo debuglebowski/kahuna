@@ -49,7 +49,7 @@ export interface ConceptSpec {
 }
 
 /**
- * The Allting application model — a documentation-centric CRM + compliance
+ * The Kahuna application model — a documentation-centric CRM + compliance
  * setup, defined entirely as data over the general engine. The runner folds it
  * into create-concept / add-field calls (event-sourced).
  *
@@ -65,7 +65,7 @@ export interface ConceptSpec {
  *   Agreement      -signed_by-> CompanyContact
  *   Task           -for->       Company
  */
-export const alltingSpec: ReadonlyArray<ConceptSpec> = [
+export const kahunaSpec: ReadonlyArray<ConceptSpec> = [
   {
     name: "Company",
     pluralName: "Companies",

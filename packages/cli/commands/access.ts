@@ -1,4 +1,4 @@
-import type { AccessActionName, AccessResourceType, AccessRole } from "@alltinghq/contract"
+import type { AccessActionName, AccessResourceType, AccessRole } from "@kahunalabs/contract"
 import { requireSession } from "../config.ts"
 import { CliError, EXIT } from "../errors.ts"
 import { note, printOne, printRows } from "../output.ts"

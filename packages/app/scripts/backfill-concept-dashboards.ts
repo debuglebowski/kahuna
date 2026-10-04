@@ -13,7 +13,7 @@
 import { Pool } from "pg"
 
 const connectionString =
-  process.env.DATABASE_URL ?? "postgresql://kingsmaker:kingsmaker@localhost:5544/kingsmaker"
+  process.env.DATABASE_URL ?? "postgresql://kahuna:kahuna@localhost:5544/kahuna"
 const pool = new Pool({ connectionString })
 
 const seedBody = (conceptId: string) => ({

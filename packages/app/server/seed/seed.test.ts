@@ -3,16 +3,16 @@ import { Effect } from "effect"
 import { describe, expect, it } from "vitest"
 import { ConceptService, type EngineServices, FieldService, type OrgContext } from "#engine"
 import { runEngineOrThrow, systemScope } from "../runtime"
-import { seedAllting } from "./seed"
+import { seedKahuna } from "./seed"
 
 const run = <A, E>(orgId: string, eff: Effect.Effect<A, E, OrgContext | EngineServices>) =>
   runEngineOrThrow(systemScope(orgId, "system"), eff)
 
-describe("allting seed", () => {
+describe("kahuna seed", () => {
   it("creates the 8 model concepts and is idempotent", async () => {
     const org = randomUUID()
-    await run(org, seedAllting)
-    await run(org, seedAllting) // re-run must not error or duplicate
+    await run(org, seedKahuna)
+    await run(org, seedKahuna) // re-run must not error or duplicate
     const names = await run(
       org,
       Effect.flatMap(ConceptService, (c) => c.list()).pipe(
@@ -33,7 +33,7 @@ describe("allting seed", () => {
 
   it("Agreement's relation fields resolve to concept ids + a status state machine", async () => {
     const org = randomUUID()
-    await run(org, seedAllting)
+    await run(org, seedKahuna)
     const { fields, companyId, templateId } = await run(
       org,
       Effect.gen(function* () {
@@ -59,7 +59,7 @@ describe("allting seed", () => {
 
   it("CompanyContact's reports_to is a self-referencing relation", async () => {
     const org = randomUUID()
-    await run(org, seedAllting)
+    await run(org, seedKahuna)
     const { reportsTo, contactId } = await run(
       org,
       Effect.gen(function* () {
@@ -77,7 +77,7 @@ describe("allting seed", () => {
 
   it("CompanyNote carries a user (author) field", async () => {
     const org = randomUUID()
-    await run(org, seedAllting)
+    await run(org, seedKahuna)
     const author = await run(
       org,
       Effect.gen(function* () {

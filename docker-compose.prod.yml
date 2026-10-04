@@ -19,31 +19,31 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-kingsmaker}
+      POSTGRES_USER: ${POSTGRES_USER:-kahuna}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
-      POSTGRES_DB: ${POSTGRES_DB:-kingsmaker}
+      POSTGRES_DB: ${POSTGRES_DB:-kahuna}
     # Loopback only. Publishing 5432/5544 on a public IP exposes the database.
     # Drop this block entirely if nothing outside the compose network needs it —
     # `app` reaches Postgres over the internal network regardless.
     ports:
       - "127.0.0.1:5544:5432"
     volumes:
-      - kingsmaker_pgdata:/var/lib/postgresql/data
+      - kahuna_pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-kingsmaker} -d ${POSTGRES_DB:-kingsmaker}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-kahuna} -d ${POSTGRES_DB:-kahuna}"]
       interval: 10s
       timeout: 5s
       retries: 10
       start_period: 10s
 
   app:
-    image: ${ALLTING_IMAGE:-ghcr.io/debuglebowski/allting:latest}
+    image: ${KAHUNA_IMAGE:-ghcr.io/debuglebowski/kahuna:latest}
     restart: unless-stopped
     env_file: .env.production
     environment:
       # Overrides whatever .env.production says: inside the compose network the
       # host is the service name, not localhost.
-      DATABASE_URL: postgresql://${POSTGRES_USER:-kingsmaker}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-kingsmaker}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-kahuna}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-kahuna}
     depends_on:
       postgres:
         condition: service_healthy
@@ -53,7 +53,7 @@ services:
     volumes:
       # Uploaded files live ONLY here — pg_dump does not capture them. Back this
       # up alongside the database, or switch to BLOB_DRIVER=s3 / =azure.
-      - kingsmaker_blobs:/data
+      - kahuna_blobs:/data
     # The server installs its own graceful-shutdown sequence with a 10s internal
     # deadline; give Docker more than that before SIGKILL.
     stop_grace_period: 20s
@@ -65,5 +65,5 @@ services:
       start_period: 20s
 
 volumes:
-  kingsmaker_pgdata:
-  kingsmaker_blobs:
+  kahuna_pgdata:
+  kahuna_blobs:

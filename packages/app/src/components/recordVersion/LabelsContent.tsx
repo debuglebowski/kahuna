@@ -1,4 +1,4 @@
-import { LABELS_KEY } from "@alltinghq/contract"
+import { LABELS_KEY } from "@kahunalabs/contract"
 import { useMutation, useQuery } from "@tanstack/react-query"
 import { Check } from "lucide-react"
 import { useEffect, useState } from "react"

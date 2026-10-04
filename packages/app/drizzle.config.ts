@@ -56,6 +56,6 @@ export default defineConfig({
   // silently ignored by drizzle-kit.
   migrations: { table: "__drizzle_migrations" },
   dbCredentials: {
-    url: process.env.DATABASE_URL ?? "postgresql://kingsmaker:kingsmaker@localhost:5544/kingsmaker",
+    url: process.env.DATABASE_URL ?? "postgresql://kahuna:kahuna@localhost:5544/kahuna",
   },
 })

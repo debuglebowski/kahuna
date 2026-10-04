@@ -123,6 +123,6 @@ echo
 if [ "$DRY_RUN" = "1" ]; then
   echo "Dry run — nothing changed."
 else
-  echo "Released $TAG. CI is building the image and publishing @alltinghq/cli."
+  echo "Released $TAG. CI is building the image and publishing @kahunalabs/cli."
   echo "  gh run watch"
 fi

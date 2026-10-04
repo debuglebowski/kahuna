@@ -24,7 +24,7 @@ import { Pool } from "pg"
 import { type AccessRule, decide, emptyPolicy, type PolicySet } from "#engine"
 
 const connectionString =
-  process.env.DATABASE_URL ?? "postgresql://kingsmaker:kingsmaker@localhost:5544/kingsmaker"
+  process.env.DATABASE_URL ?? "postgresql://kahuna:kahuna@localhost:5544/kahuna"
 const pool = new Pool({ connectionString })
 
 const ACTIONS = ["configure", "delete", "view", "edit"] as const

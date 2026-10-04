@@ -95,7 +95,7 @@ export const createUserDirect = async (input: CreateUserInput): Promise<CreatedU
  * (`plugins/organization/routes/crud-org.mjs`: `isSystemAction = !session &&
  * ctx.body.userId`), which skips that check. Going through the endpoint rather
  * than inserting rows matters: it still fires `afterCreateOrganization`, so the
- * org gets seeded with the Allting concepts (see auth.ts).
+ * org gets seeded with the Kahuna concepts (see auth.ts).
  *
  * ONE ORG PER DEPLOYMENT. This refuses to create a second, which is what makes
  * that a real invariant rather than a convention: every production path to a new

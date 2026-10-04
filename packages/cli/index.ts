@@ -27,9 +27,9 @@ import pkg from "./package.json" with { type: "json" }
 import { Registry } from "./registry.ts"
 
 /**
- * `allt` — the Allting command line.
+ * `kahuna` — the Kahuna command line.
  *
- *   allt <noun> [<sub-noun>] <verb> [target] [--flags]
+ *   kahuna <noun> [<sub-noun>] <verb> [target] [--flags]
  *
  * Dispatch is a longest-prefix match over the registry; see registry.ts for why
  * that is unambiguous. Everything after the matched path is a positional
@@ -67,9 +67,9 @@ const GLOBAL_OPTIONS = {
 
 const usage = (): string => {
   const lines = [
-    "allt — the Allting command line",
+    "kahuna — the Kahuna command line",
     "",
-    "Usage: allt <noun> [sub-noun] <verb> [args] [--flags]",
+    "Usage: kahuna <noun> [sub-noun] <verb> [args] [--flags]",
     "",
   ]
   let noun = ""
@@ -79,7 +79,7 @@ const usage = (): string => {
       lines.push("")
       noun = head
     }
-    lines.push(`  allt ${c.path.padEnd(22)} ${c.summary}`)
+    lines.push(`  kahuna ${c.path.padEnd(22)} ${c.summary}`)
   }
   lines.push(
     "",
@@ -90,7 +90,7 @@ const usage = (): string => {
     "  --yes, -y         do not ask before a destructive change",
     "  --dry-run         print what would happen and write nothing",
     "",
-    "Environment: ALLT_HOST, ALLT_TOKEN, ALLT_NO_BROWSER, ALLT_REGISTRY, XDG_CONFIG_HOME",
+    "Environment: KAHUNA_HOST, KAHUNA_TOKEN, KAHUNA_NO_BROWSER, KAHUNA_REGISTRY, XDG_CONFIG_HOME",
   )
   return lines.join("\n")
 }
@@ -111,7 +111,7 @@ export const run = async (argv: ReadonlyArray<string>): Promise<number> => {
   // script greps and what a bug report quotes, so it answers instantly and
   // works before sign-in, on an unreachable host, with no profile configured.
   //
-  // Not to be confused with `allt system version`, which asks the DEPLOYMENT what
+  // Not to be confused with `kahuna system version`, which asks the DEPLOYMENT what
   // it is running and compares the two.
   if (argv[0] === "--version" || argv[0] === "-v") {
     process.stdout.write(`${pkg.version}\n`)
@@ -124,13 +124,13 @@ export const run = async (argv: ReadonlyArray<string>): Promise<number> => {
     // noun, and deserves a different answer: list what that noun can do.
     const noun = argv[0] ?? ""
     const near = registry.under(noun)
-    note(`Unknown command: allt ${argv.join(" ")}`)
+    note(`Unknown command: kahuna ${argv.join(" ")}`)
     if (near.length > 0) {
       note("")
       note(`Commands under "${noun}":`)
-      for (const c of near) note(`  allt ${c.path.padEnd(22)} ${c.summary}`)
+      for (const c of near) note(`  kahuna ${c.path.padEnd(22)} ${c.summary}`)
     } else {
-      note("Run `allt help` for the full list.")
+      note("Run `kahuna help` for the full list.")
     }
     return EXIT.usage
   }
@@ -148,13 +148,13 @@ export const run = async (argv: ReadonlyArray<string>): Promise<number> => {
       strict: true,
     })
   } catch (e) {
-    note(`allt ${command.path}: ${e instanceof Error ? e.message : String(e)}`)
-    if (command.usage) note(`Usage: allt ${command.usage}`)
+    note(`kahuna ${command.path}: ${e instanceof Error ? e.message : String(e)}`)
+    if (command.usage) note(`Usage: kahuna ${command.usage}`)
     return EXIT.usage
   }
 
   if (parsed.values.help) {
-    process.stdout.write(`${command.summary}\n\nUsage: allt ${command.usage ?? command.path}\n`)
+    process.stdout.write(`${command.summary}\n\nUsage: kahuna ${command.usage ?? command.path}\n`)
     return EXIT.ok
   }
 
@@ -167,9 +167,9 @@ export const run = async (argv: ReadonlyArray<string>): Promise<number> => {
     return EXIT.ok
   } catch (e) {
     const { message, hint, exitCode } = toFailure(e)
-    note(`allt ${command.path}: ${message}`)
+    note(`kahuna ${command.path}: ${message}`)
     if (hint) note(hint)
-    if (exitCode === EXIT.usage && command.usage) note(`Usage: allt ${command.usage}`)
+    if (exitCode === EXIT.usage && command.usage) note(`Usage: kahuna ${command.usage}`)
     return exitCode
   }
 }
@@ -179,7 +179,7 @@ export const run = async (argv: ReadonlyArray<string>): Promise<number> => {
  * without the CLI running itself.
  *
  * REALPATH, not the raw argv. An installed CLI is invoked through
- * `node_modules/.bin/allt`, which is a SYMLINK to this file: `process.argv[1]` is
+ * `node_modules/.bin/kahuna`, which is a SYMLINK to this file: `process.argv[1]` is
  * the link, `import.meta.url` is its target, and comparing them directly makes
  * this false for every real user. The command then exits 0 having done nothing
  * — silence a script reads as success. Caught by installing the packed tarball
@@ -203,7 +203,7 @@ if (isEntrypoint()) {
     .catch((e: unknown) => {
       // Anything that escapes `run` is a bug in the CLI, not a user error.
       const { message } = toFailure(e instanceof CliError ? e : new Error(String(e)))
-      note(`allt: ${message}`)
+      note(`kahuna: ${message}`)
       process.exitCode = EXIT.failed
     })
 }

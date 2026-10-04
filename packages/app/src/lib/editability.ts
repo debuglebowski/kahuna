@@ -2,7 +2,7 @@
  * Whose data may be written — the client mirror of the engine's version freeze.
  *
  * `app/src/` imports zero engine modules (types are hand-mirrored through
- * `@alltinghq/contract`), so this duplicates `app/engine/domain/versioning.ts`
+ * `@kahunalabs/contract`), so this duplicates `app/engine/domain/versioning.ts`
  * on purpose. Keep the two in step: the server is authoritative and answers
  * `VersionFrozen` on a mismatch, so drift shows up as a UI that offers an edit the
  * API then refuses.

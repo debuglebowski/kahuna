@@ -892,7 +892,7 @@ export function GenesisIntro({ onDone, concepts }: IntroProps & { concepts?: Con
           ctx.fill()
           ctx.fillStyle = WHITE
           ctx.font = FONT_BRAND
-          ctx.fillText("Kingsmaker", L.sbX + 28, 44.5)
+          ctx.fillText("Kahuna", L.sbX + 28, 44.5)
         }
       }
 

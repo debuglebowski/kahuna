@@ -989,7 +989,7 @@ function ActionEditor({
               </Field>
               <p className="text-xs text-muted-foreground">
                 POSTs JSON with the automation id, the record id and its concept. This is the one
-                action that sends org data outside Allting.
+                action that sends org data outside Kahuna.
               </p>
             </div>
           )}
@@ -1087,7 +1087,7 @@ function ActionEditor({
                 />
               </Field>
               <p className="text-xs text-muted-foreground">
-                Allting members aren't linked to Slack accounts, so this takes a Slack id — find it
+                Kahuna members aren't linked to Slack accounts, so this takes a Slack id — find it
                 under “Copy member ID” in their Slack profile.
               </p>
               <TokenHint />
@@ -1158,7 +1158,7 @@ function ActionEditor({
                   <Input
                     value={action.body}
                     onChange={(e) => onChange({ ...action, body: e.target.value })}
-                    placeholder="Moved to {{trigger.to}} in Allting"
+                    placeholder="Moved to {{trigger.to}} in Kahuna"
                     disabled={disabled}
                   />
                 </Field>
@@ -1178,7 +1178,7 @@ function ActionEditor({
                 your Linear ticket concept. On any other record it's recorded as “not a Linear
                 ticket”.
                 {action.kind === "linear.assign" &&
-                  " If the person's Linear address differs from their Allting one, the run records the miss rather than assigning the wrong person."}
+                  " If the person's Linear address differs from their Kahuna one, the run records the miss rather than assigning the wrong person."}
               </p>
               {action.kind !== "linear.closeIssue" && <TokenHint />}
             </div>

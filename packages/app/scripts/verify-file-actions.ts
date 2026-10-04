@@ -8,9 +8,9 @@
  * BASE/API default to the throwaway stack. SHOT=<path> saves a screenshot. */
 import { spawn } from "node:child_process"
 import { rmSync, unlinkSync, writeFileSync } from "node:fs"
-import { AlltingRpcs } from "@alltinghq/contract"
 import { FetchHttpClient } from "@effect/platform"
 import { RpcClient, RpcSerialization } from "@effect/rpc"
+import { KahunaRpcs } from "@kahunalabs/contract"
 import { Context, Effect, Layer, ManagedRuntime } from "effect"
 import { newWidget } from "../src/lib/dashboards"
 import { provisionVerifyIdentity } from "./verify-session"
@@ -191,7 +191,7 @@ const CookieFetch = Layer.succeed(FetchHttpClient.Fetch, ((
   input: RequestInfo | URL,
   init?: RequestInit,
 ) => fetch(input, { ...init, headers: { ...(init?.headers ?? {}), cookie } })) as typeof fetch)
-const makeClient = RpcClient.make(AlltingRpcs)
+const makeClient = RpcClient.make(KahunaRpcs)
 type Client = Effect.Effect.Success<typeof makeClient>
 class ApiClient extends Context.Tag("verify-file-actions/ApiClient")<ApiClient, Client>() {}
 const runtime = ManagedRuntime.make(

@@ -15,7 +15,7 @@ import { createOrgDirect, createUserDirect, makeOrgSlug } from "../server/provis
  * Needed because self-serve sign-up AND self-serve org creation are both closed
  * (see server/auth.ts), so there is otherwise no way to get the FIRST account
  * into an empty database. Going through better-auth's org endpoint (rather than
- * inserting rows) is what makes the org arrive seeded with the Allting
+ * inserting rows) is what makes the org arrive seeded with the Kahuna
  * concepts — `afterCreateOrganization` still fires.
  *
  * THE BOOTSTRAP ADMIN IS MEANT TO BE TEMPORARY. Intended sequence:

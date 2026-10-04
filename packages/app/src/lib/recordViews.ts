@@ -1,4 +1,4 @@
-import type { Concept, RecordViewPrefsBody, RecordViewTile } from "@alltinghq/contract"
+import type { Concept, RecordViewPrefsBody, RecordViewTile } from "@kahunalabs/contract"
 import { useMutation, useQuery } from "@tanstack/react-query"
 import { api } from "./api"
 import { queryClient } from "./queryClient"

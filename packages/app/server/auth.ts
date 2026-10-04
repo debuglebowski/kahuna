@@ -15,7 +15,7 @@ import {
 import { db, pool } from "./db"
 import { syncMembershipRole } from "./membership"
 import { runEngineOrThrow, systemScope } from "./runtime"
-import { seedAllting } from "./seed/seed"
+import { seedKahuna } from "./seed/seed"
 
 /**
  * Every engine table keyed by `org_id`, in child→parent order (the engine's own
@@ -228,15 +228,15 @@ export const auth = betterAuth({
       // is therefore exempt from this check while still firing the hooks below.
       allowUserToCreateOrganization: false,
       organizationHooks: {
-        // Seed the Allting concepts into every new org, server-side, so it
+        // Seed the Kahuna concepts into every new org, server-side, so it
         // can't be skipped by a failed/absent client call. Idempotent.
         afterCreateOrganization: async ({ organization, user }) => {
           try {
-            await runEngineOrThrow(systemScope(organization.id, user.id), seedAllting)
+            await runEngineOrThrow(systemScope(organization.id, user.id), seedKahuna)
             // The creator's membership is `owner`, but membership and ACCESS are two
             // tables — without this the founding owner holds no access role, and the
             // org reads as having nobody who can configure it (which is what the
-            // irreducible-floor check counts). `seedAllting` created the presets;
+            // irreducible-floor check counts). `seedKahuna` created the presets;
             // this points the owner at theirs.
             await syncMembershipRole(organization.id, user.id, "owner")
           } catch (error) {

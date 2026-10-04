@@ -593,7 +593,7 @@ export const posthogConnection = pgTable(
 /**
  * Synced per-person product-usage metrics, keyed by (org, distinct_id). One row
  * per PostHog person; `email` is denormalized so callers can match a person to
- * a Allting record version by email OR distinct_id without re-parsing properties.
+ * a Kahuna record version by email OR distinct_id without re-parsing properties.
  */
 export const posthogPersonMetric = pgTable(
   "posthog_person_metric",
@@ -712,7 +712,7 @@ export const linearConnection = pgTable(
  * Synced Linear issues, keyed by (org, linear_id). One row per issue; common
  * generic attributes (identifier/title/state/assignee/team/priority) are
  * denormalized for cheap querying, with the full node preserved in `raw`. No
- * Allting concept/field mapping happens here — that is deferred.
+ * Kahuna concept/field mapping happens here — that is deferred.
  */
 export const linearIssue = pgTable(
   "linear_issue",

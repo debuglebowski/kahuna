@@ -154,7 +154,7 @@ function RequiredPermissions({ children }: { children: ReactNode }) {
 }
 
 /** Text button + modal disclosing exactly what data the connector pulls into
- *  Allting — shown next to the initial Connect button for transparency. */
+ *  Kahuna — shown next to the initial Connect button for transparency. */
 function DataImportInfo({ name, children }: { name: string; children: ReactNode }) {
   const [open, setOpen] = useState(false)
   return (
@@ -253,8 +253,8 @@ const INTEGRATION_INFO = {
     name: "Slack",
     permissions: (
       <p>
-        Installs the Allting bot in your workspace (a workspace admin may need to approve).
-        Requested bot scopes: <code>chat:write</code>, <code>channels:read</code>,{" "}
+        Installs the Kahuna bot in your workspace (a workspace admin may need to approve). Requested
+        bot scopes: <code>chat:write</code>, <code>channels:read</code>,{" "}
         <code>channels:history</code>, <code>commands</code>, <code>app_mentions:read</code>.
       </p>
     ),
@@ -289,7 +289,7 @@ const INTEGRATION_INFO = {
     permissions: (
       <p>
         No provider permissions to grant. Add a <strong>Webhook source</strong> to your Clay table
-        and paste its URL below; Allting generates the callback secret for results.
+        and paste its URL below; Kahuna generates the callback secret for results.
       </p>
     ),
     dataImported: (
@@ -940,7 +940,7 @@ function LinearCard() {
           </Field>
           <Field
             label="Webhook signing secret (optional)"
-            hint="Only needed if you want Linear to push issue changes into Allting — it verifies the signature on incoming Linear webhooks. Leave blank for one-way (Allting → Linear) sync."
+            hint="Only needed if you want Linear to push issue changes into Kahuna — it verifies the signature on incoming Linear webhooks. Leave blank for one-way (Kahuna → Linear) sync."
           >
             <Input
               type="password"
@@ -1080,7 +1080,7 @@ function SlackCard() {
               </>
             ) : (
               <>
-                <span>Connect your own Slack account to let Allting act as you.</span>
+                <span>Connect your own Slack account to let Kahuna act as you.</span>
                 <Button
                   type="button"
                   variant="outline"
@@ -1339,7 +1339,7 @@ function ClayCard() {
           <RequiredPermissions>{detail.permissions}</RequiredPermissions>
           <Field
             label="Clay table webhook URL"
-            hint="The webhook URL of the Clay table that receives rows pushed from Allting — in Clay, add a 'Webhook' source to the table and paste its URL here. Stored encrypted."
+            hint="The webhook URL of the Clay table that receives rows pushed from Kahuna — in Clay, add a 'Webhook' source to the table and paste its URL here. Stored encrypted."
           >
             <Input
               value={tableWebhookUrl}
