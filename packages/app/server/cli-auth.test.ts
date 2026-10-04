@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 import {
+  approveDevice,
   devicePage,
   __normaliseForTest as normalise,
   __pendingForTest as pending,
@@ -41,8 +42,7 @@ describe("starting a flow", () => {
     const body = (await res.json()) as Record<string, string | number>
     expect(String(body.userCode)).toMatch(/^[A-Z2-9]{4}-[A-Z2-9]{4}$/)
     expect(String(body.deviceCode).length).toBeGreaterThan(30)
-    // ONE url, carrying the code: opening it is the approval, so there is no
-    // second "go here and type it" address.
+    // ONE url, carrying the code; opening it asks for confirmation.
     expect(String(body.verificationUri)).toBe(
       `http://localhost:3100/api/cli/device?code=${body.userCode}`,
     )
@@ -140,7 +140,30 @@ describe("polling", () => {
   })
 })
 
-describe("approving by opening the link", () => {
+describe("approving", () => {
+  it("refuses a cross-origin or origin-less POST, leaving the request pending", async () => {
+    pending.set("dev-x", {
+      userCode: "QQQQ-RRRR",
+      status: "pending",
+      expiresAt: Date.now() + 60_000,
+      attempts: 0,
+    })
+    const body = new URLSearchParams({ code: "QQQQ-RRRR" })
+    for (const headers of [{}, { origin: "https://evil.example" }] as Record<string, string>[]) {
+      const res = await approveDevice(
+        req("/api/cli/device/approve", {
+          method: "POST",
+          body,
+          headers: { cookie: "s=1", ...headers },
+        }),
+      )
+      expect(res.status).toBe(403)
+    }
+    expect(pending.get("dev-x")?.status).toBe("pending")
+  })
+})
+
+describe("the link itself", () => {
   it("refuses without a session, and leaves the request untouched", async () => {
     pending.set("dev-2", {
       userCode: "GGGG-HHHH",

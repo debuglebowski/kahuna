@@ -728,9 +728,25 @@ const main = async (): Promise<void> => {
   })
   check("a signed-in visit with a dead code is refused", stale.status === 400, String(stale.status))
 
-  // Opening the link approves it. No form, no code entry.
-  const approved = await fetch(link, { headers: { cookie: browserCookie } })
-  check("opening the link IS the approval", approved.status === 200, String(approved.status))
+  // Opening the link only shows the confirmation; it must NOT approve.
+  const page = await fetch(link, { headers: { cookie: browserCookie } })
+  const pageHtml = await page.text()
+  check(
+    "opening the link shows a confirmation and does not approve",
+    page.status === 200 && pageHtml.includes("Approve") && !pageHtml.includes("Signed in"),
+    String(page.status),
+  )
+  const code = new URL(link).searchParams.get("code") ?? ""
+  const post = (headers: Record<string, string>) =>
+    fetch(`${API}/api/cli/device/approve`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded", ...headers },
+      body: new URLSearchParams({ code }),
+    })
+  const forged = await post({ cookie: browserCookie, origin: "https://evil.example" })
+  check("a cross-origin approve is refused", forged.status === 403, String(forged.status))
+  const approved = await post({ cookie: browserCookie, origin: API })
+  check("a same-origin approve works", approved.status === 200, String(approved.status))
   check("the page says so", (await approved.text()).includes("Signed in"), "")
 
   const blExit = await new Promise<number>((resolve) => child.on("exit", (c) => resolve(c ?? 1)))

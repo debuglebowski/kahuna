@@ -6,8 +6,7 @@ import { resolveOrg } from "./session"
  *
  *   1. `kahuna auth login --browser` asks for a device code and prints a URL.
  *   2. The person opens it in ANY browser, on any machine, and signs in however
- *      this deployment allows. Opening the link IS the approval — there is
- *      nothing to type.
+ *      this deployment allows, then confirms the code matches their terminal.
  *   3. The CLI has been polling; it gets the credential and stores it.
  *
  * WHY NOT A LOOPBACK REDIRECT, which is the other standard answer: it requires
@@ -103,43 +102,54 @@ export const startDevice = async (request: Request): Promise<Response> => {
   return Response.json({
     deviceCode,
     userCode: code,
-    // ONE url, and opening it approves. There is no bare "go here and type the
-    // code" page, because there is nothing to type.
+    // Opening it shows the code and asks for confirmation; it never approves.
     verificationUri: `${origin}/api/cli/device?code=${encodeURIComponent(code)}`,
     intervalSeconds: POLL_INTERVAL_SECONDS,
     expiresInSeconds: TTL_MS / 1000,
   })
 }
 
+const esc = (v: string): string => v.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
+
+/** Sign-in bounce that keeps the code, so SSO / passwords / anything else this
+ *  deployment supports can drive a CLI sign-in without the CLI knowing. */
+const signInRedirect = (rawCode: string | null): Response => {
+  const next = `/api/cli/device${rawCode ? `?code=${encodeURIComponent(rawCode)}` : ""}`
+  return new Response(null, {
+    status: 302,
+    headers: { location: `/?next=${encodeURIComponent(next)}` },
+  })
+}
+
+const liveEntry = (submitted: string): Pending | undefined => {
+  sweep()
+  const entry = [...pending.values()].find((p) => codesMatch(p.userCode, submitted))
+  return entry && entry.status === "pending" ? entry : undefined
+}
+
+const staleLink = (): Response =>
+  // Deliberately the same answer for "no such code" and "already used": a
+  // stale link in someone's history learns nothing about what is live.
+  shell(
+    `<h1>That link is no longer valid</h1><p>It may have expired, or already been used. Run <code>kahuna auth login --browser</code> again.</p>`,
+    400,
+  )
+
 /**
- * GET /api/cli/device?code=… — the page a person opens, which APPROVES.
+ * GET /api/cli/device?code=… — the page a person opens. It does NOT approve.
  *
- * There is no form and nothing to type. The link the CLI printed carries the
- * code, so opening it is the confirmation: the person had to be signed in to
- * this deployment to get here, and they had to follow a link their own terminal
- * produced.
- *
- * A confirmation step would defend against someone tricking you into opening a
- * link that authorises THEIR terminal. On a deployment where one person is the
- * only one who ever sees this page, that risk is theoretical and the step is
- * pure friction — so the link approves and the page says what happened.
+ * A bare link that approved on open would let anyone start a flow of their own
+ * and send the victim the link: a signed-in victim who clicked it would hand
+ * their session to the attacker's terminal. So this only SHOWS the code and asks
+ * the person to confirm it matches the one in THEIR terminal; approval is the
+ * POST below.
  */
 export const devicePage = async (request: Request): Promise<Response> => {
   const url = new URL(request.url)
   const submitted = normalise(url.searchParams.get("code") ?? "")
 
   const org = await resolveOrg(request)
-  if (!org.ok) {
-    // Sign in first, then come straight back here with the code intact — which
-    // is what lets SSO, passwords, or anything else this deployment supports
-    // drive a CLI sign-in without the CLI knowing about any of them.
-    const raw = url.searchParams.get("code")
-    const next = `/api/cli/device${raw ? `?code=${encodeURIComponent(raw)}` : ""}`
-    return new Response(null, {
-      status: 302,
-      headers: { location: `/?next=${encodeURIComponent(next)}` },
-    })
-  }
+  if (!org.ok) return signInRedirect(url.searchParams.get("code"))
 
   if (!submitted) {
     return shell(
@@ -147,17 +157,40 @@ export const devicePage = async (request: Request): Promise<Response> => {
       400,
     )
   }
+  const entry = liveEntry(submitted)
+  if (!entry) return staleLink()
 
-  sweep()
-  const entry = [...pending.values()].find((p) => codesMatch(p.userCode, submitted))
-  if (!entry || entry.status !== "pending") {
-    // Deliberately the same answer for "no such code" and "already used": a
-    // stale link in someone's history learns nothing about what is live.
+  return shell(
+    `<h1>Authorise the Kahuna CLI?</h1>` +
+      `<p>Only continue if this code matches the one in your terminal. If you did not just run <code>kahuna auth login --browser</code>, close this page.</p>` +
+      `<form method="post" action="/api/cli/device/approve">` +
+      `<input name="code" value="${esc(entry.userCode)}" readonly aria-label="Code">` +
+      `<button type="submit">Approve</button></form>`,
+  )
+}
+
+/**
+ * POST /api/cli/device/approve — the confirmation. Same-origin only: a
+ * cross-site form post is exactly how this would otherwise be forged, and the
+ * Origin header is how a server tells.
+ */
+export const approveDevice = async (request: Request): Promise<Response> => {
+  const origin = request.headers.get("origin")
+  if (!origin || origin !== new URL(request.url).origin) {
     return shell(
-      `<h1>That link is no longer valid</h1><p>It may have expired, or already been used. Run <code>kahuna auth login --browser</code> again.</p>`,
-      400,
+      `<h1>Request refused</h1><p>Open the link from your terminal and approve from there.</p>`,
+      403,
     )
   }
+
+  const org = await resolveOrg(request)
+  if (!org.ok)
+    return shell(`<h1>Sign in first</h1><p>Open the link from your terminal again.</p>`, 401)
+
+  const form = await request.formData().catch(() => null)
+  const submitted = normalise(String(form?.get("code") ?? ""))
+  const entry = submitted ? liveEntry(submitted) : undefined
+  if (!entry) return staleLink()
 
   const cookie = request.headers.get("cookie")
   if (!cookie) return shell(`<h1>No session cookie</h1><p>Sign in and try again.</p>`, 401)
