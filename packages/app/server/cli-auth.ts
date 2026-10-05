@@ -39,6 +39,7 @@ interface Pending {
 const pending = new Map<string, Pending>()
 
 const TTL_MS = 10 * 60_000
+const MAX_PENDING = 1000
 export const POLL_INTERVAL_SECONDS = 3
 
 /**
@@ -90,6 +91,10 @@ const shell = (body: string, status = 200): Response =>
  *  nobody is signed in yet, which is the entire point. */
 export const startDevice = async (request: Request): Promise<Response> => {
   sweep()
+  // Unauthenticated by design, so bound the store: an anonymous caller must not
+  // be able to grow it without limit.
+  if (pending.size >= MAX_PENDING)
+    return Response.json({ error: "TOO_MANY_REQUESTS" }, { status: 429 })
   const deviceCode = randomBytes(32).toString("base64url")
   const code = userCode()
   pending.set(deviceCode, {

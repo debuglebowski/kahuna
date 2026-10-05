@@ -103,6 +103,8 @@ export const attachmentCommands: ReadonlyArray<Command> = [
       const res = await fetch(url, {
         method: "POST",
         body: form,
+        // The session cookie is attached by hand: never follow a redirect with it.
+        redirect: "manual",
         headers: { cookie: session.cookie ?? "", origin: session.host },
       }).catch((e: unknown) => {
         throw new CliError(
@@ -132,6 +134,7 @@ export const attachmentCommands: ReadonlyArray<Command> = [
       if (!id) throw new CliError("Which attachment?", EXIT.usage)
       const session = requireSession()
       const res = await fetch(`${session.host}/api/attachments/${id}/download`, {
+        redirect: "manual",
         headers: { cookie: session.cookie ?? "", origin: session.host },
       }).catch((e: unknown) => {
         throw new CliError(

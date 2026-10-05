@@ -25,6 +25,8 @@ const post = async (path: string, body?: unknown, method = "POST"): Promise<unkn
   const session = requireSession()
   const res = await fetch(`${session.host}${path}`, {
     method,
+    // The session cookie is attached by hand: never follow a redirect with it.
+    redirect: "manual",
     headers: {
       "content-type": "application/json",
       cookie: session.cookie ?? "",

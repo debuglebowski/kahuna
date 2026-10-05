@@ -55,7 +55,11 @@ export function AuthPage() {
       // reloading onto the dashboard would strand it. Same-origin PATHS only: a
       // full URL here would be an open redirect on our own sign-in page.
       const next = new URLSearchParams(location.search).get("next")
-      if (next?.startsWith("/") && !next.startsWith("//")) location.assign(next)
+      // Resolve and compare origins rather than pattern-matching the string:
+      // browsers read `/\evil.example` as `//evil.example`.
+      const target = next ? new URL(next, location.origin) : null
+      if (target && target.origin === location.origin)
+        location.assign(`${target.pathname}${target.search}${target.hash}`)
       else location.reload()
     } catch (err) {
       setError((err as Error).message)
