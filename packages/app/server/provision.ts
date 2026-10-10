@@ -4,6 +4,7 @@ import { eq } from "drizzle-orm"
 import { account, organization, user } from "#db"
 import { auth } from "./auth"
 import { db } from "./db"
+import { securityEvent } from "./securityLog"
 
 /**
  * Server-side account + org provisioning, for when the public sign-up route is
@@ -84,6 +85,14 @@ export const createUserDirect = async (input: CreateUserInput): Promise<CreatedU
     password: await hashPassword(input.password),
     updatedAt: now,
   })
+  // Operator-initiated (CLI / first-boot bootstrap): no signed-in actor exists.
+  securityEvent({
+    event: "account.provisioned",
+    outcome: "success",
+    targetKind: "user",
+    targetId: userId,
+    detail: { method: "password" },
+  })
   return { userId, email, created: true }
 }
 
@@ -128,5 +137,12 @@ export const createOrgDirect = async (input: {
     body: { name: input.name, slug: input.slug, userId: input.userId },
   })
   if (!org) throw new Error(`failed to create organization "${input.name}"`)
+  securityEvent({
+    event: "org.created",
+    outcome: "success",
+    actor: input.userId,
+    orgId: org.id,
+    detail: { via: "provision" },
+  })
   return { id: org.id }
 }

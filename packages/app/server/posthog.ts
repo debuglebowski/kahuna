@@ -9,6 +9,7 @@ import { connectorFailure, publicConnectorError } from "./integrations/errors"
 import { sleepBeforeRetry } from "./integrations/http"
 import { connectionForOrgIn } from "./integrations/rows"
 import { guardedFetch } from "./integrations/url-guard"
+import { webhookRejected } from "./securityLog"
 import { resolveAdmin, resolveOrg } from "./session"
 
 /**
@@ -469,7 +470,7 @@ export async function handlePosthogWebhook(req: Request) {
   const url = new URL(req.url)
   // Header preferred, `?token=` still accepted for already-wired destinations.
   const token = webhookTokenFrom(req, url)
-  if (!token) return json({ error: "MISSING_TOKEN" }, 401)
+  if (!token) return webhookRejected("posthog", req, "MISSING_TOKEN", 401)
   const [connection] = await db
     .select()
     .from(posthogConnection)
@@ -477,7 +478,7 @@ export async function handlePosthogWebhook(req: Request) {
       and(eq(posthogConnection.webhookToken, token), eq(posthogConnection.status, "connected")),
     )
     .limit(1)
-  if (!connection) return json({ error: "BAD_TOKEN" }, 403)
+  if (!connection) return webhookRejected("posthog", req, "BAD_TOKEN", 403)
 
   // Gate AFTER the token check (a disabled org must still reject a bad token the
   // same way a healthy one does) and BEFORE the dedupe insert (a key burned

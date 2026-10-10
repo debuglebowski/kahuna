@@ -6,6 +6,7 @@ import { auth } from "./auth"
 import { db, pool } from "./db"
 import { canConfigure, type Role } from "./policy"
 import { resolvePolicy, runEngine, sessionScope, type UseCaseResult } from "./runtime"
+import { clientIp, routeOf, securityEvent } from "./securityLog"
 
 /** Resolve a user's role within an org from the BetterAuth `member` table. */
 export const roleOf = async (userId: string, orgId: string): Promise<Role | null> => {
@@ -29,6 +30,27 @@ export const isDeactivated = async (userId: string, orgId: string): Promise<bool
   return r.rows.length > 0
 }
 
+/**
+ * A refused authorisation on a plain-HTTP route. Exported so router.ts's inline
+ * `canConfigure` checks log the same event. Only reached for an authenticated actor:
+ * an unauthenticated 401 is deliberately not logged (volume; no actor to record).
+ */
+export const logDenied = (
+  request: Request,
+  reason: string,
+  who: { actor: string; orgId: string; required?: string },
+): void =>
+  securityEvent({
+    event: "authz.denied",
+    outcome: "denied",
+    actor: who.actor,
+    orgId: who.orgId,
+    reason,
+    route: routeOf(request),
+    ip: clientIp(request.headers),
+    detail: { required: who.required },
+  })
+
 export type OrgResolution =
   | { readonly ok: true; readonly orgId: string; readonly actor: string; readonly role: Role }
   | { readonly ok: false; readonly status: number; readonly code: string }
@@ -51,8 +73,10 @@ export const resolveAdmin = async (request: Request): Promise<OrgResolution> => 
   if (!org.ok) return org
   // Decided from the RULES, not the membership tier — Admin is an ordinary role now,
   // so an org may hand org-configuration to a role of its own making.
-  if (!(await canConfigure(org.orgId, org.actor, org.role)))
+  if (!(await canConfigure(org.orgId, org.actor, org.role))) {
+    logDenied(request, "FORBIDDEN", { actor: org.actor, orgId: org.orgId, required: "admin" })
     return { ok: false, status: 403, code: "FORBIDDEN" }
+  }
   return org
 }
 
@@ -67,7 +91,10 @@ export const resolveAdmin = async (request: Request): Promise<OrgResolution> => 
 export const resolveOwner = async (request: Request): Promise<OrgResolution> => {
   const org = await resolveOrg(request)
   if (!org.ok) return org
-  if (org.role !== "owner") return { ok: false, status: 403, code: "FORBIDDEN" }
+  if (org.role !== "owner") {
+    logDenied(request, "FORBIDDEN", { actor: org.actor, orgId: org.orgId, required: "owner" })
+    return { ok: false, status: 403, code: "FORBIDDEN" }
+  }
   return org
 }
 
@@ -122,9 +149,13 @@ export const resolveOrg = async (request: Request): Promise<OrgResolution> => {
   if (!orgId) return { ok: false, status: 409, code: "NO_ACTIVE_ORG" }
 
   const role = await roleOf(session.user.id, orgId)
-  if (!role) return { ok: false, status: 403, code: "NOT_A_MEMBER" }
+  if (!role) {
+    logDenied(request, "NOT_A_MEMBER", { actor: session.user.id, orgId })
+    return { ok: false, status: 403, code: "NOT_A_MEMBER" }
+  }
 
   if (await isDeactivated(session.user.id, orgId)) {
+    logDenied(request, "DEACTIVATED", { actor: session.user.id, orgId })
     return { ok: false, status: 403, code: "DEACTIVATED" }
   }
 
@@ -149,5 +180,10 @@ export const runScoped = async <A, E>(
   const org = await resolveOrg(request)
   if (!org.ok) return { ok: false, status: org.status, code: org.code }
   const policy = await resolvePolicy(org.orgId, org.actor)
-  return runEngine(sessionScope(org.orgId, org.actor, org.role, policy), effect)
+  const result = await runEngine(sessionScope(org.orgId, org.actor, org.role, policy), effect)
+  // A refused use-case (attachments, member purge, …) is an authorisation denial like
+  // any other. Refusals only: successful reads and writes are not security events.
+  if (!result.ok && result.status === 403 && result.code === "FORBIDDEN")
+    logDenied(request, "FORBIDDEN", { actor: org.actor, orgId: org.orgId })
+  return result
 }

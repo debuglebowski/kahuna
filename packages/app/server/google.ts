@@ -26,6 +26,7 @@ import {
   upsertRecordVersionByExternalId,
 } from "./integrations/records"
 import { systemScope } from "./runtime"
+import { oauthRejected, webhookRejected } from "./securityLog"
 import { resolveOrg } from "./session"
 
 // Token crypto now lives in the shared integrations helper; re-export it so
@@ -237,9 +238,10 @@ export async function handleGoogleCallback(req: Request) {
     .from(googleOAuthState)
     .where(eq(googleOAuthState.state, state))
     .limit(1)
-  if (!stored || stored.expiresAt.getTime() < Date.now()) return json({ error: "BAD_STATE" }, 400)
+  if (!stored || stored.expiresAt.getTime() < Date.now())
+    return oauthRejected("google", req, org, "BAD_STATE", 400)
   if (stored.orgId !== org.orgId || stored.userId !== org.actor) {
-    return json({ error: "STATE_SESSION_MISMATCH" }, 403)
+    return oauthRejected("google", req, org, "STATE_SESSION_MISMATCH", 403)
   }
   await db.delete(googleOAuthState).where(eq(googleOAuthState.state, state))
 
@@ -1213,7 +1215,7 @@ export async function handleGmailPush(req: Request) {
   const url = new URL(req.url)
   const provided = url.searchParams.get("token") ?? bearerToken(req)
   if (!provided || !secretMatches(provided, expected)) {
-    return json({ error: "INVALID_TOKEN" }, 401)
+    return webhookRejected("google", req, "INVALID_TOKEN", 401)
   }
   const body = (await req.json().catch(() => null)) as {
     message?: { messageId?: string; data?: string }
@@ -1243,7 +1245,7 @@ export async function handleCalendarPush(req: Request) {
   const channelToken = req.headers.get("x-goog-channel-token")
   const messageNumber = req.headers.get("x-goog-message-number")
   const state = req.headers.get("x-goog-resource-state")
-  if (!channelId || !messageNumber) return json({ error: "BAD_CALENDAR_PUSH" }, 400)
+  if (!channelId || !messageNumber) return webhookRejected("google", req, "BAD_CALENDAR_PUSH", 400)
   const key = `calendar:${channelId}:${messageNumber}`
   if (!(await markNotification(key, "calendar"))) return json({ ok: true })
   const [sync] = await db
@@ -1251,7 +1253,8 @@ export async function handleCalendarPush(req: Request) {
     .from(googleCalendarSync)
     .where(eq(googleCalendarSync.watchChannelId, channelId))
     .limit(1)
-  if (!sync || sync.watchToken !== channelToken) return json({ error: "BAD_CHANNEL" }, 403)
+  if (!sync || sync.watchToken !== channelToken)
+    return webhookRejected("google", req, "BAD_CHANNEL", 403)
   if (state !== "sync") {
     // The sync row carries only `connectionId`, so the org costs one lookup —
     // taken after the channel-token check so a disabled org still 403s a forged

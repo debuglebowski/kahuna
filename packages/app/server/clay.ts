@@ -10,6 +10,7 @@ import { sleepBeforeRetry } from "./integrations/http"
 import { connectionForOrgIn } from "./integrations/rows"
 import { guardedFetch } from "./integrations/url-guard"
 import { resolvePolicy, runEngine, sessionScope, systemScope } from "./runtime"
+import { webhookRejected } from "./securityLog"
 import { resolveAdmin, resolveOrg } from "./session"
 import { createRecord, getRecord, updateRecord } from "./use-cases"
 
@@ -431,9 +432,9 @@ const patchFromMapping = (
 export async function handleClayCallback(req: Request) {
   const url = new URL(req.url)
   const cid = url.searchParams.get("cid")
-  if (!cid) return json({ error: "MISSING_CID" }, 401)
+  if (!cid) return webhookRejected("clay", req, "MISSING_CID", 401)
   const connection = await connectionById(cid)
-  if (connection?.status !== "connected") return json({ error: "BAD_CID" }, 403)
+  if (connection?.status !== "connected") return webhookRejected("clay", req, "BAD_CID", 403)
 
   const rawText = await req.text().catch(() => "")
   let body: Record<string, unknown> = {}
@@ -449,7 +450,7 @@ export async function handleClayCallback(req: Request) {
     url.searchParams.get("token") ??
     (typeof body._km_callback_secret === "string" ? body._km_callback_secret : "")
   if (!expected || !provided || !secretMatches(provided, expected))
-    return json({ error: "INVALID_SECRET" }, 401)
+    return webhookRejected("clay", req, "INVALID_SECRET", 401)
 
   // No session here: the callback is routed by `?cid=` and authenticated by the
   // shared secret above, so it acts with engine privilege, not a member's.

@@ -3,6 +3,7 @@ import { organization, ssoProvider } from "#db"
 import { auth } from "./auth"
 import { type AuthMethods, readAuthMethods, writeAuthMethods } from "./authMethods"
 import { db } from "./db"
+import { clientIp, routeOf, securityEvent } from "./securityLog"
 import { resolveAdmin, resolveOwner } from "./session"
 
 /**
@@ -26,6 +27,29 @@ import { resolveAdmin, resolveOwner } from "./session"
  */
 
 const json = (body: unknown, status = 200) => Response.json(body, { status })
+
+/** One audit line for an owner-only auth-config change. Ids and booleans only —
+ *  never the client secret, and not the issuer/domain either (they are readable in
+ *  the settings page but have no business in a log). */
+const auditAuthConfig = (
+  req: Request,
+  org: { orgId: string; actor: string },
+  event: string,
+  outcome: "success" | "failure",
+  extra: { reason?: string; targetId?: string; detail?: Record<string, boolean> } = {},
+): void =>
+  securityEvent({
+    event,
+    outcome,
+    actor: org.actor,
+    orgId: org.orgId,
+    targetKind: extra.targetId ? "sso_provider" : undefined,
+    targetId: extra.targetId,
+    reason: extra.reason,
+    route: routeOf(req),
+    ip: clientIp(req.headers),
+    detail: extra.detail,
+  })
 
 /**
  * The provider id, derived from the ORG ID and nothing else.
@@ -229,9 +253,14 @@ export const saveSsoProvider = async (req: Request): Promise<Response> => {
   } catch (e) {
     // Discovery failures (unreachable issuer, no well-known document) surface
     // here. Pass the message through — the operator is the one who can fix it.
+    auditAuthConfig(req, org, "sso.provider.saved", "failure", {
+      reason: "REGISTER_FAILED",
+      targetId: providerId,
+    })
     return json({ error: "REGISTER_FAILED", message: String((e as Error).message ?? e) }, 400)
   }
 
+  auditAuthConfig(req, org, "sso.provider.saved", "success", { targetId: providerId })
   return json({ ok: true, provider: await providerPayload(org.orgId) })
 }
 
@@ -247,6 +276,10 @@ export const deleteSsoProvider = async (req: Request): Promise<Response> => {
     .deleteSSOProvider({ body: { providerId: providerIdFor(org.orgId) }, headers: req.headers })
     .catch(() => undefined)
 
+  auditAuthConfig(req, org, "sso.provider.deleted", "success", {
+    targetId: providerIdFor(org.orgId),
+    detail: { localSignInReenabled: !methods.passwordEnabled },
+  })
   // Password is forced back on above: removing the only other way in while
   // password sign-in is off would lock every non-owner out.
   return json({ ok: true, passwordReenabled: !methods.passwordEnabled })
@@ -288,5 +321,9 @@ export const updateAuthMethods = async (req: Request): Promise<Response> => {
   }
 
   await writeAuthMethods(org.orgId, methods)
+  auditAuthConfig(req, org, "auth.methods.updated", "success", {
+    // "localSignIn", not "password…": the redaction filter rightly drops any such key.
+    detail: { localSignIn: methods.passwordEnabled, ssoSignIn: methods.ssoEnabled },
+  })
   return json({ ok: true, methods })
 }

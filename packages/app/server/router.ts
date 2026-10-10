@@ -57,7 +57,8 @@ import {
   syncPosthogForRequest,
 } from "./posthog"
 import type { UseCaseResult } from "./runtime"
-import { resolveOrg, resolveOwner, roleOf, runScoped } from "./session"
+import { clientIp, routeOf, securityEvent } from "./securityLog"
+import { logDenied, resolveOrg, resolveOwner, roleOf, runScoped } from "./session"
 import {
   disconnectSlack,
   disconnectSlackUser,
@@ -352,8 +353,10 @@ export const handleApi = async (req: Request): Promise<Response | null> => {
     const org = await resolveOrg(req)
     if (!org.ok) return Response.json({ error: org.code }, { status: org.status })
     const role = await roleOf(org.actor, org.orgId)
-    if (!(await canConfigure(org.orgId, org.actor, role)))
+    if (!(await canConfigure(org.orgId, org.actor, role))) {
+      logDenied(req, "FORBIDDEN", { ...org, required: "configure:org" })
       return Response.json({ error: "FORBIDDEN" }, { status: 403 })
+    }
 
     const body = (await req.json().catch(() => null)) as {
       name?: string
@@ -372,6 +375,15 @@ export const handleApi = async (req: Request): Promise<Response | null> => {
       .where(eq(organization.id, org.orgId))
       .returning({ id: organization.id, name: organization.name, logo: organization.logo })
     if (!updated) return Response.json({ error: "NO_SUCH_ORG" }, { status: 404 })
+    securityEvent({
+      event: "org.updated",
+      outcome: "success",
+      actor: org.actor,
+      orgId: org.orgId,
+      route: routeOf(req),
+      ip: clientIp(req.headers),
+      detail: { nameChanged: name !== undefined, logoChanged: body?.logo !== undefined },
+    })
     return Response.json(updated)
   }
 
@@ -385,8 +397,10 @@ export const handleApi = async (req: Request): Promise<Response | null> => {
     const org = await resolveOrg(req)
     if (!org.ok) return Response.json({ error: org.code }, { status: org.status })
     const role = await roleOf(org.actor, org.orgId)
-    if (!(await canConfigure(org.orgId, org.actor, role, { type: "member" })))
+    if (!(await canConfigure(org.orgId, org.actor, role, { type: "member" }))) {
+      logDenied(req, "FORBIDDEN", { ...org, required: "configure:member" })
       return Response.json({ error: "FORBIDDEN" }, { status: 403 })
+    }
 
     const body = (await req.json().catch(() => null)) as {
       email?: string
@@ -423,8 +437,29 @@ export const handleApi = async (req: Request): Promise<Response | null> => {
       // `afterAddMember` in auth.ts already synced their access roles — belt and
       // braces for the case where the hook is bypassed by a future BetterAuth change.
       await syncMembershipRole(org.orgId, target.id, "member")
+      securityEvent({
+        event: "member.added",
+        outcome: "success",
+        actor: org.actor,
+        orgId: org.orgId,
+        targetKind: "user",
+        targetId: target.id,
+        route: routeOf(req),
+        ip: clientIp(req.headers),
+        detail: { role: "member" },
+      })
       return Response.json(member, { status: 201 })
     } catch (e) {
+      securityEvent({
+        event: "member.added",
+        outcome: "failure",
+        actor: org.actor,
+        orgId: org.orgId,
+        targetKind: "user",
+        targetId: target.id,
+        reason: "ADD_FAILED",
+        route: routeOf(req),
+      })
       return Response.json({ error: "ADD_FAILED", detail: String(e) }, { status: 500 })
     }
   }
@@ -480,8 +515,29 @@ export const handleApi = async (req: Request): Promise<Response | null> => {
         // approved. No bypass needed, and none invented.
         headers: req.headers,
       })
+      securityEvent({
+        event: "member.role_changed",
+        outcome: "success",
+        actor: org.actor,
+        orgId: org.orgId,
+        targetKind: "user",
+        targetId: userId,
+        route: routeOf(req),
+        ip: clientIp(req.headers),
+        detail: { from: current, to: next },
+      })
       return Response.json(updated)
     } catch (e) {
+      securityEvent({
+        event: "member.role_changed",
+        outcome: "failure",
+        actor: org.actor,
+        orgId: org.orgId,
+        targetKind: "user",
+        targetId: userId,
+        reason: "ROLE_UPDATE_FAILED",
+        route: routeOf(req),
+      })
       return Response.json({ error: "ROLE_UPDATE_FAILED", detail: String(e) }, { status: 500 })
     }
   }
@@ -495,8 +551,10 @@ export const handleApi = async (req: Request): Promise<Response | null> => {
     const org = await resolveOrg(req)
     if (!org.ok) return Response.json({ error: org.code }, { status: org.status })
     const role = await roleOf(org.actor, org.orgId)
-    if (!(await canConfigure(org.orgId, org.actor, role, { type: "member" })))
+    if (!(await canConfigure(org.orgId, org.actor, role, { type: "member" }))) {
+      logDenied(req, "FORBIDDEN", { ...org, required: "configure:member" })
       return Response.json({ error: "FORBIDDEN" }, { status: 403 })
+    }
 
     const userId = seg[3]
     const targetRole = await roleOf(userId, org.orgId)
@@ -532,8 +590,28 @@ export const handleApi = async (req: Request): Promise<Response | null> => {
         .delete(member)
         .where(and(eq(member.userId, userId), eq(member.organizationId, org.orgId)))
     } catch (e) {
+      securityEvent({
+        event: "member.removed",
+        outcome: "failure",
+        actor: org.actor,
+        orgId: org.orgId,
+        targetKind: "user",
+        targetId: userId,
+        reason: "REMOVE_FAILED",
+        route: routeOf(req),
+      })
       return Response.json({ error: "REMOVE_FAILED", detail: String(e) }, { status: 500 })
     }
+    securityEvent({
+      event: "member.removed",
+      outcome: "success",
+      actor: org.actor,
+      orgId: org.orgId,
+      targetKind: "user",
+      targetId: userId,
+      route: routeOf(req),
+      ip: clientIp(req.headers),
+    })
     return json(await runScoped(req, purgeMemberData(userId)))
   }
 

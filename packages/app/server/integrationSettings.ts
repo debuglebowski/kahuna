@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm"
 import { orgIntegrationSettings } from "#db"
 import { db } from "./db"
 import { canConfigure } from "./policy"
+import { clientIp, routeOf, securityEvent } from "./securityLog"
 import { resolveAdmin, resolveOrg } from "./session"
 
 /**
@@ -267,6 +268,16 @@ export const updateIntegrationSettings = async (req: Request): Promise<Response>
   if (Object.keys(patch).length === 0) return json({ error: "MISSING_FIELDS" }, 400)
 
   await writeIntegrationSettings(org.orgId, patch)
+  securityEvent({
+    event: "integration.settings.updated",
+    outcome: "success",
+    actor: org.actor,
+    orgId: org.orgId,
+    route: routeOf(req),
+    ip: clientIp(req.headers),
+    // Which settings changed, not their values.
+    detail: { fields: Object.keys(patch).join(",") },
+  })
   return json({
     effective: await readIntegrationSettings(org.orgId),
     overrides: await readIntegrationOverrides(org.orgId),

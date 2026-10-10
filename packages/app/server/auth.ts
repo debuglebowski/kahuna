@@ -5,6 +5,7 @@ import { APIError, createAuthMiddleware } from "better-auth/api"
 import { organization } from "better-auth/plugins"
 import { asc, eq } from "drizzle-orm"
 import * as schema from "#db"
+import { auditAuthResponse } from "./authAudit"
 import {
   domainMatches,
   emailDomain,
@@ -15,6 +16,7 @@ import {
 import { db, pool } from "./db"
 import { syncMembershipRole } from "./membership"
 import { runEngineOrThrow, systemScope } from "./runtime"
+import { clientIp, securityEvent, subjectRef } from "./securityLog"
 import { seedKahuna } from "./seed/seed"
 
 /**
@@ -180,6 +182,14 @@ export const auth = betterAuth({
       if (ctx.path === "/sign-in/email") {
         const email = typeof ctx.body?.email === "string" ? ctx.body.email : ""
         if (!(await passwordSignInAllowed(email))) {
+          securityEvent({
+            event: "auth.signin",
+            outcome: "denied",
+            reason: "PASSWORD_SIGN_IN_DISABLED",
+            subjectRef: email ? subjectRef(email) : undefined,
+            ip: clientIp(ctx.headers),
+            detail: { method: "password" },
+          })
           throw new APIError("FORBIDDEN", {
             code: "PASSWORD_SIGN_IN_DISABLED",
             message: "This organization requires signing in with SSO.",
@@ -196,12 +206,25 @@ export const auth = betterAuth({
         if (!provider?.organizationId) return
         const methods = await readAuthMethods(provider.organizationId)
         if (!methods.ssoEnabled) {
+          securityEvent({
+            event: "auth.sso.initiated",
+            outcome: "denied",
+            orgId: provider.organizationId,
+            reason: "SSO_DISABLED",
+            ip: clientIp(ctx.headers),
+          })
           throw new APIError("FORBIDDEN", {
             code: "SSO_DISABLED",
             message: "SSO is not enabled for this organization.",
           })
         }
       }
+    }),
+    // Security audit trail for everything BetterAuth owns: sign-in/out, SSO
+    // callback, credential changes, direct org-membership calls. Pure logging —
+    // it never alters the response. See authAudit.ts / docs/security-logging.md.
+    after: createAuthMiddleware(async (ctx) => {
+      auditAuthResponse(ctx)
     }),
   },
   databaseHooks: {
@@ -274,6 +297,7 @@ export const auth = betterAuth({
         // we never end up with an absent org but orphaned engine rows.
         beforeDeleteOrganization: async ({ organization }) => {
           await purgeOrgEngineData(organization.id)
+          securityEvent({ event: "org.purged", outcome: "success", orgId: organization.id })
         },
       },
     }),
@@ -327,6 +351,15 @@ export const auth = betterAuth({
       provisionUser: async ({ user, provider }) => {
         const domain = emailDomain(user.email)
         if (!domain || !domainMatches(domain, provider.domain)) {
+          securityEvent({
+            event: "auth.signin",
+            outcome: "denied",
+            orgId: provider.organizationId,
+            targetKind: "sso_provider",
+            targetId: provider.providerId,
+            reason: "SSO_DOMAIN_NOT_ALLOWED",
+            detail: { method: "sso" },
+          })
           throw new APIError("FORBIDDEN", {
             code: "SSO_DOMAIN_NOT_ALLOWED",
             message: "This identity's email domain is not allowed for this provider.",

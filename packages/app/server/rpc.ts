@@ -47,7 +47,9 @@ import {
 import { auth } from "./auth"
 import { pool } from "./db"
 import { canConfigure } from "./policy"
+import { instrumentRpcHandlers } from "./rpcAudit"
 import { EngineBase, ERROR_MAP, resolvePolicy, sessionScope } from "./runtime"
+import { clientIp, securityEvent } from "./securityLog"
 import { isDeactivated, roleOf } from "./session"
 import * as uc from "./use-cases"
 
@@ -95,6 +97,15 @@ const AuthMiddlewareLive = Layer.succeed(AuthMiddleware, (options) =>
       catch: () => new RpcError({ code: "INTERNAL", message: "role lookup failed", status: 500 }),
     })
     if (!role) {
+      securityEvent({
+        event: "authz.denied",
+        outcome: "denied",
+        actor: session.user.id,
+        orgId,
+        reason: "NOT_A_MEMBER",
+        ip: clientIp(headers),
+        detail: { rpc: options.rpc._tag },
+      })
       return yield* Effect.fail(
         new RpcError({ code: "NOT_A_MEMBER", message: "Not a member", status: 403 }),
       )
@@ -105,6 +116,15 @@ const AuthMiddlewareLive = Layer.succeed(AuthMiddleware, (options) =>
         new RpcError({ code: "INTERNAL", message: "deactivation lookup failed", status: 500 }),
     })
     if (deactivated) {
+      securityEvent({
+        event: "authz.denied",
+        outcome: "denied",
+        actor: session.user.id,
+        orgId,
+        reason: "DEACTIVATED",
+        ip: clientIp(headers),
+        detail: { rpc: options.rpc._tag },
+      })
       return yield* Effect.fail(
         new RpcError({ code: "DEACTIVATED", message: "Member is deactivated", status: 403 }),
       )
@@ -532,548 +552,574 @@ async function assertDeactivatable(orgId: string, actor: string, userId: string)
 
 const ServerRpcs = KahunaRpcs.middleware(AuthMiddleware)
 
-const HandlersLive = ServerRpcs.toLayer({
-  listConcepts: ({ includeArchived, withCounts }) =>
-    as<ReadonlyArray<Concept>>(uc.listConcepts(includeArchived, withCounts)),
-  createConcept: ({ name, color, access }) => as<Concept>(uc.createConcept(name, color, access)),
-  updateConcept: ({
-    id,
-    name,
-    pluralName,
-    description,
-    icon,
-    color,
-    versioningEnabled,
-    editReach,
-    staticLabelIds,
-    defaultLabelIds,
-  }) =>
-    adminOn<Concept>(
-      "configure",
-      { type: "concept", id },
-      uc.updateConcept(id, {
-        name,
-        pluralName,
-        description,
-        icon,
-        color,
-        versioningEnabled,
-        editReach,
-        staticLabelIds,
-        defaultLabelIds,
-      }),
-    ),
-  // Not admin-gated: any member may shape a concept's default record version layout.
-  setConceptRecordView: ({ id, recordView }) =>
-    as<Concept>(uc.setConceptRecordView(id, recordView)),
-  setConceptTitleField: ({ id, titleFieldId }) =>
-    adminOn<Concept>(
-      "configure",
-      { type: "concept", id },
-      uc.setConceptTitleField(id, titleFieldId),
-    ),
-  // Admin + the member check `createRecord` does: `fields` seeds a real record,
-  // so any `user`-kind value in it must be an actual org member. Without this the
-  // toggle would be a hole in a rule every other write path enforces.
-  setConceptSingleRecord: ({ conceptId, singleRecord, fields }) =>
-    requireAction("configure", { type: "concept", id: conceptId }).pipe(
-      Effect.zipRight(
-        checkThen(
-          (orgId) => assertMembers(orgId, conceptId, fields ?? {}),
-          uc.setConceptSingleRecord(conceptId, singleRecord, fields),
-        ),
-      ),
-    ) as Effect.Effect<Concept, RpcError, OrgContext | EngineServices>,
-  archiveConcept: ({ id }) =>
-    adminOn<Concept>("archive", { type: "concept", id }, uc.archiveConcept(id)),
-  restoreConcept: ({ id }) =>
-    adminOn<Concept>("archive", { type: "concept", id }, uc.restoreConcept(id)),
-  // Not `admin`: the single-record cascade needs its own transaction, hence PgClient.
-  deleteConcept: ({ id }) =>
-    adminSqlOn<Concept>("delete", { type: "concept", id }, uc.deleteConcept(id)),
-  listLabels: ({ includeArchived }) => as<ReadonlyArray<Label>>(uc.listLabels(includeArchived)),
-  createLabel: ({ name, color, primary }) => admin<Label>(uc.createLabel(name, color, primary)),
-  renameLabel: ({ id, name, color, primary }) =>
-    admin<Label>(uc.renameLabel(id, { name, color, primary })),
-  archiveLabel: ({ id }) => admin<Label>(uc.archiveLabel(id)),
-  restoreLabel: ({ id }) => admin<Label>(uc.restoreLabel(id)),
-  deleteLabel: ({ id }) => admin<Label>(uc.deleteLabel(id)),
-  listFields: ({ conceptId, includeArchived }) =>
-    as<ReadonlyArray<Field>>(uc.listFields(conceptId, includeArchived)),
-  getConceptGraph: () => as<ConceptGraph>(uc.getConceptGraph),
-  getGraphLayout: () => as<GraphLayout>(uc.getGraphLayout),
-  saveGraphLayout: ({ positions }) => as<GraphLayout>(uc.saveGraphLayout(positions)),
-  getRecordGraphLayout: ({ recordId }) => as<GraphLayout>(uc.getRecordGraphLayout(recordId)),
-  saveRecordGraphLayout: ({ recordId, positions }) =>
-    as<GraphLayout>(uc.saveRecordGraphLayout(recordId, positions)),
-  addField: ({ conceptId, name, kind, config, formula, icon }) =>
-    adminOn<Field>(
-      "configure",
-      { type: "concept", id: conceptId },
-      uc.addField({ conceptId, name, kind, config, formula, icon }),
-    ),
-  updateField: ({ id, name, config, formula, icon }) =>
-    adminOnFieldConcept<Field>(
-      "configure",
+const HandlersLive = ServerRpcs.toLayer(
+  instrumentRpcHandlers({
+    listConcepts: ({ includeArchived, withCounts }) =>
+      as<ReadonlyArray<Concept>>(uc.listConcepts(includeArchived, withCounts)),
+    createConcept: ({ name, color, access }) => as<Concept>(uc.createConcept(name, color, access)),
+    updateConcept: ({
       id,
-      uc.updateField({ id, name, config, formula, icon }),
-    ),
-  archiveField: ({ id }) => adminOnFieldConcept<Field>("configure", id, uc.archiveField(id)),
-  restoreField: ({ id }) => adminOnFieldConcept<Field>("configure", id, uc.restoreField(id)),
-  deleteField: ({ id }) => adminOnFieldConcept<Field>("configure", id, uc.deleteField(id)),
-  reorderFields: ({ conceptId, orders }) =>
-    adminOn<ReadonlyArray<Field>>(
-      "configure",
-      { type: "concept", id: conceptId },
-      uc.reorderFields(conceptId, orders),
-    ),
-  listRecords: ({ conceptId, includeArchived }) =>
-    mapErr(
-      uc.listRecords(conceptId, { decorate: true, includeArchived, limit: LIST_RECORDS_LIMIT }),
-    ),
-  getRecord: ({ id }) => as<RecordDetail>(uc.getRecordDetail(id)),
-  getSingleRecord: ({ conceptId }) => as<RecordDetail | null>(uc.getSingleRecord(conceptId)),
-  getChanged: () => mapErr(uc.getChanged),
-  listEvents: ({ conceptId, since, limit }) => mapErr(uc.listEvents({ conceptId, since, limit })),
-  createRecord: ({ conceptId, fields }) =>
-    checkThen(
-      (orgId) => assertMembers(orgId, conceptId, fields),
-      uc.createRecord(conceptId, fields),
-    ),
-  updateRecord: ({ id, expectedVersion, patch }) =>
-    checkThen(
-      (orgId) => assertMembersForRecordVersion(orgId, id, patch),
-      uc.updateRecord(id, expectedVersion, patch),
-    ),
-  transitionRecord: ({ id, expectedVersion, field, to }) =>
-    mapErr(uc.transitionRecord(id, expectedVersion, field, to)),
-  // Archive/restore are ordinary record writes (any member); a hard delete is
-  // admin-only, mirroring the schema-mutating concept/field/label deletes.
-  archiveRecordVersion: ({ id, expectedVersion }) =>
-    mapErr(uc.archiveRecordVersion(id, expectedVersion)),
-  restoreRecordVersion: ({ id, expectedVersion }) =>
-    mapErr(uc.restoreRecordVersion(id, expectedVersion)),
-  deleteRecordVersion: ({ id }) => admin<RecordVersion>(uc.deleteRecordVersion(id)),
-  // Versioning: lifecycle + relation editing are ordinary member writes (the
-  // versioning *toggle* is admin, via updateConcept). Discarding a draft is a
-  // member write (it only removes never-published work).
-  listVersions: ({ recordId }) => mapErr(uc.listVersions(recordId)),
-  newVersion: ({ recordId }) => mapErr(uc.newVersion(recordId)),
-  publishVersion: ({ id, expectedVersion }) => mapErr(uc.publishVersion(id, expectedVersion)),
-  discardDraft: ({ id }) => mapErr(uc.discardDraft(id)),
-  archiveRecord: ({ recordId }) => as<KmRecord>(uc.archiveRecord(recordId)),
-  restoreRecord: ({ recordId }) => as<KmRecord>(uc.restoreRecord(recordId)),
-  searchRecords: ({ conceptId, query, limit }) =>
-    as<ReadonlyArray<RecordPick>>(uc.searchRecords(conceptId, query, limit)),
-  createRelation: ({ fieldId, fromId, toRecordId, toVersionId, toId, properties }) =>
-    as<Relation>(uc.createRelation({ fieldId, fromId, toRecordId, toVersionId, toId, properties })),
-  removeRelation: ({ relationId }) => as<Relation>(uc.removeRelation(relationId)),
-  // Views: any member may create/edit/reorder/toggle (no admin gate). The engine
-  // service blocks touching another user's personal view via its owner scoping.
-  listViews: () => as<ReadonlyArray<SidebarView>>(uc.listViews),
-  createView: ({ name, icon, scope, body }) =>
-    as<SidebarView>(uc.createView({ name, icon, scope, body })),
-  updateView: ({ id, name, icon, hidden, scope, body }) =>
-    as<SidebarView>(uc.updateView({ id, name, icon, hidden, scope, body })),
-  deleteView: ({ id }) => as<SidebarView>(uc.deleteView(id)),
-  reorderViews: ({ orders }) => as<ReadonlyArray<SidebarView>>(uc.reorderViews(orders)),
-  // Dashboards: same model as views — any member may create/edit/reorder/toggle
-  // (no admin gate); the engine service blocks touching another user's personal one.
-  listDashboards: () => as<ReadonlyArray<Dashboard>>(uc.listDashboards),
-  listAllDashboards: () => as<ReadonlyArray<Dashboard>>(uc.listAllDashboards),
-  listRecordDashboards: ({ conceptId }) =>
-    as<ReadonlyArray<Dashboard>>(uc.listRecordDashboards(conceptId)),
-  createDashboard: ({ name, icon, scope, body, kind, conceptId }) =>
-    as<Dashboard>(uc.createDashboard({ name, icon, scope, body, kind, conceptId })),
-  updateDashboard: ({ id, name, icon, hidden, scope, body, expectedUpdatedAt }) =>
-    as<Dashboard>(uc.updateDashboard({ id, name, icon, hidden, scope, body, expectedUpdatedAt })),
-  deleteDashboard: ({ id }) => as<Dashboard>(uc.deleteDashboard(id)),
-  reorderDashboards: ({ orders }) => as<ReadonlyArray<Dashboard>>(uc.reorderDashboards(orders)),
-  // ── annotation layer: notes ───────────────────────────────────────────────────
-  // Create + read are open to any member; edits/archive/purge are author/admin
-  // (the note has no assignee). The per-record activity feed is a plain read.
-  listNotes: ({ subjectId, includeArchived }) =>
-    as<ReadonlyArray<Note>>(uc.listNotes(subjectId, includeArchived)),
-  createNote: ({ subjectId, body, customFields }) =>
-    as<Note>(uc.createNote({ subjectId, body, customFields })),
-  updateNote: ({ id, expectedVersion, body, customFields }) =>
-    guarded<Note>(
-      (orgId, actor) => assertCanMutateAnnotation(orgId, actor, id),
-      uc.updateNote({ id, expectedVersion, body, customFields }),
-    ),
-  archiveNote: ({ id, expectedVersion }) =>
-    guarded<Note>(
-      (orgId, actor) => assertCanMutateAnnotation(orgId, actor, id),
-      uc.archiveNote(id, expectedVersion),
-    ),
-  restoreNote: ({ id, expectedVersion }) =>
-    guarded<Note>(
-      (orgId, actor) => assertCanMutateAnnotation(orgId, actor, id),
-      uc.restoreNote(id, expectedVersion),
-    ),
-  deleteNote: ({ id }) =>
-    guarded<Note>((orgId, actor) => assertCanMutateAnnotation(orgId, actor, id), uc.deleteNote(id)),
-  // ── annotation layer: tasks ───────────────────────────────────────────────────
-  // Create is open (assignee validated); edits/assign/status/archive/purge gate on
-  // author/assignee/admin. Assignment also validates the new assignee's membership.
-  listTasks: ({ subjectId, assignee, statusId, dueBefore, dueAfter, includeArchived, limit }) =>
-    as<ReadonlyArray<Task>>(
-      uc.listTasks({ subjectId, assignee, statusId, dueBefore, dueAfter, includeArchived, limit }),
-    ),
-  resolveTaskSubjects: ({ subjectIds }) =>
-    as<ReadonlyArray<TaskSubjectRef>>(uc.resolveTaskSubjects(subjectIds)),
-  // The engine resolves every kind it can gate itself; `person` is auth-tier and
-  // is overlaid here (see `resolvePeopleMentions`). `page` stays null by design —
-  // it is resolved client-side from the static nav table.
-  searchMentionableRecords: ({ query, limit }) =>
-    as<ReadonlyArray<MentionRef>>(uc.searchMentionableRecords(query, limit)),
-  listBacklinks: ({ recordId }) => as<ReadonlyArray<BacklinkRef>>(uc.listBacklinks(recordId)),
-  resolveMentions: ({ refs }) =>
-    Effect.gen(function* () {
-      const { orgId } = yield* OrgContext
-      const resolved = yield* as<ReadonlyArray<MentionRef>>(uc.resolveMentions(refs))
-      const personIds = refs.filter((r) => r.kind === "person").map((r) => r.targetId)
-      if (personIds.length === 0) return resolved
-      const people = yield* Effect.tryPromise({
-        try: () => resolvePeopleMentions(orgId, personIds),
-        catch: toRpcError,
-      })
-      return resolved.map((r) => {
-        if (r.kind !== "person") return r
-        const hit = people.get(r.targetId)
-        return hit ? { ...r, href: hit.href, label: hit.label, icon: hit.icon } : r
-      })
-    }),
-  createTask: ({
-    subjectId,
-    title,
-    description,
-    statusId,
-    priorityId,
-    labelIds,
-    assignee,
-    dueAt,
-    customFields,
-  }) =>
-    checkThen(
-      (orgId) => assertAssigneeMember(orgId, assignee),
-      uc.createTask({
-        subjectId,
-        title,
-        description,
-        statusId,
-        priorityId,
-        labelIds,
-        assignee,
-        dueAt,
-        customFields,
-      }),
-    ),
-  updateTask: ({
-    id,
-    expectedVersion,
-    title,
-    description,
-    priorityId,
-    labelIds,
-    dueAt,
-    customFields,
-  }) =>
-    guarded<Task>(
-      (orgId, actor) => assertCanMutateAnnotation(orgId, actor, id),
-      uc.updateTask({
-        id,
-        expectedVersion,
-        title,
-        description,
-        priorityId,
-        labelIds,
-        dueAt,
-        customFields,
-      }),
-    ),
-  setTaskStatus: ({ id, expectedVersion, statusId }) =>
-    guarded<Task>(
-      (orgId, actor) => assertCanMutateAnnotation(orgId, actor, id),
-      uc.setTaskStatus(id, expectedVersion, statusId),
-    ),
-  assignTask: ({ id, expectedVersion, assignee }) =>
-    guarded<Task>(
-      async (orgId, actor) => {
-        await assertCanMutateAnnotation(orgId, actor, id)
-        await assertAssigneeMember(orgId, assignee)
-      },
-      uc.assignTask(id, expectedVersion, assignee),
-    ),
-  snoozeTask: ({ id, expectedVersion, until }) =>
-    guarded<Task>(
-      (orgId, actor) => assertCanMutateAnnotation(orgId, actor, id),
-      uc.snoozeTask(id, expectedVersion, until),
-    ),
-  setTaskBlocked: ({ id, expectedVersion, blocked }) =>
-    guarded<Task>(
-      (orgId, actor) => assertCanMutateAnnotation(orgId, actor, id),
-      uc.setTaskBlocked(id, expectedVersion, blocked),
-    ),
-  archiveTask: ({ id, expectedVersion }) =>
-    guarded<Task>(
-      (orgId, actor) => assertCanMutateAnnotation(orgId, actor, id),
-      uc.archiveTask(id, expectedVersion),
-    ),
-  restoreTask: ({ id, expectedVersion }) =>
-    guarded<Task>(
-      (orgId, actor) => assertCanMutateAnnotation(orgId, actor, id),
-      uc.restoreTask(id, expectedVersion),
-    ),
-  deleteTask: ({ id }) =>
-    guarded<Task>((orgId, actor) => assertCanMutateAnnotation(orgId, actor, id), uc.deleteTask(id)),
-  getActivity: ({ subjectId, limit }) => mapErr(uc.getActivity(subjectId, limit)),
-  // ── annotation layer: files ─────────────────────────────────────────────────────
-  // Reads are open to any member; archive/restore/purge gate on uploader/admin
-  // (upload itself is the plain-HTTP multipart route, open like createNote).
-  listFiles: ({ recordId, recordVersionId, bucketId, conceptId, includeArchived, limit }) =>
-    as<ReadonlyArray<Attachment>>(
-      uc.listFiles({ recordId, recordVersionId, bucketId, conceptId, includeArchived, limit }),
-    ),
-  archiveFile: ({ id }) =>
-    guarded<Attachment>(
-      (orgId, actor) => assertCanMutateAttachment(orgId, actor, id),
-      uc.archiveFile(id),
-    ),
-  restoreFile: ({ id }) =>
-    guarded<Attachment>(
-      (orgId, actor) => assertCanMutateAttachment(orgId, actor, id),
-      uc.restoreFile(id),
-    ),
-  deleteFile: ({ id }) =>
-    guarded<Attachment>(
-      (orgId, actor) => assertCanMutateAttachment(orgId, actor, id),
-      uc.deleteFile(id),
-    ),
-  purgeBucket: ({ bucketId }) =>
-    guarded<ReadonlyArray<Attachment>>(
-      (orgId, actor) => assertCanPurgeBucket(orgId, actor, bucketId),
-      uc.purgeBucket(bucketId),
-    ),
-  // Any member, deliberately: this only mirrors the widget's own toggle onto the
-  // rows, and saving that toggle into the dashboard body is already open to any
-  // member. A stricter gate here would let the body and the rows disagree — the
-  // very drift this call exists to prevent. Nothing is destroyed or exposed that
-  // editing the widget didn't already decide.
-  setBucketShared: ({ bucketId, shared }) =>
-    as<ReadonlyArray<Attachment>>(uc.setBucketShared(bucketId, shared)),
-  // ── annotation layer: task statuses + custom-field defs (admin) ────────────────
-  listTaskStatuses: ({ includeArchived }) =>
-    as<ReadonlyArray<TaskStatus>>(uc.listTaskStatuses(includeArchived)),
-  createTaskStatus: ({ name, category, color, isDefault }) =>
-    admin<TaskStatus>(uc.createTaskStatus({ name, category, color, isDefault })),
-  updateTaskStatus: ({ id, name, color, category, isDefault }) =>
-    admin<TaskStatus>(uc.updateTaskStatus({ id, name, color, category, isDefault })),
-  archiveTaskStatus: ({ id }) => admin<TaskStatus>(uc.archiveTaskStatus(id)),
-  restoreTaskStatus: ({ id }) => admin<TaskStatus>(uc.restoreTaskStatus(id)),
-  reorderTaskStatuses: ({ orders }) =>
-    admin<ReadonlyArray<TaskStatus>>(uc.reorderTaskStatuses(orders)),
-  listTaskPriorities: ({ includeArchived }) =>
-    as<ReadonlyArray<TaskPriority>>(uc.listTaskPriorities(includeArchived)),
-  createTaskPriority: ({ name, color }) =>
-    admin<TaskPriority>(uc.createTaskPriority({ name, color })),
-  updateTaskPriority: ({ id, name, color }) =>
-    admin<TaskPriority>(uc.updateTaskPriority({ id, name, color })),
-  archiveTaskPriority: ({ id }) => admin<TaskPriority>(uc.archiveTaskPriority(id)),
-  restoreTaskPriority: ({ id }) => admin<TaskPriority>(uc.restoreTaskPriority(id)),
-  reorderTaskPriorities: ({ orders }) =>
-    admin<ReadonlyArray<TaskPriority>>(uc.reorderTaskPriorities(orders)),
-  listAnnotationFields: ({ annotationType, includeArchived }) =>
-    as<ReadonlyArray<AnnotationField>>(uc.listAnnotationFields(annotationType, includeArchived)),
-  addAnnotationField: ({ annotationType, name, kind, config, icon }) =>
-    admin<AnnotationField>(uc.addAnnotationField({ annotationType, name, kind, config, icon })),
-  updateAnnotationField: ({ id, name, config, icon }) =>
-    admin<AnnotationField>(uc.updateAnnotationField({ id, name, config, icon })),
-  archiveAnnotationField: ({ id }) => admin<AnnotationField>(uc.archiveAnnotationField(id)),
-  restoreAnnotationField: ({ id }) => admin<AnnotationField>(uc.restoreAnnotationField(id)),
-  reorderAnnotationFields: ({ annotationType, orders }) =>
-    admin<ReadonlyArray<AnnotationField>>(uc.reorderAnnotationFields(annotationType, orders)),
-  // Record version-view layout prefs: both target the caller's own row.
-  getRecordViewPrefs: () => as<RecordViewPrefs>(uc.getRecordViewPrefs),
-  updateRecordViewPrefs: ({ body }) => as<RecordViewPrefs>(uc.updateRecordViewPrefs(body)),
-  // Deactivation: the list is member-readable (drives picker filtering + the
-  // directory toggle); the writes are admin-only with auth-tier guards. A purge
-  // is the plain-HTTP DELETE /api/org/members/:userId (see router.ts).
-  listDeactivatedMembers: () => as<ReadonlyArray<DeactivatedMember>>(uc.listDeactivatedMembers),
-  deactivateMember: ({ userId }) =>
-    requireAction("configure", { type: "member" }).pipe(
-      Effect.zipRight(
-        checkThen(
-          (orgId, actor) => assertDeactivatable(orgId, actor, userId),
-          uc.deactivateMember(userId),
-        ),
+      name,
+      pluralName,
+      description,
+      icon,
+      color,
+      versioningEnabled,
+      editReach,
+      staticLabelIds,
+      defaultLabelIds,
+    }) =>
+      adminOn<Concept>(
+        "configure",
+        { type: "concept", id },
+        uc.updateConcept(id, {
+          name,
+          pluralName,
+          description,
+          icon,
+          color,
+          versioningEnabled,
+          editReach,
+          staticLabelIds,
+          defaultLabelIds,
+        }),
       ),
-    ) as Effect.Effect<DeactivatedMember, RpcError, OrgContext | EngineServices>,
-  reactivateMember: ({ userId }) =>
-    adminOn<{ userId: string }>("configure", { type: "member" }, uc.reactivateMember(userId)),
-  // Automations. Reads are member-visible (a record's activity trail names the
-  // automation that touched it, so the list must be resolvable); every WRITE is
-  // admin-gated, because an automation writes to everyone's records.
-  listAutomations: ({ includeArchived }) =>
-    as<ReadonlyArray<Automation>>(uc.listAutomations(includeArchived)),
-  getAutomation: ({ id }) => as<Automation>(uc.getAutomation(id)),
-  createAutomation: ({ name, trigger, conditions, match, actions, enabled }) =>
-    admin<Automation>(uc.createAutomation({ name, trigger, conditions, match, actions, enabled })),
-  updateAutomation: ({ id, name, trigger, conditions, match, actions, enabled }) =>
-    admin<Automation>(
-      uc.updateAutomation({ id, name, trigger, conditions, match, actions, enabled }),
-    ),
-  archiveAutomation: ({ id }) => admin<Automation>(uc.archiveAutomation(id)),
-  restoreAutomation: ({ id }) => admin<Automation>(uc.restoreAutomation(id)),
-  deleteAutomation: ({ id }) => admin<{ id: string }>(uc.deleteAutomation(id)),
-  listAutomationRuns: ({ automationId, limit }) =>
-    as<ReadonlyArray<AutomationRun>>(uc.listAutomationRuns(automationId, limit)),
-  // A dry run writes nothing, but it reads every record of a concept — keep it
-  // behind the same gate as the editor that launches it.
-  testAutomation: ({ id, limit }) => admin<AutomationDryRun>(uc.testAutomation(id, limit)),
-
-  // ── roles ──────────────────────────────────────────────────────────────────
-  // Role NAMES are org vocabulary — any member may read them (they render as pills
-  // on /members). The RULES inside a role are the sensitive half and need
-  // `configure` on `role` — its OWN resource type, not blanket org-configure, so
-  // "may manage permissions" is grantable without also handing out schema/settings
-  // administration. See the artifact's Surfaces table.
-  listRoles: () => as<ReadonlyArray<AccessRole>>(uc.listRoles()),
-  rolesOf: ({ userId }) => as<ReadonlyArray<AccessRole>>(uc.rolesOfUser(userId)),
-  listRules: ({ roleId }) =>
-    adminOn<ReadonlyArray<AccessRule>>("configure", { type: "role" }, uc.listRules(roleId)),
-  // Not `admin`-gated, deliberately: this is how a client finds out whether it is an
-  // admin, so gating it on being one makes it useless. It reveals only the caller's
-  // own answer.
-  //
-  // `canConfigure` no longer short-circuits on `role === "owner"` — that was the
-  // pre-Layer-0 bypass, and it drove the Settings nav's admin affordances, so
-  // leaving it in would have shown an owner with no admin role a UI whose actual
-  // writes all 403. `scope.policy` already carries the Layer 0 floor for an owner
-  // (`sessionScope`), which does not cover `org` — same decision `requireAction`
-  // makes underneath every one of those routes.
-  myAccess: () =>
-    Effect.gen(function* () {
-      const scope = yield* OrgContext
-      const has = (type: "org" | "role") =>
-        scope.policy !== undefined &&
-        decide(scope.policy, "configure", { type }, false, { unconditionalOnly: true })
-      return {
-        isOwner: scope.role === "owner",
-        canConfigure: has("org"),
-        canConfigureRoles: has("role"),
-      }
-    }),
-  roleHolders: ({ roleId }) =>
-    adminOn<{ readonly actors: ReadonlyArray<string> }>(
-      "configure",
-      { type: "role" },
-      uc.roleHolders(roleId),
-    ),
-  reassignRoleHolders: ({ fromRoleId, toRoleId }) =>
-    adminOn<{ readonly moved: number }>(
-      "configure",
-      { type: "role" },
-      uc.reassignRoleHolders({ fromRoleId, toRoleId }),
-    ),
-  createRole: ({ name, description, kind, startFrom }) =>
-    adminOn<AccessRole>(
-      "configure",
-      { type: "role" },
-      uc.createRole({ name, description, kind, startFrom }),
-    ),
-  updateRole: ({ id, name, description, autoAssign, active, basedOn }) =>
-    adminOn<AccessRole>(
-      "configure",
-      { type: "role" },
-      uc.updateRole({ id, name, description, autoAssign, active, basedOn }),
-    ),
-  deleteRole: ({ id }) =>
-    adminOn<{ readonly id: string }>("configure", { type: "role" }, uc.deleteRole(id)),
-  assignRole: ({ roleId, userId }) =>
-    adminOn<{ readonly ok: boolean }>("configure", { type: "role" }, uc.assignRole(roleId, userId)),
-  unassignRole: ({ roleId, userId }) =>
-    adminOn<{ readonly ok: boolean }>(
-      "configure",
-      { type: "role" },
-      uc.unassignRole(roleId, userId),
-    ),
-  reorderMemberRoles: ({ userId, roleIds }) =>
-    adminOn<{ readonly ok: boolean }>(
-      "configure",
-      { type: "role" },
-      uc.reorderMemberRoles(userId, roleIds),
-    ),
-  ensurePersonalRole: ({ userId }) =>
-    adminOn<AccessRole>("configure", { type: "role" }, uc.ensurePersonalRole(userId)),
-  addRule: ({ roleId, effect, actions, resourceType, resourceId, conceptId, condition }) =>
-    adminOn<{ readonly id: string }>(
-      "configure",
-      { type: "role" },
-      uc.addRule({ roleId, effect, actions, resourceType, resourceId, conceptId, condition }),
-    ),
-  updateRule: ({ ruleId, effect, actions, resourceType, resourceId, conceptId, condition }) =>
-    adminOn<{ readonly id: string }>(
-      "configure",
-      { type: "role" },
-      uc.updateRule({ ruleId, effect, actions, resourceType, resourceId, conceptId, condition }),
-    ),
-  setRoleRules: ({ roleId, groups }) =>
-    adminOn<{ readonly ok: boolean }>(
-      "configure",
-      { type: "role" },
-      uc.setRoleRules({ roleId, groups }),
-    ),
-  removeRule: ({ ruleId }) =>
-    adminOn<{ readonly id: string }>("configure", { type: "role" }, uc.removeRule(ruleId)),
-  /**
-   * Asking about YOURSELF is always allowed — that is the point of the self-serve
-   * report ("why can't I see this?" answered without an admin). Asking about
-   * someone else needs `configure` on `role` — this section lives on the member
-   * ACCESS page (P5), which the same permission gates end to end: seeing why a
-   * decision came out the way it did is "may manage permissions", same as
-   * assigning the role that made it.
-   *
-   * The target's membership role decides whether their trace carries the Layer 0
-   * floor — a fact `PolicyService.resolve` doesn't know (it only reads
-   * `access_rules`), the same reason `assertDeactivatable` looks it up here rather
-   * than trusting the resolved policy alone.
-   */
-  effectiveAccess: ({ userId }) =>
-    Effect.gen(function* () {
-      const scope = yield* OrgContext
-      const target = userId ?? scope.actor
-      if (target !== scope.actor) yield* requireAction("configure", { type: "role" })
-      const targetRole = yield* Effect.tryPromise({
-        try: () => roleOf(target, scope.orgId),
-        catch: () => new RpcError({ code: "INTERNAL", message: "role lookup failed", status: 500 }),
-      })
-      return yield* as<EffectiveAccess>(uc.effectiveAccess(target, targetRole === "owner"))
-    }),
-  /** The targeted twin of `effectiveAccess` — same self-vs-others gate, same
-   *  Layer-0 lookup, one specific (resource, action) traced instead of every rule
-   *  listed. */
-  explainAccess: ({ userId, resourceType, resourceId, conceptId, action }) =>
-    Effect.gen(function* () {
-      const scope = yield* OrgContext
-      const target = userId ?? scope.actor
-      if (target !== scope.actor) yield* requireAction("configure", { type: "role" })
-      const targetRole = yield* Effect.tryPromise({
-        try: () => roleOf(target, scope.orgId),
-        catch: () => new RpcError({ code: "INTERNAL", message: "role lookup failed", status: 500 }),
-      })
-      return yield* as<ExplainAccess>(
-        uc.explainAccess(
-          target,
-          targetRole === "owner",
-          resourceType,
-          resourceId ?? null,
-          conceptId ?? null,
-          action,
+    // Not admin-gated: any member may shape a concept's default record version layout.
+    setConceptRecordView: ({ id, recordView }) =>
+      as<Concept>(uc.setConceptRecordView(id, recordView)),
+    setConceptTitleField: ({ id, titleFieldId }) =>
+      adminOn<Concept>(
+        "configure",
+        { type: "concept", id },
+        uc.setConceptTitleField(id, titleFieldId),
+      ),
+    // Admin + the member check `createRecord` does: `fields` seeds a real record,
+    // so any `user`-kind value in it must be an actual org member. Without this the
+    // toggle would be a hole in a rule every other write path enforces.
+    setConceptSingleRecord: ({ conceptId, singleRecord, fields }) =>
+      requireAction("configure", { type: "concept", id: conceptId }).pipe(
+        Effect.zipRight(
+          checkThen(
+            (orgId) => assertMembers(orgId, conceptId, fields ?? {}),
+            uc.setConceptSingleRecord(conceptId, singleRecord, fields),
+          ),
         ),
-      )
-    }),
-}).pipe(Layer.provide(EngineBase))
+      ) as Effect.Effect<Concept, RpcError, OrgContext | EngineServices>,
+    archiveConcept: ({ id }) =>
+      adminOn<Concept>("archive", { type: "concept", id }, uc.archiveConcept(id)),
+    restoreConcept: ({ id }) =>
+      adminOn<Concept>("archive", { type: "concept", id }, uc.restoreConcept(id)),
+    // Not `admin`: the single-record cascade needs its own transaction, hence PgClient.
+    deleteConcept: ({ id }) =>
+      adminSqlOn<Concept>("delete", { type: "concept", id }, uc.deleteConcept(id)),
+    listLabels: ({ includeArchived }) => as<ReadonlyArray<Label>>(uc.listLabels(includeArchived)),
+    createLabel: ({ name, color, primary }) => admin<Label>(uc.createLabel(name, color, primary)),
+    renameLabel: ({ id, name, color, primary }) =>
+      admin<Label>(uc.renameLabel(id, { name, color, primary })),
+    archiveLabel: ({ id }) => admin<Label>(uc.archiveLabel(id)),
+    restoreLabel: ({ id }) => admin<Label>(uc.restoreLabel(id)),
+    deleteLabel: ({ id }) => admin<Label>(uc.deleteLabel(id)),
+    listFields: ({ conceptId, includeArchived }) =>
+      as<ReadonlyArray<Field>>(uc.listFields(conceptId, includeArchived)),
+    getConceptGraph: () => as<ConceptGraph>(uc.getConceptGraph),
+    getGraphLayout: () => as<GraphLayout>(uc.getGraphLayout),
+    saveGraphLayout: ({ positions }) => as<GraphLayout>(uc.saveGraphLayout(positions)),
+    getRecordGraphLayout: ({ recordId }) => as<GraphLayout>(uc.getRecordGraphLayout(recordId)),
+    saveRecordGraphLayout: ({ recordId, positions }) =>
+      as<GraphLayout>(uc.saveRecordGraphLayout(recordId, positions)),
+    addField: ({ conceptId, name, kind, config, formula, icon }) =>
+      adminOn<Field>(
+        "configure",
+        { type: "concept", id: conceptId },
+        uc.addField({ conceptId, name, kind, config, formula, icon }),
+      ),
+    updateField: ({ id, name, config, formula, icon }) =>
+      adminOnFieldConcept<Field>(
+        "configure",
+        id,
+        uc.updateField({ id, name, config, formula, icon }),
+      ),
+    archiveField: ({ id }) => adminOnFieldConcept<Field>("configure", id, uc.archiveField(id)),
+    restoreField: ({ id }) => adminOnFieldConcept<Field>("configure", id, uc.restoreField(id)),
+    deleteField: ({ id }) => adminOnFieldConcept<Field>("configure", id, uc.deleteField(id)),
+    reorderFields: ({ conceptId, orders }) =>
+      adminOn<ReadonlyArray<Field>>(
+        "configure",
+        { type: "concept", id: conceptId },
+        uc.reorderFields(conceptId, orders),
+      ),
+    listRecords: ({ conceptId, includeArchived }) =>
+      mapErr(
+        uc.listRecords(conceptId, { decorate: true, includeArchived, limit: LIST_RECORDS_LIMIT }),
+      ),
+    getRecord: ({ id }) => as<RecordDetail>(uc.getRecordDetail(id)),
+    getSingleRecord: ({ conceptId }) => as<RecordDetail | null>(uc.getSingleRecord(conceptId)),
+    getChanged: () => mapErr(uc.getChanged),
+    listEvents: ({ conceptId, since, limit }) => mapErr(uc.listEvents({ conceptId, since, limit })),
+    createRecord: ({ conceptId, fields }) =>
+      checkThen(
+        (orgId) => assertMembers(orgId, conceptId, fields),
+        uc.createRecord(conceptId, fields),
+      ),
+    updateRecord: ({ id, expectedVersion, patch }) =>
+      checkThen(
+        (orgId) => assertMembersForRecordVersion(orgId, id, patch),
+        uc.updateRecord(id, expectedVersion, patch),
+      ),
+    transitionRecord: ({ id, expectedVersion, field, to }) =>
+      mapErr(uc.transitionRecord(id, expectedVersion, field, to)),
+    // Archive/restore are ordinary record writes (any member); a hard delete is
+    // admin-only, mirroring the schema-mutating concept/field/label deletes.
+    archiveRecordVersion: ({ id, expectedVersion }) =>
+      mapErr(uc.archiveRecordVersion(id, expectedVersion)),
+    restoreRecordVersion: ({ id, expectedVersion }) =>
+      mapErr(uc.restoreRecordVersion(id, expectedVersion)),
+    deleteRecordVersion: ({ id }) => admin<RecordVersion>(uc.deleteRecordVersion(id)),
+    // Versioning: lifecycle + relation editing are ordinary member writes (the
+    // versioning *toggle* is admin, via updateConcept). Discarding a draft is a
+    // member write (it only removes never-published work).
+    listVersions: ({ recordId }) => mapErr(uc.listVersions(recordId)),
+    newVersion: ({ recordId }) => mapErr(uc.newVersion(recordId)),
+    publishVersion: ({ id, expectedVersion }) => mapErr(uc.publishVersion(id, expectedVersion)),
+    discardDraft: ({ id }) => mapErr(uc.discardDraft(id)),
+    archiveRecord: ({ recordId }) => as<KmRecord>(uc.archiveRecord(recordId)),
+    restoreRecord: ({ recordId }) => as<KmRecord>(uc.restoreRecord(recordId)),
+    searchRecords: ({ conceptId, query, limit }) =>
+      as<ReadonlyArray<RecordPick>>(uc.searchRecords(conceptId, query, limit)),
+    createRelation: ({ fieldId, fromId, toRecordId, toVersionId, toId, properties }) =>
+      as<Relation>(
+        uc.createRelation({ fieldId, fromId, toRecordId, toVersionId, toId, properties }),
+      ),
+    removeRelation: ({ relationId }) => as<Relation>(uc.removeRelation(relationId)),
+    // Views: any member may create/edit/reorder/toggle (no admin gate). The engine
+    // service blocks touching another user's personal view via its owner scoping.
+    listViews: () => as<ReadonlyArray<SidebarView>>(uc.listViews),
+    createView: ({ name, icon, scope, body }) =>
+      as<SidebarView>(uc.createView({ name, icon, scope, body })),
+    updateView: ({ id, name, icon, hidden, scope, body }) =>
+      as<SidebarView>(uc.updateView({ id, name, icon, hidden, scope, body })),
+    deleteView: ({ id }) => as<SidebarView>(uc.deleteView(id)),
+    reorderViews: ({ orders }) => as<ReadonlyArray<SidebarView>>(uc.reorderViews(orders)),
+    // Dashboards: same model as views — any member may create/edit/reorder/toggle
+    // (no admin gate); the engine service blocks touching another user's personal one.
+    listDashboards: () => as<ReadonlyArray<Dashboard>>(uc.listDashboards),
+    listAllDashboards: () => as<ReadonlyArray<Dashboard>>(uc.listAllDashboards),
+    listRecordDashboards: ({ conceptId }) =>
+      as<ReadonlyArray<Dashboard>>(uc.listRecordDashboards(conceptId)),
+    createDashboard: ({ name, icon, scope, body, kind, conceptId }) =>
+      as<Dashboard>(uc.createDashboard({ name, icon, scope, body, kind, conceptId })),
+    updateDashboard: ({ id, name, icon, hidden, scope, body, expectedUpdatedAt }) =>
+      as<Dashboard>(uc.updateDashboard({ id, name, icon, hidden, scope, body, expectedUpdatedAt })),
+    deleteDashboard: ({ id }) => as<Dashboard>(uc.deleteDashboard(id)),
+    reorderDashboards: ({ orders }) => as<ReadonlyArray<Dashboard>>(uc.reorderDashboards(orders)),
+    // ── annotation layer: notes ───────────────────────────────────────────────────
+    // Create + read are open to any member; edits/archive/purge are author/admin
+    // (the note has no assignee). The per-record activity feed is a plain read.
+    listNotes: ({ subjectId, includeArchived }) =>
+      as<ReadonlyArray<Note>>(uc.listNotes(subjectId, includeArchived)),
+    createNote: ({ subjectId, body, customFields }) =>
+      as<Note>(uc.createNote({ subjectId, body, customFields })),
+    updateNote: ({ id, expectedVersion, body, customFields }) =>
+      guarded<Note>(
+        (orgId, actor) => assertCanMutateAnnotation(orgId, actor, id),
+        uc.updateNote({ id, expectedVersion, body, customFields }),
+      ),
+    archiveNote: ({ id, expectedVersion }) =>
+      guarded<Note>(
+        (orgId, actor) => assertCanMutateAnnotation(orgId, actor, id),
+        uc.archiveNote(id, expectedVersion),
+      ),
+    restoreNote: ({ id, expectedVersion }) =>
+      guarded<Note>(
+        (orgId, actor) => assertCanMutateAnnotation(orgId, actor, id),
+        uc.restoreNote(id, expectedVersion),
+      ),
+    deleteNote: ({ id }) =>
+      guarded<Note>(
+        (orgId, actor) => assertCanMutateAnnotation(orgId, actor, id),
+        uc.deleteNote(id),
+      ),
+    // ── annotation layer: tasks ───────────────────────────────────────────────────
+    // Create is open (assignee validated); edits/assign/status/archive/purge gate on
+    // author/assignee/admin. Assignment also validates the new assignee's membership.
+    listTasks: ({ subjectId, assignee, statusId, dueBefore, dueAfter, includeArchived, limit }) =>
+      as<ReadonlyArray<Task>>(
+        uc.listTasks({
+          subjectId,
+          assignee,
+          statusId,
+          dueBefore,
+          dueAfter,
+          includeArchived,
+          limit,
+        }),
+      ),
+    resolveTaskSubjects: ({ subjectIds }) =>
+      as<ReadonlyArray<TaskSubjectRef>>(uc.resolveTaskSubjects(subjectIds)),
+    // The engine resolves every kind it can gate itself; `person` is auth-tier and
+    // is overlaid here (see `resolvePeopleMentions`). `page` stays null by design —
+    // it is resolved client-side from the static nav table.
+    searchMentionableRecords: ({ query, limit }) =>
+      as<ReadonlyArray<MentionRef>>(uc.searchMentionableRecords(query, limit)),
+    listBacklinks: ({ recordId }) => as<ReadonlyArray<BacklinkRef>>(uc.listBacklinks(recordId)),
+    resolveMentions: ({ refs }) =>
+      Effect.gen(function* () {
+        const { orgId } = yield* OrgContext
+        const resolved = yield* as<ReadonlyArray<MentionRef>>(uc.resolveMentions(refs))
+        const personIds = refs.filter((r) => r.kind === "person").map((r) => r.targetId)
+        if (personIds.length === 0) return resolved
+        const people = yield* Effect.tryPromise({
+          try: () => resolvePeopleMentions(orgId, personIds),
+          catch: toRpcError,
+        })
+        return resolved.map((r) => {
+          if (r.kind !== "person") return r
+          const hit = people.get(r.targetId)
+          return hit ? { ...r, href: hit.href, label: hit.label, icon: hit.icon } : r
+        })
+      }),
+    createTask: ({
+      subjectId,
+      title,
+      description,
+      statusId,
+      priorityId,
+      labelIds,
+      assignee,
+      dueAt,
+      customFields,
+    }) =>
+      checkThen(
+        (orgId) => assertAssigneeMember(orgId, assignee),
+        uc.createTask({
+          subjectId,
+          title,
+          description,
+          statusId,
+          priorityId,
+          labelIds,
+          assignee,
+          dueAt,
+          customFields,
+        }),
+      ),
+    updateTask: ({
+      id,
+      expectedVersion,
+      title,
+      description,
+      priorityId,
+      labelIds,
+      dueAt,
+      customFields,
+    }) =>
+      guarded<Task>(
+        (orgId, actor) => assertCanMutateAnnotation(orgId, actor, id),
+        uc.updateTask({
+          id,
+          expectedVersion,
+          title,
+          description,
+          priorityId,
+          labelIds,
+          dueAt,
+          customFields,
+        }),
+      ),
+    setTaskStatus: ({ id, expectedVersion, statusId }) =>
+      guarded<Task>(
+        (orgId, actor) => assertCanMutateAnnotation(orgId, actor, id),
+        uc.setTaskStatus(id, expectedVersion, statusId),
+      ),
+    assignTask: ({ id, expectedVersion, assignee }) =>
+      guarded<Task>(
+        async (orgId, actor) => {
+          await assertCanMutateAnnotation(orgId, actor, id)
+          await assertAssigneeMember(orgId, assignee)
+        },
+        uc.assignTask(id, expectedVersion, assignee),
+      ),
+    snoozeTask: ({ id, expectedVersion, until }) =>
+      guarded<Task>(
+        (orgId, actor) => assertCanMutateAnnotation(orgId, actor, id),
+        uc.snoozeTask(id, expectedVersion, until),
+      ),
+    setTaskBlocked: ({ id, expectedVersion, blocked }) =>
+      guarded<Task>(
+        (orgId, actor) => assertCanMutateAnnotation(orgId, actor, id),
+        uc.setTaskBlocked(id, expectedVersion, blocked),
+      ),
+    archiveTask: ({ id, expectedVersion }) =>
+      guarded<Task>(
+        (orgId, actor) => assertCanMutateAnnotation(orgId, actor, id),
+        uc.archiveTask(id, expectedVersion),
+      ),
+    restoreTask: ({ id, expectedVersion }) =>
+      guarded<Task>(
+        (orgId, actor) => assertCanMutateAnnotation(orgId, actor, id),
+        uc.restoreTask(id, expectedVersion),
+      ),
+    deleteTask: ({ id }) =>
+      guarded<Task>(
+        (orgId, actor) => assertCanMutateAnnotation(orgId, actor, id),
+        uc.deleteTask(id),
+      ),
+    getActivity: ({ subjectId, limit }) => mapErr(uc.getActivity(subjectId, limit)),
+    // ── annotation layer: files ─────────────────────────────────────────────────────
+    // Reads are open to any member; archive/restore/purge gate on uploader/admin
+    // (upload itself is the plain-HTTP multipart route, open like createNote).
+    listFiles: ({ recordId, recordVersionId, bucketId, conceptId, includeArchived, limit }) =>
+      as<ReadonlyArray<Attachment>>(
+        uc.listFiles({ recordId, recordVersionId, bucketId, conceptId, includeArchived, limit }),
+      ),
+    archiveFile: ({ id }) =>
+      guarded<Attachment>(
+        (orgId, actor) => assertCanMutateAttachment(orgId, actor, id),
+        uc.archiveFile(id),
+      ),
+    restoreFile: ({ id }) =>
+      guarded<Attachment>(
+        (orgId, actor) => assertCanMutateAttachment(orgId, actor, id),
+        uc.restoreFile(id),
+      ),
+    deleteFile: ({ id }) =>
+      guarded<Attachment>(
+        (orgId, actor) => assertCanMutateAttachment(orgId, actor, id),
+        uc.deleteFile(id),
+      ),
+    purgeBucket: ({ bucketId }) =>
+      guarded<ReadonlyArray<Attachment>>(
+        (orgId, actor) => assertCanPurgeBucket(orgId, actor, bucketId),
+        uc.purgeBucket(bucketId),
+      ),
+    // Any member, deliberately: this only mirrors the widget's own toggle onto the
+    // rows, and saving that toggle into the dashboard body is already open to any
+    // member. A stricter gate here would let the body and the rows disagree — the
+    // very drift this call exists to prevent. Nothing is destroyed or exposed that
+    // editing the widget didn't already decide.
+    setBucketShared: ({ bucketId, shared }) =>
+      as<ReadonlyArray<Attachment>>(uc.setBucketShared(bucketId, shared)),
+    // ── annotation layer: task statuses + custom-field defs (admin) ────────────────
+    listTaskStatuses: ({ includeArchived }) =>
+      as<ReadonlyArray<TaskStatus>>(uc.listTaskStatuses(includeArchived)),
+    createTaskStatus: ({ name, category, color, isDefault }) =>
+      admin<TaskStatus>(uc.createTaskStatus({ name, category, color, isDefault })),
+    updateTaskStatus: ({ id, name, color, category, isDefault }) =>
+      admin<TaskStatus>(uc.updateTaskStatus({ id, name, color, category, isDefault })),
+    archiveTaskStatus: ({ id }) => admin<TaskStatus>(uc.archiveTaskStatus(id)),
+    restoreTaskStatus: ({ id }) => admin<TaskStatus>(uc.restoreTaskStatus(id)),
+    reorderTaskStatuses: ({ orders }) =>
+      admin<ReadonlyArray<TaskStatus>>(uc.reorderTaskStatuses(orders)),
+    listTaskPriorities: ({ includeArchived }) =>
+      as<ReadonlyArray<TaskPriority>>(uc.listTaskPriorities(includeArchived)),
+    createTaskPriority: ({ name, color }) =>
+      admin<TaskPriority>(uc.createTaskPriority({ name, color })),
+    updateTaskPriority: ({ id, name, color }) =>
+      admin<TaskPriority>(uc.updateTaskPriority({ id, name, color })),
+    archiveTaskPriority: ({ id }) => admin<TaskPriority>(uc.archiveTaskPriority(id)),
+    restoreTaskPriority: ({ id }) => admin<TaskPriority>(uc.restoreTaskPriority(id)),
+    reorderTaskPriorities: ({ orders }) =>
+      admin<ReadonlyArray<TaskPriority>>(uc.reorderTaskPriorities(orders)),
+    listAnnotationFields: ({ annotationType, includeArchived }) =>
+      as<ReadonlyArray<AnnotationField>>(uc.listAnnotationFields(annotationType, includeArchived)),
+    addAnnotationField: ({ annotationType, name, kind, config, icon }) =>
+      admin<AnnotationField>(uc.addAnnotationField({ annotationType, name, kind, config, icon })),
+    updateAnnotationField: ({ id, name, config, icon }) =>
+      admin<AnnotationField>(uc.updateAnnotationField({ id, name, config, icon })),
+    archiveAnnotationField: ({ id }) => admin<AnnotationField>(uc.archiveAnnotationField(id)),
+    restoreAnnotationField: ({ id }) => admin<AnnotationField>(uc.restoreAnnotationField(id)),
+    reorderAnnotationFields: ({ annotationType, orders }) =>
+      admin<ReadonlyArray<AnnotationField>>(uc.reorderAnnotationFields(annotationType, orders)),
+    // Record version-view layout prefs: both target the caller's own row.
+    getRecordViewPrefs: () => as<RecordViewPrefs>(uc.getRecordViewPrefs),
+    updateRecordViewPrefs: ({ body }) => as<RecordViewPrefs>(uc.updateRecordViewPrefs(body)),
+    // Deactivation: the list is member-readable (drives picker filtering + the
+    // directory toggle); the writes are admin-only with auth-tier guards. A purge
+    // is the plain-HTTP DELETE /api/org/members/:userId (see router.ts).
+    listDeactivatedMembers: () => as<ReadonlyArray<DeactivatedMember>>(uc.listDeactivatedMembers),
+    deactivateMember: ({ userId }) =>
+      requireAction("configure", { type: "member" }).pipe(
+        Effect.zipRight(
+          checkThen(
+            (orgId, actor) => assertDeactivatable(orgId, actor, userId),
+            uc.deactivateMember(userId),
+          ),
+        ),
+      ) as Effect.Effect<DeactivatedMember, RpcError, OrgContext | EngineServices>,
+    reactivateMember: ({ userId }) =>
+      adminOn<{ userId: string }>("configure", { type: "member" }, uc.reactivateMember(userId)),
+    // Automations. Reads are member-visible (a record's activity trail names the
+    // automation that touched it, so the list must be resolvable); every WRITE is
+    // admin-gated, because an automation writes to everyone's records.
+    listAutomations: ({ includeArchived }) =>
+      as<ReadonlyArray<Automation>>(uc.listAutomations(includeArchived)),
+    getAutomation: ({ id }) => as<Automation>(uc.getAutomation(id)),
+    createAutomation: ({ name, trigger, conditions, match, actions, enabled }) =>
+      admin<Automation>(
+        uc.createAutomation({ name, trigger, conditions, match, actions, enabled }),
+      ),
+    updateAutomation: ({ id, name, trigger, conditions, match, actions, enabled }) =>
+      admin<Automation>(
+        uc.updateAutomation({ id, name, trigger, conditions, match, actions, enabled }),
+      ),
+    archiveAutomation: ({ id }) => admin<Automation>(uc.archiveAutomation(id)),
+    restoreAutomation: ({ id }) => admin<Automation>(uc.restoreAutomation(id)),
+    deleteAutomation: ({ id }) => admin<{ id: string }>(uc.deleteAutomation(id)),
+    listAutomationRuns: ({ automationId, limit }) =>
+      as<ReadonlyArray<AutomationRun>>(uc.listAutomationRuns(automationId, limit)),
+    // A dry run writes nothing, but it reads every record of a concept — keep it
+    // behind the same gate as the editor that launches it.
+    testAutomation: ({ id, limit }) => admin<AutomationDryRun>(uc.testAutomation(id, limit)),
+
+    // ── roles ──────────────────────────────────────────────────────────────────
+    // Role NAMES are org vocabulary — any member may read them (they render as pills
+    // on /members). The RULES inside a role are the sensitive half and need
+    // `configure` on `role` — its OWN resource type, not blanket org-configure, so
+    // "may manage permissions" is grantable without also handing out schema/settings
+    // administration. See the artifact's Surfaces table.
+    listRoles: () => as<ReadonlyArray<AccessRole>>(uc.listRoles()),
+    rolesOf: ({ userId }) => as<ReadonlyArray<AccessRole>>(uc.rolesOfUser(userId)),
+    listRules: ({ roleId }) =>
+      adminOn<ReadonlyArray<AccessRule>>("configure", { type: "role" }, uc.listRules(roleId)),
+    // Not `admin`-gated, deliberately: this is how a client finds out whether it is an
+    // admin, so gating it on being one makes it useless. It reveals only the caller's
+    // own answer.
+    //
+    // `canConfigure` no longer short-circuits on `role === "owner"` — that was the
+    // pre-Layer-0 bypass, and it drove the Settings nav's admin affordances, so
+    // leaving it in would have shown an owner with no admin role a UI whose actual
+    // writes all 403. `scope.policy` already carries the Layer 0 floor for an owner
+    // (`sessionScope`), which does not cover `org` — same decision `requireAction`
+    // makes underneath every one of those routes.
+    myAccess: () =>
+      Effect.gen(function* () {
+        const scope = yield* OrgContext
+        const has = (type: "org" | "role") =>
+          scope.policy !== undefined &&
+          decide(scope.policy, "configure", { type }, false, { unconditionalOnly: true })
+        return {
+          isOwner: scope.role === "owner",
+          canConfigure: has("org"),
+          canConfigureRoles: has("role"),
+        }
+      }),
+    roleHolders: ({ roleId }) =>
+      adminOn<{ readonly actors: ReadonlyArray<string> }>(
+        "configure",
+        { type: "role" },
+        uc.roleHolders(roleId),
+      ),
+    reassignRoleHolders: ({ fromRoleId, toRoleId }) =>
+      adminOn<{ readonly moved: number }>(
+        "configure",
+        { type: "role" },
+        uc.reassignRoleHolders({ fromRoleId, toRoleId }),
+      ),
+    createRole: ({ name, description, kind, startFrom }) =>
+      adminOn<AccessRole>(
+        "configure",
+        { type: "role" },
+        uc.createRole({ name, description, kind, startFrom }),
+      ),
+    updateRole: ({ id, name, description, autoAssign, active, basedOn }) =>
+      adminOn<AccessRole>(
+        "configure",
+        { type: "role" },
+        uc.updateRole({ id, name, description, autoAssign, active, basedOn }),
+      ),
+    deleteRole: ({ id }) =>
+      adminOn<{ readonly id: string }>("configure", { type: "role" }, uc.deleteRole(id)),
+    assignRole: ({ roleId, userId }) =>
+      adminOn<{ readonly ok: boolean }>(
+        "configure",
+        { type: "role" },
+        uc.assignRole(roleId, userId),
+      ),
+    unassignRole: ({ roleId, userId }) =>
+      adminOn<{ readonly ok: boolean }>(
+        "configure",
+        { type: "role" },
+        uc.unassignRole(roleId, userId),
+      ),
+    reorderMemberRoles: ({ userId, roleIds }) =>
+      adminOn<{ readonly ok: boolean }>(
+        "configure",
+        { type: "role" },
+        uc.reorderMemberRoles(userId, roleIds),
+      ),
+    ensurePersonalRole: ({ userId }) =>
+      adminOn<AccessRole>("configure", { type: "role" }, uc.ensurePersonalRole(userId)),
+    addRule: ({ roleId, effect, actions, resourceType, resourceId, conceptId, condition }) =>
+      adminOn<{ readonly id: string }>(
+        "configure",
+        { type: "role" },
+        uc.addRule({ roleId, effect, actions, resourceType, resourceId, conceptId, condition }),
+      ),
+    updateRule: ({ ruleId, effect, actions, resourceType, resourceId, conceptId, condition }) =>
+      adminOn<{ readonly id: string }>(
+        "configure",
+        { type: "role" },
+        uc.updateRule({ ruleId, effect, actions, resourceType, resourceId, conceptId, condition }),
+      ),
+    setRoleRules: ({ roleId, groups }) =>
+      adminOn<{ readonly ok: boolean }>(
+        "configure",
+        { type: "role" },
+        uc.setRoleRules({ roleId, groups }),
+      ),
+    removeRule: ({ ruleId }) =>
+      adminOn<{ readonly id: string }>("configure", { type: "role" }, uc.removeRule(ruleId)),
+    /**
+     * Asking about YOURSELF is always allowed — that is the point of the self-serve
+     * report ("why can't I see this?" answered without an admin). Asking about
+     * someone else needs `configure` on `role` — this section lives on the member
+     * ACCESS page (P5), which the same permission gates end to end: seeing why a
+     * decision came out the way it did is "may manage permissions", same as
+     * assigning the role that made it.
+     *
+     * The target's membership role decides whether their trace carries the Layer 0
+     * floor — a fact `PolicyService.resolve` doesn't know (it only reads
+     * `access_rules`), the same reason `assertDeactivatable` looks it up here rather
+     * than trusting the resolved policy alone.
+     */
+    effectiveAccess: ({ userId }) =>
+      Effect.gen(function* () {
+        const scope = yield* OrgContext
+        const target = userId ?? scope.actor
+        if (target !== scope.actor) yield* requireAction("configure", { type: "role" })
+        const targetRole = yield* Effect.tryPromise({
+          try: () => roleOf(target, scope.orgId),
+          catch: () =>
+            new RpcError({ code: "INTERNAL", message: "role lookup failed", status: 500 }),
+        })
+        return yield* as<EffectiveAccess>(uc.effectiveAccess(target, targetRole === "owner"))
+      }),
+    /** The targeted twin of `effectiveAccess` — same self-vs-others gate, same
+     *  Layer-0 lookup, one specific (resource, action) traced instead of every rule
+     *  listed. */
+    explainAccess: ({ userId, resourceType, resourceId, conceptId, action }) =>
+      Effect.gen(function* () {
+        const scope = yield* OrgContext
+        const target = userId ?? scope.actor
+        if (target !== scope.actor) yield* requireAction("configure", { type: "role" })
+        const targetRole = yield* Effect.tryPromise({
+          try: () => roleOf(target, scope.orgId),
+          catch: () =>
+            new RpcError({ code: "INTERNAL", message: "role lookup failed", status: 500 }),
+        })
+        return yield* as<ExplainAccess>(
+          uc.explainAccess(
+            target,
+            targetRole === "owner",
+            resourceType,
+            resourceId ?? null,
+            conceptId ?? null,
+            action,
+          ),
+        )
+      }),
+  }),
+).pipe(Layer.provide(EngineBase))
 
 // HttpRouter.DefaultServices (HttpPlatform | Etag | FileSystem | Path) — pure
 // layers (no-op FileSystem) since the RPC handler never touches the filesystem.

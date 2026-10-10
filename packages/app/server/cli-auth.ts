@@ -1,4 +1,5 @@
 import { randomBytes, timingSafeEqual } from "node:crypto"
+import { clientIp, routeOf, securityEvent } from "./securityLog"
 import { resolveOrg } from "./session"
 
 /**
@@ -203,6 +204,16 @@ export const approveDevice = async (request: Request): Promise<Response> => {
   entry.status = "approved"
   entry.cookie = cookie
   entry.userId = org.actor
+
+  // The CLI is about to receive this person's session cookie: an access grant.
+  securityEvent({
+    event: "cli.device.approved",
+    outcome: "success",
+    actor: org.actor,
+    orgId: org.orgId,
+    route: routeOf(request),
+    ip: clientIp(request.headers),
+  })
 
   return shell(`<h1>Signed in</h1><p>Your terminal is ready. You can close this page.</p>`)
 }

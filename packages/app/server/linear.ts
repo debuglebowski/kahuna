@@ -16,6 +16,7 @@ import {
 } from "./integrations/records"
 import { connectionForOrgIn } from "./integrations/rows"
 import { systemScope } from "./runtime"
+import { webhookRejected } from "./securityLog"
 import { resolveAdmin, resolveOrg } from "./session"
 
 /**
@@ -593,13 +594,13 @@ export async function handleLinearWebhook(req: Request) {
   // Header preferred, `?token=` still accepted for already-wired webhooks. This
   // token only ROUTES to the connection; the HMAC below is the authenticator.
   const token = webhookTokenFrom(req, url)
-  if (!token) return json({ error: "MISSING_TOKEN" }, 401)
+  if (!token) return webhookRejected("linear", req, "MISSING_TOKEN", 401)
   const [connection] = await db
     .select()
     .from(linearConnection)
     .where(and(eq(linearConnection.webhookToken, token), eq(linearConnection.status, "connected")))
     .limit(1)
-  if (!connection) return json({ error: "BAD_TOKEN" }, 403)
+  if (!connection) return webhookRejected("linear", req, "BAD_TOKEN", 403)
 
   const rawText = await req.text().catch(() => "")
   const secret = decryptToken(connection.webhookSecret)
@@ -609,7 +610,7 @@ export async function handleLinearWebhook(req: Request) {
   const valid =
     signature.length === expected.length &&
     timingSafeEqual(Buffer.from(signature), Buffer.from(expected))
-  if (!valid) return json({ error: "INVALID_SIGNATURE" }, 401)
+  if (!valid) return webhookRejected("linear", req, "INVALID_SIGNATURE", 401)
 
   // AFTER the HMAC, not after the token lookup: the signature is the
   // authenticator here (the token only routes), so it must run for a disabled

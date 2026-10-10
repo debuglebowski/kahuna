@@ -16,6 +16,7 @@ import { connectorFailure, logConnectorError, publicConnectorError } from "./int
 import { sleepBeforeRetry } from "./integrations/http"
 import { redirect, safeReturnTo } from "./integrations/oauth"
 import { connectionForOrgIn } from "./integrations/rows"
+import { oauthRejected, webhookRejected } from "./securityLog"
 import { resolveAdmin, resolveOrg } from "./session"
 
 /**
@@ -514,9 +515,10 @@ export async function handleSlackCallback(req: Request) {
     .from(slackOAuthState)
     .where(eq(slackOAuthState.state, state))
     .limit(1)
-  if (!stored || stored.expiresAt.getTime() < Date.now()) return json({ error: "BAD_STATE" }, 400)
+  if (!stored || stored.expiresAt.getTime() < Date.now())
+    return oauthRejected("slack", req, org, "BAD_STATE", 400)
   if (stored.orgId !== org.orgId || stored.userId !== org.actor) {
-    return json({ error: "STATE_SESSION_MISMATCH" }, 403)
+    return oauthRejected("slack", req, org, "STATE_SESSION_MISMATCH", 403)
   }
   await db.delete(slackOAuthState).where(eq(slackOAuthState.state, state))
 
@@ -561,7 +563,7 @@ export async function handleSlackCallback(req: Request) {
         status: "error",
         detail: { reason: "team_mismatch", tokenTeam: test.team_id, botTeam: bot.teamId },
       })
-      return json({ error: "TEAM_MISMATCH" }, 403)
+      return oauthRejected("slack", req, org, "TEAM_MISMATCH", 403)
     }
     const existingUser = await userConnectionFor(org.orgId, org.actor)
     const userValues = {
@@ -959,7 +961,8 @@ type SlackEventBody = {
  */
 export async function handleSlackEvents(req: Request) {
   const rawText = await req.text().catch(() => "")
-  if (!verifySlackSignature(req, rawText)) return json({ error: "INVALID_SIGNATURE" }, 401)
+  if (!verifySlackSignature(req, rawText))
+    return webhookRejected("slack", req, "INVALID_SIGNATURE", 401)
   let body: SlackEventBody = {}
   try {
     body = rawText ? (JSON.parse(rawText) as SlackEventBody) : {}
@@ -1015,7 +1018,8 @@ export async function handleSlackEvents(req: Request) {
  */
 export async function handleSlashCommand(req: Request) {
   const rawText = await req.text().catch(() => "")
-  if (!verifySlackSignature(req, rawText)) return json({ error: "INVALID_SIGNATURE" }, 401)
+  if (!verifySlackSignature(req, rawText))
+    return webhookRejected("slack", req, "INVALID_SIGNATURE", 401)
   const params = new URLSearchParams(rawText)
   const command = params.get("command") ?? ""
   const text = params.get("text") ?? ""
@@ -1046,7 +1050,8 @@ export async function handleSlashCommand(req: Request) {
  */
 export async function handleInteractivity(req: Request) {
   const rawText = await req.text().catch(() => "")
-  if (!verifySlackSignature(req, rawText)) return json({ error: "INVALID_SIGNATURE" }, 401)
+  if (!verifySlackSignature(req, rawText))
+    return webhookRejected("slack", req, "INVALID_SIGNATURE", 401)
   const params = new URLSearchParams(rawText)
   const payloadRaw = params.get("payload")
   let payload: { team?: { id?: string }; type?: string } = {}
