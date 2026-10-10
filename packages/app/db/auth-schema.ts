@@ -492,7 +492,11 @@ export const googleAuditLog = pgTable(
     detail: jsonb("detail").notNull().default({}),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
-  (table) => [index("google_audit_log_org_idx").on(table.orgId, table.createdAt)],
+  (table) => [
+    index("google_audit_log_org_idx").on(table.orgId, table.createdAt),
+    // Retention purge scans by age alone, which the (org_id, created_at) index can't serve.
+    index("google_audit_log_created_idx").on(table.createdAt),
+  ],
 )
 
 export const userRelations = relations(user, ({ many }) => ({
@@ -636,6 +640,7 @@ export const posthogWebhookEvent = pgTable(
   (table) => [
     uniqueIndex("posthog_webhook_event_dedupe_uq").on(table.dedupeKey),
     index("posthog_webhook_event_org_idx").on(table.orgId, table.receivedAt),
+    index("posthog_webhook_event_received_idx").on(table.receivedAt),
   ],
 )
 
@@ -653,7 +658,11 @@ export const posthogAuditLog = pgTable(
     detail: jsonb("detail").notNull().default({}),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
-  (table) => [index("posthog_audit_log_org_idx").on(table.orgId, table.createdAt)],
+  (table) => [
+    index("posthog_audit_log_org_idx").on(table.orgId, table.createdAt),
+    // Retention purge scans by age alone, which the (org_id, created_at) index can't serve.
+    index("posthog_audit_log_created_idx").on(table.createdAt),
+  ],
 )
 
 /**
@@ -765,6 +774,7 @@ export const linearWebhookEvent = pgTable(
   (table) => [
     uniqueIndex("linear_webhook_event_dedupe_uq").on(table.dedupeKey),
     index("linear_webhook_event_org_idx").on(table.orgId, table.receivedAt),
+    index("linear_webhook_event_received_idx").on(table.receivedAt),
   ],
 )
 
@@ -782,7 +792,11 @@ export const linearAuditLog = pgTable(
     detail: jsonb("detail").notNull().default({}),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
-  (table) => [index("linear_audit_log_org_idx").on(table.orgId, table.createdAt)],
+  (table) => [
+    index("linear_audit_log_org_idx").on(table.orgId, table.createdAt),
+    // Retention purge scans by age alone, which the (org_id, created_at) index can't serve.
+    index("linear_audit_log_created_idx").on(table.createdAt),
+  ],
 )
 
 /**
@@ -944,6 +958,7 @@ export const slackEvent = pgTable(
   (table) => [
     uniqueIndex("slack_event_dedupe_uq").on(table.dedupeKey),
     index("slack_event_org_idx").on(table.orgId, table.receivedAt),
+    index("slack_event_received_idx").on(table.receivedAt),
   ],
 )
 
@@ -961,7 +976,11 @@ export const slackAuditLog = pgTable(
     detail: jsonb("detail").notNull().default({}),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
-  (table) => [index("slack_audit_log_org_idx").on(table.orgId, table.createdAt)],
+  (table) => [
+    index("slack_audit_log_org_idx").on(table.orgId, table.createdAt),
+    // Retention purge scans by age alone, which the (org_id, created_at) index can't serve.
+    index("slack_audit_log_created_idx").on(table.createdAt),
+  ],
 )
 
 /**
@@ -1041,7 +1060,11 @@ export const apolloAuditLog = pgTable(
     detail: jsonb("detail").notNull().default({}),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
-  (table) => [index("apollo_audit_log_org_idx").on(table.orgId, table.createdAt)],
+  (table) => [
+    index("apollo_audit_log_org_idx").on(table.orgId, table.createdAt),
+    // Retention purge scans by age alone, which the (org_id, created_at) index can't serve.
+    index("apollo_audit_log_created_idx").on(table.createdAt),
+  ],
 )
 
 /**
@@ -1130,6 +1153,7 @@ export const clayJob = pgTable(
   (table) => [
     index("clay_job_org_idx").on(table.orgId, table.pushedAt),
     index("clay_job_status_idx").on(table.status),
+    index("clay_job_pushed_idx").on(table.pushedAt),
     index("clay_job_record_version_idx").on(table.recordVersionId),
   ],
 )
@@ -1154,6 +1178,7 @@ export const clayNotification = pgTable(
   (table) => [
     uniqueIndex("clay_notification_dedupe_uq").on(table.dedupeKey),
     index("clay_notification_org_idx").on(table.orgId, table.receivedAt),
+    index("clay_notification_received_idx").on(table.receivedAt),
   ],
 )
 
@@ -1171,5 +1196,9 @@ export const clayAuditLog = pgTable(
     detail: jsonb("detail").notNull().default({}),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
-  (table) => [index("clay_audit_log_org_idx").on(table.orgId, table.createdAt)],
+  (table) => [
+    index("clay_audit_log_org_idx").on(table.orgId, table.createdAt),
+    // Retention purge scans by age alone, which the (org_id, created_at) index can't serve.
+    index("clay_audit_log_created_idx").on(table.createdAt),
+  ],
 )

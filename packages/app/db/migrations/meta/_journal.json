@@ -162,6 +162,13 @@
       "when": 1786295364366,
       "tag": "0022_retire_wildcard_and_close_automations",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1791645484726,
+      "tag": "0023_retention_purge_indexes",
+      "breakpoints": true
     }
   ]
 }

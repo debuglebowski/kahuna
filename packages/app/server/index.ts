@@ -6,6 +6,7 @@ import { startAutomationRunner, startAutomationScheduleTick } from "./automation
 import { startDecayTick } from "./decay-tick"
 import { startGoogleWatchRenewal } from "./google"
 import { withApiSecurityHeaders, withAppSecurityHeaders } from "./headers"
+import { startRetentionTick } from "./retention-tick"
 import { handleApi, isBetterAuthPath, isBlockedSsoPath } from "./router"
 import { rpcHandler } from "./rpc"
 import { AppRuntime } from "./runtime"
@@ -20,6 +21,7 @@ const DIST = path.resolve(import.meta.dirname, "../dist")
 // and the periodic decay tick that turns time-based band crossings into events.
 startHub()
 startDecayTick()
+startRetentionTick()
 startGoogleWatchRenewal()
 // Automations: the event-triggered runner taps the hub above (so it needs no
 // second LISTEN), and the schedule tick claims due rows atomically. Both AFTER
