@@ -10,9 +10,11 @@ import {
   GOOGLE_SCOPES,
   handleCalendarPush,
   handleGoogleCallback,
+  handleGoogleConnect,
   setGoogleFetchForTest,
   syncGoogleConnection,
 } from "./google"
+import { updateIntegrationSettings } from "./integrationSettings"
 import { createUserDirect } from "./provision"
 
 const cookieHeader = (res: Response): string =>
@@ -392,5 +394,99 @@ describe("Google integration", () => {
     expect(first.status).toBe(200)
     expect(second.status).toBe(200)
     expect(calendarCalls).toBe(1)
+  })
+})
+
+describe("Google connect scopes", () => {
+  const oldEnv = { ...process.env }
+
+  beforeEach(() => {
+    process.env.GOOGLE_CLIENT_ID = "client"
+    process.env.GOOGLE_CLIENT_SECRET = "secret"
+    process.env.GOOGLE_REDIRECT_URI = "http://localhost/api/integrations/google/callback"
+    process.env.INTEGRATION_ENCRYPTION_KEY =
+      "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+  })
+
+  afterEach(() => {
+    process.env = { ...oldEnv }
+  })
+
+  const connect = async (actor: { headers: Headers }, query = "") => {
+    const res = await handleGoogleConnect(
+      new Request(`http://localhost/api/integrations/google/connect${query}`, {
+        headers: actor.headers,
+      }),
+    )
+    if (res.status !== 302) return { res, scopes: [] as string[], url: null }
+    const url = new URL(res.headers.get("location") ?? "")
+    return { res, scopes: (url.searchParams.get("scope") ?? "").split(" "), url }
+  }
+
+  const setCapabilities = async (actor: { headers: Headers }, google: string[] | null) => {
+    const headers = new Headers(actor.headers)
+    headers.set("content-type", "application/json")
+    const res = await updateIntegrationSettings(
+      new Request("http://localhost/api/integrations/settings", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ capabilities: { google } }),
+      }),
+    )
+    expect(res.status).toBe(200)
+  }
+
+  it("requests calendar alone by default — no Gmail scope at all", async () => {
+    const actor = await signUpAndOrg()
+    const { scopes, url } = await connect(actor)
+    expect(scopes).toEqual([GOOGLE_SCOPES.calendarEvents])
+    expect(scopes.some((s) => s.includes("gmail"))).toBe(false)
+    // Reconnecting must not silently re-grant scopes the org has since turned off.
+    expect(url?.searchParams.has("include_granted_scopes")).toBe(false)
+  })
+
+  it("adds Gmail scopes only after an admin opts in, and read implies metadata", async () => {
+    const actor = await signUpAndOrg()
+    await setCapabilities(actor, ["calendar", "gmail.read"])
+    const { scopes } = await connect(actor)
+    expect(scopes).toEqual([
+      GOOGLE_SCOPES.calendarEvents,
+      GOOGLE_SCOPES.gmailMetadata,
+      GOOGLE_SCOPES.gmailReadonly,
+    ])
+    expect(scopes).not.toContain(GOOGLE_SCOPES.gmailSend)
+
+    await setCapabilities(actor, ["calendar", "gmail.send"])
+    expect((await connect(actor)).scopes).toEqual([
+      GOOGLE_SCOPES.calendarEvents,
+      GOOGLE_SCOPES.gmailSend,
+    ])
+
+    // `null` resets to the least-privilege default.
+    await setCapabilities(actor, null)
+    expect((await connect(actor)).scopes).toEqual([GOOGLE_SCOPES.calendarEvents])
+  })
+
+  it("lets a capability param narrow the request but never widen it", async () => {
+    const actor = await signUpAndOrg()
+    // Not enabled: the param cannot pull Gmail in.
+    expect((await connect(actor, "?capability=gmail.send&capability=gmail.read")).res.status).toBe(
+      400,
+    )
+    expect((await connect(actor, "?capability=calendar")).scopes).toEqual([
+      GOOGLE_SCOPES.calendarEvents,
+    ])
+    await setCapabilities(actor, ["calendar", "gmail.send"])
+    expect((await connect(actor, "?capability=calendar")).scopes).toEqual([
+      GOOGLE_SCOPES.calendarEvents,
+    ])
+  })
+
+  it("refuses to connect when every capability is disabled", async () => {
+    const actor = await signUpAndOrg()
+    await setCapabilities(actor, [])
+    const { res } = await connect(actor)
+    expect(res.status).toBe(400)
+    expect(((await res.json()) as { error?: string }).error).toBe("NO_CAPABILITIES_ENABLED")
   })
 })

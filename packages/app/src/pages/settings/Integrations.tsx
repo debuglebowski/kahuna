@@ -11,7 +11,12 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Badge, Button, Card, CardHeader, Field, Input, Modal, Spinner } from "../../components/ui"
-import { api, type IntegrationSettings, type PosthogRegion } from "../../lib/api"
+import {
+  api,
+  type CapabilityIntegration,
+  type IntegrationSettings,
+  type PosthogRegion,
+} from "../../lib/api"
 import {
   ApolloLogo,
   ClayLogo,
@@ -346,6 +351,7 @@ function GoogleCard() {
     <IntegrationCard
       name="Google"
       icon={<GoogleLogo />}
+      permissions={<CapabilitiesPanel integration="google" />}
       settings={
         <IntegrationSettingsPanel
           rows={[
@@ -442,6 +448,7 @@ export function IntegrationCard({
   action,
   children,
   settings,
+  permissions,
 }: {
   name: string
   icon: ReactNode
@@ -453,6 +460,10 @@ export function IntegrationCard({
   /** Per-org toggles. Only rendered when connected — a toggle on a connector
    *  nobody has set up is noise, and it has nothing to act on. */
   settings?: ReactNode
+  /** Capability toggles for OAuth connectors. Shown as soon as the connector is
+   *  configured — an admin has to be able to opt in BEFORE the first connect,
+   *  since that is when the consent screen is built. */
+  permissions?: ReactNode
 }) {
   const hasBody = Boolean(children)
   return (
@@ -481,6 +492,7 @@ export function IntegrationCard({
         }
       />
       {configured ? children : null}
+      {configured ? permissions : null}
       {configured && connected ? settings : null}
     </Card>
   )
@@ -608,6 +620,87 @@ function IntegrationSettingsPanel({ rows }: { rows: ReadonlyArray<SettingRow> })
         ),
       )}
 
+      <Feedback ok={save.isSuccess} okText="Saved." error={save.error} />
+    </div>
+  )
+}
+
+/**
+ * What the app may ask the provider for, per OAuth integration. Generic over the
+ * server's capability catalog: a new capability appears here with no UI change.
+ * Sensitive ones (reading mail, acting as the user) are off until an admin ticks
+ * them. Changing a selection only affects the NEXT connect — an existing grant
+ * keeps its scopes until the user reconnects.
+ */
+function CapabilitiesPanel({ integration }: { integration: CapabilityIntegration }) {
+  const qc = useQueryClient()
+  const settings = useQuery({
+    queryKey: ["integrationSettings"],
+    queryFn: api.getIntegrationSettings,
+  })
+  const [draft, setDraft] = useState<ReadonlyArray<string> | null>(null)
+
+  const save = useMutation({
+    mutationFn: (ids: ReadonlyArray<string>) =>
+      api.updateIntegrationSettings({ capabilities: { [integration]: ids } }),
+    onSuccess: () => {
+      setDraft(null)
+      qc.invalidateQueries({ queryKey: ["integrationSettings"] })
+    },
+  })
+
+  if (!settings.data?.canEdit) return null
+  const catalog = settings.data.capabilities.catalog[integration]
+  const saved = settings.data.capabilities.effective[integration]
+  const selected = new Set(draft ?? saved)
+  // Whatever an enabled capability implies is on and locked (read ⇒ metadata).
+  const implied = new Set(
+    catalog.filter((c) => selected.has(c.id)).flatMap((c) => c.implies as string[]),
+  )
+  const toggle = (id: string, on: boolean) => {
+    const next = new Set(selected)
+    if (on) {
+      next.add(id)
+      for (const dep of catalog.find((c) => c.id === id)?.implies ?? []) next.add(dep)
+    } else {
+      next.delete(id)
+    }
+    setDraft(catalog.filter((c) => next.has(c.id)).map((c) => c.id))
+  }
+
+  return (
+    <div className="space-y-4 border-t border-border p-6">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-sm font-medium text-foreground">Permissions requested</span>
+        <Button
+          onClick={() => draft && save.mutate(draft)}
+          disabled={save.isPending || draft === null}
+          variant="secondary"
+        >
+          {save.isPending ? "Saving…" : "Save"}
+        </Button>
+      </div>
+      {catalog.map((cap) => (
+        <Label key={cap.id} className="flex items-start gap-3 font-normal">
+          <Checkbox
+            className="mt-0.5"
+            checked={selected.has(cap.id)}
+            disabled={implied.has(cap.id)}
+            onCheckedChange={(c) => toggle(cap.id, c === true)}
+          />
+          <span className="space-y-1">
+            <span className="flex items-center gap-2 text-sm font-medium text-foreground">
+              {cap.label}
+              {cap.sensitive && <Badge>Sensitive</Badge>}
+            </span>
+            <span className="block text-sm text-muted-foreground">{cap.description}</span>
+          </span>
+        </Label>
+      ))}
+      <p className="text-sm text-muted-foreground">
+        Applies the next time someone connects. Existing connections keep the permissions they
+        already granted until they reconnect.
+      </p>
       <Feedback ok={save.isSuccess} okText="Saved." error={save.error} />
     </div>
   )
@@ -991,6 +1084,7 @@ function SlackCard() {
     <IntegrationCard
       name="Slack"
       icon={<SlackLogo />}
+      permissions={<CapabilitiesPanel integration="slack" />}
       settings={
         <IntegrationSettingsPanel
           rows={[

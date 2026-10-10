@@ -1,6 +1,13 @@
 import { eq } from "drizzle-orm"
 import { orgIntegrationSettings } from "#db"
 import { db } from "./db"
+import {
+  applyCapabilityPatch,
+  capabilityCatalog,
+  readCapabilityOverrides,
+  readEnabledCapabilities,
+  writeCapabilityOverrides,
+} from "./integrationCapabilities"
 import { canConfigure } from "./policy"
 import { clientIp, routeOf, securityEvent } from "./securityLog"
 import { resolveAdmin, resolveOrg } from "./session"
@@ -209,6 +216,13 @@ const NUMERIC_KEYS = {
   analyticsCacheTtlMs: MIN_ANALYTICS_TTL_MS,
 } as const
 
+/** Catalog + effective + explicit selection of the OAuth capability toggles. */
+const capabilityStatus = async (orgId: string) => ({
+  catalog: capabilityCatalog(),
+  effective: await readEnabledCapabilities(orgId),
+  overrides: await readCapabilityOverrides(orgId),
+})
+
 /**
  * GET /api/integrations/settings
  *
@@ -224,6 +238,7 @@ export const integrationSettingsStatus = async (req: Request): Promise<Response>
     effective: await readIntegrationSettings(org.orgId),
     overrides: await readIntegrationOverrides(org.orgId),
     defaults: deploymentDefaults(),
+    capabilities: await capabilityStatus(org.orgId),
     canEdit: await canConfigure(org.orgId, org.actor, org.role),
   })
 }
@@ -265,9 +280,24 @@ export const updateIntegrationSettings = async (req: Request): Promise<Response>
     patch[key] = v
   }
 
-  if (Object.keys(patch).length === 0) return json({ error: "MISSING_FIELDS" }, 400)
+  const fields = Object.keys(patch)
+  let capabilityDetail: string | undefined
+  if ("capabilities" in body) {
+    const result = applyCapabilityPatch(await readCapabilityOverrides(org.orgId), body.capabilities)
+    if (!result.ok) return json({ error: "INVALID_FIELD", field: result.field }, 400)
+    await writeCapabilityOverrides(org.orgId, result.next)
+    fields.push("capabilities")
+    // Capability ids are not secret and are the point of the audit entry:
+    // "who turned on mail send, and when".
+    const effective = await readEnabledCapabilities(org.orgId)
+    capabilityDetail = Object.entries(effective)
+      .map(([k, ids]) => `${k}=${ids.join("+")}`)
+      .join(" ")
+  }
 
-  await writeIntegrationSettings(org.orgId, patch)
+  if (fields.length === 0) return json({ error: "MISSING_FIELDS" }, 400)
+
+  if (Object.keys(patch).length > 0) await writeIntegrationSettings(org.orgId, patch)
   securityEvent({
     event: "integration.settings.updated",
     outcome: "success",
@@ -276,10 +306,14 @@ export const updateIntegrationSettings = async (req: Request): Promise<Response>
     route: routeOf(req),
     ip: clientIp(req.headers),
     // Which settings changed, not their values.
-    detail: { fields: Object.keys(patch).join(",") },
+    detail: {
+      fields: fields.join(","),
+      ...(capabilityDetail !== undefined && { capabilities: capabilityDetail }),
+    },
   })
   return json({
     effective: await readIntegrationSettings(org.orgId),
     overrides: await readIntegrationOverrides(org.orgId),
+    capabilities: await capabilityStatus(org.orgId),
   })
 }

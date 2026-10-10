@@ -33,20 +33,26 @@
 
 ## Scopes
 
-Base connect requests:
+Connect requests only the capabilities the org has enabled. The default is
+**Calendar alone**; Gmail is opt-in. See [integration-permissions.md](integration-permissions.md)
+for the model and how an admin enables a capability.
 
-- `https://www.googleapis.com/auth/calendar.events`
-- `https://www.googleapis.com/auth/gmail.metadata`
-- `https://www.googleapis.com/auth/gmail.labels`
+| Capability | Scope requested | Enables |
+| --- | --- | --- |
+| `calendar` (default) | `calendar.events` | Calendar sync; create/update events |
+| `gmail.metadata` | `gmail.metadata` | Email headers sync (no bodies) |
+| `gmail.read` | `gmail.readonly` (+ `gmail.metadata`) | Read bodies; search mail |
+| `gmail.send` | `gmail.send` | Send mail as the connected user |
 
-On-demand upgrades:
+`calendar.freebusy`, `gmail.labels` and `gmail.compose` are not requested; no
+feature uses them.
 
-- Mail read: `https://www.googleapis.com/auth/gmail.readonly`
-- Mail send: `https://www.googleapis.com/auth/gmail.send`
-- Mail compose/drafts: `https://www.googleapis.com/auth/gmail.compose`
-- Availability: `https://www.googleapis.com/auth/calendar.freebusy`
+To turn Gmail on: Settings → Integrations → Google → **Permissions requested**,
+tick the Gmail capabilities, Save, then **reconnect** Google. The consent screen
+lists exactly those scopes. Existing connections keep the scopes they already
+granted until reconnected.
 
-Gmail `gmail.metadata`, `gmail.readonly`, `gmail.compose`, and `gmail.modify` are restricted. Server storage/transmission can require a security assessment. `gmail.send` is sensitive. Calendar scopes should stay at `calendar.events` and `calendar.freebusy` unless broader calendar management is explicitly needed.
+Gmail `gmail.metadata`, `gmail.readonly`, `gmail.compose`, and `gmail.modify` are restricted. Server storage/transmission can require a security assessment. `gmail.send` is sensitive.
 
 ## Sync + Watches
 

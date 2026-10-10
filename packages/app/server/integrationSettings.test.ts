@@ -360,3 +360,60 @@ describe("integration settings", () => {
     })
   })
 })
+
+describe("capability settings", () => {
+  beforeEach(() => clearIntegrationSettingsCacheForTest())
+
+  it("reports the catalog with least-privilege defaults and nothing overridden", async () => {
+    const actor = await signUpAndOrg()
+    const body = (await (await get(actor)).json()) as {
+      capabilities: {
+        catalog: Record<string, { id: string; sensitive: boolean; defaultEnabled: boolean }[]>
+        effective: Record<string, string[]>
+        overrides: Record<string, string[]>
+      }
+    }
+    expect(body.capabilities.effective.google).toEqual(["calendar"])
+    expect(body.capabilities.effective.slack).toEqual(["chat.write"])
+    expect(body.capabilities.overrides).toEqual({})
+    const sensitive = body.capabilities.catalog.google?.filter((c) => c.sensitive) ?? []
+    expect(sensitive.length).toBeGreaterThan(0)
+    expect(sensitive.every((c) => !c.defaultEnabled)).toBe(true)
+  })
+
+  it("stores implied capabilities expanded and merges per integration", async () => {
+    const actor = await signUpAndOrg()
+    expect((await post(actor, { capabilities: { google: ["gmail.read"] } })).status).toBe(200)
+    expect((await post(actor, { capabilities: { slack: [] } })).status).toBe(200)
+    const body = (await (await get(actor)).json()) as {
+      capabilities: { effective: Record<string, string[]> }
+    }
+    expect(body.capabilities.effective.google).toEqual(["gmail.metadata", "gmail.read"])
+    expect(body.capabilities.effective.slack).toEqual([])
+  })
+
+  it("rejects unknown integrations, unknown ids and malformed values", async () => {
+    const actor = await signUpAndOrg()
+    for (const capabilities of [
+      { nope: ["x"] },
+      { google: ["gmail.everything"] },
+      { google: "calendar" },
+      { google: [1] },
+      ["google"],
+    ]) {
+      const res = await post(actor, { capabilities })
+      expect(res.status, JSON.stringify(capabilities)).toBe(400)
+    }
+  })
+
+  it("is admin-only", async () => {
+    const owner = await signUpAndOrg()
+    const member = await addPlainMember(owner.orgId)
+    const res = await post(member, { capabilities: { google: ["gmail.send"] } })
+    expect(res.status).toBe(403)
+    const body = (await (await get(owner)).json()) as {
+      capabilities: { effective: Record<string, string[]> }
+    }
+    expect(body.capabilities.effective.google).toEqual(["calendar"])
+  })
+})

@@ -169,6 +169,13 @@
       "when": 1791645484726,
       "tag": "0023_retention_purge_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1791655616735,
+      "tag": "0024_talented_prism",
+      "breakpoints": true
     }
   ]
 }

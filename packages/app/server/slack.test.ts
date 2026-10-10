@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { slackConnection, slackEvent, slackOAuthState, slackUserConnection } from "#db"
 import { auth } from "./auth"
 import { db } from "./db"
+import { updateIntegrationSettings } from "./integrationSettings"
 import { decryptToken, encryptToken } from "./integrations/crypto"
 import { createUserDirect } from "./provision"
 import {
@@ -538,7 +539,8 @@ describe("Slack integration", () => {
     expect(res.status).toBe(302)
     const location = new URL(res.headers.get("location") ?? "")
     expect(location.origin + location.pathname).toBe("https://slack.com/oauth/v2/authorize")
-    expect(location.searchParams.get("user_scope")).toContain("chat:write")
+    // Least privilege: only the one scope a feature uses.
+    expect(location.searchParams.get("user_scope")).toBe("chat:write")
     expect(location.searchParams.get("scope")).toBeNull()
     const state = location.searchParams.get("state") ?? ""
     const [row] = await db
@@ -547,6 +549,41 @@ describe("Slack integration", () => {
       .where(eq(slackOAuthState.state, state))
       .limit(1)
     expect(row?.kind).toBe("user")
+  })
+
+  it("ignores SLACK_USER_SCOPES: user scopes come from the org's capabilities", async () => {
+    const actor = await signUpAndOrg()
+    await seedBot(actor.orgId, actor.userId)
+    process.env.SLACK_USER_SCOPES = "search:read users.profile:write reminders:write"
+    const res = await handleSlackUserConnect(
+      new Request("http://localhost/api/integrations/slack/user/connect", {
+        headers: actor.headers,
+      }),
+    )
+    const location = new URL(res.headers.get("location") ?? "")
+    expect(location.searchParams.get("user_scope")).toBe("chat:write")
+  })
+
+  it("refuses user connect when the org disabled every Slack capability", async () => {
+    const actor = await signUpAndOrg()
+    await seedBot(actor.orgId, actor.userId)
+    const headers = new Headers(actor.headers)
+    headers.set("content-type", "application/json")
+    const saved = await updateIntegrationSettings(
+      new Request("http://localhost/api/integrations/settings", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ capabilities: { slack: [] } }),
+      }),
+    )
+    expect(saved.status).toBe(200)
+    const res = await handleSlackUserConnect(
+      new Request("http://localhost/api/integrations/slack/user/connect", {
+        headers: actor.headers,
+      }),
+    )
+    expect(res.status).toBe(400)
+    expect(((await res.json()) as { error?: string }).error).toBe("NO_CAPABILITIES_ENABLED")
   })
 
   it("user callback stores the xoxp token per (org,user), validated via auth.test", async () => {

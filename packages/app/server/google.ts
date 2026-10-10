@@ -13,8 +13,17 @@ import {
 } from "#db"
 import type { OrgScope } from "#engine"
 import { db, pool } from "./db"
+import { readEnabledCapabilitiesFor } from "./integrationCapabilities"
 import { readIntegrationSettings } from "./integrationSettings"
 import { type AuditEntry, writeAuditLog } from "./integrations/audit"
+import {
+  expandCapabilities,
+  GOOGLE_CAPABILITIES,
+  GOOGLE_SCOPES,
+  hasCapability,
+  scopesFor,
+  splitGrantedScopes,
+} from "./integrations/capabilities"
 import { decryptToken, encryptToken, secretMatches } from "./integrations/crypto"
 import { publicConnectorError } from "./integrations/errors"
 import { sleepBeforeRetry } from "./integrations/http"
@@ -37,28 +46,10 @@ const GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 const GOOGLE_API = "https://www.googleapis.com"
 
-export const GOOGLE_SCOPES = {
-  calendarEvents: "https://www.googleapis.com/auth/calendar.events",
-  calendarFreebusy: "https://www.googleapis.com/auth/calendar.freebusy",
-  gmailMetadata: "https://www.googleapis.com/auth/gmail.metadata",
-  gmailLabels: "https://www.googleapis.com/auth/gmail.labels",
-  gmailReadonly: "https://www.googleapis.com/auth/gmail.readonly",
-  gmailSend: "https://www.googleapis.com/auth/gmail.send",
-  gmailCompose: "https://www.googleapis.com/auth/gmail.compose",
-} as const
-
-// Connect requests the full set the app uses in a single consent: calendar
-// read/write + free/busy, and Gmail metadata/labels/read/send. (gmail.compose is
-// intentionally omitted — no feature uses it.) `scopesForRequest` still honors
-// per-capability params, but the UI no longer needs incremental grants.
-const BASE_SCOPES = [
-  GOOGLE_SCOPES.calendarEvents,
-  GOOGLE_SCOPES.calendarFreebusy,
-  GOOGLE_SCOPES.gmailMetadata,
-  GOOGLE_SCOPES.gmailLabels,
-  GOOGLE_SCOPES.gmailReadonly,
-  GOOGLE_SCOPES.gmailSend,
-]
+// Scopes come from the capability registry (integrations/capabilities.ts), never
+// a fixed list: connect requests only the capabilities the org enabled, and the
+// default is calendar alone. Gmail read/metadata/send are opt-in per org.
+export { GOOGLE_SCOPES }
 
 type GoogleFetch = (
   input: Parameters<typeof fetch>[0],
@@ -100,21 +91,21 @@ const bearerToken = (req: Request): string | null => {
   return m ? m[1]!.trim() : null
 }
 
-const toScopeList = (scopeText: string | null | undefined) =>
-  new Set((scopeText ?? "").split(/\s+/).filter(Boolean))
+const hasGoogleCapability = (scopeText: string | null | undefined, id: string) =>
+  hasCapability(GOOGLE_CAPABILITIES, scopeText, id)
 
-const hasScope = (scopeText: string | null | undefined, scope: string) =>
-  toScopeList(scopeText).has(scope)
-
-const scopesForRequest = (url: URL) => {
-  const scopes = new Set<string>(BASE_SCOPES)
-  for (const capability of url.searchParams.getAll("capability")) {
-    if (capability === "gmail.read") scopes.add(GOOGLE_SCOPES.gmailReadonly)
-    if (capability === "gmail.send") scopes.add(GOOGLE_SCOPES.gmailSend)
-    if (capability === "gmail.compose") scopes.add(GOOGLE_SCOPES.gmailCompose)
-    if (capability === "calendar.freebusy") scopes.add(GOOGLE_SCOPES.calendarFreebusy)
-  }
-  return [...scopes]
+/**
+ * The scopes to request: the org's enabled capabilities. A `capability` query
+ * param can only NARROW that set (request fewer scopes); it can never add one the
+ * org has not enabled, so a crafted connect URL can't widen the consent.
+ */
+const scopesForRequest = (url: URL, enabled: readonly string[]) => {
+  const requested = url.searchParams.getAll("capability")
+  const ids =
+    requested.length > 0
+      ? enabled.filter((id) => expandCapabilities(GOOGLE_CAPABILITIES, requested).includes(id))
+      : enabled
+  return scopesFor(GOOGLE_CAPABILITIES, ids)
 }
 
 /** Write one row to this connector's audit log. */
@@ -204,7 +195,8 @@ export async function handleGoogleConnect(req: Request) {
   const c = requireConfig()
   const url = new URL(req.url)
   const state = randomUUID()
-  const scopes = scopesForRequest(url)
+  const scopes = scopesForRequest(url, await readEnabledCapabilitiesFor(org.orgId, "google"))
+  if (scopes.length === 0) return json({ error: "NO_CAPABILITIES_ENABLED" }, 400)
   const returnTo = url.searchParams.get("returnTo") || "/settings/integrations"
   await db.insert(googleOAuthState).values({
     state,
@@ -221,7 +213,6 @@ export async function handleGoogleConnect(req: Request) {
   authUrl.searchParams.set("scope", scopes.join(" "))
   authUrl.searchParams.set("state", state)
   authUrl.searchParams.set("access_type", "offline")
-  authUrl.searchParams.set("include_granted_scopes", "true")
   authUrl.searchParams.set("prompt", "consent")
   return redirect(authUrl.toString())
 }
@@ -402,7 +393,7 @@ export async function googleStatus(req: Request) {
     configured,
     connected: connection.status === "connected",
     email: connection.email,
-    scopes: [...toScopeList(connection.scopes)],
+    scopes: splitGrantedScopes(connection.scopes),
     lastSyncAt: connection.lastSyncAt,
     lastError: connection.lastError,
     calendarWatchExpiresAt: calendar?.watchExpiresAt ?? null,
@@ -417,8 +408,8 @@ export async function syncGoogleConnection(connectionId: string) {
     .where(eq(googleConnection.id, connectionId))
     .limit(1)
   if (connection?.status !== "connected") return
-  if (hasScope(connection.scopes, GOOGLE_SCOPES.calendarEvents)) await syncCalendar(connection.id)
-  if (hasScope(connection.scopes, GOOGLE_SCOPES.gmailMetadata)) await syncGmail(connection.id)
+  if (hasGoogleCapability(connection.scopes, "calendar")) await syncCalendar(connection.id)
+  if (hasGoogleCapability(connection.scopes, "gmail.metadata")) await syncGmail(connection.id)
   await db
     .update(googleConnection)
     .set({ lastSyncAt: new Date(), lastError: null })
@@ -851,7 +842,7 @@ async function fullSyncGmail(connection: typeof googleConnection.$inferSelect) {
   // returns 403 "Metadata scope does not support 'q' parameter". So date-filter
   // (newer_than:90d) only when we have readonly; otherwise list the most-recent
   // messages unfiltered and cap the backfill (no server-side date filter).
-  const canSearch = hasScope(connection.scopes, GOOGLE_SCOPES.gmailReadonly)
+  const canSearch = hasGoogleCapability(connection.scopes, "gmail.read")
   const MAX_BACKFILL = 500
   let pageToken: string | undefined
   let newestHistoryId: string | null = null
@@ -1096,7 +1087,7 @@ export async function getGoogleThread(req: Request, threadId: string) {
     .where(and(eq(googleConnection.orgId, org.orgId), eq(googleConnection.userId, org.actor)))
     .limit(1)
   if (!connection) return json({ error: "NO_GOOGLE_CONNECTION" }, 404)
-  if (!hasScope(connection.scopes, GOOGLE_SCOPES.gmailReadonly)) {
+  if (!hasGoogleCapability(connection.scopes, "gmail.read")) {
     return json({ error: "GMAIL_READ_SCOPE_REQUIRED" }, 403)
   }
   const messages = await pool.query<{ message_id: string }>(
@@ -1128,7 +1119,7 @@ export async function sendGoogleMail(req: Request) {
     .where(and(eq(googleConnection.orgId, org.orgId), eq(googleConnection.userId, org.actor)))
     .limit(1)
   if (!connection) return json({ error: "NO_GOOGLE_CONNECTION" }, 404)
-  if (!hasScope(connection.scopes, GOOGLE_SCOPES.gmailSend)) {
+  if (!hasGoogleCapability(connection.scopes, "gmail.send")) {
     return json({ error: "GMAIL_SEND_SCOPE_REQUIRED" }, 403)
   }
   const body = (await req.json().catch(() => null)) as {

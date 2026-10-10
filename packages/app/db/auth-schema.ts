@@ -239,6 +239,11 @@ export const orgIntegrationSettings = pgTable("org_integration_settings", {
   apolloEnrichCacheEnabled: boolean("apollo_enrich_cache_enabled"),
   apolloEnrichCacheTtlDays: integer("apollo_enrich_cache_ttl_days"),
   analyticsCacheTtlMs: integer("analytics_cache_ttl_ms"),
+  // Capabilities the org enabled per OAuth integration, `{ google: ["calendar"] }`.
+  // NULL (or a missing key) = the registry defaults, which are least-privilege
+  // (server/integrations/capabilities.ts). A top-level OBJECT, not an array, so
+  // there is no array-literal-vs-JSON trap on write.
+  enabledCapabilities: jsonb("enabled_capabilities").$type<Record<string, string[]>>(),
   updatedAt: timestamp("updated_at", { withTimezone: true })
     .defaultNow()
     .$onUpdate(() => /* @__PURE__ */ new Date())

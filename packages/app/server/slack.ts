@@ -9,8 +9,10 @@ import {
   slackUserConnection,
 } from "#db"
 import { db } from "./db"
+import { readEnabledCapabilitiesFor } from "./integrationCapabilities"
 import { readIntegrationSettings } from "./integrationSettings"
 import { type AuditEntry, writeAuditLog } from "./integrations/audit"
+import { SLACK_USER_CAPABILITIES, scopesFor } from "./integrations/capabilities"
 import { decryptToken, encryptToken } from "./integrations/crypto"
 import { connectorFailure, logConnectorError, publicConnectorError } from "./integrations/errors"
 import { sleepBeforeRetry } from "./integrations/http"
@@ -62,12 +64,12 @@ const DEFAULT_SCOPES = [
 ]
 
 /**
- * Default USER scopes (xoxp), requested in the per-user connect flow so KM can
- * act AS the person; overridable via `SLACK_USER_SCOPES`. These must also be
- * added under "User Token Scopes" in the Slack app config + the workspace
- * re-authorized once before they're grantable.
+ * USER scopes (xoxp) are not listed here: they come from the capability registry
+ * (integrations/capabilities.ts) filtered by what the org enabled, so the default
+ * consent is `chat:write` only. Any scope requested must also be added under
+ * "User Token Scopes" in the Slack app config + the workspace re-authorized once
+ * before it's grantable.
  */
-const DEFAULT_USER_SCOPES = ["chat:write", "search:read", "users.profile:write", "reminders:write"]
 
 const splitScopes = (raw: string | undefined): string[] =>
   (raw ?? "").split(/[\s,]+/).filter(Boolean)
@@ -82,9 +84,6 @@ const config = () => ({
   scopes: splitScopes(process.env.SLACK_SCOPES).length
     ? splitScopes(process.env.SLACK_SCOPES)
     : DEFAULT_SCOPES,
-  userScopes: splitScopes(process.env.SLACK_USER_SCOPES).length
-    ? splitScopes(process.env.SLACK_USER_SCOPES)
-    : DEFAULT_USER_SCOPES,
 })
 
 const requireConfig = () => {
@@ -469,6 +468,11 @@ export async function handleSlackUserConnect(req: Request) {
   const c = requireConfig()
   const bot = await connectionForOrg(org.orgId)
   if (bot?.status !== "connected") return json({ error: "NO_SLACK_CONNECTION" }, 404)
+  const userScopes = scopesFor(
+    SLACK_USER_CAPABILITIES,
+    await readEnabledCapabilitiesFor(org.orgId, "slack"),
+  )
+  if (userScopes.length === 0) return json({ error: "NO_CAPABILITIES_ENABLED" }, 400)
   const url = new URL(req.url)
   const state = randomUUID()
   const returnTo = url.searchParams.get("returnTo") || "/settings/integrations"
@@ -482,7 +486,7 @@ export async function handleSlackUserConnect(req: Request) {
   })
   const authUrl = new URL(SLACK_AUTHORIZE_URL)
   authUrl.searchParams.set("client_id", c.clientId)
-  authUrl.searchParams.set("user_scope", c.userScopes.join(","))
+  authUrl.searchParams.set("user_scope", userScopes.join(","))
   authUrl.searchParams.set("redirect_uri", c.redirectUri)
   authUrl.searchParams.set("state", state)
   return redirect(authUrl.toString())

@@ -215,13 +215,32 @@ export interface IntegrationSettings {
 export type IntegrationOverrides = {
   readonly [K in keyof IntegrationSettings]: IntegrationSettings[K] | null
 }
+export type CapabilityIntegration = "google" | "slack"
+export interface CapabilityInfo {
+  readonly id: string
+  readonly label: string
+  readonly description: string
+  /** Reads other people's data or acts as the user; off unless an admin opts in. */
+  readonly sensitive: boolean
+  readonly defaultEnabled: boolean
+  readonly implies: ReadonlyArray<string>
+}
+export interface CapabilityStatus {
+  readonly catalog: Record<CapabilityIntegration, ReadonlyArray<CapabilityInfo>>
+  readonly effective: Record<CapabilityIntegration, ReadonlyArray<string>>
+  readonly overrides: Partial<Record<CapabilityIntegration, ReadonlyArray<string>>>
+}
 export type IntegrationSettingsPatch = {
   readonly [K in keyof IntegrationSettings]?: IntegrationSettings[K] | null
+} & {
+  /** `{ google: [...] }` replaces that integration's selection; `null` resets it. */
+  readonly capabilities?: Partial<Record<CapabilityIntegration, ReadonlyArray<string> | null>>
 }
 export interface IntegrationSettingsPayload {
   readonly effective: IntegrationSettings
   readonly overrides: IntegrationOverrides
   readonly defaults: IntegrationSettings
+  readonly capabilities: CapabilityStatus
   readonly canEdit: boolean
 }
 

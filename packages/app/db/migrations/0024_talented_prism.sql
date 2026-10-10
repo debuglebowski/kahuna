@@ -1,0 +1,1 @@
+ALTER TABLE "org_integration_settings" ADD COLUMN "enabled_capabilities" jsonb;
