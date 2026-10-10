@@ -55,6 +55,7 @@ export function Authentication() {
 
   const [passwordEnabled, setPasswordEnabled] = useState(true)
   const [ssoEnabled, setSsoEnabled] = useState(false)
+  const [ownerFallback, setOwnerFallback] = useState(true)
   const [issuer, setIssuer] = useState("")
   const [domain, setDomain] = useState("")
   const [clientId, setClientId] = useState("")
@@ -66,13 +67,19 @@ export function Authentication() {
     if (!cfg.data) return
     setPasswordEnabled(cfg.data.methods.passwordEnabled)
     setSsoEnabled(cfg.data.methods.ssoEnabled)
+    setOwnerFallback(cfg.data.methods.ownerPasswordFallback)
     setIssuer(cfg.data.provider?.issuer ?? "")
     setDomain(cfg.data.provider?.domain ?? "")
     setClientId(cfg.data.provider?.clientId ?? "")
   }, [cfg.data])
 
   const saveMethods = useMutation({
-    mutationFn: () => api.updateAuthMethods({ passwordEnabled, ssoEnabled }),
+    mutationFn: () =>
+      api.updateAuthMethods({
+        passwordEnabled,
+        ssoEnabled,
+        ownerPasswordFallback: ownerFallback,
+      }),
     onSuccess: invalidate,
   })
   const saveProvider = useMutation({
@@ -97,7 +104,8 @@ export function Authentication() {
   const provider = cfg.data?.provider ?? null
   const methodsDirty =
     passwordEnabled !== cfg.data?.methods.passwordEnabled ||
-    ssoEnabled !== cfg.data?.methods.ssoEnabled
+    ssoEnabled !== cfg.data?.methods.ssoEnabled ||
+    ownerFallback !== cfg.data?.methods.ownerPasswordFallback
   // Both off is rejected server-side too; blocking it here keeps the user from
   // submitting the one combination that has no valid outcome.
   const methodsValid = passwordEnabled || ssoEnabled
@@ -133,7 +141,7 @@ export function Authentication() {
             <span className="space-y-1">
               <span className="flex items-center gap-1.5 text-sm font-medium text-foreground">
                 Email and password
-                <InfoHint text="Organization owners can always sign in with a password, even when this is off — otherwise a broken identity provider would lock everyone out with no way back in." />
+                <InfoHint text="While the owner password option below is on, owners can sign in with a password even when this is off, so a broken identity provider cannot lock everyone out." />
               </span>
               <span className="block text-sm text-muted-foreground">
                 Accounts created by an operator sign in directly.
@@ -154,6 +162,25 @@ export function Authentication() {
                 {provider
                   ? "Members sign in through your identity provider. New people are added to this organization automatically, as members."
                   : "Configure an identity provider below first."}
+              </span>
+            </span>
+          </Label>
+
+          <Label className="flex items-start gap-3 font-normal">
+            <Checkbox
+              className="mt-0.5"
+              checked={ownerFallback}
+              disabled={!canEdit}
+              onCheckedChange={(c) => setOwnerFallback(c === true)}
+            />
+            <span className="space-y-1">
+              <span className="block text-sm font-medium text-foreground">
+                Owners can use a password
+              </span>
+              <span className="block text-sm text-muted-foreground">
+                Recovery path if your identity provider breaks. Turn off so owners are covered by
+                your identity provider's MFA; recovery then needs server access. Only turn off after
+                you have signed in with SSO successfully.
               </span>
             </span>
           </Label>

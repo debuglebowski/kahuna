@@ -203,6 +203,9 @@ export const orgAuthSettings = pgTable("org_auth_settings", {
     .references(() => organization.id, { onDelete: "cascade" }),
   passwordEnabled: boolean("password_enabled").notNull().default(true),
   ssoEnabled: boolean("sso_enabled").notNull().default(false),
+  // Owners may sign in with a password even when `password_enabled` is off (the
+  // recovery path). Off = owners are bound by the same toggles as everyone.
+  ownerPasswordFallback: boolean("owner_password_fallback").notNull().default(true),
   updatedAt: timestamp("updated_at", { withTimezone: true })
     .defaultNow()
     .$onUpdate(() => /* @__PURE__ */ new Date())

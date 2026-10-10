@@ -138,6 +138,7 @@ export const publicAuthMethodsFor = async (orgId: string): Promise<PublicAuthMet
   const provider = methods.ssoEnabled ? await providerPayload(orgId) : null
   return {
     passwordEnabled: methods.passwordEnabled,
+    ownerPasswordFallback: methods.ownerPasswordFallback,
     ssoEnabled: methods.ssoEnabled && Boolean(provider),
     ssoProviderId: provider?.providerId ?? null,
   }
@@ -272,7 +273,11 @@ export const deleteSsoProvider = async (req: Request): Promise<Response> => {
   if (!org.ok) return json({ error: org.code }, org.status)
 
   const methods = await readAuthMethods(org.orgId)
-  await writeAuthMethods(org.orgId, { passwordEnabled: true, ssoEnabled: false })
+  await writeAuthMethods(org.orgId, {
+    passwordEnabled: true,
+    ssoEnabled: false,
+    ownerPasswordFallback: true,
+  })
   await auth.api
     .deleteSSOProvider({ body: { providerId: providerIdFor(org.orgId) }, headers: req.headers })
     .catch(() => undefined)
@@ -305,6 +310,7 @@ export const updateAuthMethods = async (req: Request): Promise<Response> => {
   const body = (await req.json().catch(() => null)) as {
     passwordEnabled?: unknown
     ssoEnabled?: unknown
+    ownerPasswordFallback?: unknown
   } | null
   if (typeof body?.passwordEnabled !== "boolean" || typeof body?.ssoEnabled !== "boolean") {
     return json({ error: "MISSING_FIELDS" }, 400)
@@ -312,6 +318,11 @@ export const updateAuthMethods = async (req: Request): Promise<Response> => {
   const methods: AuthMethods = {
     passwordEnabled: body.passwordEnabled,
     ssoEnabled: body.ssoEnabled,
+    // Omitted keeps the current value, so older clients cannot flip it.
+    ownerPasswordFallback:
+      typeof body.ownerPasswordFallback === "boolean"
+        ? body.ownerPasswordFallback
+        : (await readAuthMethods(org.orgId)).ownerPasswordFallback,
   }
 
   if (!methods.passwordEnabled && !methods.ssoEnabled) {
@@ -321,10 +332,20 @@ export const updateAuthMethods = async (req: Request): Promise<Response> => {
     return json({ error: "NO_SSO_PROVIDER" }, 400)
   }
 
+  // Without a working IdP path, turning the owner fallback off would leave no
+  // way in at all.
+  if (!methods.ownerPasswordFallback && !methods.ssoEnabled) {
+    return json({ error: "OWNER_FALLBACK_NEEDS_SSO" }, 400)
+  }
+
   await writeAuthMethods(org.orgId, methods)
   auditAuthConfig(req, org, "auth.methods.updated", "success", {
     // "localSignIn", not "password…": the redaction filter rightly drops any such key.
-    detail: { localSignIn: methods.passwordEnabled, ssoSignIn: methods.ssoEnabled },
+    detail: {
+      localSignIn: methods.passwordEnabled,
+      ssoSignIn: methods.ssoEnabled,
+      ownerLocalSignIn: methods.ownerPasswordFallback,
+    },
   })
   return json({ ok: true, methods })
 }

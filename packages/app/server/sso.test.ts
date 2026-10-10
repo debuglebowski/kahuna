@@ -7,6 +7,7 @@ import {
   domainMatches,
   emailDomain,
   passwordSignInAllowed,
+  readAuthMethods,
   resolveSignInProvider,
   writeAuthMethods,
 } from "./authMethods"
@@ -15,6 +16,7 @@ import { createUserDirect } from "./provision"
 import { resolveOrg } from "./session"
 import {
   authConfigStatus,
+  deleteSsoProvider,
   type PublicAuthMethods,
   publicAuthMethods,
   publicAuthMethodsFor,
@@ -178,6 +180,161 @@ describe("password sign-in gate", () => {
     await writeAuthMethods(a.orgId, { passwordEnabled: false, ssoEnabled: true })
 
     expect(await passwordSignInAllowed(user.email)).toBe(true)
+  })
+})
+
+/** A provider row complete enough that `signInSSO` builds the redirect from it
+ *  without a discovery fetch, so the sign-in route can run with no live IdP. */
+const insertRoutableProvider = async (orgId: string, userId: string, domain: string) => {
+  await db.insert(ssoProvider).values({
+    id: randomUUID(),
+    issuer: "https://idp.test.dev",
+    domain,
+    oidcConfig: JSON.stringify({
+      clientId: "cid",
+      clientSecret: "shh",
+      authorizationEndpoint: "https://idp.test.dev/authorize",
+      tokenEndpoint: "https://idp.test.dev/token",
+      jwksEndpoint: "https://idp.test.dev/jwks",
+      discoveryEndpoint: "https://idp.test.dev/.well-known/openid-configuration",
+      pkce: true,
+      scopes: ["openid", "email", "profile"],
+    }),
+    userId,
+    providerId: `org-${orgId}`,
+    organizationId: orgId,
+  })
+}
+
+describe("SSO-only mode (password off, SSO on)", () => {
+  it("refuses password sign-in for members and lets SSO sign-in start", async () => {
+    const { orgId, owner } = await orgWithOwner()
+    const domain = `d-${randomUUID().slice(0, 8)}.test`
+    await insertRoutableProvider(orgId, owner.userId, domain)
+    const member = await signUp()
+    await addMember(orgId, member.userId)
+    await writeAuthMethods(orgId, { passwordEnabled: false, ssoEnabled: true })
+
+    await expect(
+      auth.api.signInEmail({ body: { email: member.email, password: PASSWORD } }),
+    ).rejects.toThrow(/requires signing in with SSO/)
+
+    const started = await auth.api.signInSSO({
+      body: { providerId: `org-${orgId}`, callbackURL: "/" },
+    })
+    expect(started.url).toContain("https://idp.test.dev/authorize")
+  })
+
+  it("refuses to start SSO when the org has SSO off, even with a provider on file", async () => {
+    const { orgId, owner } = await orgWithOwner()
+    await insertRoutableProvider(orgId, owner.userId, `d-${randomUUID().slice(0, 8)}.test`)
+    await writeAuthMethods(orgId, { passwordEnabled: true, ssoEnabled: false })
+
+    await expect(
+      auth.api.signInSSO({ body: { providerId: `org-${orgId}`, callbackURL: "/" } }),
+    ).rejects.toThrow(/SSO is not enabled/)
+  })
+})
+
+describe("lockout recovery", () => {
+  const post = (headers: Headers, body: unknown) =>
+    updateAuthMethods(
+      req("/api/auth-config/methods", headers, { method: "POST", body: JSON.stringify(body) }),
+    )
+
+  it("removing the provider forces password sign-in back on", async () => {
+    const { orgId, owner } = await orgWithOwner()
+    await insertRoutableProvider(orgId, owner.userId, `d-${randomUUID().slice(0, 8)}.test`)
+    const member = await signUp()
+    await addMember(orgId, member.userId)
+    const headers = await signIn(owner.email)
+    expect((await post(headers, { passwordEnabled: false, ssoEnabled: true })).status).toBe(200)
+    expect(await passwordSignInAllowed(member.email)).toBe(false)
+
+    const res = await deleteSsoProvider(req("/api/auth-config/sso", headers, { method: "DELETE" }))
+    expect(res.status).toBe(200)
+    expect(await readAuthMethods(orgId)).toEqual({
+      passwordEnabled: true,
+      ssoEnabled: false,
+      ownerPasswordFallback: true,
+    })
+    expect(await passwordSignInAllowed(member.email)).toBe(true)
+  })
+
+  it("provider row lost out-of-band: members are locked out, the owner is not and can recover", async () => {
+    const { orgId, owner } = await orgWithOwner()
+    await insertRoutableProvider(orgId, owner.userId, `d-${randomUUID().slice(0, 8)}.test`)
+    const member = await signUp()
+    await addMember(orgId, member.userId)
+    await writeAuthMethods(orgId, { passwordEnabled: false, ssoEnabled: true })
+    await db.delete(ssoProvider).where(eq(ssoProvider.organizationId, orgId))
+
+    // Nothing is offered on the sign-in page, and the member's password is refused.
+    expect(await publicAuthMethodsFor(orgId)).toMatchObject({
+      passwordEnabled: false,
+      ssoEnabled: false,
+    })
+    expect(await passwordSignInAllowed(member.email)).toBe(false)
+
+    // The owner's password still works, and the settings write that fixes it is
+    // accepted without a provider (password on, SSO off).
+    const headers = await signIn(owner.email)
+    expect((await post(headers, { passwordEnabled: true, ssoEnabled: false })).status).toBe(200)
+    expect(await passwordSignInAllowed(member.email)).toBe(true)
+  })
+
+  it("cannot turn both methods off, or SSO on without a provider", async () => {
+    const { owner } = await orgWithOwner()
+    const headers = await signIn(owner.email)
+    expect((await post(headers, { passwordEnabled: false, ssoEnabled: false })).status).toBe(400)
+    expect((await post(headers, { passwordEnabled: false, ssoEnabled: true })).status).toBe(400)
+  })
+
+  it("owner fallback off: owners are bound by the toggles too, and it cannot be set without SSO", async () => {
+    const { orgId, owner } = await orgWithOwner()
+    await insertRoutableProvider(orgId, owner.userId, `d-${randomUUID().slice(0, 8)}.test`)
+    const headers = await signIn(owner.email)
+
+    // Refused while SSO is off: it would leave no way in.
+    const early = await post(headers, {
+      passwordEnabled: true,
+      ssoEnabled: false,
+      ownerPasswordFallback: false,
+    })
+    expect(((await early.json()) as { error: string }).error).toBe("OWNER_FALLBACK_NEEDS_SSO")
+
+    expect(
+      (
+        await post(headers, {
+          passwordEnabled: false,
+          ssoEnabled: true,
+          ownerPasswordFallback: false,
+        })
+      ).status,
+    ).toBe(200)
+    expect(await passwordSignInAllowed(owner.email)).toBe(false)
+    await expect(
+      auth.api.signInEmail({ body: { email: owner.email, password: PASSWORD } }),
+    ).rejects.toThrow(/requires signing in with SSO/)
+
+    // Omitting the field keeps it; removing the provider restores the fallback.
+    await post(headers, { passwordEnabled: false, ssoEnabled: true })
+    expect((await readAuthMethods(orgId)).ownerPasswordFallback).toBe(false)
+    await writeAuthMethods(orgId, {
+      passwordEnabled: true,
+      ssoEnabled: true,
+      ownerPasswordFallback: false,
+    })
+    expect(await passwordSignInAllowed(owner.email)).toBe(true)
+  })
+
+  it("an owner of another org keeps password sign-in (the exemption is per address, not per org)", async () => {
+    const a = await orgWithOwner()
+    const b = await orgWithOwner()
+    await addMember(a.orgId, b.owner.userId)
+    await writeAuthMethods(a.orgId, { passwordEnabled: false, ssoEnabled: true })
+    await writeAuthMethods(b.orgId, { passwordEnabled: false, ssoEnabled: true })
+    expect(await passwordSignInAllowed(b.owner.email)).toBe(true)
   })
 })
 

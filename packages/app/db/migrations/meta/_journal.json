@@ -176,6 +176,13 @@
       "when": 1791655616735,
       "tag": "0024_talented_prism",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1791667676069,
+      "tag": "0025_cultured_zodiak",
+      "breakpoints": true
     }
   ]
 }

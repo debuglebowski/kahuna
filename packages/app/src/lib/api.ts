@@ -138,6 +138,8 @@ export interface VersionInfo {
 export interface AuthMethods {
   readonly passwordEnabled: boolean
   readonly ssoEnabled: boolean
+  /** Owners may use a password even when password sign-in is off. */
+  readonly ownerPasswordFallback: boolean
 }
 
 /**
@@ -187,6 +189,7 @@ const AUTH_CONFIG_ERRORS: Record<string, string> = {
   ISSUER_MUST_BE_HTTPS: "The issuer must use https.",
   INVALID_DOMAIN: "Enter bare domains (e.g. acme.com), not emails or URLs.",
   NO_SIGN_IN_METHOD: "At least one sign-in method must stay enabled.",
+  OWNER_FALLBACK_NEEDS_SSO: "Turn single sign-on on before removing owner password access.",
   NO_SSO_PROVIDER: "Configure an identity provider before enabling SSO.",
   REGISTER_FAILED: "The identity provider could not be reached.",
 }
@@ -824,7 +827,13 @@ export const api = {
     // Never block sign-in on this: a failure falls back to offering everything,
     // which is what the page did before it asked at all. No provider id, so the
     // SSO button asks for an email rather than guessing.
-    if (!res.ok) return { passwordEnabled: true, ssoEnabled: true, ssoProviderId: null }
+    if (!res.ok)
+      return {
+        passwordEnabled: true,
+        ssoEnabled: true,
+        ownerPasswordFallback: true,
+        ssoProviderId: null,
+      }
     return (await res.json()) as PublicAuthMethods
   },
   getAuthConfig: async (): Promise<AuthConfig> => {

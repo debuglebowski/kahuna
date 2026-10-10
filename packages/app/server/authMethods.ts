@@ -15,18 +15,25 @@ import { db } from "./db"
 export interface AuthMethods {
   readonly passwordEnabled: boolean
   readonly ssoEnabled: boolean
+  /** Owners may use a password even when `passwordEnabled` is off. */
+  readonly ownerPasswordFallback: boolean
 }
 
 /** Password on, SSO off — what an org with no settings row gets. Existing orgs
  *  therefore need no backfill, and a deployment that never opens the settings
  *  page behaves exactly as it did before SSO existed. */
-export const DEFAULT_METHODS: AuthMethods = { passwordEnabled: true, ssoEnabled: false }
+export const DEFAULT_METHODS: AuthMethods = {
+  passwordEnabled: true,
+  ssoEnabled: false,
+  ownerPasswordFallback: true,
+}
 
 export const readAuthMethods = async (orgId: string): Promise<AuthMethods> => {
   const [row] = await db
     .select({
       passwordEnabled: orgAuthSettings.passwordEnabled,
       ssoEnabled: orgAuthSettings.ssoEnabled,
+      ownerPasswordFallback: orgAuthSettings.ownerPasswordFallback,
     })
     .from(orgAuthSettings)
     .where(eq(orgAuthSettings.orgId, orgId))
@@ -34,7 +41,11 @@ export const readAuthMethods = async (orgId: string): Promise<AuthMethods> => {
   return row ?? DEFAULT_METHODS
 }
 
-export const writeAuthMethods = async (orgId: string, methods: AuthMethods): Promise<void> => {
+/** `ownerPasswordFallback` omitted leaves the stored value alone (default on for a new row). */
+export const writeAuthMethods = async (
+  orgId: string,
+  methods: Omit<AuthMethods, "ownerPasswordFallback"> & { ownerPasswordFallback?: boolean },
+): Promise<void> => {
   await db
     .insert(orgAuthSettings)
     .values({ orgId, ...methods })
@@ -66,10 +77,12 @@ export const emailDomain = (email: string): string => email.trim().toLowerCase()
  *  - unknown address, or one with no org memberships → yes. Not our call to
  *    make, and rejecting here would turn the gate into an account oracle for
  *    addresses that don't exist.
- *  - owner of ANY org → yes, ALWAYS. This is the break-glass. An owner who
- *    misconfigures their IdP (wrong issuer, expired secret, IdP outage) has to
- *    retain a way back in, or a self-hosted deployment bricks itself with no
- *    remedy short of DB access.
+ *  - owner of an org that keeps `ownerPasswordFallback` (the default) → yes.
+ *    This is the break-glass. An owner who misconfigures their IdP (wrong
+ *    issuer, expired secret, IdP outage) has to retain a way back in, or a
+ *    self-hosted deployment bricks itself with no remedy short of DB access.
+ *    An org that turns the fallback off trades that for owners being covered by
+ *    the IdP's MFA; recovery is then operator-only (docs/sso-rollout.md).
  *  - otherwise → yes only if at least one of their orgs still allows password.
  *    A member of two orgs where only one is SSO-only is not locked out of the
  *    other one.
@@ -91,6 +104,7 @@ export const passwordSignInAllowed = async (email: string): Promise<boolean> => 
       // LEFT JOIN: an org with no settings row falls back to the default rather
       // than dropping out of the result set (which would read as "no orgs").
       passwordEnabled: sql<boolean>`coalesce(${orgAuthSettings.passwordEnabled}, true)`,
+      ownerFallback: sql<boolean>`coalesce(${orgAuthSettings.ownerPasswordFallback}, true)`,
     })
     .from(member)
     .innerJoin(user, eq(user.id, member.userId))
@@ -98,8 +112,7 @@ export const passwordSignInAllowed = async (email: string): Promise<boolean> => 
     .where(eq(sql`lower(${user.email})`, normalized))
 
   if (rows.length === 0) return true
-  if (rows.some((r) => r.role === "owner")) return true
-  return rows.some((r) => r.passwordEnabled)
+  return rows.some((r) => r.passwordEnabled || (r.role === "owner" && r.ownerFallback))
 }
 
 export interface SignInProvider {

@@ -1,0 +1,1 @@
+ALTER TABLE "org_auth_settings" ADD COLUMN "owner_password_fallback" boolean DEFAULT true NOT NULL;
