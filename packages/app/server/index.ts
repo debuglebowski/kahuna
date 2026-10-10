@@ -6,6 +6,7 @@ import { startAutomationRunner, startAutomationScheduleTick } from "./automation
 import { startDecayTick } from "./decay-tick"
 import { startGoogleWatchRenewal } from "./google"
 import { withApiSecurityHeaders, withAppSecurityHeaders } from "./headers"
+import { assertEncryptionKey } from "./integrations/crypto"
 import { startRetentionTick } from "./retention-tick"
 import { handleApi, isBetterAuthPath, isBlockedSsoPath } from "./router"
 import { rpcHandler } from "./rpc"
@@ -13,6 +14,9 @@ import { AppRuntime } from "./runtime"
 import { installGracefulShutdown } from "./shutdown"
 import { startHub, streamHandler } from "./stream"
 import { CURRENT_VERSION, startUpdateCheck } from "./version"
+
+// Refuse to boot without the credential-encryption key (integrations + SSO secret).
+assertEncryptionKey()
 
 const port = Number(process.env.PORT ?? 3100)
 const DIST = path.resolve(import.meta.dirname, "../dist")

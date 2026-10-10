@@ -18,6 +18,7 @@ import { syncMembershipRole } from "./membership"
 import { runEngineOrThrow, systemScope } from "./runtime"
 import { clientIp, securityEvent, subjectRef } from "./securityLog"
 import { seedKahuna } from "./seed/seed"
+import { withSsoSecretEncryption } from "./ssoSecretAdapter"
 
 /**
  * Every engine table keyed by `org_id`, in child→parent order (the engine's own
@@ -128,7 +129,7 @@ const trustedOrigins = isProd
   : [...envOrigins, "http://localhost:*", "http://127.0.0.1:*"]
 
 export const auth = betterAuth({
-  database: drizzleAdapter(db, { provider: "pg", schema }),
+  database: withSsoSecretEncryption(drizzleAdapter(db, { provider: "pg", schema })),
   // Sign-IN only. Self-serve sign-up is closed because this deploys internally:
   // accounts are provisioned by an operator (`scripts/create-user.ts`) and then
   // added to an org by an admin. NOTE the check lives INSIDE the route handler,

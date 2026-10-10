@@ -23,6 +23,11 @@ if (process.env.TEST_DATABASE_URL) {
   process.env.DATABASE_URL = process.env.TEST_DATABASE_URL
 }
 
+// The credential-encryption key is required (no derived fallback), so give the
+// suite a fixed, test-only one when the environment doesn't provide it.
+process.env.INTEGRATION_ENCRYPTION_KEY ||=
+  "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+
 export default defineConfig({
   // `#engine`/`#db` come from package.json `imports`, which Vite resolves
   // natively. Only `@/*` needs an explicit alias (it mirrors vite.config.ts).

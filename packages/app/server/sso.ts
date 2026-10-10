@@ -18,12 +18,13 @@ import { resolveAdmin, resolveOwner } from "./session"
  * themselves members. Reads stay at `admin` so the settings page renders
  * read-only for them.
  *
- * SECRET AT REST — ACCEPTED RISK. `bauth_sso_provider.oidc_config` holds the
- * IdP client secret as plain JSON, unlike every other credential here
- * (`integrations/crypto.ts` encrypts those). The plugin reads that column
- * directly on every sign-in, so encrypting it would mean owning the plugin's
- * read path. Mitigations instead: the secret is never returned to a client (see
- * `providerPayload`), and it is write-only in the UI.
+ * SECRET AT REST — ENCRYPTED. The IdP client secret inside
+ * `bauth_sso_provider.oidc_config` is sealed with the same AES-256-GCM scheme as
+ * every other credential (`integrations/crypto.ts`) by an adapter wrapper
+ * (`ssoSecretAdapter.ts`) — the plugin reads/writes only through the adapter, so
+ * it sees plaintext and we do not fork it. Rows written before this stay readable
+ * and are re-sealed on their next write. Also: the secret is never returned to a
+ * client (see `providerPayload`) and is write-only in the UI.
  */
 
 const json = (body: unknown, status = 200) => Response.json(body, { status })

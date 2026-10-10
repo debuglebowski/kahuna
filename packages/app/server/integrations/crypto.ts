@@ -1,10 +1,4 @@
-import {
-  createCipheriv,
-  createDecipheriv,
-  createHash,
-  randomBytes,
-  timingSafeEqual,
-} from "node:crypto"
+import { createCipheriv, createDecipheriv, randomBytes, timingSafeEqual } from "node:crypto"
 
 /**
  * AES-256-GCM token crypto shared by every integration connector (Google,
@@ -16,62 +10,31 @@ import {
  * hex. It protects API keys and webhook secrets as well as OAuth tokens, which
  * is why the name no longer says "TOKEN".
  *
- * The two earlier names — `INTEGRATION_TOKEN_ENCRYPTION_KEY` and
- * `GOOGLE_TOKEN_ENCRYPTION_KEY` — are NOT read anymore. A deployment still on
- * one of them fails closed in production (the throw below) rather than falling
- * back to a key the operator did not choose. Outside production it would
- * silently derive a different key and stop decrypting existing rows, so rename
- * the variable before starting a dev server that holds real tokens.
- *
- * FALLBACK, non-production only: a key derived from `BETTER_AUTH_SECRET`, so a
- * local checkout needs no extra config. Two guard rails on it, because this used
- * to be looser than it looked:
- *
- *  - `BETTER_AUTH_SECRET` must actually be set, and must not be the published dev
- *    placeholder. It previously defaulted to `"dev-secret-change-me"`, so with
- *    neither variable configured every stored token was encrypted under a
- *    constant that is in this repo — i.e. readable by anyone with the ciphertext.
- *  - Deriving from the session secret COUPLES the two: rotating
- *    `BETTER_AUTH_SECRET` (documented as merely invalidating sessions) silently
- *    makes every stored integration token undecryptable. The warning below is the
- *    only place that says so out loud, so any deployment holding real tokens gets
- *    told to set a dedicated key.
+ * The key is REQUIRED in every environment — there is no fallback. An earlier
+ * version derived one from `BETTER_AUTH_SECRET` outside production; that coupled
+ * session-secret rotation to every stored credential, so it was removed. The two
+ * older names (`INTEGRATION_TOKEN_ENCRYPTION_KEY`, `GOOGLE_TOKEN_ENCRYPTION_KEY`)
+ * are not read either: rename the variable rather than expect it to be picked up.
  */
-const DEV_PLACEHOLDER_SECRET = "dev-secret-change-me"
-let warnedAboutDerivedKey = false
-
 const encryptionKey = (): Buffer => {
   const raw = process.env.INTEGRATION_ENCRYPTION_KEY
-  if (raw) {
-    if (/^[0-9a-f]{64}$/i.test(raw)) return Buffer.from(raw, "hex")
-    const decoded = Buffer.from(raw, "base64")
-    if (decoded.length === 32) return decoded
-    // A set-but-malformed key is a configuration mistake in every environment.
-    // Falling through to the derived key would encrypt real tokens under
-    // something the operator did not choose and cannot reproduce.
+  if (!raw) {
     throw new Error(
-      "INTEGRATION_ENCRYPTION_KEY is set but malformed — need 32 bytes as base64 or 64-char hex",
+      "INTEGRATION_ENCRYPTION_KEY must be set: 32 bytes as base64 or 64-char hex " +
+        "(e.g. `openssl rand -base64 32`)",
     )
   }
-  if (process.env.NODE_ENV === "production") {
-    throw new Error("INTEGRATION_ENCRYPTION_KEY must be 32 bytes as base64 or 64-char hex")
-  }
-  const authSecret = process.env.BETTER_AUTH_SECRET
-  if (!authSecret || authSecret === DEV_PLACEHOLDER_SECRET) {
-    throw new Error(
-      "Set INTEGRATION_ENCRYPTION_KEY (32 bytes base64/hex), or a real BETTER_AUTH_SECRET to derive it from. " +
-        `Refusing to encrypt tokens under the published placeholder "${DEV_PLACEHOLDER_SECRET}".`,
-    )
-  }
-  if (!warnedAboutDerivedKey) {
-    warnedAboutDerivedKey = true
-    console.warn(
-      "[integrations/crypto] No INTEGRATION_ENCRYPTION_KEY; deriving the token key from " +
-        "BETTER_AUTH_SECRET. Rotating that secret will make every stored integration token " +
-        "undecryptable. Set a dedicated key before storing tokens you care about.",
-    )
-  }
-  return createHash("sha256").update(authSecret).digest()
+  if (/^[0-9a-f]{64}$/i.test(raw)) return Buffer.from(raw, "hex")
+  const decoded = Buffer.from(raw, "base64")
+  if (decoded.length === 32) return decoded
+  throw new Error(
+    "INTEGRATION_ENCRYPTION_KEY is malformed — need 32 bytes as base64 or 64-char hex",
+  )
+}
+
+/** Fail the boot, not the first encrypt, when the key is missing or malformed. */
+export const assertEncryptionKey = (): void => {
+  encryptionKey()
 }
 
 export const encryptToken = (token: string | null | undefined): string | null => {
