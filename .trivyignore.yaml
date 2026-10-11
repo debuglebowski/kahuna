@@ -1,0 +1,17 @@
+# Recorded exceptions to the image vulnerability scan (CI `image` job and the
+# weekly vulnerability-scan workflow). The scan fails on HIGH/CRITICAL findings
+# that have a fix; an entry here suppresses one finding, in git history, with a
+# reviewer.
+#
+# Every entry needs `statement` (why it is safe to ship) and `expired_at`
+# (when it must be re-examined). Once the date passes, Trivy stops ignoring the
+# finding and the build fails again.
+#
+# vulnerabilities:
+#   - id: CVE-0000-00000
+#     paths:                        # optional: limit to one package/file
+#       - "node_modules/example/package.json"
+#     statement: "Vulnerable function is not reachable: <explain>."
+#     expired_at: 2027-01-31
+
+vulnerabilities: []

@@ -1,0 +1,40 @@
+version: 2
+
+updates:
+  # The Bun workspace. Bun's lockfile is resolved from the root, so one entry
+  # covers packages/app, packages/contract and packages/cli.
+  - package-ecosystem: bun
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    groups:
+      # Minor/patch bumps arrive as one PR per ecosystem so CI runs once.
+      # Majors stay individual: they are the ones that break things.
+      bun-minor-patch:
+        update-types: [minor, patch]
+    # Security advisories open their own PRs regardless of this schedule and
+    # are not grouped, so a fix is never held behind an unrelated bump.
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # Base images in the Dockerfile (oven/bun) and the compose files.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday

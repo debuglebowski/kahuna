@@ -270,6 +270,21 @@ jobs:
 
           echo "smoke test passed"
 
+      # Blocks the build — and the push below — on a HIGH or CRITICAL
+      # vulnerability that has a fix available. Unfixed findings are not
+      # blocking (there is nothing to act on) but remain visible in the weekly
+      # scan. Exceptions (reason + expiry) live in .trivyignore.yaml.
+      - name: Scan image for vulnerabilities
+        uses: aquasecurity/trivy-action@0.33.1
+        with:
+          image-ref: kahuna:ci
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          trivyignores: .trivyignore.yaml
+          format: table
+
       - name: Tear down smoke-test containers
         if: always()
         run: |
