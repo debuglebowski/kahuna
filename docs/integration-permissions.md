@@ -6,14 +6,18 @@ connected person; it owns the provider scopes that grant it. Defaults are
 least-privilege, and anything that reads other people's data or acts as the user
 is **sensitive** and off until an org admin opts in.
 
+Gmail is not available at all: its capabilities are not in the registry, so an
+admin cannot opt in. See "Gmail is disabled" in [google-integration.md](google-integration.md).
+
 ## Where it lives
 
 - Registry (code): `packages/app/server/integrations/capabilities.ts`. Lists
   each capability's scopes, `sensitive` flag, default, and `implies`. A test
   asserts no sensitive capability is on by default.
 - Selection (DB): `org_integration_settings.enabled_capabilities`, e.g.
-  `{ "google": ["calendar", "gmail.send"] }`. NULL or a missing key means the
-  registry defaults. Not configurable by env.
+  `{ "slack": [] }`. NULL or a missing key means the registry defaults. Ids the
+  registry does not know are ignored on read and rejected on write. Not
+  configurable by env.
 - UI: Settings → Integrations → **Permissions requested** on the Google and
   Slack cards (admins only). Visible before the first connect.
 - API: `GET/POST /api/integrations/settings`, field `capabilities`
@@ -26,9 +30,6 @@ is **sensitive** and off until an org admin opts in.
 | Integration | Capability | Default | Scopes | Sensitive |
 | --- | --- | --- | --- | --- |
 | google | `calendar` | on | `calendar.events` | no |
-| google | `gmail.metadata` | off | `gmail.metadata` | yes |
-| google | `gmail.read` | off | `gmail.readonly`; implies `gmail.metadata` | yes |
-| google | `gmail.send` | off | `gmail.send` | yes |
 | slack (user token) | `chat.write` | on | `chat:write` | no |
 
 Slack **bot** scopes are fixed by the app manifest (`SLACK_SCOPES`) and are not

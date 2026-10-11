@@ -1,16 +1,33 @@
 import { randomUUID } from "node:crypto"
 import { and, eq } from "drizzle-orm"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { googleCalendarEvent, googleCalendarSync, googleConnection, googleOAuthState } from "#db"
+import {
+  googleCalendarEvent,
+  googleCalendarSync,
+  googleConnection,
+  googleGmailMessage,
+  googleGmailSync,
+  googleGmailThread,
+  googleNotification,
+  googleOAuthState,
+  orgIntegrationSettings,
+} from "#db"
 import { auth } from "./auth"
 import { db, pool } from "./db"
 import {
   decryptToken,
   encryptToken,
   GOOGLE_SCOPES,
+  getGoogleThread,
+  googleRequest,
+  googleStatus,
   handleCalendarPush,
+  handleGmailPush,
   handleGoogleCallback,
   handleGoogleConnect,
+  listGoogleThreads,
+  renewWatches,
+  sendGoogleMail,
   setGoogleFetchForTest,
   syncGoogleConnection,
 } from "./google"
@@ -82,22 +99,21 @@ describe("Google integration", () => {
       state: "state-1",
       orgId: actor.orgId,
       userId: actor.userId,
-      scopes: [GOOGLE_SCOPES.calendarEvents, GOOGLE_SCOPES.gmailMetadata].join(" "),
+      scopes: GOOGLE_SCOPES.calendarEvents,
       returnTo: "/settings/integrations",
       expiresAt: new Date(Date.now() + 60_000),
     })
+    const urls: string[] = []
     setGoogleFetchForTest(async (input) => {
       const url = String(input)
+      urls.push(url)
       if (url.includes("oauth2.googleapis.com/token")) {
         return okJson({
           access_token: "access-1",
           refresh_token: "refresh-1",
           expires_in: 3600,
-          scope: [GOOGLE_SCOPES.calendarEvents, GOOGLE_SCOPES.gmailMetadata].join(" "),
+          scope: GOOGLE_SCOPES.calendarEvents,
         })
-      }
-      if (url.includes("/gmail/v1/users/me/profile")) {
-        return okJson({ emailAddress: "tester@gmail.com", historyId: "10" })
       }
       return new Response("unexpected", { status: 500 })
     })
@@ -116,7 +132,9 @@ describe("Google integration", () => {
         and(eq(googleConnection.orgId, actor.orgId), eq(googleConnection.userId, actor.userId)),
       )
       .limit(1)
-    expect(connection?.email).toBe("tester@gmail.com")
+    // The profile (and so the address) comes from the Gmail API, which is not called.
+    expect(connection?.email).toBeNull()
+    expect(urls.some((u) => u.includes("/gmail/"))).toBe(false)
     expect(connection?.accessToken).not.toBe("access-1")
     expect(decryptToken(connection?.accessToken)).toBe("access-1")
     expect(decryptToken(connection?.refreshToken)).toBe("refresh-1")
@@ -265,84 +283,6 @@ describe("Google integration", () => {
     expect(ev2?.[fTitle]).toBe("Replanning")
   })
 
-  it("mirrors Gmail threads into an Email concept (metadata only, idempotent)", async () => {
-    const actor = await signUpAndOrg()
-    const [connection] = await db
-      .insert(googleConnection)
-      .values({
-        orgId: actor.orgId,
-        userId: actor.userId,
-        scopes: GOOGLE_SCOPES.gmailMetadata,
-        accessToken: encryptToken("access"),
-        accessTokenExpiresAt: new Date(Date.now() + 5 * 60_000),
-      })
-      .returning()
-    if (!connection) throw new Error("missing connection")
-
-    let subject = "Welcome"
-    setGoogleFetchForTest(async (input) => {
-      const url = String(input)
-      // Single-message fetch (note: no historyId, so sync stays on the full path).
-      if (url.includes("/gmail/v1/users/me/messages/")) {
-        return okJson({
-          id: "m1",
-          threadId: "t1",
-          internalDate: "1718200000000",
-          labelIds: ["INBOX"],
-          payload: {
-            headers: [
-              { name: "Subject", value: subject },
-              { name: "From", value: "Ada <ada@test.dev>" },
-            ],
-          },
-        })
-      }
-      if (url.includes("/gmail/v1/users/me/messages")) {
-        return okJson({ messages: [{ id: "m1" }] })
-      }
-      return new Response("unexpected", { status: 500 })
-    })
-
-    await syncGoogleConnection(connection.id)
-
-    const [conn1] = await db
-      .select()
-      .from(googleConnection)
-      .where(eq(googleConnection.id, connection.id))
-      .limit(1)
-    expect(conn1?.gmailConceptId).toBeTruthy()
-    const conceptId = conn1?.gmailConceptId as string
-    const fieldMap = (conn1?.gmailFieldMap ?? {}) as Record<string, string>
-    expect(fieldMap.externalId).toBeTruthy()
-
-    const concept = await pool.query<{ name: string }>(
-      `SELECT name FROM concepts WHERE org_id = $1 AND id = $2`,
-      [actor.orgId, conceptId],
-    )
-    expect(concept.rows[0]?.name).toBe("Google - Email")
-
-    const fId = fieldMap.externalId as string
-    const fSubject = fieldMap.subject as string
-    const fFrom = fieldMap.from as string
-
-    const states1 = await instanceStates(actor.orgId, conceptId)
-    expect(states1).toHaveLength(1)
-    const em = states1.find((s) => s[fId] === "t1")
-    if (!em) throw new Error("thread t1 recordVersion missing")
-    expect(em[fSubject]).toBe("Welcome")
-    expect(em[fFrom]).toBe("Ada <ada@test.dev>")
-    // Metadata only — no body/snippet field is written (only mapped columns).
-    expect(Object.keys(em).every((k) => Object.values(fieldMap).includes(k))).toBe(true)
-
-    // Second sync with a changed subject: same record version count, updated in place.
-    subject = "Re: Welcome"
-    await syncGoogleConnection(connection.id)
-    const states2 = await instanceStates(actor.orgId, conceptId)
-    expect(states2).toHaveLength(1)
-    const em2 = states2.find((s) => s[fId] === "t1")
-    expect(em2?.[fSubject]).toBe("Re: Welcome")
-  })
-
   it("dedupes Calendar push notifications", async () => {
     const actor = await signUpAndOrg()
     const [connection] = await db
@@ -445,38 +385,39 @@ describe("Google connect scopes", () => {
     expect(url?.searchParams.has("include_granted_scopes")).toBe(false)
   })
 
-  it("adds Gmail scopes only after an admin opts in, and read implies metadata", async () => {
+  it("never requests a Gmail scope: the settings API refuses it and a stored selection is ignored", async () => {
     const actor = await signUpAndOrg()
-    await setCapabilities(actor, ["calendar", "gmail.read"])
+    for (const id of ["gmail.metadata", "gmail.read", "gmail.send"]) {
+      const res = await updateIntegrationSettings(
+        new Request("http://localhost/api/integrations/settings", {
+          method: "POST",
+          headers: new Headers({
+            ...Object.fromEntries(actor.headers),
+            "content-type": "application/json",
+          }),
+          body: JSON.stringify({ capabilities: { google: ["calendar", id] } }),
+        }),
+      )
+      expect(res.status, id).toBe(400)
+    }
+
+    // A selection written before the block (straight into the table, as an older
+    // build would have) cannot widen the request either.
+    await db.insert(orgIntegrationSettings).values({
+      orgId: actor.orgId,
+      enabledCapabilities: { google: ["calendar", "gmail.metadata", "gmail.read", "gmail.send"] },
+    })
     const { scopes } = await connect(actor)
-    expect(scopes).toEqual([
-      GOOGLE_SCOPES.calendarEvents,
-      GOOGLE_SCOPES.gmailMetadata,
-      GOOGLE_SCOPES.gmailReadonly,
-    ])
-    expect(scopes).not.toContain(GOOGLE_SCOPES.gmailSend)
-
-    await setCapabilities(actor, ["calendar", "gmail.send"])
-    expect((await connect(actor)).scopes).toEqual([
-      GOOGLE_SCOPES.calendarEvents,
-      GOOGLE_SCOPES.gmailSend,
-    ])
-
-    // `null` resets to the least-privilege default.
-    await setCapabilities(actor, null)
-    expect((await connect(actor)).scopes).toEqual([GOOGLE_SCOPES.calendarEvents])
+    expect(scopes).toEqual([GOOGLE_SCOPES.calendarEvents])
+    expect(scopes.some((s) => s.includes("gmail"))).toBe(false)
   })
 
   it("lets a capability param narrow the request but never widen it", async () => {
     const actor = await signUpAndOrg()
-    // Not enabled: the param cannot pull Gmail in.
+    // The param cannot pull Gmail in.
     expect((await connect(actor, "?capability=gmail.send&capability=gmail.read")).res.status).toBe(
       400,
     )
-    expect((await connect(actor, "?capability=calendar")).scopes).toEqual([
-      GOOGLE_SCOPES.calendarEvents,
-    ])
-    await setCapabilities(actor, ["calendar", "gmail.send"])
     expect((await connect(actor, "?capability=calendar")).scopes).toEqual([
       GOOGLE_SCOPES.calendarEvents,
     ])
@@ -488,5 +429,217 @@ describe("Google connect scopes", () => {
     const { res } = await connect(actor)
     expect(res.status).toBe(400)
     expect(((await res.json()) as { error?: string }).error).toBe("NO_CAPABILITIES_ENABLED")
+  })
+})
+
+describe("Gmail is disabled", () => {
+  const oldEnv = { ...process.env }
+  const urls: string[] = []
+
+  beforeEach(() => {
+    process.env.GOOGLE_CLIENT_ID = "client"
+    process.env.GOOGLE_CLIENT_SECRET = "secret"
+    process.env.INTEGRATION_ENCRYPTION_KEY =
+      "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+    process.env.GOOGLE_SYNC_ENABLED = "1"
+    process.env.GOOGLE_PUBSUB_VERIFICATION_TOKEN = "push-secret"
+    process.env.GOOGLE_PUBSUB_TOPIC = "projects/p/topics/t"
+    urls.length = 0
+    // Calendar answers; ANY other call is recorded and fails. Every test asserts the
+    // recorded list holds no Gmail URL.
+    setGoogleFetchForTest(async (input) => {
+      const url = String(input)
+      urls.push(url)
+      if (url.includes("/calendar/v3/calendars/primary/events")) {
+        return okJson({ items: [], nextSyncToken: "sync-1" })
+      }
+      return new Response("unexpected", { status: 500 })
+    })
+  })
+
+  afterEach(() => {
+    setGoogleFetchForTest(fetch)
+    process.env = { ...oldEnv }
+  })
+
+  const gmailUrls = () =>
+    urls.filter((u) => u.includes("/gmail/") || u.includes("gmail.googleapis"))
+
+  /** A connection whose token still carries every Gmail scope — i.e. one made before
+   *  the block. The gates must hold on the code, not on what the token happens to say. */
+  const legacyConnection = async (actor: { orgId: string; userId: string }) => {
+    const [connection] = await db
+      .insert(googleConnection)
+      .values({
+        orgId: actor.orgId,
+        userId: actor.userId,
+        email: `legacy-${randomUUID().slice(0, 8)}@test.dev`,
+        scopes: [
+          GOOGLE_SCOPES.calendarEvents,
+          GOOGLE_SCOPES.gmailMetadata,
+          GOOGLE_SCOPES.gmailReadonly,
+          GOOGLE_SCOPES.gmailSend,
+        ].join(" "),
+        accessToken: encryptToken("access"),
+        accessTokenExpiresAt: new Date(Date.now() + 5 * 60_000),
+      })
+      .returning()
+    if (!connection) throw new Error("missing connection")
+    return connection
+  }
+
+  const jsonRequest = (actor: { headers: Headers }, url: string, method: string, body?: unknown) =>
+    new Request(url, {
+      method,
+      headers: new Headers({
+        ...Object.fromEntries(actor.headers),
+        "content-type": "application/json",
+      }),
+      body: body === undefined ? undefined : JSON.stringify(body),
+    })
+
+  it("sync talks to Calendar only and mirrors no mail", async () => {
+    const actor = await signUpAndOrg()
+    const connection = await legacyConnection(actor)
+
+    await syncGoogleConnection(connection.id)
+
+    expect(urls.length).toBeGreaterThan(0)
+    expect(gmailUrls()).toEqual([])
+    const [row] = await db
+      .select()
+      .from(googleConnection)
+      .where(eq(googleConnection.id, connection.id))
+    // No Email concept was provisioned, so nothing org-visible was created.
+    expect(row?.gmailConceptId).toBeNull()
+    for (const table of [googleGmailThread, googleGmailMessage, googleGmailSync]) {
+      const rows = await db.select().from(table).where(eq(table.connectionId, connection.id))
+      expect(rows).toHaveLength(0)
+    }
+  })
+
+  it("refuses the thread list, the thread read and send with 410, calling nothing", async () => {
+    const actor = await signUpAndOrg()
+    await legacyConnection(actor)
+
+    const calls = [
+      await listGoogleThreads(
+        jsonRequest(actor, "http://localhost/api/integrations/google/gmail/threads", "GET"),
+      ),
+      await getGoogleThread(
+        jsonRequest(actor, "http://localhost/api/integrations/google/gmail/threads/t1", "GET"),
+        "t1",
+      ),
+      await sendGoogleMail(
+        jsonRequest(actor, "http://localhost/api/integrations/google/gmail/send", "POST", {
+          to: "a@test.dev",
+          subject: "hi",
+          text: "body",
+        }),
+      ),
+    ]
+    for (const res of calls) {
+      expect(res.status).toBe(410)
+      expect(((await res.json()) as { error?: string }).error).toBe("GMAIL_DISABLED")
+    }
+    expect(urls).toEqual([])
+  })
+
+  it("still authenticates before refusing", async () => {
+    const res = await listGoogleThreads(
+      new Request("http://localhost/api/integrations/google/gmail/threads"),
+    )
+    expect(res.status).not.toBe(410)
+    expect(res.status).toBeGreaterThanOrEqual(401)
+  })
+
+  describe("Pub/Sub push", () => {
+    const push = (token: string | null, messageId: string) =>
+      handleGmailPush(
+        new Request(
+          `http://localhost/api/integrations/google/gmail/push${token ? `?token=${token}` : ""}`,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              message: {
+                messageId,
+                data: Buffer.from(JSON.stringify({ emailAddress: "a@test.dev" })).toString(
+                  "base64url",
+                ),
+              },
+            }),
+          },
+        ),
+      )
+
+    it("refuses a valid push with 410, records nothing and syncs nothing", async () => {
+      const actor = await signUpAndOrg()
+      const connection = await legacyConnection(actor)
+      await db
+        .update(googleConnection)
+        .set({ email: "a@test.dev" })
+        .where(eq(googleConnection.id, connection.id))
+      const messageId = `m-${randomUUID()}`
+
+      const res = await push("push-secret", messageId)
+
+      expect(res.status).toBe(410)
+      expect(urls).toEqual([])
+      const dedupe = await db
+        .select()
+        .from(googleNotification)
+        .where(eq(googleNotification.key, `gmail:${messageId}`))
+      expect(dedupe).toHaveLength(0)
+    })
+
+    it("still rejects a bad token as before, rather than revealing the block", async () => {
+      expect((await push("wrong", `m-${randomUUID()}`)).status).toBe(401)
+      expect((await push(null, `m-${randomUUID()}`)).status).toBe(401)
+    })
+  })
+
+  it("renews no Gmail watch even with a Pub/Sub topic configured", async () => {
+    const actor = await signUpAndOrg()
+    const connection = await legacyConnection(actor)
+
+    // Resolves (does not throw), so the early return is what stopped it, not only the
+    // transport refusing the request.
+    await expect(renewWatches(connection.id)).resolves.toBeUndefined()
+
+    expect(gmailUrls()).toEqual([])
+    const rows = await db
+      .select()
+      .from(googleGmailSync)
+      .where(eq(googleGmailSync.connectionId, connection.id))
+    expect(rows).toHaveLength(0)
+  })
+
+  it("the transport refuses any Gmail URL, on either host, and still passes Calendar", async () => {
+    const actor = await signUpAndOrg()
+    const connection = await legacyConnection(actor)
+
+    for (const url of [
+      "https://www.googleapis.com/gmail/v1/users/me/profile",
+      "https://gmail.googleapis.com/gmail/v1/users/me/messages",
+    ]) {
+      await expect(googleRequest(connection.id, url), url).rejects.toMatchObject({ status: 410 })
+    }
+    expect(urls).toEqual([])
+
+    await googleRequest(
+      connection.id,
+      "https://www.googleapis.com/calendar/v3/calendars/primary/events",
+    )
+    expect(urls).toHaveLength(1)
+  })
+
+  it("status reports no Gmail watch", async () => {
+    const actor = await signUpAndOrg()
+    await legacyConnection(actor)
+    const res = await googleStatus(
+      jsonRequest(actor, "http://localhost/api/integrations/google/status", "GET"),
+    )
+    expect(res.status).toBe(200)
+    expect(await res.json()).not.toHaveProperty("gmailWatchExpiresAt")
   })
 })

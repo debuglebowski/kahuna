@@ -11,12 +11,12 @@
   set `0` to default it off. Per-org overrides live in Settings →
   Integrations (`org_integration_settings`) and win over this. Gates the
   callback backfill, inbound push, and the Sync button.
-- `GOOGLE_WATCH_ENABLED`: deployment DEFAULT for watch renewal (opt-in — set
-  `1` to default it on). Per-org override as above. The hourly renewal loop
+- `GOOGLE_WATCH_ENABLED`: deployment DEFAULT for Calendar watch renewal (opt-in —
+  set `1` to default it on). Per-org override as above. The hourly renewal loop
   now always runs and skips orgs whose effective value is off.
 - `GOOGLE_WEBHOOK_BASE_URL`: public app origin for Calendar webhooks.
-- `GOOGLE_PUBSUB_TOPIC`: Gmail Pub/Sub topic, e.g. `projects/<id>/topics/<topic>`.
-- `GOOGLE_PUBSUB_VERIFICATION_TOKEN`: reserved for Pub/Sub push verification.
+- `GOOGLE_PUBSUB_TOPIC`, `GOOGLE_PUBSUB_VERIFICATION_TOKEN`: Gmail push only. No
+  effect while Gmail is disabled (see below); leave unset.
 
 ## Manual Setup
 
@@ -24,41 +24,79 @@
 2. Configure OAuth consent screen.
 3. Add authorized redirect URI: `https://<host>/api/integrations/google/callback`.
 4. Create OAuth client ID/secret.
-5. Enable Google Calendar API.
-6. Enable Gmail API.
-7. Add test users while OAuth app is in testing.
-8. For Gmail push, create Pub/Sub topic/subscription and push to `/api/integrations/google/gmail/push`.
-9. For Calendar push, expose `/api/integrations/google/calendar/push`.
-10. Complete Google app verification before production use of sensitive/restricted scopes.
+5. Enable Google Calendar API. Do not enable the Gmail API.
+6. Add test users while OAuth app is in testing.
+7. For Calendar push, expose `/api/integrations/google/calendar/push`.
 
 ## Scopes
 
-Connect requests only the capabilities the org has enabled. The default is
-**Calendar alone**; Gmail is opt-in. See [integration-permissions.md](integration-permissions.md)
-for the model and how an admin enables a capability.
+Connect requests only the capabilities the org has enabled, and the only
+capability is **Calendar**. See [integration-permissions.md](integration-permissions.md)
+for the model.
 
 | Capability | Scope requested | Enables |
 | --- | --- | --- |
 | `calendar` (default) | `calendar.events` | Calendar sync; create/update events |
-| `gmail.metadata` | `gmail.metadata` | Email headers sync (no bodies) |
-| `gmail.read` | `gmail.readonly` (+ `gmail.metadata`) | Read bodies; search mail |
-| `gmail.send` | `gmail.send` | Send mail as the connected user |
 
-`calendar.freebusy`, `gmail.labels` and `gmail.compose` are not requested; no
-feature uses them.
+## Gmail is disabled
 
-To turn Gmail on: Settings → Integrations → Google → **Permissions requested**,
-tick the Gmail capabilities, Save, then **reconnect** Google. The consent screen
-lists exactly those scopes. Existing connections keep the scopes they already
-granted until reconnected.
+Gmail cannot be turned on: no setting, env var or API call enables it. It is
+blocked in layers, so lifting one does not lift the rest:
 
-Gmail `gmail.metadata`, `gmail.readonly`, `gmail.compose`, and `gmail.modify` are restricted. Server storage/transmission can require a security assessment. `gmail.send` is sensitive.
+- **No capability.** `gmail.*` is not in the capability registry
+  (`server/integrations/capabilities.ts`), so connect never requests a Gmail scope,
+  the settings API rejects the ids, a selection stored by an older build is ignored,
+  and a connection is never treated as granted Gmail even if its token still carries
+  the scope.
+- **Routes refuse.** `GET /gmail/threads`, `GET /gmail/threads/:id` and
+  `POST /gmail/send` answer `410 GMAIL_DISABLED`. `POST /gmail/push` answers the
+  same after its token check, and writes nothing.
+- **Nothing syncs.** Sync, watch renewal and the profile lookup skip Gmail.
+- **The transport refuses.** Every Google request goes through one function, which
+  throws before any Gmail URL (either host) is called.
+
+Upgrading an existing deployment:
+
+1. Run `bun run db:migrate`. Migration `0026` deletes mirrored Gmail rows (threads,
+   messages, sync cursors, record links) and removes the subject, sender and time
+   from the Email records and from the event log, including for records purged
+   earlier. Email records are archived, not deleted; user-added fields on that
+   concept are left alone. The concept itself stays (empty).
+2. Remove any Pub/Sub subscription that pushes to this server. It gets 410 until
+   you do.
+3. A connection made while Gmail was on still holds a token that carries the
+   Gmail scopes at Google. Kahuna ignores them, but the grant stays until the person
+   reconnects Google (the connect screen then asks for Calendar only) or removes
+   the app at their Google account.
+4. The connected address is no longer filled in: it came from the Gmail profile
+   call, which needs a Gmail scope.
+
+Before Gmail is turned on again, the following must exist and be tested. They did
+not when it was disabled:
+
+- Mail private to the mailbox owner by default. Today a mirrored thread becomes a
+  record in an org-wide concept, readable by every member through the built-in
+  Member role.
+- Owner-set rules that make selected mail visible, and exclusions by thread, label
+  and contact.
+- Only metadata stored. Snippets, the raw API response and message bodies were
+  stored (bodies after a thread was opened), and bodies were stored twice.
+- A removal path that also scrubs the event log. Record purge keeps events, so a
+  purged email record kept its subject and sender there.
+- Thread-to-person matching. `google_object_link` is read by retention and never
+  written, so no thread was ever linked.
+- Disconnect and member removal that stop the sync and remove the mirror. Removing a
+  member did not touch their connection.
+- A send log with the message id, recipient count and failures.
+
+The code is kept (`google.ts`, the tables, `GMAIL_CAPABILITIES_DISABLED`), but the
+behaviour tests for it were removed because they asserted the behaviour above. To
+re-enable, move the definitions into `GOOGLE_CAPABILITIES`, which lifts every layer
+at once, and only after those controls are in.
 
 ## Sync + Watches
 
 - Calendar sync stores `nextSyncToken`; HTTP 410 clears the token and triggers full resync.
-- Gmail sync stores `historyId`; HTTP 404 triggers full resync.
-- Gmail push carries email/history ID through Pub/Sub and enqueues incremental sync.
 - Calendar push carries channel headers only; handler dedupes and runs incremental sync.
 - Renewal runs hourly, per connection, for orgs whose effective
   `googleWatchEnabled` is on (`GOOGLE_WATCH_ENABLED=1` is the default).
@@ -66,8 +104,5 @@ Gmail `gmail.metadata`, `gmail.readonly`, `gmail.compose`, and `gmail.modify` ar
 References:
 
 - Calendar scopes: https://developers.google.com/workspace/calendar/api/auth
-- Gmail scopes: https://developers.google.com/workspace/gmail/api/auth/scopes
 - Calendar sync: https://developers.google.com/workspace/calendar/api/guides/sync
 - Calendar push: https://developers.google.com/workspace/calendar/api/guides/push
-- Gmail sync: https://developers.google.com/workspace/gmail/api/guides/sync
-- Gmail push: https://developers.google.com/workspace/gmail/api/guides/push

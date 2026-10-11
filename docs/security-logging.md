@@ -105,7 +105,8 @@ Only the RPC name and the target id are logged, never names or values. `rpcAudit
 |---|---|
 | `integration.connect`, `integration.disconnect` | `targetId` is the connector (`google`, `linear`, `slack`, `posthog`, `apollo`, `clay`). |
 | `integration.user.connect`, `integration.user.disconnect` | Per-user Slack token. |
-| `integration.gmail.send`, `integration.post_message`, `integration.post_message.user`, `integration.writeback.update`, `integration.writeback.close` | Writes pushed out to a third party. |
+| `integration.post_message`, `integration.post_message.user`, `integration.writeback.update`, `integration.writeback.close` | Writes pushed out to a third party. |
+| `integration.gmail.send` | Not emitted while Gmail is disabled; the send route answers 410 before it runs. |
 | `integration.settings.updated` | `detail.fields` lists which settings changed, not their values. |
 
 ## Operating notes

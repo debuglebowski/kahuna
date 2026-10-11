@@ -2,13 +2,23 @@ import { describe, expect, it } from "vitest"
 import {
   defaultCapabilityIds,
   expandCapabilities,
+  GMAIL_CAPABILITIES_DISABLED,
   GOOGLE_CAPABILITIES,
   GOOGLE_SCOPES,
+  gmailEnabled,
   hasCapability,
   INTEGRATION_CAPABILITIES,
   resolveCapabilityIds,
   scopesFor,
 } from "./capabilities"
+
+const GMAIL_SCOPES = [
+  GOOGLE_SCOPES.gmailMetadata,
+  GOOGLE_SCOPES.gmailLabels,
+  GOOGLE_SCOPES.gmailReadonly,
+  GOOGLE_SCOPES.gmailSend,
+  GOOGLE_SCOPES.gmailCompose,
+]
 
 describe("capability registries", () => {
   for (const [name, registry] of Object.entries(INTEGRATION_CAPABILITIES)) {
@@ -46,14 +56,51 @@ describe("capability registries", () => {
   })
 
   it("expands implied capabilities and drops unknown ids", () => {
-    expect(expandCapabilities(GOOGLE_CAPABILITIES, ["gmail.read", "nope"])).toEqual([
-      "gmail.metadata",
-      "gmail.read",
-    ])
-    expect(scopesFor(GOOGLE_CAPABILITIES, ["gmail.read"])).toEqual([
-      GOOGLE_SCOPES.gmailMetadata,
-      GOOGLE_SCOPES.gmailReadonly,
-    ])
+    // Slack's registry has no `implies`; exercise the expansion on a registry that does.
+    const registry = [
+      { ...GOOGLE_CAPABILITIES[0]!, id: "base", scopes: ["a"] },
+      { ...GOOGLE_CAPABILITIES[0]!, id: "top", scopes: ["b"], implies: ["base"] },
+    ]
+    expect(expandCapabilities(registry, ["top", "nope"])).toEqual(["base", "top"])
+    expect(scopesFor(registry, ["top"])).toEqual(["a", "b"])
+  })
+
+  describe("Gmail is disabled", () => {
+    it("has no Gmail capability in the registry", () => {
+      expect(gmailEnabled()).toBe(false)
+      expect(GOOGLE_CAPABILITIES.some((c) => c.id.startsWith("gmail."))).toBe(false)
+      // Still defined, so moving them back is the one deliberate step to enable.
+      expect(GMAIL_CAPABILITIES_DISABLED.map((c) => c.id)).toEqual([
+        "gmail.metadata",
+        "gmail.read",
+        "gmail.send",
+      ])
+    })
+
+    it("treats every Gmail id as unknown: never expanded, never requested", () => {
+      const ids = GMAIL_CAPABILITIES_DISABLED.map((c) => c.id)
+      expect(expandCapabilities(GOOGLE_CAPABILITIES, ids)).toEqual([])
+      expect(scopesFor(GOOGLE_CAPABILITIES, ids)).toEqual([])
+      // A stored selection from before the block cannot bring Gmail back.
+      expect(resolveCapabilityIds(GOOGLE_CAPABILITIES, ["calendar", ...ids])).toEqual(["calendar"])
+      expect(resolveCapabilityIds(GOOGLE_CAPABILITIES, ids)).toEqual([])
+    })
+
+    it("is false even when the token still carries the Gmail scopes", () => {
+      for (const cap of GMAIL_CAPABILITIES_DISABLED) {
+        expect(hasCapability(GOOGLE_CAPABILITIES, GMAIL_SCOPES.join(" "), cap.id), cap.id).toBe(
+          false,
+        )
+      }
+    })
+
+    it("requests no Gmail scope however the registry is read", () => {
+      const every = scopesFor(
+        GOOGLE_CAPABILITIES,
+        GOOGLE_CAPABILITIES.map((c) => c.id),
+      )
+      for (const scope of GMAIL_SCOPES) expect(every).not.toContain(scope)
+    })
   })
 
   it("never requests the unused scopes", () => {
@@ -67,11 +114,12 @@ describe("capability registries", () => {
   })
 
   it("checks a GRANT, space- or comma-separated, not the org's intent", () => {
-    expect(hasCapability(GOOGLE_CAPABILITIES, GOOGLE_SCOPES.gmailSend, "gmail.send")).toBe(true)
-    expect(hasCapability(GOOGLE_CAPABILITIES, GOOGLE_SCOPES.calendarEvents, "gmail.send")).toBe(
-      false,
-    )
+    expect(hasCapability(GOOGLE_CAPABILITIES, GOOGLE_SCOPES.calendarEvents, "calendar")).toBe(true)
+    expect(
+      hasCapability(GOOGLE_CAPABILITIES, `x,${GOOGLE_SCOPES.calendarEvents} y`, "calendar"),
+    ).toBe(true)
+    expect(hasCapability(GOOGLE_CAPABILITIES, GOOGLE_SCOPES.gmailSend, "calendar")).toBe(false)
     expect(hasCapability(GOOGLE_CAPABILITIES, null, "calendar")).toBe(false)
-    expect(hasCapability(GOOGLE_CAPABILITIES, GOOGLE_SCOPES.gmailSend, "unknown")).toBe(false)
+    expect(hasCapability(GOOGLE_CAPABILITIES, GOOGLE_SCOPES.calendarEvents, "unknown")).toBe(false)
   })
 })

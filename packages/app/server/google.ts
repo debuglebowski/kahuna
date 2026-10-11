@@ -20,6 +20,7 @@ import {
   expandCapabilities,
   GOOGLE_CAPABILITIES,
   GOOGLE_SCOPES,
+  gmailEnabled,
   hasCapability,
   scopesFor,
   splitGrantedScopes,
@@ -62,6 +63,15 @@ export const setGoogleFetchForTest = (next: GoogleFetch) => {
 }
 
 const json = (body: unknown, status = 200) => Response.json(body, { status })
+
+/**
+ * Gmail is disabled (see `GMAIL_CAPABILITIES_DISABLED`). 410, not 403: a caller can
+ * tell "this will not work on this server" from "you lack a scope".
+ */
+const gmailDisabled = () => json({ error: "GMAIL_DISABLED" }, 410)
+
+/** Both hosts the Gmail API answers on. */
+const GMAIL_API_PREFIXES = [`${GOOGLE_API}/gmail/`, "https://gmail.googleapis.com/"]
 
 const config = () => ({
   clientId: process.env.GOOGLE_CLIENT_ID ?? "",
@@ -111,12 +121,18 @@ const scopesForRequest = (url: URL, enabled: readonly string[]) => {
 /** Write one row to this connector's audit log. */
 const audit = (input: AuditEntry) => writeAuditLog(googleAuditLog, input)
 
-async function googleRequest<T>(
+export async function googleRequest<T>(
   connectionId: string,
   url: string,
   init: RequestInit = {},
   attempt = 0,
 ): Promise<T> {
+  // The one transport every Google request passes through, so no caller can reach
+  // the Gmail API while Gmail is disabled, whatever its own checks say. Before the
+  // token lookup, so a refused call does not even refresh a token.
+  if (!gmailEnabled() && GMAIL_API_PREFIXES.some((prefix) => url.startsWith(prefix))) {
+    throw Object.assign(new Error("GMAIL_DISABLED"), { status: 410 })
+  }
   const accessToken = await accessTokenFor(connectionId)
   const headers = new Headers(init.headers)
   headers.set("authorization", `Bearer ${accessToken}`)
@@ -311,6 +327,9 @@ export async function handleGoogleCallback(req: Request) {
 }
 
 async function hydrateGoogleProfile(connectionId: string) {
+  // The profile comes from the Gmail API, so there is nothing to hydrate while Gmail
+  // is disabled. (A Calendar-only grant could not call it anyway.)
+  if (!gmailEnabled()) return
   const profile = await googleRequest<{ emailAddress?: string; historyId?: string }>(
     connectionId,
     `${GOOGLE_API}/gmail/v1/users/me/profile`,
@@ -384,11 +403,6 @@ export async function googleStatus(req: Request) {
     .from(googleCalendarSync)
     .where(eq(googleCalendarSync.connectionId, connection.id))
     .limit(1)
-  const [gmail] = await db
-    .select()
-    .from(googleGmailSync)
-    .where(eq(googleGmailSync.connectionId, connection.id))
-    .limit(1)
   return json({
     configured,
     connected: connection.status === "connected",
@@ -397,7 +411,6 @@ export async function googleStatus(req: Request) {
     lastSyncAt: connection.lastSyncAt,
     lastError: connection.lastError,
     calendarWatchExpiresAt: calendar?.watchExpiresAt ?? null,
-    gmailWatchExpiresAt: gmail?.watchExpiration ?? null,
   })
 }
 
@@ -809,6 +822,7 @@ async function mirrorGmailThreads(conn: typeof googleConnection.$inferSelect) {
 }
 
 async function syncGmail(connectionId: string) {
+  if (!gmailEnabled()) return
   const [connection] = await db
     .select()
     .from(googleConnection)
@@ -954,6 +968,13 @@ async function fetchGmailMessage(connectionId: string, id: string, format: "meta
   return googleRequest<GmailMessage>(connectionId, u.toString())
 }
 
+/**
+ * NOTE (Gmail is disabled — see GMAIL_CAPABILITIES_DISABLED): "metadata only" holds
+ * for the Email RECORDS this feeds, not for these tables. The message and thread rows
+ * keep `snippet` (a body excerpt), `payload` and `raw` (the whole API response), and,
+ * once a thread is opened, `body_text` / `body_html`, which then also sit inside
+ * `raw` / `payload`. Fix that before re-enabling.
+ */
 async function upsertGmailMessage(
   connection: typeof googleConnection.$inferSelect,
   msg: GmailMessage,
@@ -1066,6 +1087,7 @@ export async function listGoogleCalendar(req: Request) {
 export async function listGoogleThreads(req: Request) {
   const org = await resolveOrg(req)
   if (!org.ok) return json({ error: org.code }, org.status)
+  if (!gmailEnabled()) return gmailDisabled()
   const rows = await pool.query(
     `SELECT t.thread_id AS id, t.subject, t.snippet, t.from_email, t.last_message_at, t.label_ids
        FROM google_gmail_thread t
@@ -1081,6 +1103,7 @@ export async function listGoogleThreads(req: Request) {
 export async function getGoogleThread(req: Request, threadId: string) {
   const org = await resolveOrg(req)
   if (!org.ok) return json({ error: org.code }, org.status)
+  if (!gmailEnabled()) return gmailDisabled()
   const [connection] = await db
     .select()
     .from(googleConnection)
@@ -1113,6 +1136,7 @@ export async function getGoogleThread(req: Request, threadId: string) {
 export async function sendGoogleMail(req: Request) {
   const org = await resolveOrg(req)
   if (!org.ok) return json({ error: org.code }, org.status)
+  if (!gmailEnabled()) return gmailDisabled()
   const [connection] = await db
     .select()
     .from(googleConnection)
@@ -1208,6 +1232,10 @@ export async function handleGmailPush(req: Request) {
   if (!provided || !secretMatches(provided, expected)) {
     return webhookRejected("google", req, "INVALID_TOKEN", 401)
   }
+  // After the token check, so a forged call is still logged and rejected as before.
+  // Nothing below runs while Gmail is disabled: no dedupe row, no sync. Delete the
+  // Pub/Sub subscription; it will retry against this refusal until then.
+  if (!gmailEnabled()) return gmailDisabled()
   const body = (await req.json().catch(() => null)) as {
     message?: { messageId?: string; data?: string }
   } | null
@@ -1322,6 +1350,7 @@ async function renewCalendarWatch(connectionId: string) {
 }
 
 async function renewGmailWatch(connectionId: string) {
+  if (!gmailEnabled()) return
   const c = config()
   if (!c.pubsubTopic) return
   const res = await googleRequest<{ historyId?: string; expiration?: string }>(

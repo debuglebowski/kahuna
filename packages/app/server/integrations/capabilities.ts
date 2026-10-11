@@ -42,15 +42,21 @@ export const GOOGLE_SCOPES = {
   gmailCompose: "https://www.googleapis.com/auth/gmail.compose",
 } as const
 
-export const GOOGLE_CAPABILITIES: CapabilityRegistry = [
-  {
-    id: "calendar",
-    label: "Calendar",
-    description: "Sync calendar events and create or update events.",
-    scopes: [GOOGLE_SCOPES.calendarEvents],
-    sensitive: false,
-    defaultEnabled: true,
-  },
+/**
+ * GMAIL IS DISABLED. None of these is in `GOOGLE_CAPABILITIES`, which is the only
+ * thing that decides what scopes are requested, what an org can select, and what
+ * counts as granted. With no registry entry an id is unknown everywhere: connect
+ * never asks for a Gmail scope, the settings API refuses it, and `hasCapability`
+ * is false even for a connection whose token still carries the scope.
+ *
+ * The definitions stay so the Gmail code paths in `google.ts` keep a home, but
+ * moving them back into the registry is NOT enough to turn Gmail on. As built, the
+ * Gmail mirror copies every thread of a mailbox (including bodies, snippets and the
+ * raw API response) into tables and an org-wide record concept, with no owner-only
+ * visibility, no exclusions and no redaction. Do not re-enable it before those
+ * exist and are tested. See docs/google-integration.md.
+ */
+export const GMAIL_CAPABILITIES_DISABLED: CapabilityRegistry = [
   {
     id: "gmail.metadata",
     label: "Gmail metadata",
@@ -78,6 +84,26 @@ export const GOOGLE_CAPABILITIES: CapabilityRegistry = [
     defaultEnabled: false,
   },
 ]
+
+export const GOOGLE_CAPABILITIES: CapabilityRegistry = [
+  {
+    id: "calendar",
+    label: "Calendar",
+    description: "Sync calendar events and create or update events.",
+    scopes: [GOOGLE_SCOPES.calendarEvents],
+    sensitive: false,
+    defaultEnabled: true,
+  },
+]
+
+/**
+ * Whether Gmail is switched on: true only if a `gmail.*` capability is in the
+ * registry. Derived rather than stored, so there is no flag that can disagree with
+ * the registry. `google.ts` gates every Gmail entry point on this, including the one
+ * transport function every Google request passes through.
+ */
+export const gmailEnabled = (): boolean =>
+  GOOGLE_CAPABILITIES.some((c) => c.id.startsWith("gmail."))
 
 /** Slack USER-token (xoxp) scopes. Bot scopes are fixed by the app manifest. */
 export const SLACK_USER_CAPABILITIES: CapabilityRegistry = [

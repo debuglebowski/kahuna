@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto"
 import { eq } from "drizzle-orm"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { posthogConnection, posthogWebhookEvent } from "#db"
+import { orgIntegrationSettings, posthogConnection, posthogWebhookEvent } from "#db"
 import { auth } from "./auth"
 import { db } from "./db"
 import {
@@ -376,20 +376,45 @@ describe("capability settings", () => {
     expect(body.capabilities.effective.google).toEqual(["calendar"])
     expect(body.capabilities.effective.slack).toEqual(["chat.write"])
     expect(body.capabilities.overrides).toEqual({})
-    const sensitive = body.capabilities.catalog.google?.filter((c) => c.sensitive) ?? []
-    expect(sensitive.length).toBeGreaterThan(0)
-    expect(sensitive.every((c) => !c.defaultEnabled)).toBe(true)
+    const google = body.capabilities.catalog.google ?? []
+    expect(google.map((c) => c.id)).toEqual(["calendar"])
+    expect(google.filter((c) => c.sensitive).every((c) => !c.defaultEnabled)).toBe(true)
   })
 
-  it("stores implied capabilities expanded and merges per integration", async () => {
+  it("merges selections per integration", async () => {
     const actor = await signUpAndOrg()
-    expect((await post(actor, { capabilities: { google: ["gmail.read"] } })).status).toBe(200)
+    expect((await post(actor, { capabilities: { google: ["calendar"] } })).status).toBe(200)
     expect((await post(actor, { capabilities: { slack: [] } })).status).toBe(200)
     const body = (await (await get(actor)).json()) as {
       capabilities: { effective: Record<string, string[]> }
     }
-    expect(body.capabilities.effective.google).toEqual(["gmail.metadata", "gmail.read"])
+    expect(body.capabilities.effective.google).toEqual(["calendar"])
     expect(body.capabilities.effective.slack).toEqual([])
+  })
+
+  it("refuses to enable a Gmail capability — Gmail is disabled", async () => {
+    const actor = await signUpAndOrg()
+    for (const id of ["gmail.metadata", "gmail.read", "gmail.send"]) {
+      const res = await post(actor, { capabilities: { google: ["calendar", id] } })
+      expect(res.status, id).toBe(400)
+    }
+    const body = (await (await get(actor)).json()) as {
+      capabilities: { effective: Record<string, string[]>; overrides: Record<string, string[]> }
+    }
+    expect(body.capabilities.effective.google).toEqual(["calendar"])
+    expect(body.capabilities.overrides).toEqual({})
+  })
+
+  it("ignores a Gmail selection stored before the block", async () => {
+    const actor = await signUpAndOrg()
+    await db.insert(orgIntegrationSettings).values({
+      orgId: actor.orgId,
+      enabledCapabilities: { google: ["calendar", "gmail.metadata", "gmail.read", "gmail.send"] },
+    })
+    const body = (await (await get(actor)).json()) as {
+      capabilities: { effective: Record<string, string[]> }
+    }
+    expect(body.capabilities.effective.google).toEqual(["calendar"])
   })
 
   it("rejects unknown integrations, unknown ids and malformed values", async () => {
@@ -409,7 +434,7 @@ describe("capability settings", () => {
   it("is admin-only", async () => {
     const owner = await signUpAndOrg()
     const member = await addPlainMember(owner.orgId)
-    const res = await post(member, { capabilities: { google: ["gmail.send"] } })
+    const res = await post(member, { capabilities: { google: [] } })
     expect(res.status).toBe(403)
     const body = (await (await get(owner)).json()) as {
       capabilities: { effective: Record<string, string[]> }

@@ -266,7 +266,6 @@ export interface GoogleStatus {
   readonly lastSyncAt?: string | null
   readonly lastError?: string | null
   readonly calendarWatchExpiresAt?: string | null
-  readonly gmailWatchExpiresAt?: string | null
 }
 
 export interface GoogleCalendarEvent {

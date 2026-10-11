@@ -192,9 +192,7 @@ const INTEGRATION_INFO = {
     permissions: (
       <p>
         Granted on Google's consent screen when you connect: <strong>Calendar</strong> (view and
-        edit events and availability) and <strong>Gmail</strong> (read messages and labels;
-        send/compose optional). Sensitive Gmail access requires your Google Cloud OAuth app to be{" "}
-        <strong>verified</strong>.
+        edit events). Gmail is disabled and is never requested.
       </p>
     ),
     dataImported: (
@@ -202,10 +200,6 @@ const INTEGRATION_INFO = {
         <li>
           <strong>Calendar events</strong> — titles, descriptions, locations, start/end times, and
           attendee emails.
-        </li>
-        <li>
-          <strong>Gmail messages</strong> — subjects, sender and recipient addresses, snippets, and
-          full message bodies (text and HTML).
         </li>
         <li>OAuth access and refresh tokens (stored encrypted).</li>
       </ul>
@@ -358,7 +352,7 @@ function GoogleCard() {
             {
               kind: "boolean",
               key: "googleSyncEnabled",
-              label: "Sync Calendar and Gmail",
+              label: "Sync Calendar",
               description:
                 "Applies to every member's Google connection in this organization — the connection is per person, this switch is not. Off also stops inbound push notifications and the Sync button.",
             },
@@ -367,7 +361,7 @@ function GoogleCard() {
               key: "googleWatchEnabled",
               label: "Keep push subscriptions alive",
               description:
-                "Renews Calendar and Gmail watches hourly so changes arrive without polling. Needs GOOGLE_WEBHOOK_BASE_URL and a Pub/Sub topic configured on the server.",
+                "Renews the Calendar watch hourly so changes arrive without polling. Needs GOOGLE_WEBHOOK_BASE_URL configured on the server.",
             },
           ]}
         />
@@ -411,12 +405,6 @@ function GoogleCard() {
               Calendar watch:{" "}
               {data.calendarWatchExpiresAt
                 ? new Date(data.calendarWatchExpiresAt).toLocaleString()
-                : "not active"}
-            </div>
-            <div>
-              Gmail watch:{" "}
-              {data.gmailWatchExpiresAt
-                ? new Date(data.gmailWatchExpiresAt).toLocaleString()
                 : "not active"}
             </div>
           </div>
