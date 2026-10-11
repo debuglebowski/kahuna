@@ -1,7 +1,7 @@
 # LOCAL DEVELOPMENT ONLY: trivial credentials, loopback-bound. For a real deploy use docker-compose.prod.yml.
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     container_name: kahuna-postgres
     restart: unless-stopped
     environment:
