@@ -64,7 +64,7 @@
         "tw-animate-css": "^1.4.0",
       },
       "devDependencies": {
-        "@effect/vitest": "0.30.0",
+        "@effect/vitest": "4.0.2",
         "@tailwindcss/vite": "4.3.0",
         "@types/bun": "1.3.14",
         "@types/d3-force": "^3.0.10",
@@ -212,7 +212,7 @@
 
     "@effect/sql-pg": ["@effect/sql-pg@0.52.1", "", { "dependencies": { "pg": "^8.16.3", "pg-connection-string": "2.9.1", "pg-cursor": "^2.15.3", "pg-pool": "^3.10.1", "pg-types": "^4.1.0" }, "peerDependencies": { "@effect/experimental": "^0.60.0", "@effect/platform": "^0.96.0", "@effect/sql": "^0.51.0", "effect": "^3.21.0" } }, "sha512-Lp0Zjas77WQ/AfWZ/FzzCOkyGCpx+wB2FXNHStzM4GrHEvwUYQoYQxMxdz5r7K+EUiZOPlxy/SBLVVReVIovjw=="],
 
-    "@effect/vitest": ["@effect/vitest@0.30.0", "", { "peerDependencies": { "effect": "^3.22.0", "vitest": "^3.2.0" } }, "sha512-2qcK7F4XSwOn7Ye9vgEkrndHiiHVf9Nl+U5jvvLBKeYx4+8++O5Y8RFezaQzs/rWx8GkdlStv/s+HYMHZ/2/AQ=="],
+    "@effect/vitest": ["@effect/vitest@4.0.2", "", { "peerDependencies": { "effect": "^4.0.2", "vitest": ">=5.0.0 <6.0.0" } }, "sha512-Zb72nu7iUy3rNdBp9J1Xu5oUQGwJ8cOYsUwmYgujj88aqyvASRDjOS01SjlcPViqf77csduetKdCJTVndMNfzw=="],
 
     "@emnapi/core": ["@emnapi/core@1.10.0", "", { "dependencies": { "@emnapi/wasi-threads": "1.2.1", "tslib": "^2.4.0" } }, "sha512-yq6OkJ4p82CAfPl0u9mQebQHKPJkY7WrIuk205cTYnYe+k2Z8YBh11FrbRG/H6ihirqcacOgl2BIO8oyMQLeXw=="],
 
