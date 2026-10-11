@@ -7,9 +7,11 @@
 # sources rather than a compiled artifact.
 #
 # Three stages. `build` does a full install and runs Vite. `prod-deps` does a
-# separate --production install, because a full node_modules is ~580MB and most
-# of it is build/lint tooling the runtime never loads (biome alone is 95MB across
-# two platform binaries, plus typescript and rolldown).
+# separate --production install, which skips the root's build/lint tooling (biome
+# alone is 95MB across two platform binaries, plus typescript and rolldown). It
+# does NOT skip workspace members' devDependencies: bun installs those anyway, so
+# test/build tooling (vite, vitest) is still present in the runtime image. Keep it
+# patched; the image scan covers it.
 #
 # `drizzle-kit` is a runtime `dependency`, not a devDependency: it IS the migrate
 # entrypoint. It used to be a devDependency copied back in by hand from Bun's
@@ -83,7 +85,9 @@ ENV NODE_ENV=production \
 
 # tini reaps zombies and forwards SIGTERM to Bun, which the server needs: it
 # installs its own graceful-shutdown handler with a 10s internal deadline.
-RUN apk add --no-cache tini
+# `apk upgrade` pulls OS security fixes published after the base image was cut;
+# without it the image ships whatever the oven/bun tag last rebuilt with.
+RUN apk upgrade --no-cache && apk add --no-cache tini
 
 # BOTH trees. With real workspace members Bun installs each member's
 # dependencies into ITS OWN node_modules and leaves the root nearly empty (2

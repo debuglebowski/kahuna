@@ -38,6 +38,14 @@
     "typescript": "6.0.3"
   },
   "overrides": {
-    "esbuild": "0.28.0"
+    "esbuild": "0.28.0",
+    "@xmldom/xmldom": "^0.8.15",
+    "nanoid": "^3.3.18",
+    "postcss": "^8.5.18",
+    "source-map-js": "^1.2.2",
+    "prosemirror-view": "^1.42.3",
+    "vitest": "4.1.11",
+    "@tiptap/core": "3.31.4",
+    "@tiptap/pm": "3.31.4"
   }
 }

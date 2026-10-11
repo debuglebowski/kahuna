@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest"
 import { type AutosaveStatus, createAutosave } from "./autosave"
 
 const conflict = () => Object.assign(new Error("VersionConflict"), { code: "VERSION_CONFLICT" })
@@ -11,7 +11,10 @@ const until = async (cond: () => boolean) => {
 }
 
 const harness = (
-  over: { save?: ReturnType<typeof vi.fn>; fetchVersion?: ReturnType<typeof vi.fn> } = {},
+  over: {
+    save?: Mock<(value: string, expectedVersion: number) => Promise<number>>
+    fetchVersion?: Mock<() => Promise<number>>
+  } = {},
 ) => {
   const statuses: Array<[AutosaveStatus, string | null]> = []
   // Default server: ack with version+1.
