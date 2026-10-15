@@ -216,6 +216,7 @@ jobs:
             -e DATABASE_URL="$DB" \
             -e BETTER_AUTH_SECRET=ci-secret-not-for-real-use-000000 \
             -e BETTER_AUTH_URL=http://localhost:3100 \
+            -e INTEGRATION_ENCRYPTION_KEY=c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1 \
             kahuna:ci
 
           # -s without -S: connection-refused retries while the server boots are
