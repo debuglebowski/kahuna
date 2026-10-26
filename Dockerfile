@@ -23,7 +23,7 @@
 # network.
 
 # ---- deps + build ----------------------------------------------------------
-FROM oven/bun:1.4.2-alpine AS build
+FROM oven/bun:1.4.4-alpine AS build
 
 WORKDIR /srv/kahuna
 
@@ -51,7 +51,7 @@ COPY tsconfig.base.json tsconfig.json biome.json ./
 RUN bun run build
 
 # ---- production dependencies ----------------------------------------------
-FROM oven/bun:1.4.2-alpine AS prod-deps
+FROM oven/bun:1.4.4-alpine AS prod-deps
 
 WORKDIR /srv/kahuna
 
@@ -62,7 +62,7 @@ COPY packages ./packages
 RUN bun install --frozen-lockfile --production
 
 # ---- runtime ---------------------------------------------------------------
-FROM oven/bun:1.4.2-alpine AS runtime
+FROM oven/bun:1.4.4-alpine AS runtime
 
 WORKDIR /srv/kahuna
 
