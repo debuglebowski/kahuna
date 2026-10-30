@@ -104,7 +104,7 @@ export const startDevice = async (request: Request): Promise<Response> => {
     expiresAt: Date.now() + TTL_MS,
     attempts: 0,
   })
-  const origin = new URL(request.url).origin
+  const origin = publicOrigin(request)
   return Response.json({
     deviceCode,
     userCode: code,
@@ -113,6 +113,24 @@ export const startDevice = async (request: Request): Promise<Response> => {
     intervalSeconds: POLL_INTERVAL_SECONDS,
     expiresInSeconds: TTL_MS / 1000,
   })
+}
+
+/**
+ * The origin people reach this deployment at — NOT `new URL(request.url).origin`.
+ * Behind a TLS-terminating proxy (ACA ingress, Caddy) the app sees `http://host`,
+ * so a link built from the request is http, and the approve check compares the
+ * browser's `Origin: https://host` against `http://host` and refuses everyone.
+ *
+ * BETTER_AUTH_URL is the configured public URL BetterAuth already trusts. NOT
+ * `X-Forwarded-Proto`/`-Host`: whether those are a proxy's facts or a client's
+ * claims depends on the proxy, and the Origin check below is exactly where a
+ * client-written value must not reach. The request's own origin is only the
+ * fallback for a server with no BETTER_AUTH_URL at all (BetterAuth defaults one).
+ * Read per call so a test can set it.
+ */
+const publicOrigin = (request: Request): string => {
+  const configured = process.env.BETTER_AUTH_URL
+  return new URL(configured || request.url).origin
 }
 
 const esc = (v: string): string => v.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
@@ -178,11 +196,12 @@ export const devicePage = async (request: Request): Promise<Response> => {
 /**
  * POST /api/cli/device/approve — the confirmation. Same-origin only: a
  * cross-site form post is exactly how this would otherwise be forged, and the
- * Origin header is how a server tells.
+ * Origin header is how a server tells. Compared against the PUBLIC origin — see
+ * `publicOrigin` for why the request's own is wrong behind a proxy.
  */
 export const approveDevice = async (request: Request): Promise<Response> => {
   const origin = request.headers.get("origin")
-  if (!origin || origin !== new URL(request.url).origin) {
+  if (!origin || origin !== publicOrigin(request)) {
     return shell(
       `<h1>Request refused</h1><p>Open the link from your terminal and approve from there.</p>`,
       403,

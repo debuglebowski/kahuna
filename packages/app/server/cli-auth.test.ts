@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 import {
   approveDevice,
   devicePage,
@@ -10,6 +10,10 @@ import {
 } from "./cli-auth"
 
 const req = (url: string, init?: RequestInit) => new Request(`http://localhost:3100${url}`, init)
+
+// The public origin comes from BETTER_AUTH_URL, which a developer's .env sets
+// and CI's does not — so every test that depends on it says what it is.
+afterEach(() => vi.unstubAllEnvs())
 
 describe("the user code", () => {
   it("is XXXX-XXXX and avoids glyphs that get misread", () => {
@@ -38,6 +42,7 @@ describe("what a person may type", () => {
 
 describe("starting a flow", () => {
   it("hands back a device code, a user code and where to go", async () => {
+    vi.stubEnv("BETTER_AUTH_URL", "http://localhost:3100")
     const res = await startDevice(req("/api/cli/device", { method: "POST" }))
     const body = (await res.json()) as Record<string, string | number>
     expect(String(body.userCode)).toMatch(/^[A-Z2-9]{4}-[A-Z2-9]{4}$/)
@@ -160,6 +165,48 @@ describe("approving", () => {
       expect(res.status).toBe(403)
     }
     expect(pending.get("dev-x")?.status).toBe("pending")
+  })
+})
+
+describe("behind a TLS-terminating proxy", () => {
+  // ACA ingress / Caddy end TLS, so the server sees `http://host` while the
+  // browser is on `https://host`. Seen on kahuna.normain.com (INT-451): the link
+  // printed was http, and every approve was refused.
+  const PUBLIC = "https://kahuna.example.com"
+  const behindProxy = (url: string, init?: RequestInit) =>
+    new Request(`http://kahuna.example.com${url}`, init)
+  const approve = (origin: string) =>
+    approveDevice(
+      behindProxy("/api/cli/device/approve", {
+        method: "POST",
+        body: new URLSearchParams({ code: "SSSS-TTTT" }),
+        headers: { origin },
+      }),
+    )
+
+  it("prints the public https link, not the proxy-internal http one", async () => {
+    vi.stubEnv("BETTER_AUTH_URL", PUBLIC)
+    const res = await startDevice(behindProxy("/api/cli/device", { method: "POST" }))
+    const body = (await res.json()) as { userCode: string; verificationUri: string }
+    expect(body.verificationUri).toBe(`${PUBLIC}/api/cli/device?code=${body.userCode}`)
+  })
+
+  it("accepts an approve from the public origin, and only from it", async () => {
+    vi.stubEnv("BETTER_AUTH_URL", PUBLIC)
+    pending.set("dev-proxy", {
+      userCode: "SSSS-TTTT",
+      status: "pending",
+      expiresAt: Date.now() + 60_000,
+      attempts: 0,
+    })
+    // Past the Origin check: what stops it now is the missing session (401),
+    // not the 403 every browser got before. The signed-in half is verify-cli.ts.
+    expect((await approve(PUBLIC)).status).toBe(401)
+    // A foreign origin is still refused — and so is the http origin the server
+    // itself sees, which no browser on the public URL ever sends.
+    expect((await approve("https://evil.example")).status).toBe(403)
+    expect((await approve("http://kahuna.example.com")).status).toBe(403)
+    expect(pending.get("dev-proxy")?.status).toBe("pending")
   })
 })
 
