@@ -1,6 +1,7 @@
 import { eq, sql } from "drizzle-orm"
 import { member, orgAuthSettings, organization, ssoProvider, user } from "#db"
 import { db } from "./db"
+import { deploymentIdp, deploymentOrgId } from "./deploymentIdp"
 
 /**
  * Which sign-in methods an org accepts, and the lookups the sign-in gates in
@@ -138,6 +139,21 @@ export const resolveSignInProvider = async (body: {
   const str = (v: unknown): string => (typeof v === "string" ? v.trim() : "")
 
   const providerId = str(body.providerId)
+  // Domain, or the domain half of an email. Matched with `domainMatches` rather
+  // than a SQL equality, because the column may hold a comma-separated list.
+  const domain = str(body.domain).toLowerCase() || emailDomain(str(body.email))
+
+  // The deployment IdP wins, as in the plugin: by id when one is given, else by
+  // domain — before any row in the table is consulted.
+  if (
+    deploymentIdp &&
+    (providerId
+      ? providerId === deploymentIdp.providerId
+      : Boolean(domain) && domainMatches(domain, deploymentIdp.domain))
+  ) {
+    return { providerId: deploymentIdp.providerId, organizationId: await deploymentOrgId() }
+  }
+
   if (providerId) {
     const [row] = await db
       .select({ providerId: ssoProvider.providerId, organizationId: ssoProvider.organizationId })
@@ -158,9 +174,6 @@ export const resolveSignInProvider = async (body: {
     return row ?? null
   }
 
-  // Domain, or the domain half of an email. Both need `domainMatches` rather
-  // than a SQL equality, because the column may hold a comma-separated list.
-  const domain = str(body.domain).toLowerCase() || emailDomain(str(body.email))
   if (!domain) return null
   const rows = await db
     .select({

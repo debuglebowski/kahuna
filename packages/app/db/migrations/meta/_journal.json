@@ -190,6 +190,13 @@
       "when": 1791754483635,
       "tag": "0026_gmail_disabled_cleanup",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1793357215035,
+      "tag": "0027_fearless_butterfly",
+      "breakpoints": true
     }
   ]
 }

@@ -102,6 +102,8 @@ export function Authentication() {
 
   const canEdit = cfg.data?.canEdit ?? false
   const provider = cfg.data?.provider ?? null
+  // A provider declared in deployment config is read-only here (server refuses too).
+  const editProvider = canEdit && !provider?.managed
   const methodsDirty =
     passwordEnabled !== cfg.data?.methods.passwordEnabled ||
     ssoEnabled !== cfg.data?.methods.ssoEnabled ||
@@ -202,7 +204,7 @@ export function Authentication() {
         <CardHeader
           title="Identity provider"
           action={
-            canEdit ? (
+            editProvider ? (
               <Button
                 onClick={() => saveProvider.mutate()}
                 disabled={saveProvider.isPending || !providerComplete}
@@ -215,14 +217,15 @@ export function Authentication() {
         />
         <div className="max-w-xl space-y-4 p-6">
           <p className="text-sm text-muted-foreground">
-            OpenID Connect. The sign-in, token and user-info endpoints are discovered from the
-            issuer, so only these four values are needed.
+            {provider?.managed
+              ? "Set in the deployment configuration (SSO_* environment variables). Change it there."
+              : "OpenID Connect. The sign-in, token and user-info endpoints are discovered from the issuer, so only these four values are needed."}
           </p>
 
           <Field label="Issuer URL">
             <Input
               value={issuer}
-              disabled={!canEdit}
+              disabled={!editProvider}
               onChange={(e) => setIssuer(e.target.value)}
               placeholder="https://acme.okta.com"
             />
@@ -230,7 +233,7 @@ export function Authentication() {
           <Field label="Email domains">
             <Input
               value={domain}
-              disabled={!canEdit}
+              disabled={!editProvider}
               onChange={(e) => setDomain(e.target.value)}
               placeholder="acme.com, acme.co.uk"
             />
@@ -242,11 +245,11 @@ export function Authentication() {
           <Field label="Client ID">
             <Input
               value={clientId}
-              disabled={!canEdit}
+              disabled={!editProvider}
               onChange={(e) => setClientId(e.target.value)}
             />
           </Field>
-          {canEdit && (
+          {editProvider && (
             <>
               <Field label="Client secret">
                 <Input
@@ -283,7 +286,7 @@ export function Authentication() {
         </div>
       </Card>
 
-      {canEdit && provider && (
+      {editProvider && provider && (
         <Card className="border-destructive/40">
           <CardHeader title={<span className="text-destructive">Danger zone</span>} />
           <div className="max-w-xl space-y-3 p-6">

@@ -15,6 +15,7 @@ import {
 } from "./authMethods"
 import { CLIENT_IP_HEADER } from "./clientIp"
 import { db, pool } from "./db"
+import { bindDeploymentIdp, deploymentIdp, joinDeploymentOrg } from "./deploymentIdp"
 import { syncMembershipRole } from "./membership"
 import { runEngineOrThrow, systemScope } from "./runtime"
 import { clientIp, securityEvent, subjectRef } from "./securityLog"
@@ -179,11 +180,14 @@ export const auth = betterAuth({
     // Note what is NOT here — SSO provider ids CANNOT be listed in
     // `trustedProviders`. The plugin rejects that as a namespace collision
     // (422), since a trusted-provider entry would let a registered SSO id
-    // inherit trust meant for a social provider. So linking falls back to the
-    // email-verified path: the IdP must assert `email_verified`, and the local
-    // row must have `emailVerified` — which `provision.ts` sets on purpose.
-    // Every mainstream IdP (Google, Entra, Okta) asserts it; one that doesn't
-    // will fail to link with `account_not_linked`.
+    // inherit trust meant for a social provider. Linking therefore takes one of
+    // two paths, and both need the local row to have `emailVerified` — which
+    // `provision.ts` sets on purpose:
+    //  - the provider declared in deployment config (`SSO_*`), trusted for its
+    //    own domains (see deploymentIdp.ts). The one that works with Entra,
+    //    which asserts no `email_verified`.
+    //  - a provider registered in Settings, only when the IdP asserts
+    //    `email_verified`. Without it: `account_not_linked`.
     accountLinking: { enabled: true },
   },
   hooks: {
@@ -207,6 +211,18 @@ export const auth = betterAuth({
           })
         }
         return
+      }
+
+      // The deployment IdP's endpoints and org are bound late; both the redirect
+      // and the callback need them. See deploymentIdp.ts.
+      if (ctx.path === "/sign-in/sso" || ctx.path.startsWith("/sso/callback")) {
+        await bindDeploymentIdp().catch((e) => {
+          console.error("SSO provider from deployment config:", e instanceof Error ? e.message : e)
+          throw new APIError("BAD_GATEWAY", {
+            code: "SSO_DISCOVERY_FAILED",
+            message: "The identity provider could not be reached.",
+          })
+        })
       }
 
       if (ctx.path === "/sign-in/sso") {
@@ -317,6 +333,14 @@ export const auth = betterAuth({
     // as a hard dependency of this package but nothing here registers a
     // `samlConfig`, and the settings UI offers no way to.
     sso({
+      // The provider declared in deployment config, if any (deploymentIdp.ts).
+      // Domain verification is on ONLY for it: its entry then resolves as
+      // `domainVerified`, which is what makes it trusted for account linking.
+      // There is no DNS verification flow here, so a provider registered in
+      // Settings stays unverified — and with this on could not sign anyone in,
+      // which is why Settings refuses to register one alongside (sso.ts).
+      domainVerification: { enabled: deploymentIdp !== null },
+      ...(deploymentIdp ? { defaultSSO: [deploymentIdp] } : {}),
       organizationProvisioning: {
         disabled: false,
         // Everyone arrives as a plain member; promotion is a deliberate act in
@@ -376,6 +400,9 @@ export const auth = betterAuth({
             message: "This identity's email domain is not allowed for this provider.",
           })
         }
+        // The deployment IdP carries no organizationId, so the plugin's own
+        // provisioning (and `getRole` above) skips it. See deploymentIdp.ts.
+        if (provider.providerId === deploymentIdp?.providerId) await joinDeploymentOrg(user.id)
       },
     }),
   ],

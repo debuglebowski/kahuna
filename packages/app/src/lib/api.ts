@@ -159,6 +159,8 @@ export interface SsoProvider {
   readonly clientId: string
   /** A secret is stored. The value itself is never sent to the client. */
   readonly hasSecret: boolean
+  /** Declared in deployment config (`SSO_*`), so read-only in Settings. */
+  readonly managed: boolean
 }
 
 export interface SsoProviderInput {
@@ -192,6 +194,8 @@ const AUTH_CONFIG_ERRORS: Record<string, string> = {
   OWNER_FALLBACK_NEEDS_SSO: "Turn single sign-on on before removing owner password access.",
   NO_SSO_PROVIDER: "Configure an identity provider before enabling SSO.",
   REGISTER_FAILED: "The identity provider could not be reached.",
+  SSO_MANAGED_BY_DEPLOYMENT:
+    "This provider is set in the deployment configuration. Change it there.",
 }
 
 const authConfigError = (code?: string, message?: string): string => {

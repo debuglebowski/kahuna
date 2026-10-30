@@ -3,6 +3,7 @@ import { organization, ssoProvider } from "#db"
 import { auth } from "./auth"
 import { type AuthMethods, readAuthMethods, writeAuthMethods } from "./authMethods"
 import { db } from "./db"
+import { deploymentIdp } from "./deploymentIdp"
 import { clientIp, routeOf, securityEvent } from "./securityLog"
 import { resolveAdmin, resolveOwner } from "./session"
 
@@ -67,9 +68,9 @@ const providerIdFor = (orgId: string): string => `org-${orgId}`
 /** Where the IdP must send the user back. Read from better-auth's own resolved
  *  baseURL (which already includes the `/api/auth` basePath) rather than
  *  reassembled from env, so it cannot drift from what the plugin actually uses. */
-const callbackUrlFor = async (orgId: string): Promise<string> => {
+const callbackUrlFor = async (providerId: string): Promise<string> => {
   const ctx = await auth.$context
-  return `${ctx.baseURL}/sso/callback/${providerIdFor(orgId)}`
+  return `${ctx.baseURL}/sso/callback/${providerId}`
 }
 
 interface ProviderPayload {
@@ -79,9 +80,25 @@ interface ProviderPayload {
   readonly clientId: string
   /** Whether a secret is stored. The secret itself is NEVER serialized. */
   readonly hasSecret: boolean
+  /** Declared in deployment config (`SSO_*`): read-only here. See deploymentIdp.ts. */
+  readonly managed: boolean
 }
 
+/** Refusal for any in-app change while the deployment declares the provider. */
+const managedByDeployment = (): Response | null =>
+  deploymentIdp ? json({ error: "SSO_MANAGED_BY_DEPLOYMENT" }, 409) : null
+
 const providerPayload = async (orgId: string): Promise<ProviderPayload | null> => {
+  if (deploymentIdp) {
+    return {
+      providerId: deploymentIdp.providerId,
+      issuer: deploymentIdp.oidcConfig.issuer,
+      domain: deploymentIdp.domain,
+      clientId: deploymentIdp.oidcConfig.clientId,
+      hasSecret: true,
+      managed: true,
+    }
+  }
   const [row] = await db
     .select()
     .from(ssoProvider)
@@ -104,7 +121,14 @@ const providerPayload = async (orgId: string): Promise<ProviderPayload | null> =
     /* leave the defaults */
   }
 
-  return { providerId: row.providerId, issuer: row.issuer, domain: row.domain, clientId, hasSecret }
+  return {
+    providerId: row.providerId,
+    issuer: row.issuer,
+    domain: row.domain,
+    clientId,
+    hasSecret,
+    managed: false,
+  }
 }
 
 export interface PublicAuthMethods extends AuthMethods {
@@ -173,10 +197,11 @@ export const publicAuthMethods = async (): Promise<Response> => {
 export const authConfigStatus = async (req: Request): Promise<Response> => {
   const org = await resolveAdmin(req)
   if (!org.ok) return json({ error: org.code }, org.status)
+  const provider = await providerPayload(org.orgId)
   return json({
     methods: await readAuthMethods(org.orgId),
-    provider: await providerPayload(org.orgId),
-    callbackUrl: await callbackUrlFor(org.orgId),
+    provider,
+    callbackUrl: await callbackUrlFor(provider?.providerId ?? providerIdFor(org.orgId)),
     // The page hides every control for a non-owner rather than letting them
     // submit and collect a 403.
     canEdit: org.role === "owner",
@@ -198,6 +223,8 @@ export const authConfigStatus = async (req: Request): Promise<Response> => {
 export const saveSsoProvider = async (req: Request): Promise<Response> => {
   const org = await resolveOwner(req)
   if (!org.ok) return json({ error: org.code }, org.status)
+  const managed = managedByDeployment()
+  if (managed) return managed
 
   const body = (await req.json().catch(() => null)) as {
     issuer?: string
@@ -271,6 +298,8 @@ export const saveSsoProvider = async (req: Request): Promise<Response> => {
 export const deleteSsoProvider = async (req: Request): Promise<Response> => {
   const org = await resolveOwner(req)
   if (!org.ok) return json({ error: org.code }, org.status)
+  const managed = managedByDeployment()
+  if (managed) return managed
 
   const methods = await readAuthMethods(org.orgId)
   await writeAuthMethods(org.orgId, {

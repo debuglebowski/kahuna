@@ -34,6 +34,28 @@ is the recovery path: an owner who breaks the IdP config can still get in and
 fix it. The consequence is that owner accounts are **not** covered by IdP MFA
 unless the fallback is turned off (see "Owners and MFA").
 
+## Provider from deployment config (recommended)
+
+Set `SSO_ISSUER`, `SSO_CLIENT_ID`, `SSO_CLIENT_SECRET` and `SSO_DOMAINS` (all four
+or none; `.env.production.example`). The provider is then fixed by whoever deploys,
+and Settings → Authentication shows it read-only: an owner session cannot point the
+org at another IdP.
+
+That is also what makes account linking work with Entra. An existing account (the
+bootstrap admin, anyone provisioned before SSO) is linked on its first SSO sign-in
+only when the provider is trusted or the IdP asserts `email_verified`. Entra never
+asserts it, so a provider registered in Settings fails those sign-ins with
+`account_not_linked`. The deployment-config provider is trusted for the domains in
+`SSO_DOMAINS`, and only for those.
+
+- Redirect URI to register at the IdP: `<BETTER_AUTH_URL>/api/auth/sso/callback/deployment-idp`.
+- Entra issuer: `https://login.microsoftonline.com/<tenant-id>/v2.0` (single tenant).
+- New people who sign in through it join the org as `member`.
+- Kahuna reads the issuer's discovery document itself and verifies the ID token;
+  no `TRUSTED_ORIGINS` entry is needed for the IdP.
+
+In the rollout below, step 3 is then done by the deploy, not in Settings.
+
 ## Rollout
 
 1. **Sign in with the bootstrap admin** (`INITIAL_ADMIN_EMAIL` /

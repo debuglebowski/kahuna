@@ -180,6 +180,11 @@ export const ssoProvider = pgTable(
     organizationId: text("organization_id").references(() => organization.id, {
       onDelete: "cascade",
     }),
+    // The plugin's field once domain verification is on, which it is only while
+    // a provider is declared in deployment config (server/deploymentIdp.ts).
+    // That provider never has a row; one registered in Settings is never
+    // verified (no DNS flow here), so false is the honest default.
+    domainVerified: boolean("domain_verified").notNull().default(false),
   },
   (table) => [
     uniqueIndex("sso_provider_org_uq").on(table.organizationId),

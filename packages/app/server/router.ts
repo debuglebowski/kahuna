@@ -184,7 +184,9 @@ export const isBetterAuthPath = (pathname: string): boolean =>
  * providers are configured through `server/sso.ts` (owner-only), which calls
  * `auth.api` in-process. Left reachable over HTTP, `/sso/register` lets ANY
  * signed-in user register their own OIDC provider. Sign-in and the callbacks
- * (`/sign-in/sso`, `/sso/callback/*`) stay open.
+ * (`/sign-in/sso`, `/sso/callback/*`) stay open. The last two exist only while
+ * domain verification is on (a provider in deployment config, auth.ts); they
+ * would mark a Settings-registered provider trusted.
  */
 const SSO_MANAGEMENT = [
   "register",
@@ -192,6 +194,8 @@ const SSO_MANAGEMENT = [
   "delete-provider",
   "providers",
   "get-provider",
+  "request-domain-verification",
+  "verify-domain",
 ]
 export const isBlockedSsoPath = (pathname: string): boolean =>
   SSO_MANAGEMENT.some(

@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process"
 import { createSign, generateKeyPairSync, randomBytes } from "node:crypto"
 import { existsSync, mkdirSync } from "node:fs"
+import { createServer as createHttpServer } from "node:http"
 import { createServer } from "node:https"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -20,6 +21,10 @@ import { join } from "node:path"
  *
  * It records every token request, so a driver can assert which client secret the
  * server actually presented.
+ *
+ * `{ tls: false }` serves plain http on 127.0.0.1 instead — for vitest, which runs
+ * in Node and cannot pick up NODE_EXTRA_CA_CERTS after start. Port 0 picks a free
+ * one; `issuer` carries the real port.
  */
 
 export interface TokenRequest {
@@ -28,12 +33,22 @@ export interface TokenRequest {
   readonly code: string
 }
 
+export interface FakeIdentity {
+  readonly sub: string
+  readonly email: string
+  readonly name?: string
+  /** Default true. `null` omits the claim altogether, as Entra does. */
+  readonly emailVerified?: boolean | null
+  /** Authentication methods (`amr`) put in the ID token. Absent when unset. */
+  readonly amr?: readonly string[]
+}
+
 export interface FakeIdp {
   readonly issuer: string
   readonly certPath: string
   readonly tokenRequests: readonly TokenRequest[]
   /** Identity returned for the next sign-in. */
-  setIdentity(identity: { sub: string; email: string; name?: string }): void
+  setIdentity(identity: FakeIdentity): void
   close(): Promise<void>
 }
 
@@ -73,15 +88,19 @@ export const ensureCert = (): { keyPath: string; certPath: string } => {
 
 const b64u = (b: Buffer | string): string => Buffer.from(b).toString("base64url")
 
-export const startFakeIdp = async (port = DEFAULT_IDP_PORT): Promise<FakeIdp> => {
-  const { keyPath, certPath } = ensureCert()
+export const startFakeIdp = async (
+  port = DEFAULT_IDP_PORT,
+  { tls = true }: { tls?: boolean } = {},
+): Promise<FakeIdp> => {
+  const { keyPath, certPath } = tls ? ensureCert() : { keyPath: "", certPath: "" }
   const { readFileSync } = await import("node:fs")
-  const issuer = `https://localhost:${port}`
+  // Set once listening, from the bound port. Requests only arrive after that.
+  let issuer = ""
   const kid = randomBytes(6).toString("hex")
   const { publicKey, privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 })
   const jwk = { ...publicKey.export({ format: "jwk" }), kid, use: "sig", alg: "RS256" }
 
-  let identity = { sub: "fake-user", email: "user@example.test", name: "Fake User" }
+  let identity: FakeIdentity = { sub: "fake-user", email: "user@example.test", name: "Fake User" }
   const tokenRequests: TokenRequest[] = []
   // code -> { nonce, clientId }
   const codes = new Map<string, { nonce?: string; clientId: string }>()
@@ -93,104 +112,114 @@ export const startFakeIdp = async (port = DEFAULT_IDP_PORT): Promise<FakeIdp> =>
     return `${head}.${body}.${b64u(sig)}`
   }
 
+  const verified = () =>
+    identity.emailVerified === null ? {} : { email_verified: identity.emailVerified ?? true }
+
   const json = (res: import("node:http").ServerResponse, body: unknown, status = 200) => {
     res.writeHead(status, { "content-type": "application/json" })
     res.end(JSON.stringify(body))
   }
 
-  const server = createServer(
-    { key: readFileSync(keyPath), cert: readFileSync(certPath) },
-    async (req, res) => {
-      const url = new URL(req.url ?? "/", issuer)
+  const handler = async (
+    req: import("node:http").IncomingMessage,
+    res: import("node:http").ServerResponse,
+  ) => {
+    const url = new URL(req.url ?? "/", issuer)
 
-      if (url.pathname === "/.well-known/openid-configuration") {
-        return json(res, {
-          issuer,
-          authorization_endpoint: `${issuer}/authorize`,
-          token_endpoint: `${issuer}/token`,
-          userinfo_endpoint: `${issuer}/userinfo`,
-          jwks_uri: `${issuer}/jwks`,
-          response_types_supported: ["code"],
-          subject_types_supported: ["public"],
-          id_token_signing_alg_values_supported: ["RS256"],
-          token_endpoint_auth_methods_supported: ["client_secret_basic", "client_secret_post"],
-          scopes_supported: ["openid", "email", "profile"],
-          claims_supported: ["sub", "email", "email_verified", "name"],
-        })
+    if (url.pathname === "/.well-known/openid-configuration") {
+      return json(res, {
+        issuer,
+        authorization_endpoint: `${issuer}/authorize`,
+        token_endpoint: `${issuer}/token`,
+        userinfo_endpoint: `${issuer}/userinfo`,
+        jwks_uri: `${issuer}/jwks`,
+        response_types_supported: ["code"],
+        subject_types_supported: ["public"],
+        id_token_signing_alg_values_supported: ["RS256"],
+        token_endpoint_auth_methods_supported: ["client_secret_basic", "client_secret_post"],
+        scopes_supported: ["openid", "email", "profile"],
+        claims_supported: ["sub", "email", "email_verified", "name"],
+      })
+    }
+
+    if (url.pathname === "/jwks") return json(res, { keys: [jwk] })
+
+    if (url.pathname === "/authorize") {
+      const redirect = url.searchParams.get("redirect_uri")
+      if (!redirect) return json(res, { error: "invalid_request" }, 400)
+      const code = randomBytes(12).toString("hex")
+      codes.set(code, {
+        nonce: url.searchParams.get("nonce") ?? undefined,
+        clientId: url.searchParams.get("client_id") ?? "",
+      })
+      const back = new URL(redirect)
+      back.searchParams.set("code", code)
+      const state = url.searchParams.get("state")
+      if (state) back.searchParams.set("state", state)
+      res.writeHead(302, { location: back.toString() })
+      return res.end()
+    }
+
+    if (url.pathname === "/token" && req.method === "POST") {
+      const chunks: Buffer[] = []
+      for await (const c of req) chunks.push(c as Buffer)
+      const form = new URLSearchParams(Buffer.concat(chunks).toString())
+      let clientId = form.get("client_id") ?? ""
+      let clientSecret = form.get("client_secret") ?? ""
+      const basic = req.headers.authorization?.match(/^Basic (.+)$/)
+      if (basic?.[1]) {
+        const [id, ...rest] = Buffer.from(basic[1], "base64").toString().split(":")
+        clientId = decodeURIComponent(id ?? "")
+        clientSecret = decodeURIComponent(rest.join(":"))
       }
+      const code = form.get("code") ?? ""
+      const grant = codes.get(code)
+      if (!grant) return json(res, { error: "invalid_grant" }, 400)
+      codes.delete(code)
+      tokenRequests.push({ clientId, clientSecret, code })
 
-      if (url.pathname === "/jwks") return json(res, { keys: [jwk] })
-
-      if (url.pathname === "/authorize") {
-        const redirect = url.searchParams.get("redirect_uri")
-        if (!redirect) return json(res, { error: "invalid_request" }, 400)
-        const code = randomBytes(12).toString("hex")
-        codes.set(code, {
-          nonce: url.searchParams.get("nonce") ?? undefined,
-          clientId: url.searchParams.get("client_id") ?? "",
-        })
-        const back = new URL(redirect)
-        back.searchParams.set("code", code)
-        const state = url.searchParams.get("state")
-        if (state) back.searchParams.set("state", state)
-        res.writeHead(302, { location: back.toString() })
-        return res.end()
-      }
-
-      if (url.pathname === "/token" && req.method === "POST") {
-        const chunks: Buffer[] = []
-        for await (const c of req) chunks.push(c as Buffer)
-        const form = new URLSearchParams(Buffer.concat(chunks).toString())
-        let clientId = form.get("client_id") ?? ""
-        let clientSecret = form.get("client_secret") ?? ""
-        const basic = req.headers.authorization?.match(/^Basic (.+)$/)
-        if (basic?.[1]) {
-          const [id, ...rest] = Buffer.from(basic[1], "base64").toString().split(":")
-          clientId = decodeURIComponent(id ?? "")
-          clientSecret = decodeURIComponent(rest.join(":"))
-        }
-        const code = form.get("code") ?? ""
-        const grant = codes.get(code)
-        if (!grant) return json(res, { error: "invalid_grant" }, 400)
-        codes.delete(code)
-        tokenRequests.push({ clientId, clientSecret, code })
-
-        const now = Math.floor(Date.now() / 1000)
-        return json(res, {
-          access_token: `at-${randomBytes(8).toString("hex")}`,
-          token_type: "Bearer",
-          expires_in: 3600,
-          id_token: sign({
-            iss: issuer,
-            aud: clientId,
-            sub: identity.sub,
-            iat: now,
-            exp: now + 3600,
-            email: identity.email,
-            email_verified: true,
-            name: identity.name,
-            ...(grant.nonce ? { nonce: grant.nonce } : {}),
-          }),
-        })
-      }
-
-      if (url.pathname === "/userinfo") {
-        return json(res, {
+      const now = Math.floor(Date.now() / 1000)
+      return json(res, {
+        access_token: `at-${randomBytes(8).toString("hex")}`,
+        token_type: "Bearer",
+        expires_in: 3600,
+        id_token: sign({
+          iss: issuer,
+          aud: clientId,
           sub: identity.sub,
+          iat: now,
+          exp: now + 3600,
           email: identity.email,
-          email_verified: true,
+          ...verified(),
           name: identity.name,
-        })
-      }
+          ...(identity.amr ? { amr: identity.amr } : {}),
+          ...(grant.nonce ? { nonce: grant.nonce } : {}),
+        }),
+      })
+    }
 
-      return json(res, { error: "not_found" }, 404)
-    },
-  )
+    if (url.pathname === "/userinfo") {
+      return json(res, {
+        sub: identity.sub,
+        email: identity.email,
+        ...verified(),
+        name: identity.name,
+      })
+    }
+
+    return json(res, { error: "not_found" }, 404)
+  }
+  const server = tls
+    ? createServer({ key: readFileSync(keyPath), cert: readFileSync(certPath) }, handler)
+    : createHttpServer(handler)
 
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject)
     server.listen(port, "127.0.0.1", resolve)
   })
+  const bound = server.address()
+  const boundPort = typeof bound === "object" && bound ? bound.port : port
+  issuer = tls ? `https://localhost:${boundPort}` : `http://127.0.0.1:${boundPort}`
 
   return {
     issuer,
