@@ -24,11 +24,34 @@ import { authClient } from "../lib/auth-client"
  * can use it. So when SSO is the only advertised method the form is collapsed
  * behind a link rather than removed.
  */
+/**
+ * Why an SSO sign-in came back refused. The callback redirects here with
+ * `?error=<code>`; only known codes get words, and those words are ours — the
+ * `error_description` beside it is URL text anyone can write, so it is never
+ * shown.
+ */
+const SSO_ERRORS: Record<string, string> = {
+  SSO_MFA_REQUIRED:
+    "Your sign-in didn't use multi-factor authentication. Sign in again with MFA through your identity provider.",
+}
+
+/** Read `?error=` once, then drop it from the URL so a reload doesn't repeat it. */
+const takeSsoError = (): string | null => {
+  const params = new URLSearchParams(location.search)
+  const code = params.get("error")
+  if (!code) return null
+  params.delete("error")
+  params.delete("error_description")
+  const qs = params.toString()
+  history.replaceState(null, "", `${location.pathname}${qs ? `?${qs}` : ""}${location.hash}`)
+  return SSO_ERRORS[code] ?? "SSO sign-in failed. Try again, or contact your administrator."
+}
+
 export function AuthPage() {
   const [methods, setMethods] = useState<PublicAuthMethods | null>(null)
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(takeSsoError)
   const [busy, setBusy] = useState(false)
   const [ssoBusy, setSsoBusy] = useState(false)
   const [showPasswordForm, setShowPasswordForm] = useState(false)

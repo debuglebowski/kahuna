@@ -189,3 +189,25 @@ export const joinDeploymentOrg = async (userId: string): Promise<void> => {
   })
   await syncMembershipRole(orgId, userId, "member")
 }
+
+/** Refusal code for a deployment-IdP sign-in whose ID token shows no MFA. */
+export const SSO_MFA_REQUIRED = "SSO_MFA_REQUIRED"
+
+/**
+ * THE MFA GATE: true only when the ID token's `amr` lists `mfa`. Kahuna has no
+ * second factor of its own, and the IdP decides when to ask for one (Entra
+ * Security Defaults, with no Conditional Access, only sometimes does) — so a
+ * sign-in the IdP let through on a password alone is refused here.
+ *
+ * Fails closed: no `amr`, or not an array, is a refusal. `claims` is the VERIFIED
+ * ID token because the deployment IdP has no userinfo endpoint (see the header);
+ * give it one and the plugin hands over userinfo claims instead, which carry no
+ * `amr` — every sign-in would then be refused, not silently admitted.
+ *
+ * Entra v2 emits `amr` only as an optional claim: add `amr` to the app
+ * registration's ID token claims, or nobody gets in.
+ */
+export const idTokenHasMfa = (claims: Readonly<Record<string, unknown>> | undefined): boolean => {
+  const amr = claims?.amr
+  return Array.isArray(amr) && amr.includes("mfa")
+}

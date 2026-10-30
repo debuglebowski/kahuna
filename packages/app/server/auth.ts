@@ -15,7 +15,14 @@ import {
 } from "./authMethods"
 import { CLIENT_IP_HEADER } from "./clientIp"
 import { db, pool } from "./db"
-import { bindDeploymentIdp, deploymentIdp, joinDeploymentOrg } from "./deploymentIdp"
+import {
+  bindDeploymentIdp,
+  DEPLOYMENT_IDP_PROVIDER_ID,
+  deploymentIdp,
+  idTokenHasMfa,
+  joinDeploymentOrg,
+  SSO_MFA_REQUIRED,
+} from "./deploymentIdp"
 import { syncMembershipRole } from "./membership"
 import { runEngineOrThrow, systemScope } from "./runtime"
 import { clientIp, securityEvent, subjectRef } from "./securityLog"
@@ -159,6 +166,34 @@ export const auth = betterAuth({
     // Stays on: self-serve deletion is password-gated (or session-fresh) by
     // BetterAuth, and only ever destroys the caller's OWN account.
     deleteUser: { enabled: true },
+    // MFA for the deployment IdP (see `idTokenHasMfa`). Here, not in
+    // `provisionUser`, because this runs BEFORE the plugin creates the user,
+    // links the account or mints a session — on every one of create-user,
+    // link-account and sign-in — so a refused sign-in leaves nothing behind.
+    // The plugin turns the rejection into a redirect carrying `?error=<code>`,
+    // which the sign-in page shows. Providers registered in Settings are not
+    // gated: their claims are whatever that IdP chose to send.
+    validateUserInfo: ({ user, source }, ctx) => {
+      if (source.method !== "sso-oidc" || source.sso?.providerId !== DEPLOYMENT_IDP_PROVIDER_ID)
+        return
+      if (idTokenHasMfa(source.sso.profile)) return
+      const email = typeof user.email === "string" ? user.email : ""
+      securityEvent({
+        event: "auth.signin",
+        outcome: "denied",
+        reason: SSO_MFA_REQUIRED,
+        subjectRef: email ? subjectRef(email) : undefined,
+        ip: clientIp(ctx.headers),
+        targetKind: "sso_provider",
+        targetId: DEPLOYMENT_IDP_PROVIDER_ID,
+        route: "GET /api/auth/sso/callback",
+        detail: { method: "sso" },
+      })
+      return {
+        error: SSO_MFA_REQUIRED,
+        errorDescription: "Sign in with multi-factor authentication to continue.",
+      }
+    },
   },
   secret: authSecret(),
   baseURL: process.env.BETTER_AUTH_URL ?? "http://localhost:3100",

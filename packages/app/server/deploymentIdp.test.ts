@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto"
 import { and, eq } from "drizzle-orm"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
-import { account, member, user } from "#db"
+import { account, member, session, user } from "#db"
 import { type FakeIdp, startFakeIdp } from "../scripts/fake-idp"
 import { db } from "./db"
+import { setSecurityLogSink } from "./securityLog"
 
 /**
  * The identity provider declared in deployment config, driven through the REAL
@@ -18,6 +19,8 @@ import { db } from "./db"
 const DOMAIN = "idp.test"
 const PASSWORD = "password12345"
 const ORIGIN = "http://localhost:3100"
+/** What Entra puts in `amr` after a second factor. */
+const MFA = ["pwd", "mfa"]
 const SSO_KEYS = ["SSO_ISSUER", "SSO_CLIENT_ID", "SSO_CLIENT_SECRET", "SSO_DOMAINS"] as const
 
 let idp: FakeIdp
@@ -129,7 +132,12 @@ describe("SSO_* parsing", () => {
 describe("sign-in through the provider in deployment config", () => {
   it("links an existing account even though the IdP asserts no email_verified", async () => {
     const ada = await newUser(`ada-${randomUUID()}@${DOMAIN}`)
-    idp.setIdentity({ sub: `sub-${ada.userId}`, email: ada.email, emailVerified: null })
+    idp.setIdentity({
+      sub: `sub-${ada.userId}`,
+      email: ada.email,
+      emailVerified: null,
+      amr: MFA,
+    })
 
     const { location, cookie } = await ssoSignIn()
     expect(decodeURIComponent(location)).toBe("/home")
@@ -149,7 +157,7 @@ describe("sign-in through the provider in deployment config", () => {
 
   it("refuses an identity outside its domains: no session, no membership", async () => {
     const email = `eve-${randomUUID()}@elsewhere.test`
-    idp.setIdentity({ sub: `sub-${randomUUID()}`, email, emailVerified: null })
+    idp.setIdentity({ sub: `sub-${randomUUID()}`, email, emailVerified: null, amr: MFA })
     const { status, cookie } = await ssoSignIn()
     // The domain guard in auth.ts (`SSO_DOMAIN_NOT_ALLOWED`).
     expect(status).toBe(403)
@@ -160,6 +168,83 @@ describe("sign-in through the provider in deployment config", () => {
       .innerJoin(user, eq(user.id, member.userId))
       .where(and(eq(member.organizationId, orgId), eq(user.email, email)))
     expect(joined).toEqual([])
+  })
+})
+
+describe("MFA required by the provider in deployment config", () => {
+  const sessionsOf = async (userId: string) =>
+    db.select({ id: session.id }).from(session).where(eq(session.userId, userId))
+
+  const refused = async (amr: readonly string[] | undefined) => {
+    const ada = await newUser(`ada-${randomUUID()}@${DOMAIN}`)
+    idp.setIdentity({ sub: `sub-${ada.userId}`, email: ada.email, emailVerified: null, amr })
+    const { location, cookie } = await ssoSignIn()
+    expect(new URL(location, ORIGIN).searchParams.get("error")).toBe("SSO_MFA_REQUIRED")
+    expect(cookie).not.toContain("session_token")
+    // Refused before the plugin wrote anything: no session, no link, no membership.
+    expect(await sessionsOf(ada.userId)).toEqual([])
+    const linked = await db
+      .select({ id: account.id })
+      .from(account)
+      .where(and(eq(account.providerId, "deployment-idp"), eq(account.userId, ada.userId)))
+    expect(linked).toEqual([])
+    const joined = await db
+      .select({ id: member.id })
+      .from(member)
+      .where(and(eq(member.organizationId, orgId), eq(member.userId, ada.userId)))
+    expect(joined).toEqual([])
+  }
+
+  it("refuses a password-only sign-in, logged once as denied", async () => {
+    const lines: string[] = []
+    setSecurityLogSink((l) => lines.push(l))
+    try {
+      await refused(["pwd"])
+    } finally {
+      setSecurityLogSink()
+    }
+    const signins = lines
+      .map((l) => JSON.parse(l) as Record<string, unknown>)
+      .filter((e) => e.event === "auth.signin")
+    expect(signins).toEqual([
+      expect.objectContaining({
+        outcome: "denied",
+        reason: "SSO_MFA_REQUIRED",
+        detail: { method: "sso" },
+      }),
+    ])
+  })
+  it("refuses a token with no amr at all", () => refused(undefined))
+
+  it("accepts one that carries mfa", async () => {
+    const ada = await newUser(`ada-${randomUUID()}@${DOMAIN}`)
+    idp.setIdentity({ sub: `sub-${ada.userId}`, email: ada.email, emailVerified: null, amr: MFA })
+    const { cookie } = await ssoSignIn()
+    expect(cookie).toContain("session_token")
+    expect(await sessionsOf(ada.userId)).toHaveLength(1)
+  })
+
+  it("refuses a returning, already-linked user who signs in without it", async () => {
+    const ada = await newUser(`ada-${randomUUID()}@${DOMAIN}`)
+    idp.setIdentity({ sub: `sub-${ada.userId}`, email: ada.email, emailVerified: null, amr: MFA })
+    expect((await ssoSignIn()).cookie).toContain("session_token")
+    idp.setIdentity({
+      sub: `sub-${ada.userId}`,
+      email: ada.email,
+      emailVerified: null,
+      amr: ["pwd"],
+    })
+    const again = await ssoSignIn()
+    expect(again.cookie).not.toContain("session_token")
+    expect(await sessionsOf(ada.userId)).toHaveLength(1)
+  })
+
+  it("refuses a first sign-in that would create the user", async () => {
+    const email = `new-${randomUUID()}@${DOMAIN}`
+    idp.setIdentity({ sub: `sub-${randomUUID()}`, email, emailVerified: null, amr: ["pwd"] })
+    const { location } = await ssoSignIn()
+    expect(new URL(location, ORIGIN).searchParams.get("error")).toBe("SSO_MFA_REQUIRED")
+    expect(await db.select({ id: user.id }).from(user).where(eq(user.email, email))).toEqual([])
   })
 })
 

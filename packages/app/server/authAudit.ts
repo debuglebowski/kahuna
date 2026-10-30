@@ -56,6 +56,13 @@ const callbackErrorCode = (ctx: AfterHookContext): string | undefined => {
   return m?.[1]
 }
 
+/**
+ * Callback refusals already logged as `denied` by the gate that refused them
+ * (auth.ts) — with more context than this hook has. Logging them again here would
+ * record one refusal as two events.
+ */
+const LOGGED_AS_DENIED = new Set(["SSO_MFA_REQUIRED", "SSO_DOMAIN_NOT_ALLOWED"])
+
 const activeOrg = (ctx: AfterHookContext): string | undefined =>
   str(asRecord(asRecord(ctx.context.newSession)?.session)?.activeOrganizationId) ??
   str(asRecord(asRecord(ctx.context.session)?.session)?.activeOrganizationId)
@@ -123,12 +130,14 @@ export const auditAuthResponse = (ctx: AfterHookContext): void => {
 
   if (path.startsWith("/sso/callback")) {
     const ok = Boolean(ctx.context.newSession)
+    const reason = ok ? undefined : (callbackErrorCode(ctx) ?? failure?.code ?? "CALLBACK_FAILED")
+    if (reason && LOGGED_AS_DENIED.has(reason)) return
     emit({
       event: "auth.signin",
       outcome: ok ? "success" : "failure",
       actor: ctx.context.newSession?.user.id,
       orgId: activeOrg(ctx),
-      reason: ok ? undefined : (callbackErrorCode(ctx) ?? failure?.code ?? "CALLBACK_FAILED"),
+      reason,
       route: "GET /api/auth/sso/callback",
       detail: { method: "sso" },
     })
