@@ -46,6 +46,7 @@
     "prosemirror-view": "^1.42.3",
     "vitest": "4.1.11",
     "@tiptap/core": "3.31.4",
-    "@tiptap/pm": "3.31.4"
+    "@tiptap/pm": "3.31.4",
+    "zod": "^4.6.7"
   }
 }
