@@ -1,6 +1,6 @@
 {
   "name": "@kahunalabs/cli",
-  "version": "0.0.10",
+  "version": "0.0.11",
   "description": "The Kahuna command line \u2014 kahuna.",
   "type": "module",
   "bin": {
