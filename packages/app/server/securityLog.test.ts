@@ -89,13 +89,12 @@ describe("securityEvent format", () => {
 })
 
 describe("identifiers", () => {
-  it("takes the first forwarded address and rejects anything that isn't one", () => {
-    expect(clientIp(new Headers({ "x-forwarded-for": "203.0.113.9, 10.0.0.1" }))).toBe(
-      "203.0.113.9",
+  // The full matrix (hops, ports, junk) is in clientIp.test.ts.
+  it("logs the address the proxy appended, never the one the client sent", () => {
+    expect(clientIp(new Headers({ "x-forwarded-for": "203.0.113.9, 198.51.100.4" }))).toBe(
+      "198.51.100.4",
     )
-    expect(clientIp(new Headers({ "x-real-ip": "2001:db8::1" }))).toBe("2001:db8::1")
     expect(clientIp(new Headers({ "x-forwarded-for": 'evil", "x":"y' }))).toBeNull()
-    expect(clientIp(new Headers())).toBeNull()
     expect(clientIp(undefined)).toBeNull()
   })
 

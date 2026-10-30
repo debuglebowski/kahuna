@@ -1,4 +1,5 @@
 import { createHmac } from "node:crypto"
+import { clientIp } from "./clientIp"
 
 /**
  * Security event log: one JSON object per line on stdout.
@@ -112,21 +113,9 @@ export const securityEvent = (e: SecurityEvent): void => {
   }
 }
 
-/**
- * The client address as the reverse proxy reports it. Kahuna sits behind one (the
- * deployment docs require it to forward the client IP), so the first
- * `x-forwarded-for` entry is the best available answer. It is only as trustworthy as
- * the proxy: one that appends instead of overwriting lets a client choose it. Treat
- * it as an investigative hint, not an authenticated fact.
- */
-export const clientIp = (headers: Headers | undefined | null): string | null => {
-  if (!headers) return null
-  const raw = headers.get("x-forwarded-for")?.split(",")[0]?.trim() || headers.get("x-real-ip")
-  if (!raw) return null
-  // Addresses only: anything else is a header someone is trying to smuggle a log
-  // line (or a very long string) through.
-  return /^[0-9a-fA-F:.]{2,45}$/.test(raw) ? raw : null
-}
+// The address the rate limiter keys on, so a log line and a 429 name the same
+// client. Re-exported because every audit call site already imports from here.
+export { clientIp }
 
 /**
  * A stable, non-reversible handle for an email address, so repeated failures against

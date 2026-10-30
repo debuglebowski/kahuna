@@ -13,6 +13,7 @@ import {
   readAuthMethods,
   resolveSignInProvider,
 } from "./authMethods"
+import { CLIENT_IP_HEADER } from "./clientIp"
 import { db, pool } from "./db"
 import { syncMembershipRole } from "./membership"
 import { runEngineOrThrow, systemScope } from "./runtime"
@@ -161,6 +162,15 @@ export const auth = betterAuth({
   secret: authSecret(),
   baseURL: process.env.BETTER_AUTH_URL ?? "http://localhost:3100",
   trustedOrigins,
+  advanced: {
+    // The rate limiter's key, and the session row's ip_address. Never raw
+    // `X-Forwarded-For`, whose left end the client writes: BetterAuth either
+    // trusts that end (≤1.6.14 — rotate the header, never get throttled) or gives
+    // up on any multi-value chain and puts every such request in ONE shared
+    // bucket (1.6.22 — three bad passwords from anyone and nobody signs in).
+    // index.ts sets this header on every BetterAuth request, from the right end.
+    ipAddress: { ipAddressHeaders: [CLIENT_IP_HEADER] },
+  },
   account: {
     // Stated explicitly rather than left to the default, because SSO depends on
     // it: an operator-provisioned user who later signs in through the IdP must

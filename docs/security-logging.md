@@ -29,7 +29,7 @@ that, in your own store.
 | `orgId` | Organization id. |
 | `targetKind`, `targetId` | What was acted on, by id (`user`, `role`, `rule`, `sso_provider`, `integration`). |
 | `reason` | Short machine code, never free text. |
-| `ip` | First `x-forwarded-for` entry. Only as trustworthy as your reverse proxy. |
+| `ip` | The `x-forwarded-for` entry your proxy appended — the `TRUSTED_PROXY_HOPS`-th from the right (default 1). The same address the sign-in rate limiter keys on. Entries to its left are client-written and never used. |
 | `subjectRef` | HMAC of the email, for failed attempts with no resolved user. Correlates repeats against one account without logging the address. Keyed with `BETTER_AUTH_SECRET`, so it differs per deployment. |
 | `route` | `METHOD /path`, query string removed. |
 | `detail` | Small flat object of booleans, numbers and short strings. |
@@ -112,8 +112,12 @@ Only the RPC name and the target id are logged, never names or values. `rpcAudit
 ## Operating notes
 
 - **Client IP.** The proxy must forward the client address in `x-forwarded-for`
-  (the same requirement as rate limiting), and should overwrite rather than
-  append the header. Without it `ip` is absent.
+  (the same requirement as rate limiting). Overwriting (the bundled Caddyfile) and
+  appending (Azure Container Apps ingress, nginx `$proxy_add_x_forwarded_for`) both
+  work: Kahuna reads from the right. Set `TRUSTED_PROXY_HOPS` to the number of
+  proxies that append — 2 with a proxying CDN in front of the ingress, or every
+  client is logged and throttled as the CDN. Without the header `ip` is absent and
+  BetterAuth throttles all sign-ins as one client.
 - **Integrity and retention** of the log are the log platform's job. Kahuna
   writes to stdout and does not rotate, sign or delete anything. Send the stream
   to an append-only store with the retention your framework requires.

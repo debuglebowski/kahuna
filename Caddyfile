@@ -32,14 +32,15 @@ kahuna.example.com {
 	}
 
 	reverse_proxy 127.0.0.1:3100 {
-		# BetterAuth's rate limiting is SILENTLY INERT without a client IP — it
-		# logs "Rate limiting skipped: could not determine client IP address"
-		# once at startup and then never throttles. Verified: 12 rapid failed
-		# sign-ins all returned 401 with no client IP, versus 429 after 3 once
-		# X-Forwarded-For was present. Since sign-up is open by default, this
-		# header is what stands between the deploy and unlimited password
-		# guessing. Caddy sets X-Forwarded-For by default; stated explicitly
-		# because removing it silently disables throttling.
+		# Sign-in rate limiting keys on the client IP, which the server reads
+		# from the RIGHT end of X-Forwarded-For (server/clientIp.ts). Without
+		# the header there is no client IP: BetterAuth 1.6.14 then never
+		# throttled at all (12 rapid failed sign-ins, all 401), and 1.6.22 puts
+		# every sign-in in ONE shared bucket, so three bad passwords from anyone
+		# lock everyone out. OVERWRITE, not append: one entry, the TCP peer,
+		# which is what TRUSTED_PROXY_HOPS=1 (the default) expects. Caddy sets
+		# X-Forwarded-For by default; stated explicitly because removing it
+		# silently breaks throttling.
 		header_up X-Forwarded-For {remote_host}
 		header_up X-Real-IP {remote_host}
 

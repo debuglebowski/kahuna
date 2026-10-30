@@ -5,6 +5,7 @@ import { linearAuditLog } from "#db"
 import { AccessDenied } from "#engine"
 import { auth } from "./auth"
 import { writeAuthMethods } from "./authMethods"
+import { withClientIpHeader } from "./clientIp"
 import { pool } from "./db"
 import { handleCalendarPush, handleGoogleCallback } from "./google"
 import { writeAuditLog } from "./integrations/audit"
@@ -94,6 +95,28 @@ describe("authentication events", () => {
     expect(all).not.toContain(PASSWORD)
     expect(all).not.toContain("wrong-password-1")
     expect(all).not.toContain(owner.email)
+  })
+
+  it("logs the proxy-appended client ip on an HTTP sign-in, never a spoofed one", async () => {
+    const { owner } = await orgWithOwner()
+    const res = await auth.handler(
+      withClientIpHeader(
+        new Request("http://localhost:3100/api/auth/sign-in/email", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            origin: "http://localhost:3100",
+            "x-forwarded-for": "203.0.113.3, 198.51.100.44",
+          },
+          body: JSON.stringify({ email: owner.email, password: "wrong-password-1" }),
+        }),
+      ),
+    )
+    expect(res.status).toBe(401)
+    expect(named("auth.signin")).toEqual([
+      expect.objectContaining({ outcome: "failure", ip: "198.51.100.44" }),
+    ])
+    expect(lines.join("\n")).not.toContain("203.0.113.3")
   })
 
   it("logs a password sign-in refused because the org requires SSO", async () => {

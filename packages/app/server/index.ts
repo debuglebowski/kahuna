@@ -3,6 +3,7 @@ import path from "node:path"
 import { healthCheck } from "#engine"
 import { auth } from "./auth"
 import { startAutomationRunner, startAutomationScheduleTick } from "./automations"
+import { withClientIpHeader } from "./clientIp"
 import { startDecayTick } from "./decay-tick"
 import { startGoogleWatchRenewal } from "./google"
 import { withApiSecurityHeaders, withAppSecurityHeaders } from "./headers"
@@ -53,7 +54,9 @@ const server = Bun.serve({
     // `startsWith("/api/auth")` — that also captures `/api/auth-config/*` (see
     // `isBetterAuthPath`).
     if (isBlockedSsoPath(url.pathname)) return secure(new Response("Not found", { status: 404 }))
-    if (isBetterAuthPath(url.pathname)) return secure(await auth.handler(req))
+    // `withClientIpHeader`: BetterAuth's rate limiter keys on the address it puts
+    // there — see `CLIENT_IP_HEADER`.
+    if (isBetterAuthPath(url.pathname)) return secure(await auth.handler(withClientIpHeader(req)))
 
     // Typed RPC endpoint (the application API).
     if (url.pathname === "/api/rpc") return secure(await rpcHandler(req))
