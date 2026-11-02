@@ -1,5 +1,26 @@
 import { describe, expect, it } from "vitest"
-import { uploadTarget } from "./files"
+import { filePreviewKind, uploadTarget } from "./files"
+
+describe("filePreviewKind", () => {
+  it.each([
+    ["text/plain; charset=utf-8", "text"],
+    [" APPLICATION/PDF ", "pdf"],
+    ["image/png", "image"],
+    ["image/avif", "image"],
+  ])("previews the server-admitted MIME %s", (mimeType, kind) => {
+    expect(filePreviewKind({ mimeType })).toBe(kind)
+  })
+
+  it.each([
+    "text/html",
+    "image/svg+xml",
+    "application/xml",
+    "application/json",
+    null,
+  ])("does not embed unsupported MIME %s", (mimeType) => {
+    expect(filePreviewKind({ mimeType })).toBeNull()
+  })
+})
 
 /**
  * `uploadTarget` decides whether a Files widget shows a drop zone at all, and

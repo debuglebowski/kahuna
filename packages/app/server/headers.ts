@@ -3,7 +3,7 @@
  *
  * There were none at all before this file existed, which is what let an uploaded
  * HTML attachment run as script on the app's own origin (see `INLINE_SAFE_TYPES`
- * in router.ts for the other half of that fix).
+ * in attachmentResponse.ts for the other half of that fix).
  *
  * Two profiles, because the SPA and user-uploaded bytes need opposite things:
  * the app must load its own scripts, and an attachment must be able to do
@@ -28,9 +28,10 @@ const SPA_CSP = [
   "img-src 'self' data: blob: https:",
   "font-src 'self' data:",
   "connect-src 'self'",
-  // No <object>/<embed>, and nothing may frame us (the header equivalent of
-  // X-Frame-Options: DENY, which is also sent below for older browsers).
-  "object-src 'none'",
+  // The Files preview uses <object> for the browser's native PDF viewer. Only
+  // our own endpoints may supply it; the attachment route still enforces its
+  // inert-MIME allowlist. The app itself remains unframeable.
+  "object-src 'self'",
   "frame-ancestors 'none'",
   "base-uri 'self'",
   "form-action 'self'",
@@ -70,11 +71,27 @@ export const appSecurityHeaders = (): Record<string, string> => ({
   "content-security-policy": SPA_CSP,
 })
 
-/** Headers for attachment bytes — deny-all CSP, no scripting, no framing. */
-export const attachmentSecurityHeaders = (): Record<string, string> => ({
+/**
+ * Only the attachment response's MIME allowlist may opt into a preview mode.
+ * Text keeps the opaque-origin sandbox. Native PDF viewers need plugins, which
+ * CSP sandbox disables; PDF mode is restricted to application/pdf + nosniff.
+ * Both preview modes permit only same-origin ancestors, never third-party sites.
+ * Downloads, unsafe types and errors retain the original deny-all profile.
+ */
+export const attachmentSecurityHeaders = (
+  preview: "none" | "sandboxed" | "pdf" = "none",
+): Record<string, string> => ({
   ...COMMON,
   ...hsts(),
-  "content-security-policy": ATTACHMENT_CSP,
+  "x-frame-options": preview === "none" ? "DENY" : "SAMEORIGIN",
+  "content-security-policy":
+    preview === "none"
+      ? ATTACHMENT_CSP
+      : [
+          "default-src 'none'",
+          ...(preview === "pdf" ? [] : ["sandbox"]),
+          "frame-ancestors 'self'",
+        ].join("; "),
 })
 
 /**
