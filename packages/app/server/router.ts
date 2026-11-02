@@ -10,6 +10,7 @@ import {
   importForRequest,
   searchForRequest,
 } from "./apollo"
+import { attachmentResponse } from "./attachmentResponse"
 import { auth } from "./auth"
 import {
   clayStatus,
@@ -90,44 +91,6 @@ import { versionInfo } from "./version"
 // itself and is left alone.
 const json = (r: UseCaseResult<unknown>) =>
   Response.json(r.ok ? r.data : { error: r.code, detail: r.detail }, { status: r.status })
-
-/**
- * MIME types that may be served with an `inline` disposition — i.e. rendered by
- * the browser in OUR origin. Deliberately a closed allowlist rather than a
- * blocklist of dangerous types: uploads carry a client-supplied Content-Type, and
- * anything not proven inert here gets `attachment` instead.
- *
- * `image/svg+xml` is NOT here, and that is the point — an SVG is a document that
- * can carry <script>, so inlining one is equivalent to inlining HTML. Same for
- * text/html and anything XML-ish. PDFs stay inline (the viewer is sandboxed and
- * the Files widget previews them), as do plain text, images, audio and video.
- */
-const INLINE_SAFE_TYPES = new Set([
-  "image/png",
-  "image/jpeg",
-  "image/gif",
-  "image/webp",
-  "image/avif",
-  "image/bmp",
-  "image/x-icon",
-  "application/pdf",
-  "text/plain",
-])
-
-/** Media whose whole subtree is inert enough to inline (`audio/*`, `video/*`). */
-const INLINE_SAFE_PREFIXES = ["audio/", "video/"]
-
-/**
- * May this stored MIME type be rendered inline? Parameters are stripped
- * (uploads arrive as e.g. `text/html;charset=utf-8`, and matching the full
- * string would miss it) and the comparison is lowercased.
- */
-export const isInlineSafe = (mimeType: string | null | undefined): boolean => {
-  if (!mimeType) return false
-  const base = mimeType.split(";")[0]!.trim().toLowerCase()
-  if (INLINE_SAFE_TYPES.has(base)) return true
-  return INLINE_SAFE_PREFIXES.some((p) => base.startsWith(p))
-}
 
 /**
  * The two multipart upload routes, sharing everything but the owner. Content-Length
@@ -621,7 +584,7 @@ export const handleApi = async (req: Request): Promise<Response | null> => {
 
   // Binary download. `?inline=1` serves with an inline disposition so the
   // browser renders previews natively (img/pdf) instead of saving — but ONLY for
-  // types that cannot execute; see `inlineDisposition`.
+  // types that cannot execute; see `attachmentResponse`.
   if (seg[1] === "attachments" && seg[2] && seg[3] === "download" && m === "GET") {
     const result = await runScoped(req, downloadAttachment(seg[2]))
     if (!result.ok)
@@ -633,20 +596,7 @@ export const handleApi = async (req: Request): Promise<Response | null> => {
       attachment: { filename: string; mimeType: string | null }
       data: Uint8Array
     }
-    const declared = attachment.mimeType
-    const inline = url.searchParams.get("inline") !== null && isInlineSafe(declared)
-    const safeName = attachment.filename.replace(/["\\\r\n]/g, "_")
-    return new Response(data as unknown as BodyInit, {
-      headers: {
-        ...attachmentSecurityHeaders(),
-        // Serve the stored type only when it is inline-safe. Anything else —
-        // notably text/html and image/svg+xml — is downgraded to
-        // application/octet-stream AND forced to `attachment`, so the browser
-        // saves the bytes instead of rendering them in our origin.
-        "content-type": inline ? (declared as string) : "application/octet-stream",
-        "content-disposition": `${inline ? "inline" : "attachment"}; filename="${safeName}"; filename*=UTF-8''${encodeURIComponent(attachment.filename)}`,
-      },
-    })
+    return attachmentResponse(attachment, data, url.searchParams.has("inline"))
   }
 
   return null

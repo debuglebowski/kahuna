@@ -8,6 +8,19 @@ import type { Attachment } from "./api"
 
 export type FileKind = "image" | "pdf" | "doc" | "other"
 
+/** Native preview formats admitted by the server's inline MIME allowlist.
+ * Unlike icon classification, a filename extension must not select a renderer:
+ * HTML called notes.txt and SVG called image.png still need the download path. */
+export const filePreviewKind = (
+  file: Pick<Attachment, "mimeType">,
+): "image" | "pdf" | "text" | null => {
+  const mime = file.mimeType?.split(";")[0]?.trim().toLowerCase() ?? ""
+  if (/^image\/(png|jpeg|gif|webp|avif|bmp|x-icon)$/.test(mime)) return "image"
+  if (mime === "application/pdf") return "pdf"
+  if (mime === "text/plain") return "text"
+  return null
+}
+
 /**
  * May this viewer archive/restore/delete this file? Uploader-or-admin, mirroring
  * the server's own gate (`assertCanMutateAttachment`) so the UI offers exactly

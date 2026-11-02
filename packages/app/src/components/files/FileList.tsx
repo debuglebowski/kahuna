@@ -14,7 +14,7 @@ import { type DragEvent, type ReactNode, useRef, useState } from "react"
 import { relativeTime } from "../../lib/activity"
 import { type Attachment, api, type FileOwner } from "../../lib/api"
 import { useSession } from "../../lib/auth-client"
-import { fileKind, formatBytes } from "../../lib/files"
+import { fileKind, filePreviewKind, formatBytes } from "../../lib/files"
 import { useIsAdmin } from "../../pages/settings/SettingsLayout"
 import { MemberAvatar, memberLabel, type OrgMember } from "../record/AssigneePicker"
 import { ConfirmDialog, IconButton, Modal } from "../ui"
@@ -41,20 +41,6 @@ export function useFileViewer(): { userId: string | undefined; admin: boolean } 
   return { userId: session?.user.id, admin }
 }
 
-/** Can we show this in-page, and how? Only formats a browser renders natively —
- *  guessing wrong means an embed that silently shows nothing, so anything else
- *  gets an honest "no preview" with download/open instead. */
-const previewKind = (f: Attachment): "image" | "pdf" | "text" | null => {
-  const mime = f.mimeType ?? ""
-  const kind = fileKind(mime, f.filename)
-  if (kind === "image") return "image"
-  if (kind === "pdf") return "pdf"
-  // Plain text renders in an iframe; the doc bucket also holds .docx and .xlsx,
-  // which do not.
-  if (mime.startsWith("text/") || /\.(txt|md|csv|json|log)$/i.test(f.filename)) return "text"
-  return null
-}
-
 /**
  * Full-size preview of one file, in a 90vw × 90vh modal. Everything renders from
  * the inline URL (same bytes as the download, `content-disposition: inline`).
@@ -69,7 +55,7 @@ const previewKind = (f: Attachment): "image" | "pdf" | "text" | null => {
  * upload). `<object>` gives a PDF no script access to this document either way.
  */
 function FilePreview({ file, onClose }: { file: Attachment; onClose: () => void }) {
-  const kind = previewKind(file)
+  const kind = filePreviewKind(file)
   return (
     <Modal
       title={
