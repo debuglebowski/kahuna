@@ -5,8 +5,16 @@ import { requireConfirmation, withVersion } from "../mutate.ts"
 import type { Format, Row } from "../output.ts"
 import { note, printOne, printRows } from "../output.ts"
 import type { Command, CommandContext } from "../registry.ts"
-import { conceptContext, labelOf, parseFieldAssignments } from "../resolve.ts"
+import {
+  conceptContext,
+  fileNames,
+  findField,
+  labelOf,
+  parseFieldAssignments,
+  parseKeyValuePairs,
+} from "../resolve.ts"
 import { type Api, makeRuntime } from "../transport.ts"
+import { postFile, readUpload } from "./attachment.ts"
 
 /** Open a client for this invocation and always dispose it. */
 const withApi = async <T>(f: (api: Api) => Promise<T>): Promise<T> => {
@@ -37,8 +45,15 @@ const columnsFor = (concept: Concept, fields: ReadonlyArray<Field>): ReadonlyArr
   ...fields.map((f) => f.name),
 ]
 
-/** A record version as a flat row: ids, status, then one column per field. */
-const toRow = (version: RecordVersion, concept: Concept, fields: ReadonlyArray<Field>): Row => {
+/** A record version as a flat row: ids, status, then one column per field.
+ *  File properties print as their filenames in a table/CSV, and as the file
+ *  refs (with ids, for `attachment download`) in JSON. */
+export const toRow = (
+  version: RecordVersion,
+  concept: Concept,
+  fields: ReadonlyArray<Field>,
+  format: Format = "table",
+): Row => {
   const row: Row = {
     id: version.id,
     // BOTH ids, always. `id` addresses this VERSION; `record` addresses the
@@ -52,7 +67,10 @@ const toRow = (version: RecordVersion, concept: Concept, fields: ReadonlyArray<F
     row.version = version.versionSeq
     row.status = version.versionStatus
   }
-  for (const f of fields) row[f.name] = version.state[f.id]
+  for (const f of fields) {
+    const v = version.state[f.id]
+    row[f.name] = f.kind === "file" && format !== "json" ? fileNames(v) : v
+  }
   if (version.archivedAt) row.archived = true
   return row
 }
@@ -83,6 +101,13 @@ const applyWhere = (
     if (!field) throw new CliError(`No field named "${name}".`, EXIT.notFound)
     out = out.filter((r) => {
       const v = r.state[field.id]
+      // A file property matches on any one of its filenames.
+      if (field.kind === "file")
+        return want === ""
+          ? fileNames(v) === ""
+          : fileNames(v)
+              .split(", ")
+              .some((n) => n.toLowerCase() === want)
       return (v === null || v === undefined ? "" : String(v)).toLowerCase() === want
     })
   }
@@ -123,9 +148,9 @@ export const recordCommands: ReadonlyArray<Command> = [
         if (sort) {
           const field = fields.find((f) => f.name.toLowerCase() === sort.toLowerCase())
           if (!field) throw new CliError(`No field named "${sort}".`, EXIT.notFound)
-          rows = [...rows].sort((a, b) =>
-            String(a.state[field.id] ?? "").localeCompare(String(b.state[field.id] ?? "")),
-          )
+          const key = (r: RecordVersion) =>
+            field.kind === "file" ? fileNames(r.state[field.id]) : String(r.state[field.id] ?? "")
+          rows = [...rows].sort((a, b) => key(a).localeCompare(key(b)))
         }
         const limit = ctx.flags.limit ? Number(ctx.flags.limit) : undefined
         if (limit !== undefined && Number.isNaN(limit)) {
@@ -134,7 +159,7 @@ export const recordCommands: ReadonlyArray<Command> = [
         const shown = limit ? rows.slice(0, limit) : rows
         printRows(
           ctx.format,
-          shown.map((r) => toRow(r, concept, fields)),
+          shown.map((r) => toRow(r, concept, fields, ctx.format)),
           columnsFor(concept, fields),
         )
       })
@@ -149,7 +174,7 @@ export const recordCommands: ReadonlyArray<Command> = [
       if (!target) throw new CliError("Which record?", EXIT.usage)
       await withApi(async (api) => {
         const detail = await getDetail(api, target)
-        const row = toRow(detail.recordVersion, detail.concept, detail.fields)
+        const row = toRow(detail.recordVersion, detail.concept, detail.fields, ctx.format)
         if (detail.labels.length > 0) row.labels = detail.labels.map((l) => l.name).join(", ")
         printOne(ctx.format, row)
       })
@@ -158,20 +183,53 @@ export const recordCommands: ReadonlyArray<Command> = [
   {
     path: "record create",
     summary: "Create a record",
-    usage: "record create <concept> --field name=value [--field ...]",
-    options: { field: { type: "string", multiple: true, short: "f" } },
+    usage: "record create <concept> --field name=value [--field ...] [--file property=path ...]",
+    options: {
+      field: { type: "string", multiple: true, short: "f" },
+      file: { type: "string", multiple: true },
+    },
     run: async (ctx) => {
       const [conceptName] = ctx.args
       if (!conceptName) throw new CliError("Which concept?", EXIT.usage)
       await withApi(async (api) => {
         const { concept, fields } = await conceptContext(api, conceptName)
         const values = parseFieldAssignments(fields, asArray(ctx.flags.field))
+        // `--file Attachments=./a.pdf` (repeatable; order kept). Every path is
+        // read and every property resolved BEFORE anything is uploaded, so a
+        // typo costs nothing.
+        const uploads = parseKeyValuePairs(ctx.flags.file, "property=path").map(([name, path]) => {
+          const field = findField(fields, name)
+          if (field.kind !== "file") {
+            throw new CliError(
+              `"${field.name}" is a ${field.kind} field, not a file property.`,
+              EXIT.usage,
+            )
+          }
+          return { field, path, bytes: readUpload(path) }
+        })
         if (ctx.flags["dry-run"]) {
-          note(`Would create a ${concept.name} with ${Object.keys(values).length} field(s).`)
+          note(
+            `Would create a ${concept.name} with ${Object.keys(values).length} field(s)` +
+              `${uploads.length ? ` and ${uploads.length} file(s)` : ""}.`,
+          )
           return
         }
+        // Stage the files (they can't attach to a record that doesn't exist yet),
+        // then create: the server claims them in the create transaction, which is
+        // what lets a required file property be met. An abandoned run leaves
+        // only staged uploads, which expire on their own.
+        const files: Record<string, string[]> = {}
+        const session = requireSession()
+        for (const u of uploads) {
+          const { id } = await postFile(session, "/api/attachments/staged", u.path, u.bytes)
+          files[u.field.id] = [...(files[u.field.id] ?? []), id]
+        }
         const created = await api.call((c) =>
-          c.createRecord({ conceptId: concept.id, fields: values }),
+          c.createRecord({
+            conceptId: concept.id,
+            fields: values,
+            ...(uploads.length ? { files } : {}),
+          }),
         )
         emit(ctx.format, created, concept, fields, "Created")
       })
@@ -362,7 +420,7 @@ const emit = (
   verb: string,
 ): void => {
   if (format === "json") {
-    printOne(format, toRow(version, concept, fields))
+    printOne(format, toRow(version, concept, fields, format))
     return
   }
   note(`${verb} ${labelOf(version, concept, fields)} (${version.id}).`)

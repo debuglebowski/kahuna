@@ -1,27 +1,46 @@
 import { useLiveQuery } from "@tanstack/react-db"
 import { useState } from "react"
+import type { Field } from "../../lib/api"
 import { filesBySubject, KEY, useRegisterCollection } from "../../lib/collections"
+import { canMutateFile } from "../../lib/files"
 import { FileDropSurface, FileDropZone, FileList } from "../files/FileList"
+import { fileMoveTargets, MoveToProperty, PropertyTag } from "../files/FileProperties"
 import type { OrgMember } from "./AssigneePicker"
 
-/** Files for a record (subjectId = record id). Any member may upload; the
- *  uploader or an admin may archive/restore/delete. Mirrors NotesPanel. */
+/**
+ * EVERY file on a record (subjectId = record id) — loose uploads AND the files
+ * of its file properties, which are the same attachments. One storage, one list:
+ * this panel is the "all files on this record" view, so nothing is ever split
+ * between a property and here. A property file carries its property's name, and
+ * anyone who can edit the record can move any file into a property, out of one,
+ * or between them. Any member may upload; the uploader or an admin may
+ * archive/restore/delete. Mirrors NotesPanel.
+ */
 export function FilesPanel({
   subjectId,
   myUserId,
   isAdmin,
   members,
+  fields = [],
+  onChanged,
 }: {
   subjectId: string
   myUserId: string | undefined
   isAdmin: boolean
   members: ReadonlyArray<OrgMember>
+  /** The record's field defs — its file properties are the move targets. */
+  fields?: ReadonlyArray<Field>
+  /** The host record view's refetch: a move changes a property's value. */
+  onChanged?: () => void
 }) {
   const [showArchived, setShowArchived] = useState(false)
   const collection = filesBySubject(subjectId)
   useRegisterCollection(KEY.files(subjectId), collection)
   const q = useLiveQuery((qb) => qb.from({ f: collection }), [subjectId, collection])
-  const refetch = () => collection.utils.refetch()
+  const refetch = () => {
+    void collection.utils.refetch()
+    onChanged?.()
+  }
 
   const byUser = new Map(members.map((m) => [m.userId, m]))
   const all = [...(q.data ?? [])].sort(
@@ -29,6 +48,9 @@ export function FilesPanel({
   )
   const files = showArchived ? all : all.filter((f) => !f.archivedAt)
   const archivedCount = all.filter((f) => f.archivedAt).length
+  const viewer = { userId: myUserId, admin: isAdmin }
+
+  const targets = fileMoveTargets(fields)
 
   // The whole panel takes a file drop, not just the dashed strip — dropping onto
   // the file list below it is the same intent. The strip stays as the visible
@@ -40,8 +62,16 @@ export function FilesPanel({
       <FileList
         files={files}
         byUser={byUser}
-        canMutate={(f) => isAdmin || (!!myUserId && f.createdBy === myUserId)}
+        canMutate={(f) => canMutateFile(f, viewer)}
         onChanged={refetch}
+        tagOf={(f) => <PropertyTag file={f} fields={fields} />}
+        actionsOf={(f) =>
+          // Any writer may move (server-gated on the record); only archive/delete
+          // are uploader-or-admin.
+          targets.length > 0 && !f.archivedAt ? (
+            <MoveToProperty file={f} targets={targets} onMoved={refetch} />
+          ) : null
+        }
       />
       {archivedCount > 0 && (
         <button

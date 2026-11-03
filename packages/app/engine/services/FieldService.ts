@@ -70,16 +70,16 @@ const validateConfig = (
         return yield* invalid("config.format is only valid on text/number fields")
       }
     }
-    if (
-      config.multiple &&
-      (kind === "relation" || kind === "file" || kind === "computed" || kind === "richtext")
-    ) {
-      return yield* invalid(
-        "config.multiple is not valid on relation/file/computed/richtext fields",
-      )
+    // `file` takes `multiple` (any number of files, ordered) — its values are
+    // attachments, not state, so the list is the property's own, not an array in
+    // `state`. Relation cardinality is `config.cardinality`, never `multiple`.
+    if (config.multiple && (kind === "relation" || kind === "computed" || kind === "richtext")) {
+      return yield* invalid("config.multiple is not valid on relation/computed/richtext fields")
     }
-    if (config.requirement && (kind === "relation" || kind === "file" || kind === "computed")) {
-      return yield* invalid("config.requirement is not valid on relation/file/computed fields")
+    // `file` takes a requirement: its files can be staged and claimed in the
+    // create transaction, so "required" is checkable at creation (RecordService).
+    if (config.requirement && (kind === "relation" || kind === "computed")) {
+      return yield* invalid("config.requirement is not valid on relation/computed fields")
     }
     if (config.unique) {
       if (!UNIQUE_KINDS.has(kind)) {
@@ -249,6 +249,29 @@ export class FieldService extends Effect.Service<FieldService>()("engine/FieldSe
               )
             }
           }
+          // Turning a multi-file property back into a single-file one must not
+          // strand the extra files behind a "single" value nobody can see — refuse
+          // while any record holds more than one live file in it. (Archived files
+          // don't count: restoring one into a single-file property replaces.)
+          if (current.kind === "file" && current.config.multiple && !config.multiple) {
+            const crowded = yield* sql<{ readonly count: number | string }>`
+              SELECT COUNT(*)::int AS count FROM (
+                SELECT 1 FROM attachments
+                WHERE org_id = ${orgId} AND field_id = ${input.id} AND archived_at IS NULL
+                GROUP BY record_id
+                HAVING COUNT(*) > 1
+              ) AS crowded`
+            const count = Number(crowded[0]?.count ?? 0)
+            if (count > 0) {
+              return yield* Effect.fail(
+                new FieldConfigInvalid({
+                  conceptId: current.conceptId,
+                  name,
+                  reason: `cannot turn off multiple: ${count} record(s) hold more than one file`,
+                }),
+              )
+            }
+          }
           if (name !== current.name) {
             const clash = yield* sql<{ readonly id: string }>`
               SELECT id FROM fields
@@ -337,7 +360,10 @@ export class FieldService extends Effect.Service<FieldService>()("engine/FieldSe
 
     /** Permanently delete a field def. Refused while relation edges still
      *  reference it (the FK would block it anyway) — archive instead. Orphaned
-     *  record version.state keys for a purged field become unresolvable (raw id shows). */
+     *  record version.state keys for a purged field become unresolvable (raw id shows).
+     *  A file property's files are NOT deleted: `attachments.field_id` is
+     *  ON DELETE SET NULL, so they fall back to loose files in the record's Files
+     *  panel — the bytes were never the field's, only its presentation. */
     const purge = (id: string) =>
       sql.withTransaction(
         Effect.gen(function* () {

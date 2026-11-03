@@ -300,6 +300,9 @@ export function WidgetEditor({
       ? ((widget as { relationFieldId?: string | null }).relationFieldId ?? null)
       : null
   const scalarFields = (fields.data ?? []).filter((f) => f.kind !== "relation" && f.kind !== "file")
+  // A list's visible columns may also show file properties (filename chips) —
+  // display only; they stay out of grouping, sorting and conditions.
+  const listColumnFields = (fields.data ?? []).filter((f) => f.kind !== "relation")
   // Rich text shows fine as a list column (text preview) but grouping/sorting
   // on a { doc, text } envelope is meaningless.
   const groupableFields = scalarFields.filter((f) => f.kind !== "richtext")
@@ -565,7 +568,7 @@ export function WidgetEditor({
           <>
             <FieldRow label="Columns (optional)">
               <MultiCombobox
-                options={scalarFields.map((f) => ({ id: f.id, label: f.name }))}
+                options={listColumnFields.map((f) => ({ id: f.id, label: f.name }))}
                 selectedIds={widget.columns ?? []}
                 onChange={(ids) => patch({ columns: ids })}
                 placeholder="All columns"

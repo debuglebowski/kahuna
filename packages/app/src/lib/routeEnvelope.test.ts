@@ -114,4 +114,21 @@ describe("routeEnvelope", () => {
       new Set([KEY.changed, KEY.files("item1"), KEY.filesGlobal, KEY.activity("item1")]),
     )
   })
+
+  it("attachment events also refresh open records and record lists (file property values)", () => {
+    // A file property's value is projected from attachments at read time, so an
+    // upload or move changes what a record page or a concept list shows.
+    const mounted = [
+      KEY.changed,
+      KEY.detail("rv1"),
+      KEY.recordVersions("c1"),
+      KEY.singleRecord("c2"),
+      KEY.notes("item1"),
+      KEY.concepts,
+    ]
+    const keys = new Set(routeEnvelope(env({ kind: "attachment", subjectId: "att1" }), mounted))
+    expect(keys).toEqual(
+      new Set([KEY.changed, KEY.detail("rv1"), KEY.recordVersions("c1"), KEY.singleRecord("c2")]),
+    )
+  })
 })

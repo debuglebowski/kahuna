@@ -1,7 +1,7 @@
 import { LABELS_KEY } from "@kahunalabs/contract"
-import { useQuery } from "@tanstack/react-query"
-import { Check, Plus, X } from "lucide-react"
-import { useMemo, useState } from "react"
+import { useMutation, useQuery } from "@tanstack/react-query"
+import { Check, Paperclip, Plus, UploadCloud, X } from "lucide-react"
+import { useMemo, useRef, useState } from "react"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
 import {
@@ -21,9 +21,10 @@ import { memberLabel, useMembers } from "../lib/members"
 import { isRichTextEmpty, isRichTextValue } from "../lib/richtext"
 
 /**
- * Kinds a user can set when creating a record version. Mirrors the engine's
- * `validateValue` — relation/file/computed are derived or set elsewhere
- * (RelationService / attachments / computed) and are excluded from the form.
+ * Kinds a user can set as VALUES when creating a record version. Mirrors the
+ * engine's `validateValue` — relation/file/computed are derived or set elsewhere
+ * (RelationService / attachments / computed). File properties still appear on
+ * the CREATE form, through their own staged-upload input (see `FileInput`).
  */
 const EDITABLE = new Set([
   "text",
@@ -164,13 +165,25 @@ export function RecordForm({
    *  are omitted from the patch (the engine can't clear typed fields), and the
    *  labels section is hidden — labels are edited on the record page itself. */
   initial?: Record<string, unknown>
-  onSubmit: (values: Record<string, unknown>) => void
+  /** `files` (create only): file-property values as staged upload ids, keyed by
+   *  field id — pass them to `createRecord`, which claims them atomically. */
+  onSubmit: (
+    values: Record<string, unknown>,
+    files: Readonly<Record<string, ReadonlyArray<string>>>,
+  ) => void
   onCancel: () => void
   pending?: boolean
 }) {
   const editing = initial !== undefined
   const editable = useMemo(() => fields.filter((f) => EDITABLE.has(f.kind)), [fields])
-  const omitted = fields.length - editable.length
+  // Create only: an edit form has a record already, whose details page owns its
+  // files. Synced (integration-managed) properties are the connector's to fill.
+  const fileFields = useMemo(
+    () => (editing ? [] : fields.filter((f) => f.kind === "file" && !f.managedBy)),
+    [fields, editing],
+  )
+  const [staged, setStaged] = useState<Record<string, ReadonlyArray<StagedFile>>>({})
+  const omitted = fields.length - editable.length - fileFields.length
   const [values, setValues] = useState<Record<string, unknown>>(() => {
     if (!initial) return {}
     const seeded: Record<string, unknown> = {}
@@ -412,10 +425,21 @@ export function RecordForm({
 
   return (
     <div className="space-y-4">
-      {editable.length === 0 ? (
+      {editable.length === 0 && fileFields.length === 0 ? (
         <p className="text-sm text-muted-foreground">This concept has no editable fields.</p>
       ) : (
         <div className="grid grid-cols-2 gap-3">
+          {fileFields.map((f) => (
+            <div key={f.id} className="col-span-2">
+              <Field label={f.config.requirement === "required" ? `${f.name} *` : f.name}>
+                <FileInput
+                  multiple={!!f.config.multiple}
+                  files={staged[f.id] ?? []}
+                  onChange={(next) => setStaged((prev) => ({ ...prev, [f.id]: next }))}
+                />
+              </Field>
+            </div>
+          ))}
           {editable.map((f) =>
             f.kind === "bool" ? (
               <div key={f.id} className="flex items-end">
@@ -435,7 +459,8 @@ export function RecordForm({
 
       {omitted > 0 && (
         <p className="text-xs text-muted-foreground">
-          {omitted} relation/file/computed field{omitted > 1 ? "s" : ""}{" "}
+          {omitted} {editing ? "relation/file/computed" : "relation/computed"} field
+          {omitted > 1 ? "s" : ""}{" "}
           {editing ? "are managed outside this form." : "are set after creating."}
         </p>
       )}
@@ -461,11 +486,21 @@ export function RecordForm({
             // Pre-check required values (the engine enforces this too) so the
             // user gets field names instead of a generic validation error.
             const out = build()
-            const miss = editable
-              .filter((f) => f.config.requirement === "required" && isMissing(out[f.id]))
-              .map((f) => f.name)
+            const miss = [
+              ...fileFields.filter(
+                (f) => f.config.requirement === "required" && (staged[f.id]?.length ?? 0) === 0,
+              ),
+              ...editable.filter(
+                (f) => f.config.requirement === "required" && isMissing(out[f.id]),
+              ),
+            ].map((f) => f.name)
             setMissing(miss)
-            if (miss.length === 0) onSubmit(out)
+            const files = Object.fromEntries(
+              Object.entries(staged)
+                .filter(([, list]) => list.length > 0)
+                .map(([id, list]) => [id, list.map((s) => s.id)]),
+            )
+            if (miss.length === 0) onSubmit(out, files)
           }}
         >
           {editing ? <Check size={15} /> : <Plus size={15} />}
@@ -476,6 +511,88 @@ export function RecordForm({
           Cancel
         </Button>
       </div>
+    </div>
+  )
+}
+
+interface StagedFile {
+  readonly id: string
+  readonly filename: string
+}
+
+/**
+ * A file property on the CREATE form. Each pick uploads straight away as a
+ * STAGED file (the record doesn't exist yet); Create then claims them in one
+ * transaction, which is what lets a required file property be met. Removing one
+ * here only drops it from the form — an unclaimed staged upload expires on its
+ * own. Single-file: a new pick replaces the old.
+ */
+function FileInput({
+  multiple,
+  files,
+  onChange,
+}: {
+  multiple: boolean
+  files: ReadonlyArray<StagedFile>
+  onChange: (next: ReadonlyArray<StagedFile>) => void
+}) {
+  const inputRef = useRef<HTMLInputElement>(null)
+  const stage = useMutation({
+    mutationFn: async (picked: File[]) => {
+      const out: StagedFile[] = []
+      for (const f of picked) out.push(await api.stageFile(f))
+      return out
+    },
+    onSuccess: (added) => onChange(multiple ? [...files, ...added] : added.slice(-1)),
+  })
+  return (
+    <div className="space-y-1.5">
+      {files.map((f) => (
+        <div
+          key={f.id}
+          className="flex items-center gap-2 rounded-md border border-border px-2 py-1.5 text-sm"
+        >
+          <Paperclip size={13} className="shrink-0 text-muted-foreground" />
+          <span className="min-w-0 flex-1 truncate" title={f.filename}>
+            {f.filename}
+          </span>
+          <button
+            type="button"
+            aria-label={`Remove ${f.filename}`}
+            onClick={() => onChange(files.filter((x) => x.id !== f.id))}
+            className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+          >
+            <X size={13} />
+          </button>
+        </div>
+      ))}
+      <button
+        type="button"
+        onClick={() => inputRef.current?.click()}
+        disabled={stage.isPending}
+        className="flex w-full items-center justify-center gap-2 rounded-md border border-dashed border-border px-3 py-2 text-sm text-muted-foreground transition hover:border-foreground/30 hover:text-foreground"
+      >
+        <UploadCloud size={15} />
+        {stage.isPending
+          ? "Uploading…"
+          : multiple
+            ? "Add files"
+            : files.length > 0
+              ? "Replace file"
+              : "Add a file"}
+      </button>
+      <input
+        ref={inputRef}
+        type="file"
+        multiple={multiple}
+        className="hidden"
+        onChange={(e) => {
+          const picked = [...(e.target.files ?? [])]
+          e.target.value = ""
+          if (picked.length > 0) stage.mutate(multiple ? picked : picked.slice(0, 1))
+        }}
+      />
+      {stage.error && <p className="text-xs text-destructive">{(stage.error as Error).message}</p>}
     </div>
   )
 }

@@ -61,9 +61,10 @@ export function ListWidget({
     enabled: archived !== "exclude" && !!conceptId,
   })
 
-  // Columns: explicit selection, else the concept's scalar fields (no relation/file).
+  // Columns: explicit selection, else the concept's fields minus relations (which
+  // live in the Connected tile). File properties show as filename chips.
   const columns = useMemo(() => {
-    const visible = fields.filter((f) => f.kind !== "relation" && f.kind !== "file")
+    const visible = fields.filter((f) => f.kind !== "relation")
     return widget.columns && widget.columns.length > 0
       ? widget.columns.map((id) => visible.find((f) => f.id === id)).filter((f) => !!f)
       : visible
@@ -125,7 +126,10 @@ export function ListWidget({
   }
 
   const create = useMutation({
-    mutationFn: (values: Record<string, unknown>) => api.createRecord(conceptId, values),
+    mutationFn: (v: {
+      values: Record<string, unknown>
+      files: Readonly<Record<string, ReadonlyArray<string>>>
+    }) => api.createRecord(conceptId, v.values, v.files),
     onSuccess: (created) => {
       setAdding(false)
       create.reset()
@@ -251,7 +255,7 @@ export function ListWidget({
             <RecordForm
               fields={fields}
               defaultLabelIds={concept?.defaultLabelIds ?? []}
-              onSubmit={(v) => create.mutate(v)}
+              onSubmit={(values, files) => create.mutate({ values, files })}
               onCancel={() => setAdding(false)}
               pending={create.isPending}
             />

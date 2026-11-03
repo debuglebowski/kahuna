@@ -74,6 +74,7 @@ export {
   AttachmentService,
   type ListFilesFilter,
   MAX_UPLOAD_BYTES,
+  sweepExpiredStaged,
   type UploadInput,
   type UploadOwner,
 } from "./services/AttachmentService"

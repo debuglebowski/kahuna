@@ -239,6 +239,63 @@ const assertAllowed = (action: AccessAction, resource: AccessResource): UC<void>
     }
   })
 
+/** What a file property's value looks like on the wire: enough to list, preview
+ *  and download a file without a second round-trip. Never the blob key. */
+export interface FileRef {
+  readonly id: string
+  readonly filename: string
+  readonly mimeType: string | null
+  readonly sizeBytes: number | null
+  readonly createdBy: string | null
+  readonly createdAt: Date
+}
+
+const toFileRef = (a: Attachment): FileRef => ({
+  id: a.id,
+  filename: a.filename,
+  mimeType: a.mimeType,
+  sizeBytes: a.sizeBytes,
+  createdBy: a.createdBy,
+  createdAt: a.createdAt,
+})
+
+/**
+ * Project file-property values into `state`, at READ time — the computed-field
+ * pattern (`ComputedFields.decorate`). A file property's files are ordinary record
+ * attachments linked by `attachments.field_id`; they are never stored in `state`
+ * (the engine refuses a write to a file field), so this is the only place the
+ * value appears. `multiple` → a `FileRef[]` in position order (absent when empty);
+ * single → the one `FileRef` (absent when none), mirroring scalar `multiple`.
+ *
+ * Keyed by RECORD (lineage), not version: files survive re-publishes, so every
+ * version of a record shows the same files.
+ *
+ * Deliberately at the use-case boundary and never in `toRecordVersion`: a write
+ * path that reads state back through a decorated copy would try to persist the
+ * value (see the data-loss guard in engine/test/visibility.test.ts).
+ */
+const withFileValues = (
+  rows: ReadonlyArray<RecordVersion>,
+  defs: ReadonlyArray<{ readonly id: string; readonly kind: string; readonly config: FieldConfig }>,
+  scope: { readonly conceptId: string } | { readonly recordIds: ReadonlyArray<string> },
+): UC<ReadonlyArray<RecordVersion>> =>
+  Effect.gen(function* () {
+    const fileDefs = defs.filter((d) => d.kind === "file")
+    if (fileDefs.length === 0 || rows.length === 0) return rows
+    const index = yield* (yield* AttachmentService).fieldFiles(scope)
+    return rows.map((r) => {
+      const byField = index.get(r.recordId)
+      const state: Record<string, unknown> = { ...r.state }
+      for (const d of fileDefs) {
+        delete state[d.id]
+        const files = byField?.get(d.id)
+        if (!files || files.length === 0) continue
+        state[d.id] = d.config.multiple ? files.map(toFileRef) : toFileRef(files[0]!)
+      }
+      return { ...r, state }
+    })
+  })
+
 export const listRecords = (
   conceptId: string,
   opts: ListOpts = {},
@@ -258,7 +315,9 @@ export const listRecords = (
     // this `decorate` does its own `listFields` per record version — and this path runs
     // with a 50 000-row cap, so that was a real N+1 on the hottest read in the app.
     const defs = opts.decorate ? yield* (yield* FieldService).listFields(conceptId) : []
-    return opts.decorate ? yield* Effect.forEach(rows, (r) => computed.decorate(r, defs)) : rows
+    if (!opts.decorate) return rows
+    const computedRows = yield* Effect.forEach(rows, (r) => computed.decorate(r, defs))
+    return yield* withFileValues(computedRows, defs, { conceptId })
   })
 
 export const getRecord = (id: string, decorate = false): UC<RecordVersion> =>
@@ -266,7 +325,12 @@ export const getRecord = (id: string, decorate = false): UC<RecordVersion> =>
     const recordVersions = yield* RecordService
     const computed = yield* ComputedFields
     const inst = yield* recordVersions.get(id)
-    return decorate ? yield* computed.decorate(inst) : inst
+    if (!decorate) return inst
+    const defs = yield* (yield* FieldService).listFields(inst.conceptId)
+    const [withFiles] = yield* withFileValues([yield* computed.decorate(inst, defs)], defs, {
+      recordIds: [inst.recordId],
+    })
+    return withFiles!
   })
 
 /**
@@ -395,8 +459,12 @@ export const getRecordDetail = (id: string): UC<unknown> =>
       Effect.forEach(inRels, (r) => resolveEntry(r, "in")),
     ]).pipe(Effect.map(([a, b]) => [...a, ...b].filter((x) => x !== null)))
 
+    const [withFiles] = yield* withFileValues([decorated], fieldDefs, {
+      recordIds: [inst.recordId],
+    })
+
     return {
-      recordVersion: decorated,
+      recordVersion: withFiles!,
       concept,
       fields: fieldDefs,
       inboundRelationFields: inboundFields,
@@ -507,11 +575,12 @@ export const setConceptSingleRecord = (
   conceptId: string,
   singleRecord: boolean,
   fields?: Record<string, unknown>,
+  files?: Readonly<Record<string, ReadonlyArray<string>>>,
 ): UC<unknown> =>
   ensureUnmanagedConcept(conceptId).pipe(
     Effect.zipRight(
       Effect.flatMap(RecordService, (i) =>
-        i.setConceptSingleRecord({ conceptId, singleRecord, fields }),
+        i.setConceptSingleRecord({ conceptId, singleRecord, fields, files }),
       ),
     ),
   )
@@ -937,10 +1006,17 @@ export const listEvents = (input: {
 export const createRecord = (
   conceptId: string,
   fields: Record<string, unknown>,
+  files?: Readonly<Record<string, ReadonlyArray<string>>>,
 ): UC<RecordVersion> =>
-  ensureUnmanagedConcept(conceptId).pipe(
-    Effect.zipRight(Effect.flatMap(RecordService, (i) => i.create({ conceptId, fields }))),
-  )
+  Effect.gen(function* () {
+    yield* ensureUnmanagedConcept(conceptId)
+    const created = yield* (yield* RecordService).create({ conceptId, fields, files })
+    if (!files || Object.keys(files).length === 0) return created
+    // Hand back the claimed files as the property values, like a read would.
+    const defs = yield* (yield* FieldService).listFields(conceptId)
+    const [withFiles] = yield* withFileValues([created], defs, { recordIds: [created.recordId] })
+    return withFiles!
+  })
 
 export const updateRecord = (
   id: string,
@@ -1099,6 +1175,33 @@ export const listFiles = (filter: {
     const attachments = yield* AttachmentService
     return yield* attachments.list(filter)
   })
+
+/**
+ * Move a record file into / out of / between file properties on its record.
+ * Gated like an upload: anyone who may write the host record. Deliberately NOT
+ * uploader-or-admin (unlike archive/delete): a move deletes nothing, is logged
+ * and reversible — and any writer can already replace a single-file property's
+ * value by uploading. A move INTO a single-file property archives the old value
+ * the same way; moving the last file out of a required property is refused.
+ */
+export const moveFile = (id: string, fieldId: string | null): UC<Attachment> =>
+  Effect.gen(function* () {
+    const attachments = yield* AttachmentService
+    const meta = yield* attachments.get(id)
+    if (meta.recordId) yield* assertSubjectWritable(meta.recordId)
+    return yield* attachments.move(id, fieldId)
+  })
+
+/** Reorder one file property's files on one record. Any member who may write the
+ *  record — order is presentation, nothing is removed. */
+export const reorderFieldFiles = (
+  recordId: string,
+  fieldId: string,
+  ids: ReadonlyArray<string>,
+): UC<ReadonlyArray<Attachment>> =>
+  assertSubjectWritable(recordId).pipe(
+    Effect.zipRight(Effect.flatMap(AttachmentService, (a) => a.reorder(recordId, fieldId, ids))),
+  )
 
 export const archiveFile = (id: string): UC<Attachment> =>
   Effect.flatMap(AttachmentService, (a) => a.archive(id))

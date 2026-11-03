@@ -109,6 +109,14 @@ export const routeEnvelope = (env: LiveEnvelope, mounted: ReadonlyArray<string>)
     // Covers the per-record panels AND the widgets' shared "files:global" key.
     for (const k of byPrefix("files:")) candidates.add(k)
     for (const k of byPrefix("activity:")) candidates.add(k)
+    // A file PROPERTY's value is projected from attachments into record state at
+    // read time, so an upload/move/archive can change what an open record or a
+    // record list shows. The envelope carries no concept (attachments have no
+    // concept column), so nudge every mounted record surface — they're few, and
+    // file events are rare next to field edits.
+    for (const k of details) candidates.add(k)
+    for (const k of byPrefix("recordVersions:")) candidates.add(k)
+    for (const k of byPrefix("singleRecord:")) candidates.add(k)
   } else if (env.kind === "taskStatus") {
     candidates.add(KEY.taskStatuses)
     for (const k of byPrefix("tasks:")) candidates.add(k)

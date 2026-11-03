@@ -1,7 +1,8 @@
 import type { Concept, Field, RecordVersion } from "@kahunalabs/contract"
 import { describe, expect, it } from "vitest"
+import { toRow } from "./commands/record.ts"
 import { EXIT } from "./errors.ts"
-import { findConcept, findField, labelOf, parseFieldAssignments } from "./resolve.ts"
+import { fileNames, findConcept, findField, labelOf, parseFieldAssignments } from "./resolve.ts"
 
 const concept = (over: Partial<Concept>): Concept =>
   ({
@@ -130,5 +131,53 @@ describe("--field name=value", () => {
 
   it("takes the first '=' so values may contain one", () => {
     expect(parseFieldAssignments(fields, ["Name=a=b"])).toEqual({ f1: "a=b" })
+  })
+})
+
+describe("file properties", () => {
+  const ref = (filename: string) => ({
+    id: `id-${filename}`,
+    filename,
+    mimeType: null,
+    sizeBytes: 1,
+    createdBy: null,
+    createdAt: new Date(0),
+  })
+  const files = field({ id: "ff", name: "Attachments", kind: "file", config: { multiple: true } })
+  const one = field({ id: "fo", name: "Signed", kind: "file" })
+
+  it("prints a file value as its filenames — list or single, absent = empty", () => {
+    expect(fileNames([ref("a.pdf"), ref("b.pdf")])).toBe("a.pdf, b.pdf")
+    expect(fileNames(ref("s.pdf"))).toBe("s.pdf")
+    expect(fileNames(undefined)).toBe("")
+    expect(fileNames("not-a-ref")).toBe("")
+  })
+
+  it("record rows show filenames in a table, the refs (with ids) in JSON", () => {
+    const version = {
+      id: "v1",
+      recordId: "r1",
+      conceptId: "c1",
+      state: { ff: [ref("a.pdf"), ref("b.pdf")], fo: ref("s.pdf") },
+      archivedAt: null,
+    } as unknown as RecordVersion
+    const table = toRow(version, concept({}), [files, one], "table")
+    expect(table.Attachments).toBe("a.pdf, b.pdf")
+    expect(table.Signed).toBe("s.pdf")
+    const json = toRow(version, concept({}), [files, one], "json")
+    expect((json.Attachments as Array<{ id: string }>).map((r) => r.id)).toEqual([
+      "id-a.pdf",
+      "id-b.pdf",
+    ])
+  })
+
+  it("refuses --field on a file property and points at attachment upload", () => {
+    try {
+      parseFieldAssignments([files], ["Attachments=a.pdf"])
+      expect.unreachable()
+    } catch (e) {
+      expect((e as { exitCode?: number }).exitCode).toBe(EXIT.usage)
+      expect(String((e as { hint?: string }).hint)).toContain("attachment upload")
+    }
   })
 })

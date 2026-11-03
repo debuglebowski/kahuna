@@ -4,6 +4,7 @@ import { FieldValueCell } from "../../lib/fieldDisplay"
 import { showValue } from "../../lib/utils"
 import type { SaveCell } from "../InlineCellEditor"
 import { DetailFieldEditor } from "./DetailFieldEditor"
+import { FileFieldEditor } from "./FileFieldEditor"
 import type { RecordVersionCtx } from "./types"
 
 /** Clicking anywhere on a row triggers its editor: text/number/money inputs
@@ -49,24 +50,41 @@ export function DetailsBody({ ctx }: { ctx: RecordVersionCtx }) {
   }
   return (
     <dl className="divide-y divide-border text-sm">
-      {fields.map((f) => (
-        // biome-ignore lint/a11y/noStaticElementInteractions: pointer convenience only — the inner control is itself focusable and keyboard-operable
-        // biome-ignore lint/a11y/useKeyWithClickEvents: keyboard users Tab straight to the control; the row click just forwards the pointer
-        <div
-          key={f.id}
-          className="flex items-center justify-between gap-4 px-6 py-2"
-          onClick={editable ? forwardRowClick : undefined}
-        >
-          <dt className="shrink-0 text-muted-foreground">{f.name}</dt>
-          <dd className={editable ? "min-w-0 flex-1 text-right" : "text-right"}>
-            {editable ? (
-              <DetailFieldEditor field={f} recordVersion={recordVersion} onSave={saveCell} />
-            ) : (
-              <FieldValueCell field={f} value={recordVersion.state[f.id]} />
-            )}
-          </dd>
-        </div>
-      ))}
+      {fields.map((f) =>
+        f.kind === "file" ? (
+          // A file property edits on its own terms: the files hang off the record
+          // lineage (not the version), so it's live even on a published version —
+          // and no row-click forwarding, which would fire the first file action.
+          <div key={f.id} className="flex items-start justify-between gap-4 px-6 py-2">
+            <dt className="shrink-0 pt-1.5 text-muted-foreground">{f.name}</dt>
+            <dd className="min-w-0 max-w-md flex-1">
+              <FileFieldEditor
+                field={f}
+                recordVersion={recordVersion}
+                viewer={{ userId: ctx.myUserId, admin: ctx.admin }}
+                onChanged={refetch}
+              />
+            </dd>
+          </div>
+        ) : (
+          // biome-ignore lint/a11y/noStaticElementInteractions: pointer convenience only — the inner control is itself focusable and keyboard-operable
+          // biome-ignore lint/a11y/useKeyWithClickEvents: keyboard users Tab straight to the control; the row click just forwards the pointer
+          <div
+            key={f.id}
+            className="flex items-center justify-between gap-4 px-6 py-2"
+            onClick={editable ? forwardRowClick : undefined}
+          >
+            <dt className="shrink-0 text-muted-foreground">{f.name}</dt>
+            <dd className={editable ? "min-w-0 flex-1 text-right" : "text-right"}>
+              {editable ? (
+                <DetailFieldEditor field={f} recordVersion={recordVersion} onSave={saveCell} />
+              ) : (
+                <FieldValueCell field={f} value={recordVersion.state[f.id]} />
+              )}
+            </dd>
+          </div>
+        ),
+      )}
       {extras.map((k) => (
         <div key={k} className="flex items-center justify-between px-6 py-2">
           <dt className="text-muted-foreground">{k}</dt>

@@ -301,8 +301,17 @@ export const handleApi = async (req: Request): Promise<Response | null> => {
   // Multipart upload onto a record, or into a Files widget's own bucket
   // (reads/mutations of the metadata are typed RPCs — listFiles/archiveFile/
   // restoreFile/deleteFile/purgeBucket).
+  // `?field=<fieldId>` uploads straight into that file property of the record
+  // (validated in the engine: live, kind file, same concept, not synced).
   if (seg[1] === "records" && seg[2] && seg[3] === "attachments" && m === "POST")
-    return uploadRoute(req, { recordId: seg[2] })
+    return uploadRoute(req, {
+      recordId: seg[2],
+      fieldId: new URL(req.url).searchParams.get("field") || null,
+    })
+  // Upload for a record that doesn't exist yet: owner-less and uploader-only
+  // until `createRecord({ files })` claims it; swept after it expires.
+  if (seg[1] === "attachments" && seg[2] === "staged" && !seg[3] && m === "POST")
+    return uploadRoute(req, { staged: true })
   if (seg[1] === "buckets" && seg[2] && seg[3] === "attachments" && m === "POST")
     return uploadRoute(req, {
       bucketId: seg[2],

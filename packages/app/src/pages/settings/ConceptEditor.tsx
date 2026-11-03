@@ -446,8 +446,11 @@ export function ConceptEditor({
   // CREATES the concept's one record, so it can't ride the batched Save (which
   // would flip a flag with no record behind it). Sits beside the Save, not inside.
   const saveSingleRecord = useMutation({
-    mutationFn: (v: { on: boolean; fields?: Record<string, unknown> }) =>
-      api.setConceptSingleRecord(concept.id, v.on, v.fields),
+    mutationFn: (v: {
+      on: boolean
+      fields?: Record<string, unknown>
+      files?: Readonly<Record<string, ReadonlyArray<string>>>
+    }) => api.setConceptSingleRecord(concept.id, v.on, v.fields, v.files),
     onSuccess: () => {
       setSeedModal(false)
       qc.invalidateQueries({ queryKey: ["concepts"] })
@@ -1314,7 +1317,7 @@ export function ConceptEditor({
           <RecordForm
             fields={liveFields}
             defaultLabelIds={concept.defaultLabelIds}
-            onSubmit={(fields) => saveSingleRecord.mutate({ on: true, fields })}
+            onSubmit={(fields, files) => saveSingleRecord.mutate({ on: true, fields, files })}
             onCancel={() => setSeedModal(false)}
             pending={saveSingleRecord.isPending}
           />

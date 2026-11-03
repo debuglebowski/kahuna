@@ -1,4 +1,4 @@
-import { Check, ExternalLink, X } from "lucide-react"
+import { Check, ExternalLink, Paperclip, X } from "lucide-react"
 import { Fragment, type ReactNode } from "react"
 import { Link } from "react-router-dom"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
@@ -6,6 +6,7 @@ import { Badge, decayTone, LabelChip, momentumTone } from "../components/ui"
 import { useFullOrg } from "../pages/settings/SettingsLayout"
 import type { DecayValue, Field, MomentumValue } from "./api"
 import { formatDateValue } from "./dates"
+import { fileRefsOf } from "./files"
 import { isRichTextEmpty, richTextPlain, richTextPreview } from "./richtext"
 import { initialsOf, showValue } from "./utils"
 
@@ -104,6 +105,50 @@ function UserPills({ ids }: { ids: ReadonlyArray<string> }) {
   )
 }
 
+/** Most chips a table cell shows before collapsing the rest into "+N". */
+const MAX_FILE_CHIPS = 3
+
+/**
+ * A file property's value in a cell: one chip per file, opening it in a new tab
+ * (inline — the browser renders what it can). Clicks stop here so a row that
+ * navigates on click doesn't also open the record.
+ */
+function FileChips({ value }: { value: unknown }) {
+  const refs = fileRefsOf(value)
+  if (refs.length === 0) return empty
+  const shown = refs.slice(0, MAX_FILE_CHIPS)
+  const rest = refs.length - shown.length
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1">
+      {shown.map((f) => (
+        <a
+          key={f.id}
+          href={`/api/attachments/${f.id}/download?inline=1`}
+          target="_blank"
+          rel="noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          title={f.filename}
+          className="inline-flex max-w-[12rem] items-center gap-1 rounded border border-border bg-muted/40 px-1.5 py-0.5 text-xs text-foreground hover:bg-muted"
+        >
+          <Paperclip size={11} className="shrink-0 text-muted-foreground" />
+          <span className="truncate">{f.filename}</span>
+        </a>
+      ))}
+      {rest > 0 && (
+        <span
+          className="text-xs text-muted-foreground"
+          title={refs
+            .slice(MAX_FILE_CHIPS)
+            .map((f) => f.filename)
+            .join(", ")}
+        >
+          +{rest}
+        </span>
+      )}
+    </span>
+  )
+}
+
 /** A scalar (one element of a possibly-`multiple` value): auto-link URLs. */
 const scalar = (v: unknown): ReactNode =>
   typeof v === "string" && URL_RE.test(v) ? <UrlLink href={v} /> : showValue(v)
@@ -180,6 +225,8 @@ export function FieldValueCell({ field, value }: { field?: Field; value: unknown
     }
     case "richtext":
       return <span title={richTextPlain(value)}>{richTextPreview(value)}</span>
+    case "file":
+      return <FileChips value={value} />
     case "date": {
       if (Array.isArray(value))
         return (

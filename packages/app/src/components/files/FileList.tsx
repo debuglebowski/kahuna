@@ -199,6 +199,8 @@ export function FileList({
   canMutate,
   onChanged,
   emptyText = "No files yet.",
+  tagOf,
+  actionsOf,
 }: {
   files: ReadonlyArray<Attachment>
   variant?: "list" | "gallery"
@@ -207,6 +209,11 @@ export function FileList({
   canMutate?: (f: Attachment) => boolean
   onChanged?: () => void
   emptyText?: string
+  /** Extra metadata after the size/date line (list variant) — the record panel
+   *  uses it to name the file property a file belongs to. */
+  tagOf?: (f: Attachment) => ReactNode
+  /** Extra row actions before download/archive/delete (list variant). */
+  actionsOf?: (f: Attachment) => ReactNode
 }) {
   const changed = onChanged ?? (() => {})
   // Above the early returns: hooks can't sit behind a conditional.
@@ -321,13 +328,15 @@ export function FileList({
                   </span>
                 )}
                 {f.archivedAt && <span className="italic">· archived</span>}
+                {tagOf?.(f)}
               </p>
             </div>
             {/* Dimmed rather than hidden: hover-only actions are invisible on touch
                 and undiscoverable everywhere else — the reason a row looked like it
                 offered nothing but a download. Focus-within keeps them up for
                 keyboard users mid-tab. */}
-            <span className="opacity-60 transition group-hover:opacity-100 focus-within:opacity-100">
+            <span className="flex items-center opacity-60 transition group-hover:opacity-100 focus-within:opacity-100">
+              {actionsOf?.(f)}
               <FileActions file={f} canMutate={canMutate?.(f) ?? false} onChanged={changed} />
             </span>
           </div>
@@ -355,9 +364,9 @@ function useUpload(owner: FileOwner, onUploaded: () => void) {
     },
     onError: (e) => setError((e as Error).message),
   })
-  const take = (list: FileList | null) => {
+  const take = (list: FileList | null, multiple = true) => {
     const files = [...(list ?? [])]
-    if (files.length > 0) upload.mutate(files)
+    if (files.length > 0) upload.mutate(multiple ? files : files.slice(0, 1))
   }
   return { take, error, pending: upload.isPending }
 }
@@ -445,12 +454,16 @@ export function FileDropZone({
   owner,
   onUploaded,
   children,
+  multiple = true,
 }: {
-  /** A record, or a Files widget's own bucket. */
+  /** A record (optionally one of its file properties), or a Files widget's own bucket. */
   owner: FileOwner
   onUploaded: () => void
   /** Custom idle content; default is the "drop files" hint. */
   children?: ReactNode
+  /** false = take one file per pick/drop (a single-file property: a second
+   *  file would only replace the first). */
+  multiple?: boolean
 }) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [dragging, setDragging] = useState(false)
@@ -469,7 +482,7 @@ export function FileDropZone({
         onDrop={(e) => {
           e.preventDefault()
           setDragging(false)
-          take(e.dataTransfer.files)
+          take(e.dataTransfer.files, multiple)
         }}
         className={`flex w-full items-center justify-center gap-2 rounded-lg border border-dashed px-3 py-3 text-sm transition ${
           dragging
@@ -483,10 +496,10 @@ export function FileDropZone({
       <input
         ref={inputRef}
         type="file"
-        multiple
+        multiple={multiple}
         className="hidden"
         onChange={(e) => {
-          take(e.target.files)
+          take(e.target.files, multiple)
           e.target.value = ""
         }}
       />

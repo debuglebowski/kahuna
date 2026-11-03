@@ -297,6 +297,9 @@ export interface AttachmentRow {
   readonly record_id: string | null
   readonly bucket_id: string | null
   readonly bucket_shared: boolean
+  readonly field_id: string | null
+  readonly position: number | string
+  readonly staged_until: Date | null
   readonly filename: string
   readonly content_ref: string
   readonly mime_type: string | null
@@ -312,6 +315,9 @@ export const toAttachment = (r: AttachmentRow): Attachment => ({
   recordId: r.record_id,
   bucketId: r.bucket_id,
   bucketShared: r.bucket_shared,
+  fieldId: r.field_id,
+  position: Number(r.position),
+  stagedUntil: r.staged_until,
   filename: r.filename,
   contentRef: r.content_ref,
   mimeType: r.mime_type,

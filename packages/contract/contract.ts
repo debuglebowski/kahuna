@@ -190,7 +190,8 @@ export const FieldConfig = Schema.Struct({
   recordDashboardId: Schema.optional(Schema.NullOr(Schema.String)),
   computedKind: Schema.optional(Schema.Literal("decay", "momentum")),
   params: Schema.optional(Schema.Record({ key: Schema.String, value: Schema.Unknown })),
-  /** any scalar kind: store/validate a list of values. */
+  /** any scalar kind: store/validate a list of values. `file`: any number of
+   *  files (ordered) instead of exactly one. */
   multiple: Schema.optional(Schema.Boolean),
   /** text/number: an extra format constraint. */
   format: Schema.optional(Schema.String),
@@ -234,6 +235,15 @@ export const Attachment = Schema.Struct({
   id: Schema.String,
   recordId: Schema.NullOr(Schema.String),
   bucketId: Schema.NullOr(Schema.String),
+  /** Record files only: the file PROPERTY (a `kind: "file"` field) this file is a
+   *  value of; null = a loose file shown only in the record's Files panel. A
+   *  property file is an ordinary record file — same storage, same rights. */
+  fieldId: Schema.NullOr(Schema.String),
+  /** Order within a multi-file property (asc). 0 for loose files. */
+  position: Schema.Number,
+  /** Set ⇔ a STAGED upload: no owner yet, visible to its uploader only, removed
+   *  at this time unless a `createRecord({ files })` claims it. */
+  stagedUntil: Schema.NullOr(Schema.Date),
   filename: Schema.String,
   mimeType: Schema.NullOr(Schema.String),
   sizeBytes: Schema.NullOr(Schema.Number),
@@ -244,6 +254,23 @@ export const Attachment = Schema.Struct({
   archivedAt: Schema.NullOr(Schema.Date),
 })
 export type Attachment = typeof Attachment.Type
+
+/**
+ * A file property's value, as it appears in `RecordVersion.state[fieldId]` on
+ * reads (`listRecords` / `getRecord`): projected from the record's attachments at
+ * read time, never stored. `multiple` → `FileRef[]` (position order), single →
+ * one `FileRef`; absent when the property holds no file. Never writable through
+ * `updateRecord` — upload with `?field=`, then `moveFile` / `reorderFieldFiles`.
+ */
+export const FileRef = Schema.Struct({
+  id: Schema.String,
+  filename: Schema.String,
+  mimeType: Schema.NullOr(Schema.String),
+  sizeBytes: Schema.NullOr(Schema.Number),
+  createdBy: Schema.NullOr(Schema.String),
+  createdAt: Schema.Date,
+})
+export type FileRef = typeof FileRef.Type
 
 export const FeedItem = Schema.Struct({
   id: Schema.Number,
@@ -1658,6 +1685,10 @@ export class KahunaRpcs extends RpcGroup.make(
       conceptId: Schema.String,
       singleRecord: Schema.Boolean,
       fields: Schema.optional(Fields),
+      /** Staged file-property values for the seeded record (see createRecord). */
+      files: Schema.optional(
+        Schema.Record({ key: Schema.String, value: Schema.Array(Schema.String) }),
+      ),
     },
     success: Concept,
     error: RpcError,
@@ -1822,8 +1853,17 @@ export class KahunaRpcs extends RpcGroup.make(
     success: Schema.Array(FeedItem),
     error: RpcError,
   }),
+  // `files`: file-property values for the new record — `fieldId → STAGED
+  // upload ids` (POST /api/attachments/staged), in display order. Claimed in the
+  // create transaction, so a `required` file property can be met at creation.
   Rpc.make("createRecord", {
-    payload: { conceptId: Schema.String, fields: Fields },
+    payload: {
+      conceptId: Schema.String,
+      fields: Fields,
+      files: Schema.optional(
+        Schema.Record({ key: Schema.String, value: Schema.Array(Schema.String) }),
+      ),
+    },
     success: RecordVersion,
     error: RpcError,
   }),
@@ -2207,6 +2247,29 @@ export class KahunaRpcs extends RpcGroup.make(
       conceptId: Schema.optional(Schema.String),
       includeArchived: Schema.optional(Schema.Boolean),
       limit: Schema.optional(Schema.Number),
+    },
+    success: Schema.Array(Attachment),
+    error: RpcError,
+  }),
+  // File properties. Upload straight into one with `?field=<fieldId>` on the
+  // record upload route. `moveFile` puts an existing record file into a property
+  // of the same record, out of one (`fieldId: null` → a loose Files-panel file),
+  // or between two; into a single-file property it REPLACES (the old value is
+  // archived). Anyone who may write the record (archive/delete stay uploader or
+  // admin).
+  Rpc.make("moveFile", {
+    payload: { id: Schema.String, fieldId: Schema.NullOr(Schema.String) },
+    success: Attachment,
+    error: RpcError,
+  }),
+  // Display order of one property's files on one record: `ids` first, in order;
+  // any live file not listed keeps its place after them. Returns the property's
+  // files (archived included), ordered. Any member who may write the record.
+  Rpc.make("reorderFieldFiles", {
+    payload: {
+      recordId: Schema.String,
+      fieldId: Schema.String,
+      ids: Schema.Array(Schema.String),
     },
     success: Schema.Array(Attachment),
     error: RpcError,

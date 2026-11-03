@@ -68,6 +68,25 @@ export const findField = (fields: ReadonlyArray<Field>, name: string): Field => 
   )
 }
 
+/**
+ * A file property's value as plain text: the filename(s), comma-joined. A file
+ * field's value arrives as one `FileRef` (single) or a `FileRef[]` (multiple),
+ * projected server-side from the record's attachments; anything else (absent,
+ * or an unexpected shape) reads as empty. JSON output keeps the refs instead, so
+ * a script still gets the ids `attachment download` needs.
+ */
+export const fileNames = (value: unknown): string => {
+  const refs = Array.isArray(value) ? value : value == null ? [] : [value]
+  return refs
+    .map((r) =>
+      r && typeof r === "object" && typeof (r as { filename?: unknown }).filename === "string"
+        ? (r as { filename: string }).filename
+        : "",
+    )
+    .filter(Boolean)
+    .join(", ")
+}
+
 /** Looks like a UUID, so it can be used as an id without a lookup. */
 export const isId = (s: string): boolean =>
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s)
@@ -156,6 +175,14 @@ const coerce = (field: Field, text: string): unknown => {
   // the only way to say "unset" without a separate flag.
   if (text === "") return null
   switch (field.kind) {
+    // Files are attachments, never state — say how to set one instead of letting
+    // the server refuse a filename it can't use.
+    case "file":
+      throw new CliError(
+        `"${field.name}" holds files, not text.`,
+        EXIT.usage,
+        `On create: --file "${field.name}=<path>". On an existing record: attachment upload <path> --record <record-id> --field "${field.name}"`,
+      )
     case "number":
     case "money": {
       const n = Number(text)

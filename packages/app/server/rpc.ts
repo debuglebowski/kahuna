@@ -596,12 +596,12 @@ const HandlersLive = ServerRpcs.toLayer(
     // Admin + the member check `createRecord` does: `fields` seeds a real record,
     // so any `user`-kind value in it must be an actual org member. Without this the
     // toggle would be a hole in a rule every other write path enforces.
-    setConceptSingleRecord: ({ conceptId, singleRecord, fields }) =>
+    setConceptSingleRecord: ({ conceptId, singleRecord, fields, files }) =>
       requireAction("configure", { type: "concept", id: conceptId }).pipe(
         Effect.zipRight(
           checkThen(
             (orgId) => assertMembers(orgId, conceptId, fields ?? {}),
-            uc.setConceptSingleRecord(conceptId, singleRecord, fields),
+            uc.setConceptSingleRecord(conceptId, singleRecord, fields, files),
           ),
         ),
       ) as Effect.Effect<Concept, RpcError, OrgContext | EngineServices>,
@@ -656,10 +656,10 @@ const HandlersLive = ServerRpcs.toLayer(
     getSingleRecord: ({ conceptId }) => as<RecordDetail | null>(uc.getSingleRecord(conceptId)),
     getChanged: () => mapErr(uc.getChanged),
     listEvents: ({ conceptId, since, limit }) => mapErr(uc.listEvents({ conceptId, since, limit })),
-    createRecord: ({ conceptId, fields }) =>
+    createRecord: ({ conceptId, fields, files }) =>
       checkThen(
         (orgId) => assertMembers(orgId, conceptId, fields),
-        uc.createRecord(conceptId, fields),
+        uc.createRecord(conceptId, fields, files),
       ),
     updateRecord: ({ id, expectedVersion, patch }) =>
       checkThen(
@@ -872,6 +872,12 @@ const HandlersLive = ServerRpcs.toLayer(
       as<ReadonlyArray<Attachment>>(
         uc.listFiles({ recordId, recordVersionId, bucketId, conceptId, includeArchived, limit }),
       ),
+    // Any member who may write the record (gated in the use-case): a move never
+    // deletes, is logged (AttachmentMoved) and reversible. Archive/delete stay
+    // uploader-or-admin.
+    moveFile: ({ id, fieldId }) => as<Attachment>(uc.moveFile(id, fieldId)),
+    reorderFieldFiles: ({ recordId, fieldId, ids }) =>
+      as<ReadonlyArray<Attachment>>(uc.reorderFieldFiles(recordId, fieldId, ids)),
     archiveFile: ({ id }) =>
       guarded<Attachment>(
         (orgId, actor) => assertCanMutateAttachment(orgId, actor, id),

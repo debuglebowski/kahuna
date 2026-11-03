@@ -54,6 +54,7 @@ export type {
   Field,
   FieldConfig,
   FieldKind,
+  FileRef,
   GraphLayout,
   KmRecord,
   Label,
@@ -86,8 +87,20 @@ export type {
 /** Who a new upload belongs to: a record, or a Files widget's own bucket
  *  (`shared: false` hides it from org-scope widgets). Mirrors the engine's
  *  `UploadOwner` — the two upload routes take exactly one of these. */
+/**
+ * The multipart upload route for an owner. `/api/records/`, NOT `/api/items/`:
+ * the vocabulary rename moved the route (router.ts) and once left this call site
+ * behind, so every upload from the app 404'd — a URL string is invisible to the
+ * typechecker, hence a pure function with a test (api-upload.test.ts).
+ */
+export const uploadUrlFor = (owner: FileOwner): string =>
+  "recordId" in owner
+    ? `/api/records/${owner.recordId}/attachments${owner.fieldId ? `?field=${encodeURIComponent(owner.fieldId)}` : ""}`
+    : `/api/buckets/${owner.bucketId}/attachments?shared=${owner.shared === false ? "false" : "true"}`
+
 export type FileOwner =
-  | { readonly recordId: string }
+  /** `fieldId` = upload straight into that file property of the record. */
+  | { readonly recordId: string; readonly fieldId?: string }
   | { readonly bucketId: string; readonly shared?: boolean }
 
 /** The server's cap, in MB, for the one message the user can act on. Kept in sync
@@ -568,7 +581,8 @@ export const api = {
     conceptId: string,
     singleRecord: boolean,
     fields?: Record<string, unknown>,
-  ) => call((c) => c.setConceptSingleRecord({ conceptId, singleRecord, fields })),
+    files?: Readonly<Record<string, ReadonlyArray<string>>>,
+  ) => call((c) => c.setConceptSingleRecord({ conceptId, singleRecord, fields, files })),
   archiveConcept: (id: string) => call((c) => c.archiveConcept({ id })),
   restoreConcept: (id: string) => call((c) => c.restoreConcept({ id })),
   deleteConcept: (id: string) => call((c) => c.deleteConcept({ id })),
@@ -620,8 +634,12 @@ export const api = {
     call((c) =>
       c.listEvents({ conceptId: input?.conceptId, since: input?.since, limit: input?.limit }),
     ),
-  createRecord: (conceptId: string, fields: Fields) =>
-    call((c) => c.createRecord({ conceptId, fields })),
+  /** `files`: file-property values as STAGED upload ids (`stageFile`). */
+  createRecord: (
+    conceptId: string,
+    fields: Fields,
+    files?: Readonly<Record<string, ReadonlyArray<string>>>,
+  ) => call((c) => c.createRecord({ conceptId, fields, ...(files ? { files } : {}) })),
   updateRecord: (id: string, expectedVersion: number, patch: Fields) =>
     call((c) => c.updateRecord({ id, expectedVersion, patch })),
   transitionRecord: (id: string, expectedVersion: number, field: string, to: string) =>
@@ -780,6 +798,11 @@ export const api = {
     includeArchived?: boolean
     limit?: number
   }) => call((c) => c.listFiles(filter ?? {})),
+  /** Into a file property of the file's record, or out (`null` → a loose
+   *  Files-panel file). Into a single-file property replaces its value. */
+  moveFile: (id: string, fieldId: string | null) => call((c) => c.moveFile({ id, fieldId })),
+  reorderFieldFiles: (recordId: string, fieldId: string, ids: ReadonlyArray<string>) =>
+    call((c) => c.reorderFieldFiles({ recordId, fieldId, ids })),
   archiveFile: (id: string) => call((c) => c.archiveFile({ id })),
   restoreFile: (id: string) => call((c) => c.restoreFile({ id })),
   deleteFile: (id: string) => call((c) => c.deleteFile({ id })),
@@ -796,21 +819,29 @@ export const api = {
   uploadFile: async (owner: FileOwner, file: File): Promise<void> => {
     const form = new FormData()
     form.append("file", file)
-    const url =
-      "recordId" in owner
-        ? // `/api/records/`, NOT `/api/items/`. The vocabulary rename moved the
-          // route (router.ts) and left this call site behind, so every upload
-          // from the app 404'd — a URL string is invisible to the typechecker,
-          // and no test covers this path. Found by the CLI hitting the same route.
-          `/api/records/${owner.recordId}/attachments`
-        : `/api/buckets/${owner.bucketId}/attachments?shared=${owner.shared === false ? "false" : "true"}`
-    const res = await fetch(url, { method: "POST", body: form })
+    const res = await fetch(uploadUrlFor(owner), { method: "POST", body: form })
     if (!res.ok) {
       const body = (await res.json().catch(() => null)) as { error?: string } | null
       if (body?.error === "ATTACHMENT_TOO_LARGE")
         throw new Error(`"${file.name}" is too large — the limit is ${MAX_UPLOAD_MB} MB`)
       throw new Error(body?.error ? `Upload failed: ${body.error}` : "Upload failed")
     }
+  },
+  /** Upload a file for a record that doesn't exist yet (the create form). Owner-
+   *  less and visible to you alone until `createRecord({ files })` claims it;
+   *  expires unclaimed after a day. Returns the staged attachment's id. */
+  stageFile: async (file: File): Promise<{ id: string; filename: string }> => {
+    const form = new FormData()
+    form.append("file", file)
+    const res = await fetch("/api/attachments/staged", { method: "POST", body: form })
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null
+      if (body?.error === "ATTACHMENT_TOO_LARGE")
+        throw new Error(`"${file.name}" is too large — the limit is ${MAX_UPLOAD_MB} MB`)
+      throw new Error(body?.error ? `Upload failed: ${body.error}` : "Upload failed")
+    }
+    const row = (await res.json()) as { id: string; filename: string }
+    return { id: row.id, filename: row.filename }
   },
   /** Browser-native save (content-disposition: attachment). */
   fileDownloadUrl: (id: string) => `/api/attachments/${id}/download`,

@@ -7,6 +7,7 @@ import { arrangeFiles, canMutateFile, uploadTarget } from "@/lib/files"
 import { queryClient } from "@/lib/queryClient"
 import { useSingleRecord } from "@/lib/singleRecord"
 import { FileDropSurface, FileDropZone, FileList, useFileViewer } from "../files/FileList"
+import { fileMoveTargets, MoveToProperty, PropertyTag } from "../files/FileProperties"
 import { Spinner } from "../ui"
 
 type Files = Extract<DashboardWidget, { type: "files" }>
@@ -102,10 +103,15 @@ export function FilesWidget({
   const itemQ = useQuery({
     queryKey: ["instanceItem", widget.recordVersionId],
     queryFn: () => api.getRecord(widget.recordVersionId ?? ""),
-    // Only a pinned record needs the id→lineage hop; a bucket and a borrowed record
-    // are already usable as-is.
-    enabled: target?.kind === "recordVersion",
+    // A pinned record needs the id→lineage hop (a bucket and a borrowed record are
+    // usable as-is) — and ANY one-record list needs its field defs, to name each
+    // file's property and offer "move to property".
+    enabled: target?.kind === "recordVersion" || (scope === "recordVersion" && configured),
   })
+  // One record's files: tag property files and offer the move menu (the server
+  // gates moves on writing the record). Wider scopes span concepts — no tags.
+  const recordFields = scope === "recordVersion" ? (itemQ.data?.fields ?? []) : []
+  const moveTargets = interactive ? fileMoveTargets(recordFields) : []
   const owner: FileOwner | null =
     target === null
       ? null
@@ -156,6 +162,12 @@ export function FilesWidget({
           // uploader-or-admin rule the server enforces, and the same one the record
           // tile already used.
           canMutate={(f) => canMutateFile(f, viewer)}
+          tagOf={(f) => <PropertyTag file={f} fields={recordFields} />}
+          actionsOf={(f) =>
+            moveTargets.length > 0 && !f.archivedAt ? (
+              <MoveToProperty file={f} targets={moveTargets} onMoved={() => filesQ.refetch()} />
+            ) : null
+          }
           emptyText={
             wantsUpload
               ? // There's a drop zone just below, so "no files" is the whole story.

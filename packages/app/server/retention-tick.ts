@@ -1,5 +1,6 @@
 import { Duration, Effect, Schedule } from "effect"
 import type { Pool } from "pg"
+import { sweepExpiredStaged } from "#engine"
 import { pool } from "./db"
 import { AppRuntime } from "./runtime"
 
@@ -208,6 +209,15 @@ const tickOnce = Effect.gen(function* () {
   const purged = Object.fromEntries(Object.entries(deleted).filter(([, n]) => n > 0))
   if (Object.keys(purged).length > 0) yield* Effect.logInfo("retention purge", purged)
   if (Object.keys(errors).length > 0) yield* Effect.logError("retention purge errors", errors)
+  // Staged uploads no create claimed (STAGED_TTL_HOURS): rows AND blobs, so it
+  // runs through the engine rather than as a plain SQL rule above. Not
+  // configurable — an unclaimed staged file is never anyone's data.
+  const staged = yield* sweepExpiredStaged().pipe(
+    Effect.catchAllCause((cause) =>
+      Effect.logError("staged upload sweep error", cause).pipe(Effect.as(0)),
+    ),
+  )
+  if (staged > 0) yield* Effect.logInfo("swept expired staged uploads", { staged })
 })
 
 let started = false

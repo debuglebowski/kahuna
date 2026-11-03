@@ -34,8 +34,9 @@ const KINDS: ReadonlyArray<FieldKind> = [
 const KIND_LABELS: Partial<Record<FieldKind, string>> = { richtext: "rich text" }
 export const fieldKindLabel = (k: FieldKind): string => KIND_LABELS[k] ?? k
 
-/** Scalar kinds that can carry `config.multiple`, and the formats per kind. */
-const MULTIPLE_KINDS = new Set<FieldKind>(["text", "number", "date", "enum", "user"])
+/** Kinds that can carry `config.multiple`, and the formats per kind. `file` =
+ *  any number of files on the property instead of exactly one. */
+const MULTIPLE_KINDS = new Set<FieldKind>(["text", "number", "date", "enum", "user", "file"])
 /** Kinds that can carry `config.unique` (mirrors the engine's UNIQUE_KINDS). */
 const UNIQUE_KINDS = new Set<FieldKind>(["text", "number", "date", "enum", "user", "money"])
 const FORMATS: Partial<Record<FieldKind, ReadonlyArray<string>>> = {
@@ -54,6 +55,9 @@ const REQUIREMENT_KINDS = new Set<FieldKind>([
   "user",
   "json",
   "money",
+  // Files are staged on the create form and claimed with the record, so a
+  // required file property is checkable at creation.
+  "file",
 ])
 type Requirement = "required" | "flagged" | "optional"
 const REQUIREMENTS: ReadonlyArray<{ value: Requirement; label: string }> = [
@@ -269,7 +273,7 @@ export function FieldForm({
           {MULTIPLE_KINDS.has(kind) && (
             <Label className="flex items-center gap-2 text-sm font-normal text-foreground">
               <Checkbox checked={multiple} onCheckedChange={(c) => setMultiple(c === true)} />
-              Allow multiple values
+              {kind === "file" ? "Allow multiple files" : "Allow multiple values"}
             </Label>
           )}
           {UNIQUE_KINDS.has(kind) && (

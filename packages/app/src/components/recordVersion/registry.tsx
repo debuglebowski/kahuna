@@ -135,6 +135,8 @@ export const TILE_CONTENTS: Record<TileContentKey, TileContent> = {
         myUserId={ctx.myUserId}
         isAdmin={ctx.admin}
         members={ctx.members}
+        fields={ctx.fields}
+        onChanged={ctx.refetch}
       />
     ),
   },

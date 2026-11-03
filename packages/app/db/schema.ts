@@ -526,6 +526,21 @@ export const recordGraphLayouts = pgTable(
  *   nothing to reference. Widget/dashboard deletion prompts the user to purge or
  *   keep (the body is opaque server-side — no cascade can exist here).
  *
+ * `field_id` (record files only) = the file PROPERTY this file is the value of —
+ * a `kind: "file"` field on the record's concept. Null = a loose file, shown only
+ * in the record's built-in Files panel. A property file is still an ordinary
+ * record file (same blob store, same uploader/admin archive + purge rights, same
+ * soft delete) — the column only says which property presents it, so files are
+ * never split across two storage locations. `position` orders a multi-file
+ * property (asc, ties by id). A purged field releases its files back to the
+ * panel (ON DELETE SET NULL) — nothing is lost.
+ *
+ * **Staged** (`staged_until` set, NO owner): uploaded before its record exists,
+ * so a create can carry files — and so a `required` file property can be met at
+ * creation. Visible to its uploader only; `createRecord({ files })` attaches it
+ * in the create transaction (owner set, `staged_until` cleared). Unclaimed rows
+ * are swept with their blobs once `staged_until` passes (retention-tick.ts).
+ *
  * `bucket_shared` = may an org-scope Files widget list this row (default yes).
  * Denormalised onto the row, not a bucket table, so the org-scope list filters
  * without a join. It gates *listing* only — a direct download URL is reachable by
@@ -540,6 +555,9 @@ export const attachments = pgTable(
     recordId: uuid("record_id").references(() => records.id),
     bucketId: uuid("bucket_id"),
     bucketShared: boolean("bucket_shared").notNull().default(true),
+    fieldId: uuid("field_id").references(() => fields.id, { onDelete: "set null" }),
+    position: integer("position").notNull().default(0),
+    stagedUntil: timestamp("staged_until", { withTimezone: true }),
     filename: text("filename").notNull(),
     contentRef: text("content_ref").notNull(),
     mimeType: text("mime_type"),
@@ -557,8 +575,19 @@ export const attachments = pgTable(
       .where(sql`${t.bucketId} IS NOT NULL`),
     // Concept/org-scope "recent uploads" lists.
     index("attachments_org_idx").on(t.orgId, t.id),
-    // Exactly one owner — never both, never neither.
-    check("attachments_one_owner", sql`(${t.recordId} IS NULL) <> (${t.bucketId} IS NULL)`),
+    // One file property's values, in display order.
+    index("attachments_field_idx")
+      .on(t.orgId, t.recordId, t.fieldId, t.position)
+      .where(sql`${t.fieldId} IS NOT NULL`),
+    // Exactly one owner — never both; neither ONLY while staged.
+    check(
+      "attachments_one_owner",
+      sql`CASE WHEN ${t.stagedUntil} IS NULL THEN (${t.recordId} IS NULL) <> (${t.bucketId} IS NULL) ELSE ${t.recordId} IS NULL AND ${t.bucketId} IS NULL END`,
+    ),
+    // The expiry sweep.
+    index("attachments_staged_idx").on(t.stagedUntil).where(sql`${t.stagedUntil} IS NOT NULL`),
+    // Only a record file can be a property's value (a bucket has no concept).
+    check("attachments_field_needs_record", sql`${t.fieldId} IS NULL OR ${t.recordId} IS NOT NULL`),
   ],
 )
 

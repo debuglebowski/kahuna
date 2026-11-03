@@ -1,4 +1,4 @@
-import type { Attachment } from "./api"
+import type { Attachment, FileRef } from "./api"
 
 /**
  * Pure helpers for the Files surfaces (record version tile + dashboard widget):
@@ -130,3 +130,18 @@ export const arrangeFiles = (
   )
   return opts.limit != null && opts.limit > 0 ? filtered.slice(0, opts.limit) : filtered
 }
+
+/**
+ * A file property's value (`state[fieldId]`), as the list of refs it holds.
+ * The server projects it at read time: one `FileRef` for a single-file property,
+ * a `FileRef[]` for a multi-file one, absent when empty. Anything that isn't a
+ * ref (a stale cached shape) is dropped rather than rendered as `[object]`.
+ */
+export const fileRefsOf = (value: unknown): ReadonlyArray<FileRef> =>
+  (Array.isArray(value) ? value : value == null ? [] : [value]).filter(
+    (v): v is FileRef =>
+      !!v &&
+      typeof v === "object" &&
+      typeof (v as FileRef).id === "string" &&
+      typeof (v as FileRef).filename === "string",
+  )

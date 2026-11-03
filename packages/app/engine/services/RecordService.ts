@@ -34,6 +34,7 @@ import { ComputedFields } from "./ComputedFields"
 import { ConceptService } from "./ConceptService"
 import { EventStore } from "./EventStore"
 import { FieldService } from "./FieldService"
+import { claimStaged, liveFileCounts } from "./fileProperties"
 import { LabelService } from "./LabelService"
 import { OrgContext } from "./OrgContext"
 import {
@@ -141,6 +142,11 @@ const validateValue = (
 ): Effect.Effect<unknown, FieldValidationError> => {
   if (value === null && def.kind !== "relation" && def.kind !== "file" && def.kind !== "computed")
     return Effect.succeed(null)
+  // Never settable through state, list or not. Checked BEFORE the `multiple`
+  // fan-out: a multi-file property would otherwise accept `[]` (nothing to fan
+  // out over) and persist a stray key its read-time value then shadows.
+  if (def.kind === "relation" || def.kind === "file" || def.kind === "computed")
+    return validateScalar(def, value)
   if (def.config.multiple) {
     if (!Array.isArray(value))
       return Effect.fail(
@@ -172,10 +178,25 @@ const checkRequired = (
   defs: ReadonlyArray<Field>,
   state: RecordState,
   keys: "all" | "present",
+  /** Live files per file property (`fieldId → n`). A file property's value is
+   *  attachments, never state, so it is checked from these counts instead —
+   *  and only when given: an update never names one (it can't), so "present"
+   *  calls pass none and skip them. */
+  fileCounts?: ReadonlyMap<string, number>,
 ): Effect.Effect<void, FieldValidationError> =>
   Effect.gen(function* () {
     for (const def of defs) {
       if (def.config.requirement !== "required") continue
+      if (def.kind === "file") {
+        if (fileCounts && (fileCounts.get(def.id) ?? 0) === 0)
+          return yield* Effect.fail(
+            new FieldValidationError({
+              message: `field "${def.name}" is required — attach at least one file`,
+              field: def.name,
+            }),
+          )
+        continue
+      }
       if (keys === "present" && !(def.id in state)) continue
       if (isMissing(state[def.id])) {
         return yield* Effect.fail(
@@ -440,7 +461,16 @@ export class RecordService extends Effect.Service<RecordService>()("engine/Recor
         }
       })
 
-    const create = (input: ConceptRef & { readonly fields: Record<string, unknown> }) =>
+    const create = (
+      input: ConceptRef & {
+        readonly fields: Record<string, unknown>
+        /** File-property values for the new record: `fieldId → STAGED upload
+         *  ids` (in order), claimed inside this transaction — so a `required`
+         *  file property is satisfiable at creation, and a failed create leaves
+         *  the uploads staged rather than half-attached. */
+        readonly files?: Readonly<Record<string, ReadonlyArray<string>>>
+      },
+    ) =>
       sql.withTransaction(
         Effect.gen(function* () {
           const { orgId, actor } = yield* OrgContext
@@ -493,7 +523,14 @@ export class RecordService extends Effect.Service<RecordService>()("engine/Recor
           const { rest, rawLabels } = splitLabels(input.fields)
           const validated = yield* validateFields(defs, rest)
           // A record cannot exist without its required values — drafts included.
-          yield* checkRequired(defs, validated, "all")
+          // File properties count the staged files this create brings along.
+          const files = input.files ?? {}
+          yield* checkRequired(
+            defs,
+            validated,
+            "all",
+            new Map(Object.entries(files).map(([k, ids]) => [k, ids.length] as const)),
+          )
           yield* checkUnique(defs, validated, concept.id, null)
           // Per-record labels: use the caller's set if given, else snapshot the
           // concept's defaults (dropping any since soft-deleted). Static labels
@@ -548,6 +585,11 @@ export class RecordService extends Effect.Service<RecordService>()("engine/Recor
                 version_status = ${folded.right.versionStatus}, published_at = ${folded.right.publishedAt}
             WHERE id = ${created.id} AND org_id = ${orgId} RETURNING *`
           yield* reindexRecordVersionMentions(orgId, created.id, folded.right.state, defs)
+          // After the RecordVersionCreated event, so the record's feed reads
+          // "created" then "file added". Same transaction: a refused claim (an
+          // id not staged by this actor, expired, too many for a single-file
+          // property) rolls the whole create back.
+          yield* claimStaged(sql, events, record.id, defs, files)
           return toRecordVersion(updated[0]!)
         }),
       )
@@ -1178,7 +1220,12 @@ export class RecordService extends Effect.Service<RecordService>()("engine/Recor
           // Publish gate: a draft may predate a field's `required` rule (the rule
           // was added/flipped after creation) — it can't become "Latest" incomplete.
           const defs = yield* fields.listFields(current.conceptId)
-          yield* checkRequired(defs, current.state, "all")
+          yield* checkRequired(
+            defs,
+            current.state,
+            "all",
+            yield* liveFileCounts(sql, current.recordId),
+          )
           const concept = yield* concepts.getById(current.conceptId)
           const event = yield* events.append({
             subjectKind: "recordVersion",
@@ -1505,6 +1552,7 @@ export class RecordService extends Effect.Service<RecordService>()("engine/Recor
       readonly conceptId: string
       readonly singleRecord: boolean
       readonly fields?: Record<string, unknown>
+      readonly files?: Readonly<Record<string, ReadonlyArray<string>>>
     }) =>
       sql.withTransaction(
         Effect.gen(function* () {
@@ -1535,7 +1583,7 @@ export class RecordService extends Effect.Service<RecordService>()("engine/Recor
           // two statements silently disables the guard for the initial record.
           const updated = yield* concepts.setSingleRecord(concept.id, true)
           if (liveItems === 0) {
-            yield* create({ conceptId: concept.id, fields: input.fields ?? {} })
+            yield* create({ conceptId: concept.id, fields: input.fields ?? {}, files: input.files })
           }
           return updated
         }),

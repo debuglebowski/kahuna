@@ -327,6 +327,8 @@ export type EventPayload =
       readonly filename: string
       readonly subjectId?: Id
       readonly bucketId?: Id
+      /** The file property it belongs to, when it is one's value. */
+      readonly fieldId?: Id
     }
   | {
       readonly _tag: "AttachmentArchived"
@@ -334,6 +336,8 @@ export type EventPayload =
       readonly filename: string
       readonly subjectId?: Id
       readonly bucketId?: Id
+      /** The file property it belongs to, when it is one's value. */
+      readonly fieldId?: Id
     }
   | {
       readonly _tag: "AttachmentRestored"
@@ -341,6 +345,8 @@ export type EventPayload =
       readonly filename: string
       readonly subjectId?: Id
       readonly bucketId?: Id
+      /** The file property it belongs to, when it is one's value. */
+      readonly fieldId?: Id
     }
   | {
       readonly _tag: "AttachmentPurged"
@@ -348,6 +354,19 @@ export type EventPayload =
       readonly filename: string
       readonly subjectId?: Id
       readonly bucketId?: Id
+      /** The file property it belongs to, when it is one's value. */
+      readonly fieldId?: Id
+    }
+  // A record file moved into, out of, or between file properties on its record
+  // (`fieldId` null = back to a loose Files-panel file). Reordering within one
+  // property is presentation only and emits nothing (like field reorder).
+  | {
+      readonly _tag: "AttachmentMoved"
+      readonly attachmentId: Id
+      readonly filename: string
+      readonly subjectId: Id
+      readonly fieldId: Id | null
+      readonly fromFieldId: Id | null
     }
   | { readonly _tag: "ConceptCreated"; readonly name: string }
   | {
@@ -536,6 +555,14 @@ export interface Attachment {
   /** Bucket files only: may an org-scope Files widget list this row? Gates
    *  listing, not access — a direct download URL stays member-reachable. */
   readonly bucketShared: boolean
+  /** Record files only: the file PROPERTY (a `kind: "file"` field) this file is a
+   *  value of; null = a loose file, shown only in the record's Files panel. */
+  readonly fieldId: Id | null
+  /** Order within a multi-file property (asc, ties by id). 0 for loose files. */
+  readonly position: number
+  /** Set ⇔ a STAGED upload (no owner yet, uploader-only): when it expires
+   *  unless a `createRecord({ files })` claims it. */
+  readonly stagedUntil: Date | null
   readonly filename: string
   readonly contentRef: string
   readonly mimeType: string | null

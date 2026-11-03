@@ -97,6 +97,14 @@ export const validateScalarValue = (
   def: ScalarDef,
   value: unknown,
 ): Effect.Effect<unknown, FieldValidationError> => {
+  // Disallowed kinds fail before the fan-out (an empty list would slip through it).
+  if (
+    def.kind === "relation" ||
+    def.kind === "file" ||
+    def.kind === "computed" ||
+    def.kind === "richtext"
+  )
+    return validateScalar(def, value)
   if (def.config.multiple) {
     if (!Array.isArray(value))
       return Effect.fail(
