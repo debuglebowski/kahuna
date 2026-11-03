@@ -13,6 +13,9 @@ export type GraphLayoutPositions = Readonly<
   Record<string, { readonly x: number; readonly y: number }>
 >
 
+/** `concept_graph_layouts.style` — opaque to the engine (see contract `GraphStyle`). */
+export type GraphStyleDoc = Readonly<Record<string, unknown>>
+
 interface LayoutRow {
   readonly positions: GraphLayoutPositions
 }
@@ -107,7 +110,30 @@ export class GraphLayoutService extends Effect.Service<GraphLayoutService>()(
           }),
         )
 
-      return { get, save, getForRecord, saveForRecord } as const
+      /** The org's canvas look settings, or `{}` when never saved. */
+      const getStyle = () =>
+        Effect.gen(function* () {
+          const { orgId } = yield* OrgContext
+          const rows = yield* sql<{ readonly style: GraphStyleDoc }>`
+            SELECT style FROM concept_graph_layouts WHERE org_id = ${orgId} LIMIT 1`
+          return rows[0]?.style ?? {}
+        })
+
+      /** Replace (not merge) the look settings — one document edited as a whole,
+       *  and "reset to defaults" must be able to clear keys. */
+      const saveStyle = (style: GraphStyleDoc) =>
+        Effect.gen(function* () {
+          const { orgId } = yield* OrgContext
+          const rows = yield* sql<{ readonly style: GraphStyleDoc }>`
+            INSERT INTO concept_graph_layouts (org_id, style, updated_at)
+            VALUES (${orgId}, ${JSON.stringify(style)}::jsonb, now())
+            ON CONFLICT (org_id)
+            DO UPDATE SET style = EXCLUDED.style, updated_at = now()
+            RETURNING style`
+          return rows[0]?.style ?? {}
+        })
+
+      return { get, save, getForRecord, saveForRecord, getStyle, saveStyle } as const
     }),
     dependencies: [],
   },

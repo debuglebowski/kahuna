@@ -37,11 +37,12 @@ type Dialog =
   | { kind: "deleteConcept"; conceptId: string }
   | null
 
-/** The list route's graph canvas spans the full viewport width. Its own
- *  component (not a hook call in {@link Concepts}) because the parent's chrome
- *  effect would run after — and overwrite — the editor's full-height chrome. */
+/** The list route's graph canvas spans the full viewport width and height
+ *  (the section is `fillHeight` in SettingsLayout). Its own component (not a
+ *  hook call in {@link Concepts}) because the parent's chrome effect would run
+ *  after — and overwrite — the editor's chrome. */
 function FullWidth() {
-  usePageChrome({ fullWidth: true })
+  usePageChrome({ fullWidth: true, fillHeight: true })
   return null
 }
 
@@ -233,7 +234,7 @@ export function Concepts() {
   }
 
   return (
-    <div className="space-y-3">
+    <div className="flex h-full flex-col gap-3">
       <FullWidth />
       <Toolbar filter={filter} onFilter={setFilter} placeholder="Find concept…">
         {admin && archivedConcepts.length > 0 && (
@@ -249,14 +250,17 @@ export function Concepts() {
         )}
       </Toolbar>
 
-      <ConceptGraphCanvas
-        selectedId={null}
-        onSelect={(cid) => navigate(`/settings/concepts/${cid}`)}
-        filter={filter}
-      />
+      {/* Takes the remaining height; below 420px the page scrolls instead. */}
+      <div className="min-h-[420px] flex-1">
+        <ConceptGraphCanvas
+          selectedId={null}
+          onSelect={(cid) => navigate(`/settings/concepts/${cid}`)}
+          filter={filter}
+        />
+      </div>
 
       {showArchived && archivedShown.length > 0 && (
-        <Card>
+        <Card className="shrink-0">
           <CardHeader title={`Archived concepts (${archivedShown.length})`} />
           <ul className="divide-y divide-border">
             {archivedShown.map((c) => (

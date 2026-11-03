@@ -18,15 +18,13 @@ import {
   useReactFlow,
 } from "@xyflow/react"
 import { ChevronDown, Redo2, Settings2, Undo2, Workflow } from "lucide-react"
-import { type CSSProperties, useCallback, useEffect, useMemo, useRef } from "react"
+import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { Checkbox } from "@/components/ui/checkbox"
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Label } from "@/components/ui/label"
@@ -43,7 +41,7 @@ import {
   computeLayout,
   DEFAULT_LAYOUT,
   LAYOUT_DIR,
-  LAYOUT_GROUPS,
+  LAYOUTS,
   type LayoutDir,
   type LayoutInput,
   type LayoutKind,
@@ -62,6 +60,8 @@ import {
 import { recordHref } from "../../lib/recordHref"
 import { recordLabel } from "../../lib/recordLabel"
 import { useRecordViewPrefs } from "../../lib/recordViews"
+import { useUnsavedGuard } from "../../lib/useUnsavedGuard"
+import { GraphLeaveConfirm, GraphSaveBar } from "../graph/GraphSaveBar"
 import { EdgeRoutesProvider, RoutedEdge, useEdgeRoutes } from "../graph/RoutedEdge"
 import { SelfLoopEdge } from "../graph/SelfLoopEdge"
 import { useGraphPositions } from "../graph/useGraphPositions"
@@ -71,7 +71,7 @@ import type { RecordVersionCtx } from "./types"
 /** Stable empty fallback — a fresh `{}` would re-run the flow memo per render. */
 const NO_SAVED: GraphLayout = {}
 
-const KNOWN_LAYOUTS = new Set<string>(LAYOUT_GROUPS.flatMap((g) => g.layouts.map((l) => l.kind)))
+const KNOWN_LAYOUTS = new Set<string>(LAYOUTS.map((l) => l.kind))
 
 /** Saved config, clamped so a stale/foreign prefs row can't break the render. */
 function cfgOf(
@@ -244,9 +244,10 @@ function GraphFlow({
   const [edges, , onEdgesChange] = useEdgesState(initial.edges)
 
   const {
-    saveState,
-    markDirty,
-    scheduleSave,
+    dirty,
+    savePositions,
+    discard,
+    adoptAsBaseline,
     pushHistory,
     undo,
     redo,
@@ -255,14 +256,34 @@ function GraphFlow({
     onNodeDragStart,
     onNodeDragStop,
   } = useGraphPositions(nodes, setNodes, saveLayout)
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState(false)
+  const save = useCallback(async () => {
+    setSaving(true)
+    setSaveError(false)
+    try {
+      await savePositions()
+    } catch (e) {
+      console.warn("graph save failed", e)
+      setSaveError(true)
+    } finally {
+      setSaving(false)
+    }
+  }, [savePositions])
+  const { blocker } = useUnsavedGuard(dirty)
 
   // Run the chosen auto-layout (some are async — ELK), then refit the viewport.
-  // Applying a layout is a single undoable step and autosaves like any move.
+  // Applying a layout is a single undoable step — or, with `asBaseline`, the
+  // unsaved-free starting point (first open with nothing saved).
   const align = useCallback(
-    (kind: LayoutKind) => {
+    (kind: LayoutKind, opts?: { asBaseline?: boolean }) => {
       void computeLayout(kind, withCanvasMeasures(toLayoutInput(graph), nodes, edges)).then(
         (positions) => {
-          pushHistory()
+          if (opts?.asBaseline)
+            adoptAsBaseline(
+              Object.fromEntries(nodes.map((n) => [n.id, positions.get(n.id) ?? n.position])),
+            )
+          else pushHistory()
           const direction = LAYOUT_DIR[kind] ?? "TB"
           setNodes((ns) =>
             ns.map((n) => ({
@@ -271,24 +292,23 @@ function GraphFlow({
               data: { ...n.data, direction },
             })),
           )
-          markDirty("all")
-          scheduleSave()
           requestAnimationFrame(() => fitView({ padding: 0.2 }))
         },
       )
     },
-    [graph, setNodes, fitView, pushHistory, markDirty, scheduleSave, nodes, edges],
+    [graph, setNodes, fitView, pushHistory, adoptAsBaseline, nodes, edges],
   )
 
   // Nothing arranged yet (fresh org / never-opened record graph): run Auto
   // once the nodes are measured, so the first view is the routed layout
-  // rather than dagre's sync fallback. It saves like any layout.
+  // rather than dagre's sync fallback. Not saved: it re-runs identically on
+  // each visit until someone arranges and saves.
   const nodesInitialized = useNodesInitialized()
   const autoLaidOut = useRef(Object.keys(savedPositions).length > 0)
   useEffect(() => {
     if (!nodesInitialized || autoLaidOut.current) return
     autoLaidOut.current = true
-    align(DEFAULT_LAYOUT)
+    align(DEFAULT_LAYOUT, { asBaseline: true })
   }, [nodesInitialized, align])
 
   const routes = useEdgeRoutes(nodes, edges)
@@ -325,19 +345,11 @@ function GraphFlow({
                 <ChevronDown className="text-muted-foreground" />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-56">
-              {LAYOUT_GROUPS.map((g, i) => (
-                <div key={g.group}>
-                  {i > 0 && <DropdownMenuSeparator />}
-                  <DropdownMenuLabel className="text-xs font-medium text-muted-foreground">
-                    {g.group}
-                  </DropdownMenuLabel>
-                  {g.layouts.map((l) => (
-                    <DropdownMenuItem key={l.kind} onSelect={() => align(l.kind)}>
-                      {l.name}
-                    </DropdownMenuItem>
-                  ))}
-                </div>
+            <DropdownMenuContent align="start" className="w-40">
+              {LAYOUTS.map((l) => (
+                <DropdownMenuItem key={l.kind} onSelect={() => align(l.kind)}>
+                  {l.name}
+                </DropdownMenuItem>
               ))}
             </DropdownMenuContent>
           </DropdownMenu>
@@ -363,15 +375,6 @@ function GraphFlow({
           >
             <Redo2 />
           </Button>
-          {saveState !== "idle" && (
-            <span
-              className={
-                saveState === "error" ? "text-xs text-destructive" : "text-xs text-muted-foreground"
-              }
-            >
-              {saveState === "error" ? "Save failed — retrying" : "Saving…"}
-            </span>
-          )}
         </Panel>
         {graph.truncated && (
           <Panel
@@ -381,7 +384,24 @@ function GraphFlow({
             Showing the first {GRAPH_NODE_CAP} items — narrow the fields or depth.
           </Panel>
         )}
+        <Panel position="bottom-center">
+          <GraphSaveBar
+            dirty={dirty}
+            saving={saving}
+            error={saveError}
+            onSave={() => void save()}
+            onDiscard={() => {
+              discard()
+              setSaveError(false)
+            }}
+          />
+        </Panel>
       </ReactFlow>
+      <GraphLeaveConfirm
+        blocked={blocker.state === "blocked"}
+        onLeave={() => blocker.proceed?.()}
+        onStay={() => blocker.reset?.()}
+      />
     </EdgeRoutesProvider>
   )
 }
@@ -414,15 +434,19 @@ export function GraphBody({ ctx }: { ctx: RecordVersionCtx }) {
     enabled: loaded,
   })
   // Saved canvas positions (org-shared, keyed by this root item). Refetched
-  // only on mount — while open, the canvas is the source of truth and
-  // autosaves its own changes. A fetch error falls back to auto-layout.
+  // only on mount — while open, the canvas is the source of truth and writes
+  // the cache back on Save. A fetch error falls back to auto-layout.
   const layoutQ = useQuery({
     queryKey: ["instanceGraphLayout", ctx.recordVersion.recordId],
     queryFn: () => api.getRecordGraphLayout(ctx.recordVersion.recordId),
     staleTime: Number.POSITIVE_INFINITY,
   })
   const saveLayout = useCallback(
-    (patch: GraphLayout) => api.saveRecordGraphLayout(ctx.recordVersion.recordId, patch),
+    (positions: GraphLayout) =>
+      api.saveRecordGraphLayout(ctx.recordVersion.recordId, positions).then((saved) => {
+        queryClient.setQueryData(["instanceGraphLayout", ctx.recordVersion.recordId], saved)
+        return saved
+      }),
     [ctx.recordVersion.recordId],
   )
 

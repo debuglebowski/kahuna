@@ -118,7 +118,8 @@ export const SETTINGS_NAV: ReadonlyArray<SettingsGroup> = [
   {
     title: "Workspace",
     items: [
-      { to: "concepts", label: "Concepts", icon: <Shapes size={16} /> },
+      // Fills the height so the concept graph canvas can take all of it.
+      { to: "concepts", label: "Concepts", icon: <Shapes size={16} />, fillHeight: true },
       { to: "labels", label: "Labels", icon: <Tags size={16} /> },
       { to: "tasks", label: "Tasks", icon: <ListTodo size={16} /> },
       {

@@ -37,6 +37,7 @@ import {
   getChanged,
   getConceptGraph,
   getGraphLayout,
+  getGraphStyle,
   getRecordDetail,
   getRecordGraphLayout,
   getRecordViewPrefs,
@@ -54,6 +55,7 @@ import {
   restoreLabel,
   restoreRecordVersion,
   saveGraphLayout,
+  saveGraphStyle,
   saveRecordGraphLayout,
   setConceptSingleRecord,
   updateField,
@@ -267,6 +269,32 @@ describe("archive / restore / delete (end-to-end use-case wiring)", () => {
     // Now empty, the concept deletes cleanly.
     await run(org, deleteConcept(c.id))
     expect(has(await run(org, listConcepts(true)), c.id)).toBe(false)
+  })
+})
+
+describe("concept graph look settings", () => {
+  it("replaces the whole document, leaves positions alone, and stays org-scoped", async () => {
+    const orgA = randomUUID()
+    const orgB = randomUUID()
+    const a = (await run(orgA, createConcept("Alpha"))) as WithId
+
+    expect(await run(orgA, getGraphStyle)).toEqual({})
+
+    // Saving style on an org with positions keeps the positions (shared row).
+    await run(orgA, saveGraphLayout({ [a.id]: { x: 1, y: 2 } }))
+    await run(orgA, saveGraphStyle({ cornerRadius: 12, labels: "forward" }))
+    expect(await run(orgA, getGraphStyle)).toEqual({ cornerRadius: 12, labels: "forward" })
+    expect(await run(orgA, getGraphLayout)).toEqual({ [a.id]: { x: 1, y: 2 } })
+
+    // Replace, not merge — "reset to defaults" must be able to drop keys.
+    await run(orgA, saveGraphStyle({ lineWidth: 2 }))
+    expect(await run(orgA, getGraphStyle)).toEqual({ lineWidth: 2 })
+
+    // Saving positions later doesn't wipe the style either.
+    await run(orgA, saveGraphLayout({ [a.id]: { x: 3, y: 4 } }))
+    expect(await run(orgA, getGraphStyle)).toEqual({ lineWidth: 2 })
+
+    expect(await run(orgB, getGraphStyle)).toEqual({})
   })
 })
 

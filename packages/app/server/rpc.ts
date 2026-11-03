@@ -18,6 +18,7 @@ import {
   type ExplainAccess,
   type Field,
   type GraphLayout,
+  type GraphStyle,
   KahunaRpcs,
   type KmRecord,
   type Label,
@@ -623,6 +624,8 @@ const HandlersLive = ServerRpcs.toLayer(
       as<ReadonlyArray<Field>>(uc.listFields(conceptId, includeArchived)),
     getConceptGraph: () => as<ConceptGraph>(uc.getConceptGraph),
     getGraphLayout: () => as<GraphLayout>(uc.getGraphLayout),
+    getGraphStyle: () => as<GraphStyle>(uc.getGraphStyle),
+    saveGraphStyle: ({ style }) => as<GraphStyle>(uc.saveGraphStyle(style)),
     saveGraphLayout: ({ positions }) => as<GraphLayout>(uc.saveGraphLayout(positions)),
     getRecordGraphLayout: ({ recordId }) => as<GraphLayout>(uc.getRecordGraphLayout(recordId)),
     saveRecordGraphLayout: ({ recordId, positions }) =>

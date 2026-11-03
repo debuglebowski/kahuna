@@ -1,0 +1,1 @@
+ALTER TABLE "concept_graph_layouts" ADD COLUMN "style" jsonb DEFAULT '{}'::jsonb NOT NULL;

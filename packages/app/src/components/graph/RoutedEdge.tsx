@@ -6,8 +6,17 @@ import {
   getBezierPath,
   type Node,
 } from "@xyflow/react"
-import { createContext, useContext, useEffect, useMemo, useState } from "react"
-import { type Box, loadAvoid, type Route, roundedPath, routeEdges } from "../../lib/graphRouting"
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react"
+import {
+  type Box,
+  DEFAULT_ROUTE_OPTIONS,
+  loadAvoid,
+  type Route,
+  type RouteOptions,
+  roundedPath,
+  routeEdges,
+  smoothPath,
+} from "../../lib/graphRouting"
 
 const NO_ROUTES: ReadonlyMap<string, Route> = new Map()
 const RoutesContext = createContext<ReadonlyMap<string, Route>>(NO_ROUTES)
@@ -26,10 +35,19 @@ function boxesOf(nodes: ReadonlyArray<Node>): Map<string, Box> {
   return boxes
 }
 
-/** Re-route all edges whenever node boxes change (drag, layout, measure). */
+/**
+ * Re-route all edges whenever node boxes change (drag, layout, measure).
+ *
+ * With `rerouteWhileDragging` off, a drag freezes routing: other lines keep
+ * their last route, lines on the dragged boxes fall back to a plain curve
+ * that follows the box (RoutedEdge's no-route path), and everything
+ * re-routes once on drop.
+ */
 export function useEdgeRoutes(
   nodes: ReadonlyArray<Node>,
   edges: ReadonlyArray<Edge>,
+  opts: RouteOptions = DEFAULT_ROUTE_OPTIONS,
+  rerouteWhileDragging = true,
 ): ReadonlyMap<string, Route> {
   const [avoid, setAvoid] = useState<Avoid | null>(null)
   useEffect(() => {
@@ -48,8 +66,23 @@ export function useEdgeRoutes(
       (n) => `${n.id}:${n.position.x},${n.position.y},${n.measured?.width},${n.measured?.height}`,
     )
     .join("|")
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `geometry` stands in for `nodes`
+  const draggingKey = rerouteWhileDragging
+    ? ""
+    : nodes
+        .filter((n) => n.dragging)
+        .map((n) => n.id)
+        .join(",")
+  const frozen = draggingKey !== ""
+  const lastRoutes = useRef<ReadonlyMap<string, Route>>(NO_ROUTES)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `geometry` stands in for `nodes`; while frozen the key is the dragged set, so mid-drag frames don't re-route
   return useMemo(() => {
+    if (frozen) {
+      const moving = new Set(draggingKey.split(","))
+      const touching = new Set(
+        edges.filter((e) => moving.has(e.source) || moving.has(e.target)).map((e) => e.id),
+      )
+      return new Map([...lastRoutes.current].filter(([id]) => !touching.has(id)))
+    }
     if (!avoid) return NO_ROUTES
     const input = edges.map((e) => ({
       id: e.id,
@@ -58,23 +91,47 @@ export function useEdgeRoutes(
       label: typeof e.label === "string" ? e.label : undefined,
     }))
     try {
-      return routeEdges(avoid, boxesOf(nodes), input)
+      const routes = routeEdges(avoid, boxesOf(nodes), input, {
+        clearance: opts.clearance,
+        lineSpacing: opts.lineSpacing,
+        labelsAlongLine: opts.labelsAlongLine,
+        smooth: opts.smooth,
+      })
+      lastRoutes.current = routes
+      return routes
     } catch (err) {
       console.warn("edge routing failed — using plain edges", err)
       return NO_ROUTES
     }
-  }, [avoid, geometry, edges])
+  }, [
+    avoid,
+    frozen ? draggingKey : geometry,
+    edges,
+    opts.clearance,
+    opts.lineSpacing,
+    opts.labelsAlongLine,
+    opts.smooth,
+  ])
 }
 
 /** An edge drawn along its libavoid route (orthogonal, around other nodes).
- *  Before the router is ready it falls back to React Flow's bezier. */
+ *  Before the router is ready it falls back to React Flow's bezier.
+ *  `data.cornerRadius` (optional) rounds the elbows; default 8.
+ *  `data.smooth` draws one continuous curve instead. */
 export function RoutedEdge(props: EdgeProps) {
-  const { id, label, markerEnd, style } = props
+  const { id, label, markerEnd, style, data } = props
+  const radius = typeof data?.cornerRadius === "number" ? data.cornerRadius : 8
+  const smooth = data?.smooth === true
   const route = useContext(RoutesContext).get(id)
   const [fallbackPath, fx, fy] = getBezierPath(props)
   const path = useMemo(
-    () => (route ? roundedPath(route.points) : fallbackPath),
-    [route, fallbackPath],
+    () =>
+      route
+        ? smooth
+          ? smoothPath(route.points)
+          : roundedPath(route.points, radius)
+        : fallbackPath,
+    [route, fallbackPath, radius, smooth],
   )
   const lx = route ? route.label.x : fx
   const ly = route ? route.label.y : fy
@@ -84,7 +141,12 @@ export function RoutedEdge(props: EdgeProps) {
       {label ? (
         <EdgeLabelRenderer>
           <div
-            style={{ transform: `translate(-50%, -50%) translate(${lx}px, ${ly}px)` }}
+            style={{
+              // Origin at the element's corner so the chain reads: centre on
+              // (0,0), optionally turn, then move to the label point.
+              transformOrigin: "0 0",
+              transform: `translate(${lx}px, ${ly}px)${route?.labelVertical ? " rotate(-90deg)" : ""} translate(-50%, -50%)`,
+            }}
             className="pointer-events-none absolute whitespace-nowrap rounded bg-card px-1.5 py-0.5 text-[11px] font-medium text-foreground"
           >
             {label}

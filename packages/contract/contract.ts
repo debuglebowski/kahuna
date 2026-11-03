@@ -393,6 +393,26 @@ export const GraphLayout = Schema.Record({
 })
 export type GraphLayout = typeof GraphLayout.Type
 
+/** Concept graph look settings. Every field optional: the client fills
+ *  defaults and clamps ranges (packages/app/src/lib/graphStyle.ts), so the
+ *  wire shape can grow without a migration. */
+export const GraphStyle = Schema.Struct({
+  direction: Schema.optional(Schema.Literal("down", "right")),
+  nodeSpacing: Schema.optional(Schema.Number),
+  layerSpacing: Schema.optional(Schema.Number),
+  groupSpacing: Schema.optional(Schema.Number),
+  cornerRadius: Schema.optional(Schema.Number),
+  lineShape: Schema.optional(Schema.Literal("square", "smooth")),
+  lineSpacing: Schema.optional(Schema.Number),
+  clearance: Schema.optional(Schema.Number),
+  lineWidth: Schema.optional(Schema.Number),
+  labels: Schema.optional(Schema.Literal("both", "forward", "none")),
+  labelDirection: Schema.optional(Schema.Literal("horizontal", "along")),
+  rerouteWhileDragging: Schema.optional(Schema.Boolean),
+  snapToGrid: Schema.optional(Schema.Boolean),
+})
+export type GraphStyle = typeof GraphStyle.Type
+
 // ── shared filter conditions ───────────────────────────────────────────────────
 // Used by the dashboard widget schemas below (and FilterBar); the "Sidebar"
 // prefix is historical — sidebar sections no longer carry conditions.
@@ -1776,6 +1796,13 @@ export class KahunaRpcs extends RpcGroup.make(
   }),
   Rpc.make("getConceptGraph", { success: ConceptGraph, error: RpcError }),
   Rpc.make("getGraphLayout", { success: GraphLayout, error: RpcError }),
+  // Org-wide concept graph look settings (gear next to Layout). Replace, not merge.
+  Rpc.make("getGraphStyle", { success: GraphStyle, error: RpcError }),
+  Rpc.make("saveGraphStyle", {
+    payload: { style: GraphStyle },
+    success: GraphStyle,
+    error: RpcError,
+  }),
   Rpc.make("saveGraphLayout", {
     payload: { positions: GraphLayout },
     success: GraphLayout,

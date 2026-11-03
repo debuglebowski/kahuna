@@ -97,6 +97,7 @@ export {
   BUILTIN_GRAPH_NODE_IDS,
   type GraphLayoutPositions,
   GraphLayoutService,
+  type GraphStyleDoc,
 } from "./services/GraphLayoutService"
 export { LabelService } from "./services/LabelService"
 export { MemberService } from "./services/MemberService"

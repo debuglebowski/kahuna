@@ -490,6 +490,10 @@ export const memberDeactivations = pgTable(
 export const conceptGraphLayouts = pgTable("concept_graph_layouts", {
   orgId: text("org_id").primaryKey(),
   positions: jsonb("positions").notNull().default(sql`'{}'::jsonb`),
+  /** Org-wide look settings for the canvas (gear next to Layout): spacings,
+   *  line style, label mode. Loose document — the client normalises it
+   *  (src/lib/graphStyle.ts), so missing/unknown keys are harmless. */
+  style: jsonb("style").notNull().default(sql`'{}'::jsonb`),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 })
 

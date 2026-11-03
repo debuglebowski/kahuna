@@ -35,6 +35,7 @@ import {
   FieldValidationError,
   type GraphLayoutPositions,
   GraphLayoutService,
+  type GraphStyleDoc,
   LABELS_KEY,
   type Label,
   LabelService,
@@ -821,6 +822,13 @@ export const getGraphLayout: UC<GraphLayoutPositions> = Effect.flatMap(GraphLayo
 
 export const saveGraphLayout = (positions: GraphLayoutPositions): UC<GraphLayoutPositions> =>
   Effect.flatMap(GraphLayoutService, (s) => s.save(positions))
+
+export const getGraphStyle: UC<GraphStyleDoc> = Effect.flatMap(GraphLayoutService, (s) =>
+  s.getStyle(),
+)
+
+export const saveGraphStyle = (style: GraphStyleDoc): UC<GraphStyleDoc> =>
+  Effect.flatMap(GraphLayoutService, (s) => s.saveStyle(style))
 
 export const getRecordGraphLayout = (recordId: string): UC<GraphLayoutPositions> =>
   Effect.flatMap(GraphLayoutService, (s) => s.getForRecord(recordId))

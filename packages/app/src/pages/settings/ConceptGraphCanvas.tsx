@@ -19,16 +19,16 @@ import {
   useReactFlow,
 } from "@xyflow/react"
 import { ChevronDown, Redo2, Undo2, Users, Workflow } from "lucide-react"
-import { type CSSProperties, useCallback, useEffect, useMemo, useRef } from "react"
+import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { GraphLeaveConfirm, GraphSaveBar } from "../../components/graph/GraphSaveBar"
+import { GraphStylePanel } from "../../components/graph/GraphStylePanel"
 import { EdgeRoutesProvider, RoutedEdge, useEdgeRoutes } from "../../components/graph/RoutedEdge"
 import { SelfLoopEdge } from "../../components/graph/SelfLoopEdge"
 import { useGraphPositions } from "../../components/graph/useGraphPositions"
@@ -38,14 +38,22 @@ import {
   computeLayout,
   DEFAULT_LAYOUT,
   LAYOUT_DIR,
-  LAYOUT_GROUPS,
+  LAYOUTS,
   type LayoutDir,
   type LayoutInput,
   type LayoutKind,
   layoutDagre,
   withCanvasMeasures,
 } from "../../lib/graphLayouts"
+import {
+  GRAPH_GRID,
+  type GraphStyle,
+  normalizeGraphStyle,
+  relationLabel,
+} from "../../lib/graphStyle"
 import { ConceptIcon, DEFAULT_CONCEPT_ICON } from "../../lib/icons"
+import { queryClient } from "../../lib/queryClient"
+import { useUnsavedGuard } from "../../lib/useUnsavedGuard"
 
 /** Stable empty fallback — a fresh `{}` would re-run the layout memo per render. */
 const NO_SAVED: GraphLayout = {}
@@ -155,12 +163,16 @@ function toLayoutInput(graph: ConceptGraph): LayoutInput {
  *  win; nodes without one (e.g. freshly created concepts) fall back to dagre. */
 function buildFlow(graph: ConceptGraph, saved: GraphLayout): { nodes: Node[]; edges: Edge[] } {
   // Collapse multiple relation fields with the same direction into one labelled edge.
-  const merged = new Map<string, { from: string; to: string; labels: Set<string> }>()
+  // Each relation keeps its forward + inverse names; the label text is built
+  // per the look settings' label mode at render time (see `displayEdges`).
+  const merged = new Map<
+    string,
+    { from: string; to: string; rels: { forward: string; inverse: string | null }[] }
+  >()
   for (const e of graph.edges) {
     const key = `${e.from}->${e.to}`
-    const m = merged.get(key) ?? { from: e.from, to: e.to, labels: new Set<string>() }
-    // Named-inverse edges read both ways on the schema canvas.
-    m.labels.add(e.inverseName ? `${e.relationType} ⇄ ${e.inverseName}` : e.relationType)
+    const m = merged.get(key) ?? { from: e.from, to: e.to, rels: [] }
+    m.rels.push({ forward: e.relationType, inverse: e.inverseName })
     merged.set(key, m)
   }
 
@@ -169,7 +181,8 @@ function buildFlow(graph: ConceptGraph, saved: GraphLayout): { nodes: Node[]; ed
     source: m.from,
     target: m.to,
     type: m.from === m.to ? "selfloop" : "routed",
-    label: [...m.labels].join(", "),
+    label: m.rels.map((r) => relationLabel("both", r.forward, r.inverse)).join(", "),
+    data: { rels: m.rels },
     // CSS vars (not hex) so edge chrome follows the active theme.
     labelStyle: { fontSize: 11, fontWeight: 500, fill: "var(--foreground)" },
     labelBgStyle: { fill: "var(--card)" },
@@ -193,6 +206,7 @@ function buildFlow(graph: ConceptGraph, saved: GraphLayout): { nodes: Node[]; ed
       target: MEMBERS_NODE_ID,
       type: "routed",
       label: [...labels].join(", "),
+      data: { rels: [...labels].map((forward) => ({ forward, inverse: null })), userEdge: true },
       labelStyle: { fontSize: 11, fontWeight: 500, fill: "var(--muted-foreground)" },
       labelBgStyle: { fill: "var(--card)" },
       labelBgPadding: [6, 3] as [number, number],
@@ -224,6 +238,14 @@ function buildFlow(graph: ConceptGraph, saved: GraphLayout): { nodes: Node[]; ed
   return { nodes, edges }
 }
 
+/** Save the full layout and refresh the cached copy, so a remount (e.g. after
+ *  a concept is added) starts from what was just saved. */
+const persistPositions = (positions: GraphLayout) =>
+  api.saveGraphLayout(positions).then((saved) => {
+    queryClient.setQueryData(["graphLayout"], saved)
+    return saved
+  })
+
 /** Interactive canvas — separated so its layout is computed once per data load. */
 function Flow({
   graph,
@@ -231,23 +253,55 @@ function Flow({
   onSelect,
   filter,
   savedPositions,
+  savedStyle,
 }: {
   graph: ConceptGraph
   selectedId: string | null
   onSelect: (conceptId: string) => void
   filter: string
   savedPositions: GraphLayout
+  savedStyle: GraphStyle
 }) {
   const { fitView } = useReactFlow()
+  // Look settings: edited locally, persisted with the layout on Save.
+  const [style, setStyle] = useState(savedStyle)
+  const [styleBaseline, setStyleBaseline] = useState(savedStyle)
+  const styleDirty = JSON.stringify(style) !== JSON.stringify(styleBaseline)
   const initial = useMemo(() => buildFlow(graph, savedPositions), [graph, savedPositions])
   const [nodes, setNodes, onNodesChange] = useNodesState(initial.nodes)
   const [edges, , onEdgesChange] = useEdgesState(initial.edges)
 
-  // Debounced patch persistence + undo/redo over positions (see the hook).
+  // Line settings applied live on top of the stored edges.
+  const displayEdges = useMemo(
+    () =>
+      edges.map((e) => {
+        const d = e.data as {
+          rels?: { forward: string; inverse: string | null }[]
+          userEdge?: boolean
+        }
+        const label = d.rels
+          ? d.rels.map((r) => relationLabel(style.labels, r.forward, r.inverse)).join(", ")
+          : e.label
+        return {
+          ...e,
+          label: label || undefined,
+          data: {
+            ...e.data,
+            cornerRadius: style.cornerRadius,
+            smooth: style.lineShape === "smooth",
+          },
+          style: { ...e.style, strokeWidth: d.userEdge ? style.lineWidth * 0.85 : style.lineWidth },
+        }
+      }),
+    [edges, style.labels, style.cornerRadius, style.lineShape, style.lineWidth],
+  )
+
+  // Positions: local until Save; undo/redo (see the hook).
   const {
-    saveState,
-    markDirty,
-    scheduleSave,
+    dirty: positionsDirty,
+    savePositions,
+    discard: discardPositions,
+    adoptAsBaseline,
     pushHistory,
     undo,
     redo,
@@ -255,7 +309,33 @@ function Flow({
     canRedo,
     onNodeDragStart,
     onNodeDragStop,
-  } = useGraphPositions(nodes, setNodes, api.saveGraphLayout)
+  } = useGraphPositions(nodes, setNodes, persistPositions)
+
+  const dirty = positionsDirty || styleDirty
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState(false)
+  const saveAll = useCallback(async () => {
+    setSaving(true)
+    setSaveError(false)
+    try {
+      if (positionsDirty) await savePositions()
+      if (styleDirty) {
+        queryClient.setQueryData(["graphStyle"], await api.saveGraphStyle(style))
+        setStyleBaseline(style)
+      }
+    } catch (e) {
+      console.warn("graph save failed", e)
+      setSaveError(true)
+    } finally {
+      setSaving(false)
+    }
+  }, [positionsDirty, savePositions, styleDirty, style])
+  const discardAll = useCallback(() => {
+    discardPositions()
+    setStyle(styleBaseline)
+    setSaveError(false)
+  }, [discardPositions, styleBaseline])
+  const { blocker } = useUnsavedGuard(dirty)
 
   // Reflect selection + find-filter without re-running layout (preserves pan/zoom).
   const q = filter.trim().toLowerCase()
@@ -273,47 +353,77 @@ function Flow({
   }, [selectedId, q, setNodes])
 
   // Run the chosen auto-layout (some are async — ELK), then refit the viewport.
-  // Applying a layout is a single undoable step and autosaves like any move.
+  // Applying a layout is a single undoable step — or, with `asBaseline`, the
+  // unsaved-free starting point (first open with nothing saved).
   const align = useCallback(
-    (kind: LayoutKind) => {
-      void computeLayout(kind, withCanvasMeasures(toLayoutInput(graph), nodes, edges)).then(
-        (positions) => {
-          pushHistory()
-          const direction = LAYOUT_DIR[kind] ?? "TB"
-          setNodes((ns) =>
-            ns.map((n) => ({
-              ...n,
-              position: positions.get(n.id) ?? n.position,
-              data: { ...n.data, direction, selected: n.id === selectedId },
-            })),
+    (kind: LayoutKind, opts?: { asBaseline?: boolean }) => {
+      void computeLayout(kind, withCanvasMeasures(toLayoutInput(graph), nodes, displayEdges), {
+        direction: style.direction,
+        nodeSpacing: style.nodeSpacing,
+        layerSpacing: style.layerSpacing,
+        groupSpacing: style.groupSpacing,
+      }).then((positions) => {
+        if (opts?.asBaseline)
+          adoptAsBaseline(
+            Object.fromEntries(nodes.map((n) => [n.id, positions.get(n.id) ?? n.position])),
           )
-          markDirty("all")
-          scheduleSave()
-          requestAnimationFrame(() => fitView({ padding: 0.2 }))
-        },
-      )
+        else pushHistory()
+        const direction = LAYOUT_DIR[kind] ?? "TB"
+        setNodes((ns) =>
+          ns.map((n) => ({
+            ...n,
+            position: positions.get(n.id) ?? n.position,
+            data: { ...n.data, direction, selected: n.id === selectedId },
+          })),
+        )
+        requestAnimationFrame(() => fitView({ padding: 0.2 }))
+      })
     },
-    [graph, selectedId, setNodes, fitView, pushHistory, markDirty, scheduleSave, nodes, edges],
+    [
+      graph,
+      selectedId,
+      setNodes,
+      fitView,
+      pushHistory,
+      adoptAsBaseline,
+      nodes,
+      displayEdges,
+      style.direction,
+      style.nodeSpacing,
+      style.layerSpacing,
+      style.groupSpacing,
+    ],
   )
 
   // Nothing arranged yet (fresh org / never-opened record graph): run Auto
   // once the nodes are measured, so the first view is the routed layout
-  // rather than dagre's sync fallback. It saves like any layout.
+  // rather than dagre's sync fallback. Not saved: it re-runs identically on
+  // each visit until someone arranges and saves.
   const nodesInitialized = useNodesInitialized()
   const autoLaidOut = useRef(Object.keys(savedPositions).length > 0)
   useEffect(() => {
     if (!nodesInitialized || autoLaidOut.current) return
     autoLaidOut.current = true
-    align(DEFAULT_LAYOUT)
+    align(DEFAULT_LAYOUT, { asBaseline: true })
   }, [nodesInitialized, align])
 
-  const routes = useEdgeRoutes(nodes, edges)
+  const routes = useEdgeRoutes(
+    nodes,
+    displayEdges,
+    {
+      clearance: style.clearance,
+      lineSpacing: style.lineSpacing,
+      labelsAlongLine: style.labelDirection === "along",
+      smooth: style.lineShape === "smooth",
+    },
+    style.rerouteWhileDragging,
+  )
 
   return (
     <EdgeRoutesProvider value={routes}>
       <ReactFlow
         nodes={nodes}
-        edges={edges}
+        edges={displayEdges}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         nodeTypes={nodeTypes}
@@ -324,12 +434,14 @@ function Flow({
         onNodeDragStart={onNodeDragStart}
         onNodeDragStop={onNodeDragStop}
         nodesConnectable={false}
+        snapToGrid={style.snapToGrid}
+        snapGrid={[GRAPH_GRID, GRAPH_GRID]}
         minZoom={0.2}
         fitView
         fitViewOptions={{ padding: 0.2 }}
         style={{ width: "100%", height: "100%" }}
       >
-        <Background color="var(--graph-dots)" gap={20} />
+        <Background color="var(--graph-dots)" gap={GRAPH_GRID} />
         <Controls showInteractive={false} />
         <Panel position="top-left" className="flex items-center gap-1.5">
           <DropdownMenu>
@@ -340,19 +452,11 @@ function Flow({
                 <ChevronDown className="text-muted-foreground" />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-56">
-              {LAYOUT_GROUPS.map((g, i) => (
-                <div key={g.group}>
-                  {i > 0 && <DropdownMenuSeparator />}
-                  <DropdownMenuLabel className="text-xs font-medium text-muted-foreground">
-                    {g.group}
-                  </DropdownMenuLabel>
-                  {g.layouts.map((l) => (
-                    <DropdownMenuItem key={l.kind} onSelect={() => align(l.kind)}>
-                      {l.name}
-                    </DropdownMenuItem>
-                  ))}
-                </div>
+            <DropdownMenuContent align="start" className="w-40">
+              {LAYOUTS.map((l) => (
+                <DropdownMenuItem key={l.kind} onSelect={() => align(l.kind)}>
+                  {l.name}
+                </DropdownMenuItem>
               ))}
             </DropdownMenuContent>
           </DropdownMenu>
@@ -378,17 +482,27 @@ function Flow({
           >
             <Redo2 />
           </Button>
-          {saveState !== "idle" && (
-            <span
-              className={
-                saveState === "error" ? "text-xs text-destructive" : "text-xs text-muted-foreground"
-              }
-            >
-              {saveState === "error" ? "Save failed — retrying" : "Saving…"}
-            </span>
-          )}
+          <GraphStylePanel
+            style={style}
+            onChange={setStyle}
+            onRerunAuto={() => align(DEFAULT_LAYOUT)}
+          />
+        </Panel>
+        <Panel position="bottom-center">
+          <GraphSaveBar
+            dirty={dirty}
+            saving={saving}
+            error={saveError}
+            onSave={() => void saveAll()}
+            onDiscard={discardAll}
+          />
         </Panel>
       </ReactFlow>
+      <GraphLeaveConfirm
+        blocked={blocker.state === "blocked"}
+        onLeave={() => blocker.proceed?.()}
+        onStay={() => blocker.reset?.()}
+      />
     </EdgeRoutesProvider>
   )
 }
@@ -406,14 +520,21 @@ export function ConceptGraphCanvas({
 }) {
   const graph = useQuery({ queryKey: ["conceptGraph"], queryFn: () => api.getConceptGraph() })
   // Saved canvas positions (org-shared). Refetched only on mount — while open,
-  // the canvas is the source of truth and autosaves its own changes.
+  // the canvas is the source of truth and writes the cache back on Save.
   const layout = useQuery({
     queryKey: ["graphLayout"],
     queryFn: () => api.getGraphLayout(),
     staleTime: Number.POSITIVE_INFINITY,
   })
+  // Look settings (org-shared). A failed load falls back to defaults rather
+  // than blocking the canvas — they're cosmetic.
+  const lookStyle = useQuery({
+    queryKey: ["graphStyle"],
+    queryFn: () => api.getGraphStyle(),
+    staleTime: Number.POSITIVE_INFINITY,
+  })
 
-  if (graph.isPending || layout.isPending) return <Spinner />
+  if (graph.isPending || layout.isPending || lookStyle.isPending) return <Spinner />
   if (graph.error)
     return (
       <Card>
@@ -434,7 +555,7 @@ export function ConceptGraphCanvas({
 
   return (
     <div
-      className="space-y-3"
+      className="flex h-full flex-col gap-3"
       // Captured OUTSIDE the force-light scope below, so the dot grid keeps
       // tracking the global theme while the graph items render light.
       style={{ "--graph-dots": "var(--border)" } as CSSProperties}
@@ -444,7 +565,7 @@ export function ConceptGraphCanvas({
           No relationships yet — add relation fields to your concepts to connect them.
         </p>
       )}
-      <Card className="h-[calc(100dvh-220px)] min-h-[420px] w-full overflow-hidden">
+      <Card className="min-h-0 w-full flex-1 overflow-hidden">
         {/* Items (nodes, edges, controls) always render in the light palette;
             the canvas surface (card bg + dots) stays bound to the global theme. */}
         <div className="force-light h-full w-full bg-transparent">
@@ -456,6 +577,7 @@ export function ConceptGraphCanvas({
               onSelect={onSelect}
               filter={filter}
               savedPositions={layout.data ?? NO_SAVED}
+              savedStyle={normalizeGraphStyle(lookStyle.data)}
             />
           </ReactFlowProvider>
         </div>

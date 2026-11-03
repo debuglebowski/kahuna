@@ -204,6 +204,13 @@
       "when": 1793697083730,
       "tag": "0028_file_properties",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1793709496007,
+      "tag": "0029_graph_style",
+      "breakpoints": true
     }
   ]
 }

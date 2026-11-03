@@ -6,7 +6,7 @@ export type LayoutDir = "LR" | "RL" | "TB" | "BT"
 
 /** Menu layouts. dagre is no longer one of them — it only places nodes that
  *  have no saved position (sync, so the first paint has somewhere to put them). */
-export type LayoutKind = "elk-layered" | "elk-stress" | "grid"
+export type LayoutKind = "elk-layered" | "elk-stress"
 
 /** What a canvas runs when nothing has been arranged yet. */
 export const DEFAULT_LAYOUT: LayoutKind = "elk-layered"
@@ -16,19 +16,10 @@ export const LAYOUT_DIR: Partial<Record<LayoutKind, LayoutDir>> = {
   "elk-layered": "TB",
 }
 
-/** Menu catalog, grouped the way the layout dropdown renders it. */
-export const LAYOUT_GROUPS: ReadonlyArray<{
-  group: string
-  layouts: ReadonlyArray<{ kind: LayoutKind; name: string }>
-}> = [
-  {
-    group: "Layout",
-    layouts: [
-      { kind: "elk-layered", name: "Auto" },
-      { kind: "elk-stress", name: "Organic" },
-      { kind: "grid", name: "Grid" },
-    ],
-  },
+/** The Layout menu, in order. */
+export const LAYOUTS: ReadonlyArray<{ kind: LayoutKind; name: string }> = [
+  { kind: "elk-layered", name: "Auto" },
+  { kind: "elk-stress", name: "Organic" },
 ]
 
 export interface LayoutInput {
@@ -111,15 +102,6 @@ export function layoutDagre(input: LayoutInput, dir: LayoutDir): Positions {
   )
 }
 
-function layoutGrid(input: LayoutInput): Positions {
-  const { w, h } = sizeOf(input)
-  const sorted = byLabel(input)
-  const cols = Math.max(1, Math.ceil(Math.sqrt(sorted.length)))
-  return new Map(
-    sorted.map((n, i) => [n.id, { x: (i % cols) * (w + 64), y: Math.floor(i / cols) * (h + 64) }]),
-  )
-}
-
 /** Rough label footprint at the canvases' 11px/500 label style. */
 const labelBox = (text: string) => ({ width: text.length * 6.2 + 14, height: 20 })
 
@@ -174,7 +156,19 @@ function components(input: LayoutInput): string[][] {
   return [...groups.values()].sort((a, b) => b.length - a.length)
 }
 
-const COMPONENT_GAP = 96
+/** Tunables for Auto (the graph look settings feed these). */
+export interface LayeredOptions {
+  readonly direction: "down" | "right"
+  readonly nodeSpacing: number
+  readonly layerSpacing: number
+  readonly groupSpacing: number
+}
+export const DEFAULT_LAYERED_OPTIONS: LayeredOptions = {
+  direction: "down",
+  nodeSpacing: 48,
+  layerSpacing: 64,
+  groupSpacing: 96,
+}
 /** Width:height the packed block aims for — roughly a canvas viewport. */
 const TARGET_ASPECT = 1.6
 
@@ -187,7 +181,10 @@ const TARGET_ASPECT = 1.6
  * separately because ELK's own component packing stacks them into one tall
  * column for downward layouts; isolated nodes become a compact grid of their own.
  */
-async function layoutElkLayered(input: LayoutInput): Promise<Positions> {
+async function layoutElkLayered(
+  input: LayoutInput,
+  opts: LayeredOptions = DEFAULT_LAYERED_OPTIONS,
+): Promise<Positions> {
   const { w, h } = sizeOf(input)
   const sizeOfNode = (id: string) => input.sizes?.get(id) ?? { w, h }
   const elk = await loadElk()
@@ -204,12 +201,12 @@ async function layoutElkLayered(input: LayoutInput): Promise<Positions> {
         id: "root",
         layoutOptions: {
           "elk.algorithm": "layered",
-          "elk.direction": "DOWN",
+          "elk.direction": opts.direction === "right" ? "RIGHT" : "DOWN",
           "elk.edgeRouting": "ORTHOGONAL",
           "elk.layered.nodePlacement.strategy": "NETWORK_SIMPLEX",
           "elk.layered.thoroughness": "40",
-          "elk.spacing.nodeNode": "48",
-          "elk.layered.spacing.nodeNodeBetweenLayers": "64",
+          "elk.spacing.nodeNode": String(opts.nodeSpacing),
+          "elk.layered.spacing.nodeNodeBetweenLayers": String(opts.layerSpacing),
           "elk.spacing.edgeNode": "28",
           "elk.layered.spacing.edgeNodeBetweenLayers": "28",
           "elk.spacing.edgeEdge": "14",
@@ -257,13 +254,16 @@ async function layoutElkLayered(input: LayoutInput): Promise<Positions> {
     })
   }
 
-  return shelfPack(blocks)
+  return shelfPack(blocks, opts.groupSpacing)
 }
 
 /** Shelf-pack blocks (tallest first, left to right, wrapping) at the wrap width
  *  whose overall bounding box is closest to TARGET_ASPECT. Candidate widths are
  *  every prefix of the row, so 2-5 big components still land side by side. */
-function shelfPack(blocks: ReadonlyArray<{ width: number; height: number; pos: Positions }>) {
+function shelfPack(
+  blocks: ReadonlyArray<{ width: number; height: number; pos: Positions }>,
+  gap: number,
+) {
   const sorted = [...blocks].sort((p, q) => q.height - p.height)
   const place = (maxW: number) => {
     const out: Positions = new Map()
@@ -274,12 +274,12 @@ function shelfPack(blocks: ReadonlyArray<{ width: number; height: number; pos: P
     for (const b of sorted) {
       if (x > 0 && x + b.width > maxW) {
         x = 0
-        y += shelfH + COMPONENT_GAP
+        y += shelfH + gap
         shelfH = 0
       }
       for (const [id, p] of b.pos) out.set(id, { x: p.x + x, y: p.y + y })
       totalW = Math.max(totalW, x + b.width)
-      x += b.width + COMPONENT_GAP
+      x += b.width + gap
       shelfH = Math.max(shelfH, b.height)
     }
     return { out, aspect: totalW / Math.max(1, y + shelfH) }
@@ -287,7 +287,7 @@ function shelfPack(blocks: ReadonlyArray<{ width: number; height: number; pos: P
   let best: ReturnType<typeof place> | null = null
   let rowW = 0
   for (const b of sorted) {
-    rowW += (rowW > 0 ? COMPONENT_GAP : 0) + b.width
+    rowW += (rowW > 0 ? gap : 0) + b.width
     const cand = place(rowW)
     if (
       !best ||
@@ -300,13 +300,15 @@ function shelfPack(blocks: ReadonlyArray<{ width: number; height: number; pos: P
 }
 
 /** Run the chosen auto-layout and return node positions. */
-export function computeLayout(kind: LayoutKind, input: LayoutInput): Promise<Positions> {
+export function computeLayout(
+  kind: LayoutKind,
+  input: LayoutInput,
+  layered: LayeredOptions = DEFAULT_LAYERED_OPTIONS,
+): Promise<Positions> {
   switch (kind) {
     case "elk-layered":
-      return layoutElkLayered(input)
+      return layoutElkLayered(input, layered)
     case "elk-stress":
       return layoutElk(input, "stress")
-    case "grid":
-      return Promise.resolve(layoutGrid(input))
   }
 }

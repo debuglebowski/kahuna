@@ -10,109 +10,57 @@ import {
 } from "react"
 import type { GraphLayout } from "../../lib/api"
 
+/** Sub-pixel jitter (measure/round-trips) must not count as an edit. */
+const EPS = 0.5
+
+const snapshotOf = (nodes: ReadonlyArray<Node>): GraphLayout =>
+  Object.fromEntries(nodes.map((n) => [n.id, { x: n.position.x, y: n.position.y }]))
+
 /**
- * Position state management for a graph canvas (concept graph, record version
- * relationship graph), split out of the components so a canvas only wires
- * handlers and renders status. The caller supplies `save` — a partial-patch
- * persister (node id → position) — so each canvas brings its own endpoint.
- * Two concerns:
+ * Position state for a graph canvas (concept graph, record relationship graph).
+ * The layout is shared org-wide, so nothing persists on its own: edits (drags,
+ * layouts, undo/redo) stay local until the user saves. Two concerns:
  *
- * - **Debounced dirty-set persistence.** Changed node ids accumulate and a
- *   debounced flush sends only those entries as a PATCH — the server
- *   jsonb-merges per node, so concurrent editors moving different nodes don't
- *   clobber each other. Failures re-queue the patch and retry (×5, 3s apart)
- *   with the state surfaced via `saveState`; pending work also flushes when
- *   the tab is hidden or the canvas unmounts.
+ * - **Explicit save against a baseline.** `baseline` is what's on the server
+ *   (or what the canvas showed on open); `dirty` = any node moved off it.
+ *   `save()` sends EVERY current position — not a dirty subset — so the stored
+ *   layout always matches what the saver saw, including nodes that were only
+ *   ever placed by a fallback/initial layout. `discard()` snaps back to it.
+ *   `adoptAsBaseline()` marks the current positions as the starting point
+ *   without saving (the first-open Auto layout, which re-runs identically on
+ *   every visit until someone saves).
  *
  * - **Client-side undo/redo.** Snapshot history in refs (capped at 100); one
  *   drag or one layout application = one step. ⌘Z/⇧⌘Z/Ctrl+Y are handled
- *   while the event target is inside the React Flow pane.
+ *   while the event target is inside the React Flow pane. Saving or
+ *   discarding clears it.
  */
 export function useGraphPositions(
   nodes: Node[],
   setNodes: Dispatch<SetStateAction<Node[]>>,
-  save: (patch: GraphLayout) => Promise<unknown>,
+  save: (positions: GraphLayout) => Promise<unknown>,
 ) {
   const nodesRef = useRef(nodes)
   useEffect(() => {
     nodesRef.current = nodes
   }, [nodes])
-  const currentPositions = useCallback((): GraphLayout => {
-    return Object.fromEntries(nodesRef.current.map((n) => [n.id, { ...n.position }]))
-  }, [])
+  const currentPositions = useCallback((): GraphLayout => snapshotOf(nodesRef.current), [])
 
-  // ── debounced dirty-set persistence ─────────────────────────────────────────
-  const dirty = useRef<Set<string>>(new Set())
-  const retries = useRef(0)
-  const [saveState, setSaveState] = useState<"idle" | "saving" | "error">("idle")
-  const markDirty = useCallback((ids: ReadonlyArray<string> | "all") => {
-    const list = ids === "all" ? nodesRef.current.map((n) => n.id) : ids
-    for (const id of list) dirty.current.add(id)
-  }, [])
-
-  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const flush = useCallback(() => {
-    if (dirty.current.size === 0) return
-    const sending = [...dirty.current]
-    dirty.current.clear()
-    const byId = new Map(nodesRef.current.map((n) => [n.id, n.position]))
-    const patch: GraphLayout = Object.fromEntries(
-      sending.flatMap((id) => {
-        const p = byId.get(id)
-        return p ? [[id, { x: p.x, y: p.y }] as const] : []
-      }),
-    )
-    setSaveState("saving")
-    save(patch).then(
-      () => {
-        retries.current = 0
-        setSaveState(dirty.current.size > 0 ? "saving" : "idle")
-      },
-      (e) => {
-        console.warn("graph layout save failed", e)
-        // Re-queue what we tried to send (newer moves are already in `dirty`)
-        // and retry a few times; afterwards, the next user change retries.
-        for (const id of sending) dirty.current.add(id)
-        setSaveState("error")
-        if (retries.current < 5) {
-          retries.current += 1
-          saveTimer.current = setTimeout(flush, 3000)
-        }
-      },
-    )
-  }, [save])
-  const scheduleSave = useCallback(() => {
-    if (saveTimer.current) clearTimeout(saveTimer.current)
-    retries.current = 0
-    saveTimer.current = setTimeout(() => {
-      saveTimer.current = null
-      flush()
-    }, 800)
-  }, [flush])
-
-  // Flush pending work when the tab goes hidden (covers most tab-close races —
-  // the request starts while the page is still alive) and on unmount.
-  useEffect(() => {
-    const onHide = () => {
-      if (document.visibilityState !== "hidden" || dirty.current.size === 0) return
-      if (saveTimer.current) clearTimeout(saveTimer.current)
-      flush()
-    }
-    document.addEventListener("visibilitychange", onHide)
-    return () => document.removeEventListener("visibilitychange", onHide)
-  }, [flush])
-  useEffect(
-    () => () => {
-      if (saveTimer.current) clearTimeout(saveTimer.current)
-      if (dirty.current.size > 0) flush()
-    },
-    [flush],
-  )
+  // ── baseline + dirty ────────────────────────────────────────────────────────
+  const [baseline, setBaseline] = useState<GraphLayout>(() => snapshotOf(nodes))
+  const dirty = nodes.some((n) => {
+    const b = baseline[n.id]
+    return !b || Math.abs(b.x - n.position.x) > EPS || Math.abs(b.y - n.position.y) > EPS
+  })
 
   // ── undo/redo over position snapshots ───────────────────────────────────────
   // Refs hold the stacks (no re-render per tick); `bump` refreshes button state.
   const history = useRef<{ past: GraphLayout[]; future: GraphLayout[] }>({ past: [], future: [] })
   const [, bump] = useReducer((c: number) => c + 1, 0)
+  const clearHistory = useCallback(() => {
+    history.current = { past: [], future: [] }
+    bump()
+  }, [])
   const pushPast = useCallback((snapshot: GraphLayout) => {
     history.current.past.push(snapshot)
     if (history.current.past.length > 100) history.current.past.shift()
@@ -127,10 +75,8 @@ export function useGraphPositions(
   const applyPositions = useCallback(
     (layout: GraphLayout) => {
       setNodes((ns) => ns.map((n) => ({ ...n, position: layout[n.id] ?? n.position })))
-      markDirty("all")
-      scheduleSave()
     },
-    [setNodes, markDirty, scheduleSave],
+    [setNodes],
   )
   const undo = useCallback(() => {
     const prev = history.current.past.pop()
@@ -171,22 +117,32 @@ export function useGraphPositions(
   const onNodeDragStart = useCallback(() => {
     dragSnap.current = currentPositions()
   }, [currentPositions])
-  const onNodeDragStop = useCallback(
-    (_e: unknown, node: Node, dragged: Node[]) => {
-      if (dragSnap.current) {
-        pushPast(dragSnap.current)
-        dragSnap.current = null
-      }
-      markDirty(dragged.length > 0 ? dragged.map((n) => n.id) : [node.id])
-      scheduleSave()
-    },
-    [pushPast, markDirty, scheduleSave],
-  )
+  const onNodeDragStop = useCallback(() => {
+    if (dragSnap.current) {
+      pushPast(dragSnap.current)
+      dragSnap.current = null
+    }
+  }, [pushPast])
+
+  // ── save / discard ──────────────────────────────────────────────────────────
+  const savePositions = useCallback(async () => {
+    const snapshot = currentPositions()
+    await save(snapshot)
+    setBaseline(snapshot)
+    clearHistory()
+  }, [save, currentPositions, clearHistory])
+  const discard = useCallback(() => {
+    applyPositions(baseline)
+    clearHistory()
+  }, [applyPositions, baseline, clearHistory])
+  /** Treat these positions as the unsaved-free starting point (no request). */
+  const adoptAsBaseline = useCallback((layout: GraphLayout) => setBaseline(layout), [])
 
   return {
-    saveState,
-    markDirty,
-    scheduleSave,
+    dirty,
+    savePositions,
+    discard,
+    adoptAsBaseline,
     pushHistory,
     undo,
     redo,
