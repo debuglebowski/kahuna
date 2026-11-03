@@ -368,6 +368,13 @@ export const ConceptGraphUserEdge = Schema.Struct({
 })
 export type ConceptGraphUserEdge = typeof ConceptGraphUserEdge.Type
 
+/** Graph node ids that are platform-defined, not concepts. `__members` = the
+ *  Member node (target of `user` fields). Saved layout positions for these keys
+ *  survive the server's prune-to-concepts pass. Mirrors the engine's
+ *  `BUILTIN_GRAPH_NODE_IDS` (pinned equal by a server test). */
+export const MEMBER_GRAPH_NODE_ID = "__members"
+export const BUILTIN_GRAPH_NODE_IDS = [MEMBER_GRAPH_NODE_ID] as const
+
 /** Concepts + their relationships, for the settings graph view. */
 export const ConceptGraph = Schema.Struct({
   nodes: Schema.Array(ConceptGraphNode),

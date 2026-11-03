@@ -1,9 +1,14 @@
 import { randomUUID } from "node:crypto"
 import type { PgClient } from "@effect/sql-pg"
+import {
+  BUILTIN_GRAPH_NODE_IDS as CONTRACT_BUILTIN_GRAPH_NODE_IDS,
+  MEMBER_GRAPH_NODE_ID,
+} from "@kahunalabs/contract"
 import { Effect } from "effect"
 import { describe, expect, it } from "vitest"
 import {
   AccessRoleService,
+  BUILTIN_GRAPH_NODE_IDS,
   ConceptService,
   type EngineServices,
   emptyPolicy,
@@ -300,10 +305,25 @@ describe("concept graph layout (shared canvas positions)", () => {
       [a.id, b.id].sort(),
     )
 
+    // Built-in (non-concept) nodes like Member keep their position; engine and
+    // contract agree on which ids those are.
+    expect([...BUILTIN_GRAPH_NODE_IDS]).toEqual([...CONTRACT_BUILTIN_GRAPH_NODE_IDS])
+    await run(orgA, saveGraphLayout({ [MEMBER_GRAPH_NODE_ID]: { x: 7, y: 8 } }))
+    expect(await run(orgA, getGraphLayout)).toMatchObject({
+      [MEMBER_GRAPH_NODE_ID]: { x: 7, y: 8 },
+    })
+    await run(orgA, saveGraphLayout({ [a.id]: { x: 300, y: 400 } }))
+    expect(await run(orgA, getGraphLayout)).toMatchObject({
+      [MEMBER_GRAPH_NODE_ID]: { x: 7, y: 8 },
+    })
+
     // Hard-deleting a concept washes its entry out on the next save.
     await run(orgA, deleteConcept(b.id))
     await run(orgA, saveGraphLayout({ [a.id]: { x: 1, y: 2 } }))
-    expect(await run(orgA, getGraphLayout)).toEqual({ [a.id]: { x: 1, y: 2 } })
+    expect(await run(orgA, getGraphLayout)).toEqual({
+      [a.id]: { x: 1, y: 2 },
+      [MEMBER_GRAPH_NODE_ID]: { x: 7, y: 8 },
+    })
 
     // Other orgs never see it.
     expect(await run(orgB, getGraphLayout)).toEqual({})

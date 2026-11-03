@@ -1,4 +1,5 @@
 import "@xyflow/react/dist/style.css"
+import { MEMBER_GRAPH_NODE_ID } from "@kahunalabs/contract"
 import { useQuery } from "@tanstack/react-query"
 import {
   Background,
@@ -94,7 +95,7 @@ function ConceptNode({ data }: NodeProps) {
 
 /** Node id of the built-in Members box. Not a concept id, so the canvas never
  *  routes a click on it; its saved position sits in the layout under this key. */
-const MEMBERS_NODE_ID = "__members"
+const MEMBERS_NODE_ID = MEMBER_GRAPH_NODE_ID
 
 /** Look shared by every platform-defined (built-in, non-concept) node: a pill —
  *  a different shape from concept boxes — with a faint green tint + thin green

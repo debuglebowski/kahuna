@@ -94,6 +94,7 @@ export {
 } from "./services/EventStore"
 export { type AddFieldInput, FieldService } from "./services/FieldService"
 export {
+  BUILTIN_GRAPH_NODE_IDS,
   type GraphLayoutPositions,
   GraphLayoutService,
 } from "./services/GraphLayoutService"

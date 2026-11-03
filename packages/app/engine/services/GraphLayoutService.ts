@@ -2,6 +2,12 @@ import { PgClient } from "@effect/sql-pg"
 import { Effect } from "effect"
 import { OrgContext } from "./OrgContext"
 
+/** Node ids on the concept graph that are platform-defined, not concepts (e.g.
+ *  the Member node). Their saved positions survive the prune-to-concepts pass.
+ *  Mirrored as `BUILTIN_GRAPH_NODE_IDS` in the contract (the engine stays
+ *  contract-free); `server/use-cases.test.ts` pins the two equal. */
+export const BUILTIN_GRAPH_NODE_IDS = ["__members"] as const
+
 /** Node id → canvas position, as stored in `concept_graph_layouts.positions`. */
 export type GraphLayoutPositions = Readonly<
   Record<string, { readonly x: number; readonly y: number }>
@@ -36,7 +42,8 @@ export class GraphLayoutService extends Effect.Service<GraphLayoutService>()(
        * so concurrent editors moving DIFFERENT nodes don't clobber each other —
        * last write wins only per node). After merging, entries whose concept no
        * longer exists are pruned, which doubles as id validation and keeps the
-       * document bounded. Returns the resulting full map.
+       * document bounded — except {@link BUILTIN_GRAPH_NODE_IDS}, which are
+       * never concepts. Returns the resulting full map.
        */
       const save = (patch: GraphLayoutPositions) =>
         sql.withTransaction(
@@ -53,6 +60,7 @@ export class GraphLayoutService extends Effect.Service<GraphLayoutService>()(
                 SELECT COALESCE(jsonb_object_agg(e.key, e.value), '{}'::jsonb)
                 FROM jsonb_each(positions) AS e
                 WHERE e.key IN (SELECT id::text FROM concepts WHERE org_id = ${orgId})
+                   OR ${sql.in("e.key", [...BUILTIN_GRAPH_NODE_IDS])}
               )
               WHERE org_id = ${orgId}
               RETURNING positions`
