@@ -100,15 +100,22 @@ function ConceptNode({ data }: NodeProps) {
  *  routes a click on it; its saved position sits in the layout under this key. */
 const MEMBERS_NODE_ID = "__members"
 
-/** Org members — what `user` fields point at. Built-in, not a concept: muted,
- *  dashed, not clickable. Shown only while some concept has a user field. */
+/** Look shared by every platform-defined (built-in, non-concept) node: a pill —
+ *  a different shape from concept boxes — with a faint green tint + thin green
+ *  border. Light fill, so it stays readable on the light AND dark canvas surface,
+ *  but quieter than a concept (no shadow, muted text). */
+const BUILTIN_NODE =
+  "cursor-default rounded-full border border-success/40 bg-[oklch(0.97_0.02_150)] px-4 py-2 text-center text-sm font-medium text-success"
+
+/** Org members — what `user` fields point at. Built-in, not a concept: {@link BUILTIN_NODE}
+ *  pill, not clickable. Always shown, linked or not — members always exist. */
 function MembersNode({ data }: NodeProps) {
   const { direction, dimmed } = data as { direction?: LayoutDir; dimmed?: boolean }
   const [targetPos, sourcePos] = DIR_HANDLES[direction ?? "TB"]
   return (
     <div
       title="Built-in: org members. User fields point here."
-      className={`rounded-lg border border-dashed border-muted-foreground/50 bg-muted px-4 py-2 text-center text-sm font-medium text-muted-foreground${dimmed ? " opacity-30" : ""}`}
+      className={`${BUILTIN_NODE}${dimmed ? " opacity-30" : ""}`}
     >
       <Handle
         type="target"
@@ -117,7 +124,10 @@ function MembersNode({ data }: NodeProps) {
       />
       <span className="inline-flex items-center justify-center gap-1.5">
         <Users size={15} />
-        Members
+        Member
+        <span className="rounded-full bg-success/10 px-1.5 py-px text-[10px] font-medium uppercase tracking-wide">
+          built-in
+        </span>
       </span>
       <Handle
         type="source"
@@ -148,7 +158,7 @@ function toLayoutInput(graph: ConceptGraph): LayoutInput {
     edges.push({ source: e.from, target: e.to })
   }
   const nodes = graph.nodes.map((n) => ({ id: n.id, label: n.name }))
-  if (graph.userEdges.length > 0) nodes.push({ id: MEMBERS_NODE_ID, label: "Members" })
+  nodes.push({ id: MEMBERS_NODE_ID, label: "Member" })
   return { nodes, edges }
 }
 
@@ -214,13 +224,12 @@ function buildFlow(graph: ConceptGraph, saved: GraphLayout): { nodes: Node[]; ed
     position: saved[n.id] ?? fallback.get(n.id) ?? { x: 0, y: 0 },
     data: { label: n.name, selected: false, direction: "TB", icon: n.icon, managedBy: n.managedBy },
   }))
-  if (userMerged.size > 0)
-    nodes.push({
-      id: MEMBERS_NODE_ID,
-      type: "members",
-      position: saved[MEMBERS_NODE_ID] ?? fallback.get(MEMBERS_NODE_ID) ?? { x: 0, y: 0 },
-      data: { label: "Members", direction: "TB" },
-    })
+  nodes.push({
+    id: MEMBERS_NODE_ID,
+    type: "members",
+    position: saved[MEMBERS_NODE_ID] ?? fallback.get(MEMBERS_NODE_ID) ?? { x: 0, y: 0 },
+    data: { label: "Member", direction: "TB" },
+  })
 
   return { nodes, edges }
 }
