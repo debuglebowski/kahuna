@@ -16,12 +16,17 @@
  * must run before first paint to avoid a light flash. Style-src likewise —
  * Tailwind v4 and the Radix primitives both set inline styles at runtime.
  *
+ * `'wasm-unsafe-eval'` lets the graph canvases compile their edge router
+ * (libavoid, WebAssembly — src/lib/graphRouting.ts). It permits WebAssembly
+ * compilation only; JS `eval`/`new Function` stay blocked. Without it the
+ * router fails to load and edges silently fall back to plain curves.
+ *
  * `connect-src` keeps 'self' only: the client talks to its own origin (RPC, SSE,
  * REST); every third-party call is made server-side by the connectors.
  */
 const SPA_CSP = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline'",
+  "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'",
   "style-src 'self' 'unsafe-inline'",
   // Avatars and record data legitimately reference external images (`image` on a
   // user, `url`-kind fields), so images are the one permissive directive.

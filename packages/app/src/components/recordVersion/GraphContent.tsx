@@ -13,11 +13,12 @@ import {
   ReactFlow,
   ReactFlowProvider,
   useEdgesState,
+  useNodesInitialized,
   useNodesState,
   useReactFlow,
 } from "@xyflow/react"
 import { ChevronDown, Redo2, Settings2, Undo2, Workflow } from "lucide-react"
-import { type CSSProperties, useCallback, useMemo } from "react"
+import { type CSSProperties, useCallback, useEffect, useMemo, useRef } from "react"
 import { useNavigate } from "react-router-dom"
 import { Checkbox } from "@/components/ui/checkbox"
 import {
@@ -40,6 +41,7 @@ import {
 import { api, type GraphLayout } from "../../lib/api"
 import {
   computeLayout,
+  DEFAULT_LAYOUT,
   LAYOUT_DIR,
   LAYOUT_GROUPS,
   type LayoutDir,
@@ -47,6 +49,7 @@ import {
   type LayoutKind,
   layoutDagre,
   NODE_W,
+  withCanvasMeasures,
 } from "../../lib/graphLayouts"
 import { queryClient } from "../../lib/queryClient"
 import {
@@ -59,6 +62,7 @@ import {
 import { recordHref } from "../../lib/recordHref"
 import { recordLabel } from "../../lib/recordLabel"
 import { useRecordViewPrefs } from "../../lib/recordViews"
+import { EdgeRoutesProvider, RoutedEdge, useEdgeRoutes } from "../graph/RoutedEdge"
 import { SelfLoopEdge } from "../graph/SelfLoopEdge"
 import { useGraphPositions } from "../graph/useGraphPositions"
 import { Button, pillStyle, Spinner } from "../ui"
@@ -127,11 +131,7 @@ function RecordNode({ data }: NodeProps) {
         (d.ghost ? " border-dashed opacity-50" : d.root ? "" : " cursor-pointer hover:border-ring")
       }
     >
-      <Handle
-        type="target"
-        position={targetPos}
-        className="!h-2 !w-2 !border-0 !bg-muted-foreground/50"
-      />
+      <Handle type="target" position={targetPos} className="!h-2 !w-2 !border-0 !opacity-0" />
       <div className="truncate text-sm font-medium text-foreground">{d.label}</div>
       {d.color ? (
         <div className="mt-0.5 flex justify-center">
@@ -142,17 +142,13 @@ function RecordNode({ data }: NodeProps) {
       ) : (
         <div className="truncate text-[10px] text-muted-foreground">{d.conceptName}</div>
       )}
-      <Handle
-        type="source"
-        position={sourcePos}
-        className="!h-2 !w-2 !border-0 !bg-muted-foreground/50"
-      />
+      <Handle type="source" position={sourcePos} className="!h-2 !w-2 !border-0 !opacity-0" />
     </div>
   )
 }
 
 const nodeTypes = { recordVersion: RecordNode }
-const edgeTypes = { selfloop: SelfLoopEdge }
+const edgeTypes = { selfloop: SelfLoopEdge, routed: RoutedEdge }
 
 /** The record version card's real footprint (label line + concept pill) — taller
  *  than the concept box, so layouts must reserve the extra height. */
@@ -212,7 +208,7 @@ function buildFlow(
       id: `${m.source}->${m.target}`,
       source: m.source,
       target: m.target,
-      type: m.source === m.target ? "selfloop" : "default",
+      type: m.source === m.target ? "selfloop" : "routed",
       label: [...m.labels].join(", "),
       labelStyle: { fontSize: 11, fontWeight: 500, fill: "var(--foreground)" },
       labelBgStyle: { fill: "var(--card)" },
@@ -264,112 +260,129 @@ function GraphFlow({
   // Applying a layout is a single undoable step and autosaves like any move.
   const align = useCallback(
     (kind: LayoutKind) => {
-      void computeLayout(kind, toLayoutInput(graph)).then((positions) => {
-        pushHistory()
-        const direction = LAYOUT_DIR[kind] ?? "TB"
-        setNodes((ns) =>
-          ns.map((n) => ({
-            ...n,
-            position: positions.get(n.id) ?? n.position,
-            data: { ...n.data, direction },
-          })),
-        )
-        markDirty("all")
-        scheduleSave()
-        requestAnimationFrame(() => fitView({ padding: 0.2 }))
-      })
+      void computeLayout(kind, withCanvasMeasures(toLayoutInput(graph), nodes, edges)).then(
+        (positions) => {
+          pushHistory()
+          const direction = LAYOUT_DIR[kind] ?? "TB"
+          setNodes((ns) =>
+            ns.map((n) => ({
+              ...n,
+              position: positions.get(n.id) ?? n.position,
+              data: { ...n.data, direction },
+            })),
+          )
+          markDirty("all")
+          scheduleSave()
+          requestAnimationFrame(() => fitView({ padding: 0.2 }))
+        },
+      )
     },
-    [graph, setNodes, fitView, pushHistory, markDirty, scheduleSave],
+    [graph, setNodes, fitView, pushHistory, markDirty, scheduleSave, nodes, edges],
   )
 
+  // Nothing arranged yet (fresh org / never-opened record graph): run Auto
+  // once the nodes are measured, so the first view is the routed layout
+  // rather than dagre's sync fallback. It saves like any layout.
+  const nodesInitialized = useNodesInitialized()
+  const autoLaidOut = useRef(Object.keys(savedPositions).length > 0)
+  useEffect(() => {
+    if (!nodesInitialized || autoLaidOut.current) return
+    autoLaidOut.current = true
+    align(DEFAULT_LAYOUT)
+  }, [nodesInitialized, align])
+
+  const routes = useEdgeRoutes(nodes, edges)
+
   return (
-    <ReactFlow
-      nodes={nodes}
-      edges={edges}
-      onNodesChange={onNodesChange}
-      onEdgesChange={onEdgesChange}
-      nodeTypes={nodeTypes}
-      edgeTypes={edgeTypes}
-      onNodeClick={(_, node) => {
-        const d = node.data as { recordVersionId?: string | null; root?: boolean }
-        if (d.recordVersionId && !d.root) navigate(recordHref(d.recordVersionId))
-      }}
-      onNodeDragStart={onNodeDragStart}
-      onNodeDragStop={onNodeDragStop}
-      nodesConnectable={false}
-      minZoom={0.2}
-      fitView
-      fitViewOptions={{ padding: 0.2 }}
-      style={{ width: "100%", height: "100%" }}
-    >
-      <Background color="var(--graph-dots)" gap={20} />
-      <Controls showInteractive={false} />
-      <Panel position="top-left" className="flex items-center gap-1.5">
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="outline" size="sm" className="shadow-sm">
-              <Workflow />
-              Layout
-              <ChevronDown className="text-muted-foreground" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="w-56">
-            {LAYOUT_GROUPS.map((g, i) => (
-              <div key={g.group}>
-                {i > 0 && <DropdownMenuSeparator />}
-                <DropdownMenuLabel className="text-xs font-medium text-muted-foreground">
-                  {g.group}
-                </DropdownMenuLabel>
-                {g.layouts.map((l) => (
-                  <DropdownMenuItem key={l.kind} onSelect={() => align(l.kind)}>
-                    {l.name}
-                  </DropdownMenuItem>
-                ))}
-              </div>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
-        <Button
-          variant="outline"
-          size="icon-sm"
-          className="shadow-sm"
-          aria-label="Undo move"
-          title="Undo (⌘Z)"
-          disabled={!canUndo}
-          onClick={undo}
-        >
-          <Undo2 />
-        </Button>
-        <Button
-          variant="outline"
-          size="icon-sm"
-          className="shadow-sm"
-          aria-label="Redo move"
-          title="Redo (⇧⌘Z)"
-          disabled={!canRedo}
-          onClick={redo}
-        >
-          <Redo2 />
-        </Button>
-        {saveState !== "idle" && (
-          <span
-            className={
-              saveState === "error" ? "text-xs text-destructive" : "text-xs text-muted-foreground"
-            }
+    <EdgeRoutesProvider value={routes}>
+      <ReactFlow
+        nodes={nodes}
+        edges={edges}
+        onNodesChange={onNodesChange}
+        onEdgesChange={onEdgesChange}
+        nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
+        onNodeClick={(_, node) => {
+          const d = node.data as { recordVersionId?: string | null; root?: boolean }
+          if (d.recordVersionId && !d.root) navigate(recordHref(d.recordVersionId))
+        }}
+        onNodeDragStart={onNodeDragStart}
+        onNodeDragStop={onNodeDragStop}
+        nodesConnectable={false}
+        minZoom={0.2}
+        fitView
+        fitViewOptions={{ padding: 0.2 }}
+        style={{ width: "100%", height: "100%" }}
+      >
+        <Background color="var(--graph-dots)" gap={20} />
+        <Controls showInteractive={false} />
+        <Panel position="top-left" className="flex items-center gap-1.5">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" className="shadow-sm">
+                <Workflow />
+                Layout
+                <ChevronDown className="text-muted-foreground" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-56">
+              {LAYOUT_GROUPS.map((g, i) => (
+                <div key={g.group}>
+                  {i > 0 && <DropdownMenuSeparator />}
+                  <DropdownMenuLabel className="text-xs font-medium text-muted-foreground">
+                    {g.group}
+                  </DropdownMenuLabel>
+                  {g.layouts.map((l) => (
+                    <DropdownMenuItem key={l.kind} onSelect={() => align(l.kind)}>
+                      {l.name}
+                    </DropdownMenuItem>
+                  ))}
+                </div>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <Button
+            variant="outline"
+            size="icon-sm"
+            className="shadow-sm"
+            aria-label="Undo move"
+            title="Undo (⌘Z)"
+            disabled={!canUndo}
+            onClick={undo}
           >
-            {saveState === "error" ? "Save failed — retrying" : "Saving…"}
-          </span>
-        )}
-      </Panel>
-      {graph.truncated && (
-        <Panel
-          position="bottom-left"
-          className="rounded bg-card px-2 py-1 text-xs text-muted-foreground"
-        >
-          Showing the first {GRAPH_NODE_CAP} items — narrow the fields or depth.
+            <Undo2 />
+          </Button>
+          <Button
+            variant="outline"
+            size="icon-sm"
+            className="shadow-sm"
+            aria-label="Redo move"
+            title="Redo (⇧⌘Z)"
+            disabled={!canRedo}
+            onClick={redo}
+          >
+            <Redo2 />
+          </Button>
+          {saveState !== "idle" && (
+            <span
+              className={
+                saveState === "error" ? "text-xs text-destructive" : "text-xs text-muted-foreground"
+              }
+            >
+              {saveState === "error" ? "Save failed — retrying" : "Saving…"}
+            </span>
+          )}
         </Panel>
-      )}
-    </ReactFlow>
+        {graph.truncated && (
+          <Panel
+            position="bottom-left"
+            className="rounded bg-card px-2 py-1 text-xs text-muted-foreground"
+          >
+            Showing the first {GRAPH_NODE_CAP} items — narrow the fields or depth.
+          </Panel>
+        )}
+      </ReactFlow>
+    </EdgeRoutesProvider>
   )
 }
 

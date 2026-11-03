@@ -1,38 +1,19 @@
 import Dagre from "@dagrejs/dagre"
-import {
-  forceCenter,
-  forceCollide,
-  forceLink,
-  forceManyBody,
-  forceSimulation,
-  forceX,
-  forceY,
-  type SimulationLinkDatum,
-  type SimulationNodeDatum,
-} from "d3-force"
-
 export const NODE_W = 168
 export const NODE_H = 44
 
 export type LayoutDir = "LR" | "RL" | "TB" | "BT"
 
-export type LayoutKind =
-  | "dagre-tb"
-  | "dagre-lr"
-  | "elk-layered"
-  | "force"
-  | "elk-stress"
-  | "circle"
-  | "concentric"
-  | "radial"
-  | "elk-mrtree"
-  | "grid"
+/** Menu layouts. dagre is no longer one of them — it only places nodes that
+ *  have no saved position (sync, so the first paint has somewhere to put them). */
+export type LayoutKind = "elk-layered" | "elk-stress" | "grid"
+
+/** What a canvas runs when nothing has been arranged yet. */
+export const DEFAULT_LAYOUT: LayoutKind = "elk-layered"
 
 /** Which way relation arrows flow for a layout — drives node handle placement. */
 export const LAYOUT_DIR: Partial<Record<LayoutKind, LayoutDir>> = {
-  "dagre-lr": "LR",
-  "dagre-tb": "TB",
-  "elk-layered": "LR",
+  "elk-layered": "TB",
 }
 
 /** Menu catalog, grouped the way the layout dropdown renders it. */
@@ -41,32 +22,10 @@ export const LAYOUT_GROUPS: ReadonlyArray<{
   layouts: ReadonlyArray<{ kind: LayoutKind; name: string }>
 }> = [
   {
-    group: "Hierarchical",
+    group: "Layout",
     layouts: [
-      { kind: "dagre-tb", name: "Layered ↓ down" },
-      { kind: "dagre-lr", name: "Layered → right" },
-      { kind: "elk-layered", name: "Layered (ELK)" },
-    ],
-  },
-  {
-    group: "Organic",
-    layouts: [
-      { kind: "force", name: "Force-directed" },
-      { kind: "elk-stress", name: "Stress (ELK)" },
-    ],
-  },
-  {
-    group: "Radial",
-    layouts: [
-      { kind: "circle", name: "Circle" },
-      { kind: "concentric", name: "Concentric by degree" },
-      { kind: "radial", name: "Radial tree" },
-    ],
-  },
-  {
-    group: "Trees & grids",
-    layouts: [
-      { kind: "elk-mrtree", name: "Tree (ELK)" },
+      { kind: "elk-layered", name: "Auto" },
+      { kind: "elk-stress", name: "Organic" },
       { kind: "grid", name: "Grid" },
     ],
   },
@@ -74,12 +33,43 @@ export const LAYOUT_GROUPS: ReadonlyArray<{
 
 export interface LayoutInput {
   nodes: ReadonlyArray<{ id: string; label: string }>
-  /** Deduplicated, self-loops excluded (they don't affect placement). */
-  edges: ReadonlyArray<{ source: string; target: string }>
+  /** Deduplicated, self-loops excluded (they don't affect placement). The
+   *  optional label lets layouts that support it reserve room for it. */
+  edges: ReadonlyArray<{ source: string; target: string; label?: string }>
   /** The card footprint layouts reserve per node — taller cards (e.g. the
    *  record version graph's label + concept pill) get proportionally more room.
    *  Defaults to the concept-canvas box. */
   nodeSize?: { w: number; h: number }
+  /** Real rendered sizes per node (from React Flow's measurement); beats
+   *  `nodeSize` for layouts that can use per-node sizes. */
+  sizes?: ReadonlyMap<string, { w: number; h: number }>
+}
+
+/** Enrich a layout input with what only the live canvas knows: measured node
+ *  sizes and the rendered edge labels (keyed by source→target pair). */
+export function withCanvasMeasures(
+  input: LayoutInput,
+  nodes: ReadonlyArray<{ id: string; measured?: { width?: number; height?: number } }>,
+  edges: ReadonlyArray<{ source: string; target: string; label?: unknown }>,
+): LayoutInput {
+  const sizes = new Map<string, { w: number; h: number }>()
+  for (const n of nodes) {
+    const w = n.measured?.width
+    const h = n.measured?.height
+    if (w && h) sizes.set(n.id, { w, h })
+  }
+  const labels = new Map<string, string>()
+  for (const e of edges) {
+    if (typeof e.label === "string" && e.label) labels.set(`${e.source}->${e.target}`, e.label)
+  }
+  return {
+    ...input,
+    sizes,
+    edges: input.edges.map((e) => ({
+      ...e,
+      label: e.label ?? labels.get(`${e.source}->${e.target}`),
+    })),
+  }
 }
 
 const sizeOf = (input: LayoutInput) => input.nodeSize ?? { w: NODE_W, h: NODE_H }
@@ -88,19 +78,6 @@ const sizeOf = (input: LayoutInput) => input.nodeSize ?? { w: NODE_W, h: NODE_H 
 export type Positions = Map<string, { x: number; y: number }>
 
 const center = (x: number, y: number, w = NODE_W, h = NODE_H) => ({ x: x - w / 2, y: y - h / 2 })
-
-/** Repulsion radius covering the card's corners, with breathing room. */
-const collideRadius = (w: number, h: number) => Math.hypot(w, h) / 2 + 32
-
-/** Undirected degree per node (how connected it is). */
-function degrees(input: LayoutInput): Map<string, number> {
-  const deg = new Map<string, number>(input.nodes.map((n) => [n.id, 0]))
-  for (const e of input.edges) {
-    deg.set(e.source, (deg.get(e.source) ?? 0) + 1)
-    deg.set(e.target, (deg.get(e.target) ?? 0) + 1)
-  }
-  return deg
-}
 
 const byLabel = (input: LayoutInput) =>
   [...input.nodes].sort((a, b) => a.label.localeCompare(b.label))
@@ -134,18 +111,6 @@ export function layoutDagre(input: LayoutInput, dir: LayoutDir): Positions {
   )
 }
 
-function layoutCircle(input: LayoutInput): Positions {
-  const { w, h } = sizeOf(input)
-  const sorted = byLabel(input)
-  const r = Math.max(180 + h, (sorted.length * (w + 56)) / (2 * Math.PI))
-  return new Map(
-    sorted.map((n, i) => {
-      const a = (2 * Math.PI * i) / sorted.length - Math.PI / 2
-      return [n.id, center(Math.cos(a) * r, Math.sin(a) * r, w, h)]
-    }),
-  )
-}
-
 function layoutGrid(input: LayoutInput): Positions {
   const { w, h } = sizeOf(input)
   const sorted = byLabel(input)
@@ -155,160 +120,193 @@ function layoutGrid(input: LayoutInput): Positions {
   )
 }
 
-/** Rings by connectivity: the best-connected nodes sit in the middle. */
-function layoutConcentric(input: LayoutInput): Positions {
-  const { w, h } = sizeOf(input)
-  const deg = degrees(input)
-  const ringsByDegree = new Map<number, typeof input.nodes>()
-  for (const n of byLabel(input)) {
-    const d = deg.get(n.id) ?? 0
-    ringsByDegree.set(d, [...(ringsByDegree.get(d) ?? []), n])
-  }
-  const rings = [...ringsByDegree.entries()].sort((a, b) => b[0] - a[0]).map(([, ns]) => ns)
+/** Rough label footprint at the canvases' 11px/500 label style. */
+const labelBox = (text: string) => ({ width: text.length * 6.2 + 14, height: 20 })
 
-  const pos: Positions = new Map()
-  let r = 0
-  rings.forEach((ring, i) => {
-    if (i === 0 && ring.length === 1 && ring[0]) {
-      pos.set(ring[0].id, center(0, 0, w, h))
-      return
-    }
-    r = Math.max(r + 190 + h, (ring.length * (w + 56)) / (2 * Math.PI))
-    ring.forEach((n, j) => {
-      // Stagger ring start angles so spokes don't line up.
-      const a = (2 * Math.PI * j) / ring.length - Math.PI / 2 + i * 0.5
-      pos.set(n.id, center(Math.cos(a) * r, Math.sin(a) * r, w, h))
-    })
-  })
-  return pos
+type ElkApi = InstanceType<typeof import("elkjs/lib/elk.bundled.js")["default"]>
+
+const loadElk = async (): Promise<ElkApi> => {
+  const { default: ELK } = await import("elkjs/lib/elk.bundled.js")
+  return new ELK()
 }
 
-/** BFS rings from the best-connected node; depth = distance from the root. */
-function layoutRadialTree(input: LayoutInput): Positions {
-  const { w, h } = sizeOf(input)
-  const deg = degrees(input)
-  const adj = new Map<string, Set<string>>(input.nodes.map((n) => [n.id, new Set()]))
-  for (const e of input.edges) {
-    adj.get(e.source)?.add(e.target)
-    adj.get(e.target)?.add(e.source)
-  }
-  const roots = byLabel(input).sort((a, b) => (deg.get(b.id) ?? 0) - (deg.get(a.id) ?? 0))
-
-  const levels: string[][] = []
-  const seen = new Set<string>()
-  // BFS from the top hub; restart from the next unseen hub so disconnected
-  // components still land on sensible rings instead of vanishing.
-  for (const root of roots) {
-    if (seen.has(root.id)) continue
-    let frontier = [root.id]
-    seen.add(root.id)
-    for (let depth = 0; frontier.length > 0; depth++) {
-      levels[depth] = [...(levels[depth] ?? []), ...frontier]
-      const next: string[] = []
-      for (const id of frontier) {
-        for (const nb of adj.get(id) ?? []) {
-          if (!seen.has(nb)) {
-            seen.add(nb)
-            next.push(nb)
-          }
-        }
-      }
-      frontier = next
-    }
-  }
-
-  const pos: Positions = new Map()
-  levels.forEach((level, depth) => {
-    if (depth === 0 && level.length === 1 && level[0]) {
-      pos.set(level[0], center(0, 0, w, h))
-      return
-    }
-    const r = Math.max(depth * (210 + h), (level.length * (w + 56)) / (2 * Math.PI))
-    level.forEach((id, j) => {
-      const a = (2 * Math.PI * j) / level.length - Math.PI / 2 + depth * 0.4
-      pos.set(id, center(Math.cos(a) * r, Math.sin(a) * r, w, h))
-    })
-  })
-  return pos
-}
-
-/** Spring-embedder physics (d3-force), ticked synchronously — small graphs only. */
-function layoutForce(input: LayoutInput): Positions {
-  const { w, h } = sizeOf(input)
-  interface SimNode extends SimulationNodeDatum {
-    id: string
-  }
-  const simNodes: SimNode[] = input.nodes.map((n) => ({ id: n.id }))
-  const links: SimulationLinkDatum<SimNode>[] = input.edges.map((e) => ({
-    source: e.source,
-    target: e.target,
-  }))
-  const sim = forceSimulation(simNodes)
-    .force(
-      "link",
-      forceLink<SimNode, SimulationLinkDatum<SimNode>>(links)
-        .id((d) => d.id)
-        .distance(Math.max(260, w * 1.6))
-        .strength(0.6),
-    )
-    .force("charge", forceManyBody().strength(-1400))
-    // Collision covers the card's corners (not just its half-width), so tall
-    // cards can't overlap vertically.
-    .force("collide", forceCollide(collideRadius(w, h)))
-    .force("center", forceCenter(0, 0))
-    // Weak gravity so disconnected components don't fly off to the horizon.
-    .force("x", forceX(0).strength(0.06))
-    .force("y", forceY(0).strength(0.06))
-    .stop()
-  sim.tick(300)
-  return new Map(simNodes.map((n) => [n.id, center(n.x ?? 0, n.y ?? 0, w, h)]))
-}
-
-/** ELK algorithms (layered / stress / mrtree) via the bundled build.
+/** ELK stress via the bundled build.
  *  Imported lazily — ELK is ~1.3MB and only needed once an ELK layout is picked. */
 async function layoutElk(input: LayoutInput, algorithm: string): Promise<Positions> {
   const { w, h } = sizeOf(input)
-  const { default: ELK } = await import("elkjs/lib/elk.bundled.js")
-  const elk = new ELK()
+  const elk = await loadElk()
   const res = await elk.layout({
     id: "root",
     layoutOptions: {
       "elk.algorithm": algorithm,
       "elk.direction": "RIGHT",
       "elk.spacing.nodeNode": String(Math.max(72, Math.round(h * 1.2))),
-      "elk.layered.spacing.nodeNodeBetweenLayers": String(Math.max(100, Math.round(h * 1.8))),
-      // Keep layer-crossing edges (and their labels) clear of the nodes they pass.
       "elk.spacing.edgeNode": String(Math.max(64, Math.round(w * 0.4))),
-      "elk.layered.spacing.edgeNodeBetweenLayers": "48",
       "elk.stress.desiredEdgeLength": String(Math.max(280, Math.round(w * 1.7))),
     },
-    children: input.nodes.map((n) => ({ id: n.id, width: w, height: h })),
+    children: input.nodes.map((n) => {
+      const s = input.sizes?.get(n.id)
+      return { id: n.id, width: s?.w ?? w, height: s?.h ?? h }
+    }),
     edges: input.edges.map((e, i) => ({ id: `e${i}`, sources: [e.source], targets: [e.target] })),
   })
   return new Map((res.children ?? []).map((c) => [c.id, { x: c.x ?? 0, y: c.y ?? 0 }]))
 }
 
+/** Connected components (undirected), biggest first; ties by first label. */
+function components(input: LayoutInput): string[][] {
+  const parent = new Map(input.nodes.map((n) => [n.id, n.id]))
+  const find = (x: string): string => {
+    const p = parent.get(x) ?? x
+    if (p === x) return x
+    const r = find(p)
+    parent.set(x, r)
+    return r
+  }
+  for (const e of input.edges) {
+    if (parent.has(e.source) && parent.has(e.target)) parent.set(find(e.source), find(e.target))
+  }
+  const groups = new Map<string, string[]>()
+  for (const n of byLabel(input)) {
+    const r = find(n.id)
+    groups.set(r, [...(groups.get(r) ?? []), n.id])
+  }
+  return [...groups.values()].sort((a, b) => b.length - a.length)
+}
+
+const COMPONENT_GAP = 96
+/** Width:height the packed block aims for — roughly a canvas viewport. */
+const TARGET_ASPECT = 1.6
+
+/**
+ * The routed canvases' default: ELK layered, top-down, per connected component,
+ * then the components shelf-packed into a screen-shaped block.
+ *
+ * Each component gets real node sizes and its edge labels as layout objects
+ * (so labels get their own room between layers). Components are laid out
+ * separately because ELK's own component packing stacks them into one tall
+ * column for downward layouts; isolated nodes become a compact grid of their own.
+ */
+async function layoutElkLayered(input: LayoutInput): Promise<Positions> {
+  const { w, h } = sizeOf(input)
+  const sizeOfNode = (id: string) => input.sizes?.get(id) ?? { w, h }
+  const elk = await loadElk()
+
+  const comps = components(input)
+  const singles = comps.filter((c) => c.length === 1).flat()
+  const connected = comps.filter((c) => c.length > 1)
+
+  type Block = { width: number; height: number; pos: Positions }
+  const blocks: Block[] = await Promise.all(
+    connected.map(async (ids) => {
+      const inComp = new Set(ids)
+      const res = await elk.layout({
+        id: "root",
+        layoutOptions: {
+          "elk.algorithm": "layered",
+          "elk.direction": "DOWN",
+          "elk.edgeRouting": "ORTHOGONAL",
+          "elk.layered.nodePlacement.strategy": "NETWORK_SIMPLEX",
+          "elk.layered.thoroughness": "40",
+          "elk.spacing.nodeNode": "48",
+          "elk.layered.spacing.nodeNodeBetweenLayers": "64",
+          "elk.spacing.edgeNode": "28",
+          "elk.layered.spacing.edgeNodeBetweenLayers": "28",
+          "elk.spacing.edgeEdge": "14",
+          "elk.layered.spacing.edgeEdgeBetweenLayers": "14",
+          "elk.spacing.edgeLabel": "6",
+          "elk.edgeLabels.placement": "CENTER",
+          "elk.padding": "[top=0,left=0,bottom=0,right=0]",
+        },
+        children: ids.map((id) => ({ id, width: sizeOfNode(id).w, height: sizeOfNode(id).h })),
+        edges: input.edges
+          .filter((e) => inComp.has(e.source) && inComp.has(e.target))
+          .map((e, i) => ({
+            id: `e${i}`,
+            sources: [e.source],
+            targets: [e.target],
+            ...(e.label ? { labels: [{ text: e.label, ...labelBox(e.label) }] } : {}),
+          })),
+      })
+      const pos: Positions = new Map(
+        (res.children ?? []).map((c) => [c.id, { x: c.x ?? 0, y: c.y ?? 0 }]),
+      )
+      // Block extent from the nodes themselves (labels/routes stay inside it).
+      let width = 0
+      let height = 0
+      for (const [id, p] of pos) {
+        width = Math.max(width, p.x + sizeOfNode(id).w)
+        height = Math.max(height, p.y + sizeOfNode(id).h)
+      }
+      return { width, height, pos }
+    }),
+  )
+
+  // Unconnected nodes: one compact grid block.
+  if (singles.length > 0) {
+    const cols = Math.max(1, Math.ceil(Math.sqrt(singles.length * TARGET_ASPECT)))
+    const cellW = Math.max(...singles.map((id) => sizeOfNode(id).w)) + 32
+    const cellH = Math.max(...singles.map((id) => sizeOfNode(id).h)) + 32
+    const pos: Positions = new Map(
+      singles.map((id, i) => [id, { x: (i % cols) * cellW, y: Math.floor(i / cols) * cellH }]),
+    )
+    blocks.push({
+      width: Math.min(cols, singles.length) * cellW - 32,
+      height: Math.ceil(singles.length / cols) * cellH - 32,
+      pos,
+    })
+  }
+
+  return shelfPack(blocks)
+}
+
+/** Shelf-pack blocks (tallest first, left to right, wrapping) at the wrap width
+ *  whose overall bounding box is closest to TARGET_ASPECT. Candidate widths are
+ *  every prefix of the row, so 2-5 big components still land side by side. */
+function shelfPack(blocks: ReadonlyArray<{ width: number; height: number; pos: Positions }>) {
+  const sorted = [...blocks].sort((p, q) => q.height - p.height)
+  const place = (maxW: number) => {
+    const out: Positions = new Map()
+    let x = 0
+    let y = 0
+    let shelfH = 0
+    let totalW = 0
+    for (const b of sorted) {
+      if (x > 0 && x + b.width > maxW) {
+        x = 0
+        y += shelfH + COMPONENT_GAP
+        shelfH = 0
+      }
+      for (const [id, p] of b.pos) out.set(id, { x: p.x + x, y: p.y + y })
+      totalW = Math.max(totalW, x + b.width)
+      x += b.width + COMPONENT_GAP
+      shelfH = Math.max(shelfH, b.height)
+    }
+    return { out, aspect: totalW / Math.max(1, y + shelfH) }
+  }
+  let best: ReturnType<typeof place> | null = null
+  let rowW = 0
+  for (const b of sorted) {
+    rowW += (rowW > 0 ? COMPONENT_GAP : 0) + b.width
+    const cand = place(rowW)
+    if (
+      !best ||
+      Math.abs(Math.log(cand.aspect / TARGET_ASPECT)) <
+        Math.abs(Math.log(best.aspect / TARGET_ASPECT))
+    )
+      best = cand
+  }
+  return best?.out ?? new Map()
+}
+
 /** Run the chosen auto-layout and return node positions. */
 export function computeLayout(kind: LayoutKind, input: LayoutInput): Promise<Positions> {
   switch (kind) {
-    case "dagre-lr":
-    case "dagre-tb":
-      return Promise.resolve(layoutDagre(input, LAYOUT_DIR[kind] ?? "TB"))
-    case "circle":
-      return Promise.resolve(layoutCircle(input))
-    case "grid":
-      return Promise.resolve(layoutGrid(input))
-    case "concentric":
-      return Promise.resolve(layoutConcentric(input))
-    case "radial":
-      return Promise.resolve(layoutRadialTree(input))
-    case "force":
-      return Promise.resolve(layoutForce(input))
     case "elk-layered":
-      return layoutElk(input, "layered")
+      return layoutElkLayered(input)
     case "elk-stress":
       return layoutElk(input, "stress")
-    case "elk-mrtree":
-      return layoutElk(input, "mrtree")
+    case "grid":
+      return Promise.resolve(layoutGrid(input))
   }
 }

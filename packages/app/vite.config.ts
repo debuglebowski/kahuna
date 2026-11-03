@@ -6,9 +6,16 @@ import { defineConfig } from "vite"
 export default defineConfig(({ mode }) => ({
   plugins: [react(), tailwindcss()],
   resolve: {
-    alias: {
-      "@": fileURLToPath(new URL("./src", import.meta.url)),
-    },
+    alias: [
+      { find: "@", replacement: fileURLToPath(new URL("./src", import.meta.url)) },
+      // libavoid-js's `exports` map hides its .wasm; alias it so `?url` can
+      // emit it as an asset (see src/lib/graphRouting.ts). Regex so the
+      // `?url` suffix survives the rewrite.
+      {
+        find: /^libavoid-wasm(\?.*)?$/,
+        replacement: `${fileURLToPath(new URL("./node_modules/libavoid-js/dist/libavoid.wasm", import.meta.url))}$1`,
+      },
+    ],
   },
   // react-grid-layout's `react-draggable` reads `process.env.*` at runtime inside
   // the drag/resize lifecycle; the browser has no `process`, so without these the

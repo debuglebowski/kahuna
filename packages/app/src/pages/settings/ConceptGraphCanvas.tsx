@@ -13,11 +13,12 @@ import {
   ReactFlow,
   ReactFlowProvider,
   useEdgesState,
+  useNodesInitialized,
   useNodesState,
   useReactFlow,
 } from "@xyflow/react"
 import { ChevronDown, Redo2, Undo2, Users, Workflow } from "lucide-react"
-import { type CSSProperties, useCallback, useEffect, useMemo } from "react"
+import { type CSSProperties, useCallback, useEffect, useMemo, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -27,18 +28,21 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { EdgeRoutesProvider, RoutedEdge, useEdgeRoutes } from "../../components/graph/RoutedEdge"
 import { SelfLoopEdge } from "../../components/graph/SelfLoopEdge"
 import { useGraphPositions } from "../../components/graph/useGraphPositions"
 import { Card, Spinner } from "../../components/ui"
 import { api, type ConceptGraph, type GraphLayout } from "../../lib/api"
 import {
   computeLayout,
+  DEFAULT_LAYOUT,
   LAYOUT_DIR,
   LAYOUT_GROUPS,
   type LayoutDir,
   type LayoutInput,
   type LayoutKind,
   layoutDagre,
+  withCanvasMeasures,
 } from "../../lib/graphLayouts"
 import { ConceptIcon, DEFAULT_CONCEPT_ICON } from "../../lib/icons"
 
@@ -76,22 +80,14 @@ function ConceptNode({ data }: NodeProps) {
         (dimmed ? " opacity-30" : "")
       }
     >
-      <Handle
-        type="target"
-        position={targetPos}
-        className="!h-2 !w-2 !border-0 !bg-muted-foreground/50"
-      />
+      <Handle type="target" position={targetPos} className="!h-2 !w-2 !border-0 !opacity-0" />
       <span
         className={`inline-flex items-center justify-center gap-1.5${managedBy ? " font-bold italic" : ""}`}
       >
         <ConceptIcon value={icon || DEFAULT_CONCEPT_ICON} size={15} />
         {label}
       </span>
-      <Handle
-        type="source"
-        position={sourcePos}
-        className="!h-2 !w-2 !border-0 !bg-muted-foreground/50"
-      />
+      <Handle type="source" position={sourcePos} className="!h-2 !w-2 !border-0 !opacity-0" />
     </div>
   )
 }
@@ -117,11 +113,7 @@ function MembersNode({ data }: NodeProps) {
       title="Built-in: org members. User fields point here."
       className={`${BUILTIN_NODE}${dimmed ? " opacity-30" : ""}`}
     >
-      <Handle
-        type="target"
-        position={targetPos}
-        className="!h-2 !w-2 !border-0 !bg-muted-foreground/50"
-      />
+      <Handle type="target" position={targetPos} className="!h-2 !w-2 !border-0 !opacity-0" />
       <span className="inline-flex items-center justify-center gap-1.5">
         <Users size={15} />
         Member
@@ -129,17 +121,13 @@ function MembersNode({ data }: NodeProps) {
           built-in
         </span>
       </span>
-      <Handle
-        type="source"
-        position={sourcePos}
-        className="!h-2 !w-2 !border-0 !bg-muted-foreground/50"
-      />
+      <Handle type="source" position={sourcePos} className="!h-2 !w-2 !border-0 !opacity-0" />
     </div>
   )
 }
 
 const nodeTypes = { concept: ConceptNode, members: MembersNode }
-const edgeTypes = { selfloop: SelfLoopEdge }
+const edgeTypes = { selfloop: SelfLoopEdge, routed: RoutedEdge }
 
 /** Layout input: deduplicated relation pairs, self-loops excluded, plus the
  *  Members node + its user-field edges when any exist. */
@@ -179,7 +167,7 @@ function buildFlow(graph: ConceptGraph, saved: GraphLayout): { nodes: Node[]; ed
     id: `${m.from}->${m.to}`,
     source: m.from,
     target: m.to,
-    type: m.from === m.to ? "selfloop" : "default",
+    type: m.from === m.to ? "selfloop" : "routed",
     label: [...m.labels].join(", "),
     // CSS vars (not hex) so edge chrome follows the active theme.
     labelStyle: { fontSize: 11, fontWeight: 500, fill: "var(--foreground)" },
@@ -202,6 +190,7 @@ function buildFlow(graph: ConceptGraph, saved: GraphLayout): { nodes: Node[]; ed
       id: `${from}->${MEMBERS_NODE_ID}`,
       source: from,
       target: MEMBERS_NODE_ID,
+      type: "routed",
       label: [...labels].join(", "),
       labelStyle: { fontSize: 11, fontWeight: 500, fill: "var(--muted-foreground)" },
       labelBgStyle: { fill: "var(--card)" },
@@ -286,103 +275,120 @@ function Flow({
   // Applying a layout is a single undoable step and autosaves like any move.
   const align = useCallback(
     (kind: LayoutKind) => {
-      void computeLayout(kind, toLayoutInput(graph)).then((positions) => {
-        pushHistory()
-        const direction = LAYOUT_DIR[kind] ?? "TB"
-        setNodes((ns) =>
-          ns.map((n) => ({
-            ...n,
-            position: positions.get(n.id) ?? n.position,
-            data: { ...n.data, direction, selected: n.id === selectedId },
-          })),
-        )
-        markDirty("all")
-        scheduleSave()
-        requestAnimationFrame(() => fitView({ padding: 0.2 }))
-      })
+      void computeLayout(kind, withCanvasMeasures(toLayoutInput(graph), nodes, edges)).then(
+        (positions) => {
+          pushHistory()
+          const direction = LAYOUT_DIR[kind] ?? "TB"
+          setNodes((ns) =>
+            ns.map((n) => ({
+              ...n,
+              position: positions.get(n.id) ?? n.position,
+              data: { ...n.data, direction, selected: n.id === selectedId },
+            })),
+          )
+          markDirty("all")
+          scheduleSave()
+          requestAnimationFrame(() => fitView({ padding: 0.2 }))
+        },
+      )
     },
-    [graph, selectedId, setNodes, fitView, pushHistory, markDirty, scheduleSave],
+    [graph, selectedId, setNodes, fitView, pushHistory, markDirty, scheduleSave, nodes, edges],
   )
 
+  // Nothing arranged yet (fresh org / never-opened record graph): run Auto
+  // once the nodes are measured, so the first view is the routed layout
+  // rather than dagre's sync fallback. It saves like any layout.
+  const nodesInitialized = useNodesInitialized()
+  const autoLaidOut = useRef(Object.keys(savedPositions).length > 0)
+  useEffect(() => {
+    if (!nodesInitialized || autoLaidOut.current) return
+    autoLaidOut.current = true
+    align(DEFAULT_LAYOUT)
+  }, [nodesInitialized, align])
+
+  const routes = useEdgeRoutes(nodes, edges)
+
   return (
-    <ReactFlow
-      nodes={nodes}
-      edges={edges}
-      onNodesChange={onNodesChange}
-      onEdgesChange={onEdgesChange}
-      nodeTypes={nodeTypes}
-      edgeTypes={edgeTypes}
-      onNodeClick={(_, node) => {
-        if (node.id !== MEMBERS_NODE_ID) onSelect(node.id)
-      }}
-      onNodeDragStart={onNodeDragStart}
-      onNodeDragStop={onNodeDragStop}
-      nodesConnectable={false}
-      minZoom={0.2}
-      fitView
-      fitViewOptions={{ padding: 0.2 }}
-      style={{ width: "100%", height: "100%" }}
-    >
-      <Background color="var(--graph-dots)" gap={20} />
-      <Controls showInteractive={false} />
-      <Panel position="top-left" className="flex items-center gap-1.5">
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="outline" size="sm" className="shadow-sm">
-              <Workflow />
-              Layout
-              <ChevronDown className="text-muted-foreground" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="w-56">
-            {LAYOUT_GROUPS.map((g, i) => (
-              <div key={g.group}>
-                {i > 0 && <DropdownMenuSeparator />}
-                <DropdownMenuLabel className="text-xs font-medium text-muted-foreground">
-                  {g.group}
-                </DropdownMenuLabel>
-                {g.layouts.map((l) => (
-                  <DropdownMenuItem key={l.kind} onSelect={() => align(l.kind)}>
-                    {l.name}
-                  </DropdownMenuItem>
-                ))}
-              </div>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
-        <Button
-          variant="outline"
-          size="icon-sm"
-          className="shadow-sm"
-          aria-label="Undo move"
-          title="Undo (⌘Z)"
-          disabled={!canUndo}
-          onClick={undo}
-        >
-          <Undo2 />
-        </Button>
-        <Button
-          variant="outline"
-          size="icon-sm"
-          className="shadow-sm"
-          aria-label="Redo move"
-          title="Redo (⇧⌘Z)"
-          disabled={!canRedo}
-          onClick={redo}
-        >
-          <Redo2 />
-        </Button>
-        {saveState !== "idle" && (
-          <span
-            className={
-              saveState === "error" ? "text-xs text-destructive" : "text-xs text-muted-foreground"
-            }
+    <EdgeRoutesProvider value={routes}>
+      <ReactFlow
+        nodes={nodes}
+        edges={edges}
+        onNodesChange={onNodesChange}
+        onEdgesChange={onEdgesChange}
+        nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
+        onNodeClick={(_, node) => {
+          if (node.id !== MEMBERS_NODE_ID) onSelect(node.id)
+        }}
+        onNodeDragStart={onNodeDragStart}
+        onNodeDragStop={onNodeDragStop}
+        nodesConnectable={false}
+        minZoom={0.2}
+        fitView
+        fitViewOptions={{ padding: 0.2 }}
+        style={{ width: "100%", height: "100%" }}
+      >
+        <Background color="var(--graph-dots)" gap={20} />
+        <Controls showInteractive={false} />
+        <Panel position="top-left" className="flex items-center gap-1.5">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" className="shadow-sm">
+                <Workflow />
+                Layout
+                <ChevronDown className="text-muted-foreground" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-56">
+              {LAYOUT_GROUPS.map((g, i) => (
+                <div key={g.group}>
+                  {i > 0 && <DropdownMenuSeparator />}
+                  <DropdownMenuLabel className="text-xs font-medium text-muted-foreground">
+                    {g.group}
+                  </DropdownMenuLabel>
+                  {g.layouts.map((l) => (
+                    <DropdownMenuItem key={l.kind} onSelect={() => align(l.kind)}>
+                      {l.name}
+                    </DropdownMenuItem>
+                  ))}
+                </div>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <Button
+            variant="outline"
+            size="icon-sm"
+            className="shadow-sm"
+            aria-label="Undo move"
+            title="Undo (⌘Z)"
+            disabled={!canUndo}
+            onClick={undo}
           >
-            {saveState === "error" ? "Save failed — retrying" : "Saving…"}
-          </span>
-        )}
-      </Panel>
-    </ReactFlow>
+            <Undo2 />
+          </Button>
+          <Button
+            variant="outline"
+            size="icon-sm"
+            className="shadow-sm"
+            aria-label="Redo move"
+            title="Redo (⇧⌘Z)"
+            disabled={!canRedo}
+            onClick={redo}
+          >
+            <Redo2 />
+          </Button>
+          {saveState !== "idle" && (
+            <span
+              className={
+                saveState === "error" ? "text-xs text-destructive" : "text-xs text-muted-foreground"
+              }
+            >
+              {saveState === "error" ? "Save failed — retrying" : "Saving…"}
+            </span>
+          )}
+        </Panel>
+      </ReactFlow>
+    </EdgeRoutesProvider>
   )
 }
 

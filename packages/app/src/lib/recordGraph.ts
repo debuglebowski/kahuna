@@ -18,7 +18,7 @@ export interface RecordGraphConfig {
 export const DEFAULT_GRAPH_CONFIG: RecordGraphConfig = {
   fieldIds: null,
   depth: 2,
-  layout: "dagre-tb",
+  layout: "elk-layered",
 }
 
 export const GRAPH_NODE_CAP = 120
