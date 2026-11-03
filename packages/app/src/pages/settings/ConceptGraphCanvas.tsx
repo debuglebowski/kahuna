@@ -16,7 +16,7 @@ import {
   useNodesState,
   useReactFlow,
 } from "@xyflow/react"
-import { ChevronDown, Redo2, Undo2, Workflow } from "lucide-react"
+import { ChevronDown, Redo2, Undo2, Users, Workflow } from "lucide-react"
 import { type CSSProperties, useCallback, useEffect, useMemo } from "react"
 import { Button } from "@/components/ui/button"
 import {
@@ -96,21 +96,60 @@ function ConceptNode({ data }: NodeProps) {
   )
 }
 
-const nodeTypes = { concept: ConceptNode }
+/** Node id of the built-in Members box. Not a concept id, so the canvas never
+ *  routes a click on it; its saved position sits in the layout under this key. */
+const MEMBERS_NODE_ID = "__members"
+
+/** Org members — what `user` fields point at. Built-in, not a concept: muted,
+ *  dashed, not clickable. Shown only while some concept has a user field. */
+function MembersNode({ data }: NodeProps) {
+  const { direction, dimmed } = data as { direction?: LayoutDir; dimmed?: boolean }
+  const [targetPos, sourcePos] = DIR_HANDLES[direction ?? "TB"]
+  return (
+    <div
+      title="Built-in: org members. User fields point here."
+      className={`rounded-lg border border-dashed border-muted-foreground/50 bg-muted px-4 py-2 text-center text-sm font-medium text-muted-foreground${dimmed ? " opacity-30" : ""}`}
+    >
+      <Handle
+        type="target"
+        position={targetPos}
+        className="!h-2 !w-2 !border-0 !bg-muted-foreground/50"
+      />
+      <span className="inline-flex items-center justify-center gap-1.5">
+        <Users size={15} />
+        Members
+      </span>
+      <Handle
+        type="source"
+        position={sourcePos}
+        className="!h-2 !w-2 !border-0 !bg-muted-foreground/50"
+      />
+    </div>
+  )
+}
+
+const nodeTypes = { concept: ConceptNode, members: MembersNode }
 const edgeTypes = { selfloop: SelfLoopEdge }
 
-/** Layout input: deduplicated relation pairs, self-loops excluded. */
+/** Layout input: deduplicated relation pairs, self-loops excluded, plus the
+ *  Members node + its user-field edges when any exist. */
 function toLayoutInput(graph: ConceptGraph): LayoutInput {
   const pairs = new Set<string>()
   const edges: { source: string; target: string }[] = []
-  for (const e of graph.edges) {
+  const all = [
+    ...graph.edges,
+    ...graph.userEdges.map((e) => ({ from: e.from, to: MEMBERS_NODE_ID })),
+  ]
+  for (const e of all) {
     if (e.from === e.to) continue
     const key = `${e.from}->${e.to}`
     if (pairs.has(key)) continue
     pairs.add(key)
     edges.push({ source: e.from, target: e.to })
   }
-  return { nodes: graph.nodes.map((n) => ({ id: n.id, label: n.name })), edges }
+  const nodes = graph.nodes.map((n) => ({ id: n.id, label: n.name }))
+  if (graph.userEdges.length > 0) nodes.push({ id: MEMBERS_NODE_ID, label: "Members" })
+  return { nodes, edges }
 }
 
 /** Project the concept graph into React Flow nodes + edges. Saved positions
@@ -141,6 +180,33 @@ function buildFlow(graph: ConceptGraph, saved: GraphLayout): { nodes: Node[]; ed
     style: { stroke: "var(--ring)", strokeWidth: 1.5 },
   }))
 
+  // User fields → Members: one dashed edge per concept, labelled with its fields.
+  const userMerged = new Map<string, Set<string>>()
+  for (const e of graph.userEdges) {
+    const labels = userMerged.get(e.from) ?? new Set<string>()
+    labels.add(e.fieldName)
+    userMerged.set(e.from, labels)
+  }
+  for (const [from, labels] of userMerged) {
+    edges.push({
+      id: `${from}->${MEMBERS_NODE_ID}`,
+      source: from,
+      target: MEMBERS_NODE_ID,
+      label: [...labels].join(", "),
+      labelStyle: { fontSize: 11, fontWeight: 500, fill: "var(--muted-foreground)" },
+      labelBgStyle: { fill: "var(--card)" },
+      labelBgPadding: [6, 3] as [number, number],
+      labelBgBorderRadius: 4,
+      markerEnd: {
+        type: MarkerType.ArrowClosed,
+        width: 16,
+        height: 16,
+        color: "var(--muted-foreground)",
+      },
+      style: { stroke: "var(--muted-foreground)", strokeWidth: 1.25, strokeDasharray: "5 4" },
+    })
+  }
+
   const fallback = layoutDagre(toLayoutInput(graph), "TB")
   const nodes: Node[] = graph.nodes.map((n) => ({
     id: n.id,
@@ -148,6 +214,13 @@ function buildFlow(graph: ConceptGraph, saved: GraphLayout): { nodes: Node[]; ed
     position: saved[n.id] ?? fallback.get(n.id) ?? { x: 0, y: 0 },
     data: { label: n.name, selected: false, direction: "TB", icon: n.icon, managedBy: n.managedBy },
   }))
+  if (userMerged.size > 0)
+    nodes.push({
+      id: MEMBERS_NODE_ID,
+      type: "members",
+      position: saved[MEMBERS_NODE_ID] ?? fallback.get(MEMBERS_NODE_ID) ?? { x: 0, y: 0 },
+      data: { label: "Members", direction: "TB" },
+    })
 
   return { nodes, edges }
 }
@@ -230,7 +303,9 @@ function Flow({
       onEdgesChange={onEdgesChange}
       nodeTypes={nodeTypes}
       edgeTypes={edgeTypes}
-      onNodeClick={(_, node) => onSelect(node.id)}
+      onNodeClick={(_, node) => {
+        if (node.id !== MEMBERS_NODE_ID) onSelect(node.id)
+      }}
       onNodeDragStart={onNodeDragStart}
       onNodeDragStop={onNodeDragStop}
       nodesConnectable={false}
@@ -339,7 +414,7 @@ export function ConceptGraphCanvas({
     )
 
   // Re-mount Flow (re-running layout) only when the underlying graph changes.
-  const sig = `${graph.data.nodes.map((n) => n.id).join()}|${graph.data.edges.map((e) => e.id).join()}`
+  const sig = `${graph.data.nodes.map((n) => n.id).join()}|${graph.data.edges.map((e) => e.id).join()}|${graph.data.userEdges.map((e) => `${e.id}:${e.fieldName}`).join()}`
 
   return (
     <div
@@ -348,7 +423,7 @@ export function ConceptGraphCanvas({
       // tracking the global theme while the graph items render light.
       style={{ "--graph-dots": "var(--border)" } as CSSProperties}
     >
-      {graph.data.edges.length === 0 && (
+      {graph.data.edges.length === 0 && graph.data.userEdges.length === 0 && (
         <p className="text-sm text-muted-foreground">
           No relationships yet — add relation fields to your concepts to connect them.
         </p>

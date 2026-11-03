@@ -9,6 +9,7 @@ import {
   useSearchParams,
 } from "react-router-dom"
 import { Checkbox } from "@/components/ui/checkbox"
+import { usePageChrome } from "../../components/Layout"
 import {
   Button,
   Card,
@@ -35,6 +36,14 @@ type Dialog =
   | { kind: "archiveConcept"; conceptId: string }
   | { kind: "deleteConcept"; conceptId: string }
   | null
+
+/** The list route's graph canvas spans the full viewport width. Its own
+ *  component (not a hook call in {@link Concepts}) because the parent's chrome
+ *  effect would run after — and overwrite — the editor's full-height chrome. */
+function FullWidth() {
+  usePageChrome({ fullWidth: true })
+  return null
+}
 
 export function Concepts() {
   const { admin } = useOutletContext<{ admin: boolean }>()
@@ -225,6 +234,7 @@ export function Concepts() {
 
   return (
     <div className="space-y-3">
+      <FullWidth />
       <Toolbar filter={filter} onFilter={setFilter} placeholder="Find concept…">
         {admin && archivedConcepts.length > 0 && (
           <ToggleChip pressed={showArchived} onPressedChange={setShowArchived}>

@@ -140,6 +140,23 @@ describe("use-cases (UI backbone)", () => {
       ),
     ).toBe(true)
 
+    // A user field points at members, not a concept: it comes back as a userEdge.
+    const owner = (await run(
+      org,
+      addField({ conceptId: idOf("CompanyContact"), name: "Owner", kind: "user" }),
+    )) as WithId
+    const withUser = (await run(org, getConceptGraph)) as {
+      edges: ReadonlyArray<{ id: string }>
+      userEdges: ReadonlyArray<{ id: string; from: string; fieldName: string; multiple: boolean }>
+    }
+    expect(withUser.userEdges).toContainEqual({
+      id: owner.id,
+      from: idOf("CompanyContact"),
+      fieldName: "Owner",
+      multiple: false,
+    })
+    expect(withUser.edges.some((e) => e.id === owner.id)).toBe(false)
+
     // "What changed": events recorded across the workflow.
     const changed = (await run(org, getChanged)) as ReadonlyArray<unknown>
     expect(changed.length).toBeGreaterThan(2)

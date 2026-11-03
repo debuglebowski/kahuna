@@ -835,6 +835,8 @@ export const saveRecordGraphLayout = (
  * The concept relationship graph: every concept is a node, and every relation
  * field is a directed edge from its concept to the field's target concept.
  * Edges whose target concept no longer exists (dangling) are dropped.
+ * `user`-kind fields point at org members (not a concept) and come back
+ * separately as `userEdges`.
  */
 export const getConceptGraph: UC<unknown> = Effect.gen(function* () {
   const concepts = yield* Effect.flatMap(ConceptService, (c) => c.list())
@@ -861,6 +863,15 @@ export const getConceptGraph: UC<unknown> = Effect.gen(function* () {
         inverseName: f.config.inverseName ?? null,
         cardinality: f.config.cardinality ?? ("many" as const),
         fieldName: f.name,
+      })),
+    userEdges: fieldsPerConcept
+      .flat()
+      .filter((f) => f.kind === "user")
+      .map((f) => ({
+        id: f.id,
+        from: f.conceptId,
+        fieldName: f.name,
+        multiple: f.config.multiple ?? false,
       })),
   }
 })

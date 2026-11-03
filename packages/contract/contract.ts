@@ -356,10 +356,23 @@ export const ConceptGraphEdge = Schema.Struct({
 })
 export type ConceptGraphEdge = typeof ConceptGraphEdge.Type
 
+/** A `user`-kind field on `from` — points at org members, not a concept, so it
+ *  is not a {@link ConceptGraphEdge}. The graph draws these to a built-in
+ *  Members node. */
+export const ConceptGraphUserEdge = Schema.Struct({
+  /** The field id. */
+  id: Schema.String,
+  from: Schema.String,
+  fieldName: Schema.String,
+  multiple: Schema.Boolean,
+})
+export type ConceptGraphUserEdge = typeof ConceptGraphUserEdge.Type
+
 /** Concepts + their relationships, for the settings graph view. */
 export const ConceptGraph = Schema.Struct({
   nodes: Schema.Array(ConceptGraphNode),
   edges: Schema.Array(ConceptGraphEdge),
+  userEdges: Schema.Array(ConceptGraphUserEdge),
 })
 export type ConceptGraph = typeof ConceptGraph.Type
 
