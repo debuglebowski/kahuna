@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { ArchiveRestore, Plus, Trash2, X } from "lucide-react"
+import { ArchiveRestore, List, Plus, Trash2, Workflow, X } from "lucide-react"
 import { useState } from "react"
 import {
   Navigate,
@@ -9,6 +9,7 @@ import {
   useSearchParams,
 } from "react-router-dom"
 import { Checkbox } from "@/components/ui/checkbox"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { usePageChrome } from "../../components/Layout"
 import {
   Button,
@@ -27,6 +28,7 @@ import { api } from "../../lib/api"
 import { ConceptIcon, DEFAULT_CONCEPT_ICON } from "../../lib/icons"
 import { ConceptEditor, msgOf } from "./ConceptEditor"
 import { ConceptGraphCanvas } from "./ConceptGraphCanvas"
+import { ConceptTable } from "./ConceptTable"
 
 /** Which destructive confirm dialog is open (null = none), and on which concept.
  *  They live at the page level (not in {@link ConceptEditor}) because both the
@@ -59,7 +61,19 @@ export function Concepts() {
   const navigate = useNavigate()
   // The editor is a route: /settings/concepts/:id (full-page, takes over).
   const { id } = useParams()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
+  // Graph canvas or table — in the URL so a reload/back keeps the choice.
+  const view = searchParams.get("view") === "table" ? "table" : "graph"
+  const setView = (v: string) =>
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        if (v === "table") next.set("view", "table")
+        else next.delete("view")
+        return next
+      },
+      { replace: true },
+    )
   const [creatingConcept, setCreatingConcept] = useState(false)
   const [newName, setNewName] = useState("")
   const [showArchived, setShowArchived] = useState(false)
@@ -147,6 +161,9 @@ export function Concepts() {
   // The find-filter narrows the archived list too (the canvas dims live ones).
   const q = filter.trim().toLowerCase()
   const archivedShown = archivedConcepts.filter((c) => c.name.toLowerCase().includes(q))
+  const liveShown = (concepts.data ?? []).filter(
+    (c) => !c.archivedAt && c.name.toLowerCase().includes(q),
+  )
 
   // Archive/delete confirms — shared by the archived list (list route) and the
   // editor (detail route), so rendered alongside both.
@@ -237,6 +254,18 @@ export function Concepts() {
     <div className="flex h-full flex-col gap-3">
       <FullWidth />
       <Toolbar filter={filter} onFilter={setFilter} placeholder="Find concept…">
+        <Tabs value={view} onValueChange={setView}>
+          <TabsList>
+            <TabsTrigger value="graph" aria-label="Graph view" title="Graph">
+              <Workflow />
+              Graph
+            </TabsTrigger>
+            <TabsTrigger value="table" aria-label="Table view" title="Table">
+              <List />
+              Table
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
         {admin && archivedConcepts.length > 0 && (
           <ToggleChip pressed={showArchived} onPressedChange={setShowArchived}>
             Archived ({archivedConcepts.length})
@@ -252,11 +281,18 @@ export function Concepts() {
 
       {/* Takes the remaining height; below 420px the page scrolls instead. */}
       <div className="min-h-[420px] flex-1">
-        <ConceptGraphCanvas
-          selectedId={null}
-          onSelect={(cid) => navigate(`/settings/concepts/${cid}`)}
-          filter={filter}
-        />
+        {view === "table" ? (
+          <ConceptTable
+            concepts={liveShown}
+            onOpen={(cid) => navigate(`/settings/concepts/${cid}`)}
+          />
+        ) : (
+          <ConceptGraphCanvas
+            selectedId={null}
+            onSelect={(cid) => navigate(`/settings/concepts/${cid}`)}
+            filter={filter}
+          />
+        )}
       </div>
 
       {showArchived && archivedShown.length > 0 && (
