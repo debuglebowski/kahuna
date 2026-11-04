@@ -12,7 +12,7 @@ import { queryClient } from "./queryClient"
  * and re-flow (rather than leave holes) when versioning is off.
  */
 
-export const TILE_CONTENT_KEYS = [
+const TILE_CONTENT_KEYS = [
   "details",
   "document",
   "connected",
