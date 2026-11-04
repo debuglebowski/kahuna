@@ -20,10 +20,11 @@ import { useSession } from "@/lib/auth-client"
 import { recordsByConcept } from "@/lib/collections"
 import type { ConceptRecordData } from "@/lib/conceptData"
 import { capitalize, FieldValueCell } from "@/lib/fieldDisplay"
+import { sortRecordsByField } from "@/lib/fieldSort"
 import { recordHref } from "@/lib/recordHref"
 import { recordLabel } from "@/lib/recordLabel"
 import { isRichTextEmpty } from "@/lib/richtext"
-import { cn, showValue } from "@/lib/utils"
+import { cn } from "@/lib/utils"
 import { kanbanBuckets } from "@/lib/widgetAggregations"
 
 type Kanban = Extract<DashboardWidget, { type: "kanban" }>
@@ -159,7 +160,11 @@ export function KanbanWidget({
     const cards = buckets.get(key) ?? []
     if (!widget.orderBy) return cards
     const k = widget.orderBy
-    return [...cards].sort((a, b) => showValue(a.state[k]).localeCompare(showValue(b.state[k])))
+    return sortRecordsByField(
+      cards,
+      fields.find((f) => f.id === k),
+      k,
+    )
   }
 
   const noValueCards = cardsOf("")

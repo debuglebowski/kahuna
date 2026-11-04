@@ -720,6 +720,8 @@ export interface ListWidget extends WidgetBase {
   readonly conditions: ReadonlyArray<SidebarCondition>
   readonly match?: ConditionMatch
   readonly orderBy?: string | null
+  /** Direction for `orderBy` (type-aware, empties last). Absent = asc. */
+  readonly orderDir?: "asc" | "desc"
   readonly limit?: number | null
   /** Field ids to show as columns; empty/absent = concept default columns. */
   readonly columns?: ReadonlyArray<string>
@@ -744,10 +746,15 @@ export interface BreakdownWidget extends WidgetBase {
   readonly match?: ConditionMatch
   /** A field id (enum) to group by, or `__labels` to group by label. */
   readonly groupBy: string
+  /** Per-group measure: record count (absent = count), or sum/avg of `field`. */
+  readonly agg?: "count" | "sum" | "avg"
+  /** Number or money field id to sum/avg (ignored for count). */
+  readonly field?: string | null
   readonly chart: "bar" | "pie" | "bars-h" | "donut" | "stacked" | "table"
-  /** `field` = the enum's configured option order (falls back to label). */
+  /** `count` = by the measured value, largest first (name predates `agg`);
+   *  `field` = the enum's configured option order (falls back to label). */
   readonly sort?: "count" | "label" | "field"
-  /** Value labels on bars / in the legend. */
+  /** Value labels on bars / in the legend. `count` = the measured value. */
   readonly values?: "count" | "percent" | "both"
   /** Collapse groups past this many into an "Other" bucket; null/absent = all. */
   readonly maxGroups?: number | null

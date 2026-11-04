@@ -6,9 +6,11 @@ import {
   BANDS_KEY,
   bandOf,
   bandRollup,
+  bucketValue,
   collapseOther,
   countRecords,
   createdOnOrBefore,
+  currenciesOf,
   groupBy,
   groupSeries,
   kanbanBuckets,
@@ -124,6 +126,64 @@ describe("groupBy", () => {
       { key: "urgent", count: 2 },
       { key: "vip", count: 1 },
     ])
+  })
+})
+
+describe("groupBy with a measure (breakdown sum/avg)", () => {
+  const money = (amount: number, currency = "SEK") => ({ amount, currency })
+  const data = [
+    inst({ cat: "infra", cost: money(100) }),
+    inst({ cat: "infra", cost: money(50) }),
+    inst({ cat: "saas", cost: money(400) }),
+    inst({ cat: "saas" }), // no amount: counted, not averaged
+    inst({ cat: "legal", cost: 30 }),
+  ]
+
+  it("sum orders groups by summed value, not count", () => {
+    const out = groupBy(data, [], "cat", undefined, { agg: "sum", fieldId: "cost" })
+    expect(out.map((b) => [b.key, bucketValue(b, "sum")])).toEqual([
+      ["saas", 400],
+      ["infra", 150],
+      ["legal", 30],
+    ])
+  })
+
+  it("avg skips blank amounts in the denominator", () => {
+    const out = groupBy(data, [], "cat", undefined, { agg: "avg", fieldId: "cost" })
+    expect(out.map((b) => [b.key, bucketValue(b, "avg")])).toEqual([
+      ["saas", 400],
+      ["infra", 75],
+      ["legal", 30],
+    ])
+    expect(bucketValue({ key: "x", count: 2, sum: 0, n: 0 }, "avg")).toBeNull()
+  })
+
+  it("count measure (or none) leaves plain count buckets", () => {
+    expect(groupBy(data, [], "cat", undefined, { agg: "count", fieldId: "cost" })).toEqual(
+      groupBy(data, [], "cat"),
+    )
+  })
+
+  it("collapseOther folds sum + n so an avg Other is weighted", () => {
+    const out = groupBy(data, [], "cat", undefined, { agg: "avg", fieldId: "cost" })
+    const [head, other] = collapseOther(out, 1)
+    expect(head?.key).toBe("saas")
+    expect(other).toEqual({ key: OTHER_KEY, count: 3, sum: 180, n: 3 })
+    expect(bucketValue(other!, "avg")).toBe(60)
+  })
+
+  it("currenciesOf lists distinct stored codes", () => {
+    expect(currenciesOf(data, "cost")).toEqual(["SEK"])
+    expect(currenciesOf([...data, inst({ cost: money(1, "eur") })], "cost")).toEqual(["SEK", "EUR"])
+    expect(currenciesOf(data, "cat")).toEqual([])
+  })
+
+  it("groupSeries samples the measured value", () => {
+    const out = groupSeries(data, [], "cat", 0, 1000, 2, undefined, {
+      agg: "sum",
+      fieldId: "cost",
+    })
+    expect(out.get("saas")).toEqual([400, 400])
   })
 })
 

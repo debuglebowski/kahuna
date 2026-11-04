@@ -611,6 +611,9 @@ const ListWidget = Schema.Struct({
   conditions: Schema.Array(SidebarCondition),
   ...ConditionMatch,
   orderBy: Schema.optional(Schema.NullOr(Schema.String)),
+  /** Direction for `orderBy` (type-aware: numbers/money/dates compare by value,
+   *  enums by option order; empty values always last). Absent = asc. */
+  orderDir: Schema.optional(Schema.Literals(["asc", "desc"])),
   limit: Schema.optional(Schema.NullOr(Schema.Number)),
   columns: Schema.optional(Schema.Array(Schema.String)),
   archived: Schema.optional(Schema.Literals(["exclude", "include", "only"])),
@@ -632,12 +635,17 @@ const BreakdownWidget = Schema.Struct({
   conditions: Schema.Array(SidebarCondition),
   ...ConditionMatch,
   groupBy: Schema.String,
+  /** Per-group measure: record count (absent = count), or sum/avg of `field`. */
+  agg: Schema.optional(Schema.Literals(["count", "sum", "avg"])),
+  /** Number or money field id to sum/avg (ignored for count). */
+  field: Schema.optional(Schema.NullOr(Schema.String)),
   /** Presentation: vertical bars / pie (recharts), ranked horizontal bars,
    *  donut-with-total, a 100%-stacked composition bar, or a numeric table. */
   chart: Schema.Literals(["bar", "pie", "bars-h", "donut", "stacked", "table"]),
-  /** `field` = the enum's configured option order (falls back to label). */
+  /** `count` = by the measured value, largest first (the name predates `agg`);
+   *  `field` = the enum's configured option order (falls back to label). */
   sort: Schema.optional(Schema.Literals(["count", "label", "field"])),
-  /** Value labels on bars / in the legend. */
+  /** Value labels on bars / in the legend. `count` = the measured value. */
   values: Schema.optional(Schema.Literals(["count", "percent", "both"])),
   /** Collapse groups past this many into an "Other" bucket; null/absent = all. */
   maxGroups: Schema.optional(Schema.NullOr(Schema.Number)),

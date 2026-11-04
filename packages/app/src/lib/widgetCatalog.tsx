@@ -509,7 +509,7 @@ export const WIDGET_CATALOG: ReadonlyArray<WidgetMeta> = [
   {
     type: "breakdown",
     label: "Breakdown",
-    description: "Counts grouped by a field, as a chart.",
+    description: "Counts, sums or averages grouped by a field, as a chart.",
     keywords: [
       "group",
       "chart",

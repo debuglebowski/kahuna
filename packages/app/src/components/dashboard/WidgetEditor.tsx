@@ -595,16 +595,31 @@ export function WidgetEditor({
                   </SelectContent>
                 </Select>
               </FieldRow>
-              <FieldRow label="Max rows">
-                <Input
-                  type="number"
-                  min={1}
-                  value={widget.limit ?? ""}
-                  onChange={(e) => patch({ limit: e.target.value ? Number(e.target.value) : null })}
-                  className="w-28"
-                />
+              <FieldRow label="Direction">
+                <Select
+                  value={widget.orderDir ?? "asc"}
+                  onValueChange={(v) => patch({ orderDir: v as "asc" | "desc" })}
+                  disabled={!widget.orderBy}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="asc">Ascending</SelectItem>
+                    <SelectItem value="desc">Descending</SelectItem>
+                  </SelectContent>
+                </Select>
               </FieldRow>
             </div>
+            <FieldRow label="Max rows">
+              <Input
+                type="number"
+                min={1}
+                value={widget.limit ?? ""}
+                onChange={(e) => patch({ limit: e.target.value ? Number(e.target.value) : null })}
+                className="w-28"
+              />
+            </FieldRow>
             <FieldRow label="Archived">
               <Select
                 value={widget.archived ?? "exclude"}
@@ -711,6 +726,43 @@ export function WidgetEditor({
               </FieldRow>
             </div>
             <div className="grid grid-cols-2 gap-3">
+              <FieldRow label="Measure">
+                <Select
+                  value={widget.agg ?? "count"}
+                  onValueChange={(v) => patch({ agg: v as "count" | "sum" | "avg" })}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="count">Count</SelectItem>
+                    <SelectItem value="sum">Sum</SelectItem>
+                    <SelectItem value="avg">Average</SelectItem>
+                  </SelectContent>
+                </Select>
+              </FieldRow>
+              {(widget.agg ?? "count") !== "count" && (
+                <FieldRow label="Field">
+                  <Select
+                    value={widget.field || "__none"}
+                    onValueChange={(v) => patch({ field: v === "__none" ? null : v })}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Number field…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none">—</SelectItem>
+                      {numberFields.map((f) => (
+                        <SelectItem key={f.id} value={f.id}>
+                          {f.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </FieldRow>
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-3">
               <FieldRow label="Sort">
                 <Select
                   value={widget.sort ?? "count"}
@@ -720,7 +772,7 @@ export function WidgetEditor({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="count">By count</SelectItem>
+                    <SelectItem value="count">By value</SelectItem>
                     <SelectItem value="label">By label</SelectItem>
                     <SelectItem value="field">Field order</SelectItem>
                   </SelectContent>
@@ -740,7 +792,7 @@ export function WidgetEditor({
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__off">Off</SelectItem>
-                    <SelectItem value="count">Count</SelectItem>
+                    <SelectItem value="count">Value</SelectItem>
                     <SelectItem value="percent">Percent</SelectItem>
                     <SelectItem value="both">Both</SelectItem>
                   </SelectContent>

@@ -56,15 +56,46 @@ export const avgField = (
   return nums.reduce((a, b) => a + b, 0) / nums.length
 }
 
+export type Agg = "count" | "sum" | "avg"
+
+/** A group's tally. `sum`/`n` are present only when grouped with a measure
+ *  field: `sum` totals its numeric values, `n` counts the records that had one
+ *  (the avg denominator — a blank amount is skipped, not a zero). */
 export interface GroupBucket {
   readonly key: string
   readonly count: number
+  readonly sum?: number
+  readonly n?: number
+}
+
+/** A bucket's measured value. `null` = avg over no numeric values. */
+export const bucketValue = (b: GroupBucket, agg: Agg = "count"): number | null => {
+  if (agg === "count") return b.count
+  if (agg === "sum") return b.sum ?? 0
+  return b.n ? (b.sum ?? 0) / b.n : null
+}
+
+/** Distinct currency codes stored on a money field's values (first-seen order).
+ *  Empty for non-money fields. More than one = a sum mixes currencies. */
+export const currenciesOf = (
+  recordVersions: readonly RecordVersion[],
+  fieldId: string,
+): string[] => {
+  const out = new Set<string>()
+  for (const i of recordVersions) {
+    const v = i.state[fieldId]
+    for (const x of Array.isArray(v) ? v : [v]) {
+      const c = x && typeof x === "object" ? (x as { currency?: unknown }).currency : null
+      if (typeof c === "string" && c) out.add(c.toUpperCase())
+    }
+  }
+  return [...out]
 }
 
 /** Synthetic bucket key for the collapsed "Other" tail (see `collapseOther`). */
 export const OTHER_KEY = "__other"
 
-/** Re-order breakdown buckets: by count (input order), by display label, or by
+/** Re-order breakdown buckets: by value (input order), by display label, or by
  *  a field's configured option order (unknown keys keep label order, at the
  *  end). `labelOf` maps a bucket key to its display name. */
 export const sortBuckets = (
@@ -95,8 +126,13 @@ export const collapseOther = (
 ): GroupBucket[] => {
   if (!max || max <= 0 || buckets.length <= max) return [...buckets]
   const head = buckets.slice(0, max)
-  const rest = buckets.slice(max).reduce((s, b) => s + b.count, 0)
-  return [...head, { key: OTHER_KEY, count: rest }]
+  const tail = buckets.slice(max)
+  const count = tail.reduce((s, b) => s + b.count, 0)
+  // Measured buckets fold sum + n (not values), so an avg "Other" is weighted.
+  if (!tail.some((b) => b.sum != null)) return [...head, { key: OTHER_KEY, count }]
+  const sum = tail.reduce((s, b) => s + (b.sum ?? 0), 0)
+  const n = tail.reduce((s, b) => s + (b.n ?? 0), 0)
+  return [...head, { key: OTHER_KEY, count, sum, n }]
 }
 
 /** The subset of record versions that already existed at `cutoffMs` — the baseline
@@ -107,34 +143,58 @@ export const createdOnOrBefore = (
   cutoffMs: number,
 ): RecordVersion[] => recordVersions.filter((i) => new Date(i.createdAt).getTime() <= cutoffMs)
 
+/** What a breakdown measures per group: sum/avg of a number/money field.
+ *  Absent (or agg count) = plain record counts. */
+export interface GroupMeasure {
+  readonly agg: Agg
+  readonly fieldId: string
+}
+
 /** Group matching record versions by a field id, or by label (`__labels` fans one
- *  bucket per label id; multi-value fields fan out too). Buckets sorted by count
- *  desc. Missing scalar values fall into a "—" bucket; no-label record versions are
- *  skipped. Keys for label grouping are label ids (caller maps id → name). */
+ *  bucket per label id; multi-value fields fan out too — a record's amount then
+ *  counts toward each of its groups). Buckets sorted by measured value desc
+ *  (count without a measure; null avgs last). Missing scalar values fall into a
+ *  "—" bucket; no-label record versions are skipped. Keys for label grouping are
+ *  label ids (caller maps id → name). */
 export const groupBy = (
   recordVersions: readonly RecordVersion[],
   conds: readonly SidebarCondition[],
   key: string,
   opts?: MatchOpts,
+  measure?: GroupMeasure | null,
 ): GroupBucket[] => {
-  const counts = new Map<string, number>()
-  const bump = (k: string) => counts.set(k, (counts.get(k) ?? 0) + 1)
+  const m = measure && measure.agg !== "count" && measure.fieldId ? measure : null
+  const acc = new Map<string, { count: number; sum: number; n: number }>()
+  const bump = (k: string, amount: number | null) => {
+    const b = acc.get(k) ?? { count: 0, sum: 0, n: 0 }
+    b.count++
+    if (amount != null) {
+      b.sum += amount
+      b.n++
+    }
+    acc.set(k, b)
+  }
   for (const i of recordVersions) {
     if (!matchRecordVersion(i, conds, opts)) continue
+    const amount = m ? toNumber(i.state[m.fieldId]) : null
     if (key === LABELS_KEY) {
-      for (const lid of labelsOf(i.state)) bump(lid)
+      for (const lid of labelsOf(i.state)) bump(lid, amount)
     } else {
       const v = i.state[key]
       const vals = Array.isArray(v) ? v : [v]
-      for (const x of vals) bump(x === undefined || x === null || x === "" ? "—" : String(x))
+      for (const x of vals)
+        bump(x === undefined || x === null || x === "" ? "—" : String(x), amount)
     }
   }
-  return [...counts.entries()]
-    .map(([k, count]) => ({ key: k, count }))
-    .sort((a, b) => b.count - a.count)
+  const buckets: GroupBucket[] = [...acc.entries()].map(([k, b]) =>
+    m ? { key: k, count: b.count, sum: b.sum, n: b.n } : { key: k, count: b.count },
+  )
+  const agg = m?.agg ?? "count"
+  const val = (b: GroupBucket) => bucketValue(b, agg) ?? Number.NEGATIVE_INFINITY
+  return buckets.sort((a, b) => val(b) - val(a))
 }
 
-/** Per-group count series across [fromMs, toMs] — the breakdown table's trend
+/** Per-group value series across [fromMs, toMs] — the breakdown table's trend
  *  sparkline + delta. Created-at based, like `metricSeries`: at each evenly-spaced
  *  sample time it re-groups the record versions that already existed then. Every key
  *  that ever appears gets a full-length series (zero-filled for samples before it
@@ -150,16 +210,18 @@ export const groupSeries = (
   toMs: number,
   points: number,
   opts?: MatchOpts,
+  measure?: GroupMeasure | null,
 ): Map<string, number[]> => {
   const n = Math.max(2, Math.floor(points))
   const step = (toMs - fromMs) / (n - 1)
   const series = new Map<string, number[]>()
+  const agg = measure?.agg ?? "count"
   for (let i = 0; i < n; i++) {
     const cutoff = i === n - 1 ? toMs : fromMs + step * i
     const counts = new Map(
-      groupBy(createdOnOrBefore(recordVersions, cutoff), conds, key, opts).map((b) => [
+      groupBy(createdOnOrBefore(recordVersions, cutoff), conds, key, opts, measure).map((b) => [
         b.key,
-        b.count,
+        bucketValue(b, agg) ?? 0,
       ]),
     )
     // A key first seen at sample i was 0 for the i earlier samples.

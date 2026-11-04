@@ -10,8 +10,9 @@ import {
 } from "@/components/ui/table"
 import type { Field, RecordVersion } from "@/lib/api"
 import { FieldValueCell } from "@/lib/fieldDisplay"
+import { type SortDir, sortRecordsByField } from "@/lib/fieldSort"
 import { recordHref } from "@/lib/recordHref"
-import { cn, showValue } from "@/lib/utils"
+import { cn } from "@/lib/utils"
 import { EditableCell, isInlineEditable } from "./InlineCellEditor"
 
 /**
@@ -26,6 +27,7 @@ export function RecordTable({
   quickEdit = false,
   onSaveCell,
   defaultSortKey = null,
+  defaultSortDir = "asc",
   recordDashboardId = null,
   dense = false,
   fill = false,
@@ -35,6 +37,9 @@ export function RecordTable({
   quickEdit?: boolean
   onSaveCell?: (inst: RecordVersion, fieldId: string, value: unknown) => Promise<void>
   defaultSortKey?: string | null
+  /** Initial direction for `defaultSortKey`. Read on mount only — key the
+   *  table on the pair to re-apply a changed default. */
+  defaultSortDir?: SortDir
   /** Open rows with this record dashboard (list widget); absent = concept default. */
   recordDashboardId?: string | null
   /** Tighter cell padding for embedded surfaces (widgets). */
@@ -46,16 +51,16 @@ export function RecordTable({
 }) {
   const navigate = useNavigate()
   const [sortKey, setSortKey] = useState<string | null>(defaultSortKey)
-  const [asc, setAsc] = useState(true)
+  const [asc, setAsc] = useState(defaultSortDir !== "desc")
 
   const sorted = useMemo(() => {
     if (!sortKey) return rows
-    return [...rows].sort((a, b) => {
-      const av = showValue(a.state[sortKey])
-      const bv = showValue(b.state[sortKey])
-      return asc ? av.localeCompare(bv) : bv.localeCompare(av)
-    })
-  }, [rows, sortKey, asc])
+    const field = columns.find((c) => c.id === sortKey)
+    // A default key that isn't a visible column: the caller pre-sorted (it has
+    // the field; we don't), so keep its order rather than re-sort blind.
+    if (!field) return rows
+    return sortRecordsByField(rows, field, sortKey, asc ? "asc" : "desc")
+  }, [rows, columns, sortKey, asc])
 
   const pad = dense ? "px-3" : "px-6"
 

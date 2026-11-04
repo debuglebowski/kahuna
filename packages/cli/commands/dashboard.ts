@@ -56,7 +56,7 @@ const WIDGET_CATALOG: ReadonlyArray<{
   {
     type: "breakdown",
     description:
-      "A chart breaking a concept's records down by a grouping field. Renders as bars, pie, donut, stacked, or a table.",
+      "A chart breaking a concept's records down by a grouping field — count, or sum/avg of a number/money field per group. Renders as bars, pie, donut, stacked, or a table.",
   },
   {
     type: "attention",

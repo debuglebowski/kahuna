@@ -9,6 +9,7 @@ import { useSession } from "@/lib/auth-client"
 import { recordsByConcept } from "@/lib/collections"
 import type { ConceptRecordData } from "@/lib/conceptData"
 import { capitalize, FieldValueCell } from "@/lib/fieldDisplay"
+import { sortRecordsByField } from "@/lib/fieldSort"
 import { useQuickEdit } from "@/lib/quickEdit"
 import { recordHref } from "@/lib/recordHref"
 import { cn, showValue } from "@/lib/utils"
@@ -83,7 +84,12 @@ export function ListWidget({
     )
     if (widget.orderBy) {
       const key = widget.orderBy
-      r = [...r].sort((a, b) => showValue(a.state[key]).localeCompare(showValue(b.state[key])))
+      r = sortRecordsByField(
+        r,
+        fields.find((f) => f.id === key),
+        key,
+        widget.orderDir ?? "asc",
+      )
     }
     if (widget.limit && widget.limit > 0) r = r.slice(0, widget.limit)
     return r
@@ -94,7 +100,9 @@ export function ListWidget({
     widget.conditions,
     widget.match,
     me,
+    fields,
     widget.orderBy,
+    widget.orderDir,
     widget.limit,
   ])
 
@@ -159,11 +167,14 @@ export function ListWidget({
   } else if (variant === "table") {
     body = (
       <RecordTable
+        // Remount on a changed default so the header sort follows the config.
+        key={`${widget.orderBy ?? ""}:${widget.orderDir ?? "asc"}`}
         columns={columns}
         rows={rows}
         quickEdit={quickEdit}
         onSaveCell={onSaveCell}
         defaultSortKey={widget.orderBy ?? null}
+        defaultSortDir={widget.orderDir ?? "asc"}
         recordDashboardId={widget.recordDashboardId}
         dense
         fill
