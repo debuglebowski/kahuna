@@ -6,6 +6,18 @@ import { cn } from "@/lib/utils"
 
 export type CalendarProps = ComponentProps<typeof DayPicker>
 
+/** Module-level so DayPicker gets a stable component identity across renders. */
+function CalendarChevron({
+  className,
+  orientation,
+}: {
+  className?: string
+  orientation?: "up" | "down" | "left" | "right"
+}) {
+  const Icon = orientation === "left" ? ChevronLeft : ChevronRight
+  return <Icon className={cn("size-4", className)} />
+}
+
 /**
  * shadcn-style calendar (react-day-picker v10), restyled with the app's tokens.
  *
@@ -49,14 +61,7 @@ function Calendar({ className, classNames, showOutsideDays = true, ...props }: C
         hidden: "invisible",
         ...classNames,
       }}
-      components={{
-        Chevron: ({ className: c, orientation }) =>
-          orientation === "left" ? (
-            <ChevronLeft className={cn("size-4", c)} />
-          ) : (
-            <ChevronRight className={cn("size-4", c)} />
-          ),
-      }}
+      components={{ Chevron: CalendarChevron }}
       {...props}
     />
   )
