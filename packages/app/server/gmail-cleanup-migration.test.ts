@@ -211,7 +211,7 @@ describe("migration 0026: Gmail cleanup", () => {
       "RecordVersionCreated",
       "RecordVersionUpdated",
     ])
-    expect((keptEvents[0]?.payload.fields as Record<string, unknown>)[note.id]).toBe(
+    expect((keptEvents[0]!.payload.fields as Record<string, unknown>)[note.id]).toBe(
       "a person typed this",
     )
     expect((await eventsOf(gone.id)).map((e) => e.event_type)).toEqual([

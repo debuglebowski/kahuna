@@ -26,7 +26,7 @@ function ConceptDataLoader({
 }) {
   const col = recordsByConcept(conceptId)
   useRegisterCollection(KEY.recordVersions(conceptId), col)
-  const live = useLiveQuery((q) => q.from({ i: col }), [col])
+  const live = useLiveQuery((q) => q.from({ i: col }))
   const fields = useQuery({
     queryKey: ["fields", conceptId],
     queryFn: () => api.listFields(conceptId),

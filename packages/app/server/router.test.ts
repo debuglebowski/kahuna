@@ -75,7 +75,7 @@ describe("POST /api/org (rename)", () => {
     const owner = await signUpAndOrg()
     const target = await signUp()
     const added = await postMember(owner.headers, { email: target.email })
-    const { userId } = (await added?.json()) as { userId: string }
+    const { userId } = (await added!.json()) as { userId: string }
     await auth.api.setActiveOrganization({
       body: { organizationId: owner.orgId },
       headers: target.headers,
@@ -102,7 +102,7 @@ describe("POST /api/org (rename)", () => {
 
     const res = await postOrg(target.headers, { name: "Renamed by an admin" })
     expect(res?.status).toBe(200)
-    expect(((await res?.json()) as { name: string }).name).toBe("Renamed by an admin")
+    expect(((await res!.json()) as { name: string }).name).toBe("Renamed by an admin")
 
     // Still a plain member as far as BetterAuth is concerned — which is the point.
     const [row] = await pool
@@ -188,7 +188,7 @@ describe("POST /api/org/members/:userId/role (change a member's role)", () => {
     const owner = await signUpAndOrg()
     const target = await signUp()
     const added = await postMember(owner.headers, { email: target.email })
-    const { userId } = (await added?.json()) as { userId: string }
+    const { userId } = (await added!.json()) as { userId: string }
 
     // Make them an owner, then take it back.
     expect((await postRole(owner.headers, userId, { role: "owner" }))?.status).toBe(200)
@@ -202,7 +202,7 @@ describe("POST /api/org/members/:userId/role (change a member's role)", () => {
     if (!ownerId) throw new Error("missing owner session")
     const lastOwner = await postRole(owner.headers, ownerId, { role: "member" })
     expect(lastOwner?.status).toBe(409)
-    expect(((await lastOwner?.json()) as { error?: string }).error).toBe("LAST_OWNER")
+    expect(((await lastOwner!.json()) as { error?: string }).error).toBe("LAST_OWNER")
 
     // With a second owner present it is allowed.
     expect((await postRole(owner.headers, userId, { role: "owner" }))?.status).toBe(200)
@@ -213,7 +213,7 @@ describe("POST /api/org/members/:userId/role (change a member's role)", () => {
     const owner = await signUpAndOrg()
     const target = await signUp()
     const added = await postMember(owner.headers, { email: target.email })
-    const { userId } = (await added?.json()) as { userId: string }
+    const { userId } = (await added!.json()) as { userId: string }
     await auth.api.setActiveOrganization({
       body: { organizationId: owner.orgId },
       headers: target.headers,
@@ -250,7 +250,7 @@ describe("DELETE /api/org/members/:userId (purge a deactivated member)", () => {
     const target = await signUp()
     const added = await postMember(owner.headers, { email: target.email, role: "member" })
     expect(added?.status).toBe(201)
-    const { userId } = (await added?.json()) as { userId: string }
+    const { userId } = (await added!.json()) as { userId: string }
     await auth.api.setActiveOrganization({
       body: { organizationId: owner.orgId },
       headers: target.headers,
@@ -269,7 +269,7 @@ describe("DELETE /api/org/members/:userId (purge a deactivated member)", () => {
     // The deactivated member is blocked at the session boundary (any /api route).
     const blocked = await postMember(target.headers, { email: "x@test.dev", role: "member" })
     expect(blocked?.status).toBe(403)
-    expect(((await blocked?.json()) as { error?: string }).error).toBe("DEACTIVATED")
+    expect(((await blocked!.json()) as { error?: string }).error).toBe("DEACTIVATED")
 
     // Purge: membership + per-member engine data go; a second delete 404s.
     expect((await del(owner.headers))?.status).toBe(200)
@@ -308,7 +308,7 @@ describe("path ownership: BetterAuth vs the app router", () => {
     expect(isBetterAuthPath(path)).toBe(false)
     const res = await handleApi(new Request(`http://localhost${path}`, { headers: owner.headers }))
     expect(res?.status).toBe(200)
-    expect((await res?.json()) as { canEdit?: boolean }).toMatchObject({ canEdit: true })
+    expect((await res!.json()) as { canEdit?: boolean }).toMatchObject({ canEdit: true })
   })
 })
 

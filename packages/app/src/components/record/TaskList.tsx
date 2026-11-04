@@ -249,7 +249,7 @@ export function TaskList({
   useRegisterCollection(KEY.tasks(subjectId), collection)
   useRegisterCollection(KEY.taskStatuses, taskStatusesCollection)
   useRegisterCollection(KEY.taskPriorities, taskPrioritiesCollection)
-  const q = useLiveQuery((qb) => qb.from({ t: collection }), [subjectId, collection])
+  const q = useLiveQuery((qb) => qb.from({ t: collection }))
   const statusesQ = useLiveQuery((qb) => qb.from({ s: taskStatusesCollection }))
   const prioritiesQ = useLiveQuery((qb) => qb.from({ p: taskPrioritiesCollection }))
   const labelsQ = useQuery({ queryKey: ["labels"], queryFn: () => api.listLabels() })

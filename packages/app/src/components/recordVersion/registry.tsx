@@ -46,19 +46,19 @@ const Count = ({ n }: { n: number }) =>
 // drop it on unmount).
 const NotesCount = ({ ctx }: { ctx: RecordVersionCtx }) => {
   const collection = notesBySubject(ctx.recordVersion.recordId)
-  const q = useLiveQuery((qb) => qb.from({ n: collection }), [collection])
+  const q = useLiveQuery((qb) => qb.from({ n: collection }))
   return <Count n={(q.data ?? []).filter((x) => !x.archivedAt).length} />
 }
 
 const TasksCount = ({ ctx }: { ctx: RecordVersionCtx }) => {
   const collection = tasksBySubject(ctx.recordVersion.recordId)
-  const q = useLiveQuery((qb) => qb.from({ t: collection }), [collection])
+  const q = useLiveQuery((qb) => qb.from({ t: collection }))
   return <Count n={(q.data ?? []).filter((x) => !x.archivedAt).length} />
 }
 
 const FilesCount = ({ ctx }: { ctx: RecordVersionCtx }) => {
   const collection = filesBySubject(ctx.recordVersion.recordId)
-  const q = useLiveQuery((qb) => qb.from({ f: collection }), [collection])
+  const q = useLiveQuery((qb) => qb.from({ f: collection }))
   return <Count n={(q.data ?? []).filter((x) => !x.archivedAt).length} />
 }
 

@@ -1,5 +1,8 @@
 version: 2
 
+# Only propose releases at least 14 days old (supply-chain cooldown). Security
+# updates ignore cooldown, so advisories still open PRs immediately.
+
 updates:
   # The Bun workspace. Bun's lockfile is resolved from the root, so one entry
   # covers packages/app, packages/contract and packages/cli.
@@ -8,6 +11,8 @@ updates:
     schedule:
       interval: weekly
       day: monday
+    cooldown:
+      default-days: 14
     open-pull-requests-limit: 10
     groups:
       # Minor/patch bumps arrive as one PR per ecosystem so CI runs once.
@@ -22,6 +27,8 @@ updates:
     schedule:
       interval: weekly
       day: monday
+    cooldown:
+      default-days: 14
     groups:
       actions:
         patterns: ["*"]
@@ -32,9 +39,13 @@ updates:
     schedule:
       interval: weekly
       day: monday
+    cooldown:
+      default-days: 14
 
   - package-ecosystem: docker-compose
     directory: /
     schedule:
       interval: weekly
       day: monday
+    cooldown:
+      default-days: 14
