@@ -2,6 +2,7 @@ import type { Concept, Field, RecordVersion } from "@kahunalabs/contract"
 import { requireSession } from "../config.ts"
 import { CliError, EXIT } from "../errors.ts"
 import { requireConfirmation, withVersion } from "../mutate.ts"
+import { openBrowser } from "../open-browser.ts"
 import type { Format, Row } from "../output.ts"
 import { note, printOne, printRows } from "../output.ts"
 import type { Command, CommandContext } from "../registry.ts"
@@ -396,15 +397,19 @@ export const recordCommands: ReadonlyArray<Command> = [
   },
   {
     path: "record open",
-    summary: "Print the web URL for a record",
+    summary: "Open a record in the browser",
     usage: "record open <id> [--print]",
+    help: "Prints the URL and opens it in the default browser. --print only prints.",
+    options: { print: { type: "boolean" } },
     run: async (ctx) => {
       const [id] = ctx.args
       if (!id) throw new CliError("Which record?", EXIT.usage)
       const session = requireSession()
-      // `/records/:id` — see App.tsx. Printed rather than launched: a CLI that
-      // opens a browser without being asked is a surprise in an ssh session.
-      process.stdout.write(`${session.host}/records/${id}\n`)
+      // `/records/:id` — see App.tsx. Always printed, so an ssh or headless
+      // session (where the launch silently fails) still gets something usable.
+      const url = `${session.host}/records/${id}`
+      process.stdout.write(`${url}\n`)
+      if (!ctx.flags.print) openBrowser(url)
     },
   },
 ]
