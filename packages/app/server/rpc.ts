@@ -22,6 +22,7 @@ import {
   type Label,
   type MentionRef,
   type Note,
+  type OrgSettings,
   type RecordDetail,
   type RecordPick,
   type RecordVersion,
@@ -959,6 +960,10 @@ const HandlersLive = ServerRpcs.toLayer(
     // Deactivation: the list is member-readable (drives picker filtering + the
     // directory toggle); the writes are admin-only with auth-tier guards. A purge
     // is the plain-HTTP DELETE /api/org/members/:userId (see router.ts).
+    // Org data defaults: member-readable, admin-written.
+    getOrgSettings: () => as<OrgSettings>(uc.getOrgSettings),
+    updateOrgSettings: ({ defaultCurrency }) =>
+      admin<OrgSettings>(uc.updateOrgSettings({ defaultCurrency })),
     listDeactivatedMembers: () => as<ReadonlyArray<DeactivatedMember>>(uc.listDeactivatedMembers),
     deactivateMember: ({ userId }) =>
       requireAction("configure", { type: "member" }).pipe(

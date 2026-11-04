@@ -38,6 +38,7 @@ import {
   getConceptGraph,
   getGraphLayout,
   getGraphStyle,
+  getOrgSettings,
   getRecordDetail,
   getRecordGraphLayout,
   getRecordViewPrefs,
@@ -59,6 +60,7 @@ import {
   saveRecordGraphLayout,
   setConceptSingleRecord,
   updateField,
+  updateOrgSettings,
   updateRecord,
   updateRecordViewPrefs,
 } from "./use-cases"
@@ -271,6 +273,25 @@ describe("archive / restore / delete (end-to-end use-case wiring)", () => {
     // Now empty, the concept deletes cleanly.
     await run(org, deleteConcept(c.id))
     expect(has(await run(org, listConcepts(true)), c.id)).toBe(false)
+  })
+})
+
+describe("org settings", () => {
+  it("defaults to unset, patches per key, clears with null, and stays org-scoped", async () => {
+    const orgA = randomUUID()
+    const orgB = randomUUID()
+    expect(await run(orgA, getOrgSettings)).toEqual({ defaultCurrency: null })
+
+    expect(await run(orgA, updateOrgSettings({ defaultCurrency: "SEK" }))).toEqual({
+      defaultCurrency: "SEK",
+    })
+    // An omitted key is left alone — a future setting saved alone can't wipe it.
+    expect(await run(orgA, updateOrgSettings({}))).toEqual({ defaultCurrency: "SEK" })
+    expect(await run(orgB, getOrgSettings)).toEqual({ defaultCurrency: null })
+
+    expect(await run(orgA, updateOrgSettings({ defaultCurrency: null }))).toEqual({
+      defaultCurrency: null,
+    })
   })
 })
 

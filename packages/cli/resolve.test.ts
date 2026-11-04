@@ -2,7 +2,15 @@ import type { Concept, Field, RecordVersion } from "@kahunalabs/contract"
 import { describe, expect, it } from "vitest"
 import { toRow } from "./commands/record.ts"
 import { EXIT } from "./errors.ts"
-import { fileNames, findConcept, findField, labelOf, parseFieldAssignments } from "./resolve.ts"
+import {
+  assignsMoney,
+  coerceValue,
+  fileNames,
+  findConcept,
+  findField,
+  labelOf,
+  parseFieldAssignments,
+} from "./resolve.ts"
 
 const concept = (over: Partial<Concept>): Concept =>
   ({
@@ -131,6 +139,138 @@ describe("--field name=value", () => {
 
   it("takes the first '=' so values may contain one", () => {
     expect(parseFieldAssignments(fields, ["Name=a=b"])).toEqual({ f1: "a=b" })
+  })
+})
+
+describe("money values", () => {
+  const cost = field({ id: "m", name: "Annual cost", kind: "money" })
+  const money = (text: string, defaultCurrency?: string | null | "unavailable") =>
+    coerceValue(cost, text, { defaultCurrency })
+
+  it("reads an amount with a code on either side, any case", () => {
+    expect(money("1200 SEK")).toEqual({ amount: 1200, currency: "SEK" })
+    expect(money("1200sek")).toEqual({ amount: 1200, currency: "SEK" })
+    expect(money("EUR 99.5")).toEqual({ amount: 99.5, currency: "EUR" })
+    expect(money("-12 usd")).toEqual({ amount: -12, currency: "USD" })
+  })
+
+  it("accepts a comma or space ONLY between thousands", () => {
+    expect(money("1,200.50 EUR")).toEqual({ amount: 1200.5, currency: "EUR" })
+    expect(money("1 200 000 SEK")).toEqual({ amount: 1_200_000, currency: "SEK" })
+    // 1200,50 is 1200.5 in Sweden and 120050 to a naive strip — refuse both.
+    expect(() => money("1200,50 SEK")).toThrow(/not an amount/)
+    expect(() => money("1,20 SEK")).toThrow(/not an amount/)
+  })
+
+  it("takes the org default currency for a bare amount", () => {
+    expect(money("1200", "SEK")).toEqual({ amount: 1200, currency: "SEK" })
+    // A code that is typed wins over the default.
+    expect(money("1200 EUR", "SEK")).toEqual({ amount: 1200, currency: "EUR" })
+  })
+
+  it("refuses a bare amount with no default — never guesses USD", () => {
+    expect(() => money("1200", null)).toThrow(/has no currency/)
+    expect(() => money("1200")).toThrow(/has no currency/)
+    try {
+      money("1200", "unavailable")
+    } catch (e) {
+      expect((e as { hint?: string }).hint).toMatch(/no org default currency setting/)
+    }
+  })
+
+  it("accepts the stored shape as JSON, validated", () => {
+    expect(money('{"amount":5,"currency":"nok"}')).toEqual({ amount: 5, currency: "NOK" })
+    expect(money('{"amount":5}', "SEK")).toEqual({ amount: 5, currency: "SEK" })
+    expect(() => money('{"amount":"5","currency":"SEK"}')).toThrow(/numeric amount/)
+    expect(() => money('{"amount":5,"currency":"kronor"}')).toThrow(/currency code/)
+  })
+
+  it("rejects junk and clears on empty", () => {
+    expect(() => money("lots")).toThrow(/not an amount/)
+    expect(() => money("$1200")).toThrow(/not an amount/)
+    expect(money("")).toBeNull()
+  })
+
+  it("knows when a command needs the default at all", () => {
+    const fields = [field({ id: "f1", name: "Name" }), cost]
+    expect(assignsMoney(fields, ["Name=x"])).toBe(false)
+    expect(assignsMoney(fields, ["annual cost=1"])).toBe(true)
+    expect(assignsMoney(fields, ["Nope=1"])).toBe(false)
+  })
+})
+
+describe("richtext values", () => {
+  const scope = field({ id: "r", name: "ISMS scope", kind: "richtext" })
+
+  it("turns plain text into a {doc, text} envelope", () => {
+    expect(parseFieldAssignments([scope], ["ISMS scope=hello"])).toEqual({
+      r: {
+        doc: {
+          type: "doc",
+          content: [{ type: "paragraph", content: [{ type: "text", text: "hello" }] }],
+        },
+        text: "hello",
+      },
+    })
+  })
+
+  it("passes raw {doc,text} JSON through, re-deriving text", () => {
+    const pm = {
+      type: "doc",
+      content: [{ type: "paragraph", content: [{ type: "text", text: "x" }] }],
+    }
+    expect(coerceValue(scope, JSON.stringify({ doc: pm, text: "" }))).toEqual({
+      doc: pm,
+      text: "x",
+    })
+  })
+
+  it("refuses JSON that is not rich text, but keeps brace-led prose", () => {
+    expect(() => coerceValue(scope, '{"a":1}')).toThrow(/not rich text/)
+    expect((coerceValue(scope, "{draft} notes") as { text: string }).text).toBe("{draft} notes")
+  })
+})
+
+describe("@file values", () => {
+  const fields = [
+    field({ id: "c", name: "Content", kind: "richtext" }),
+    field({ id: "n", name: "Handle", kind: "text" }),
+    field({ id: "h", name: "Headcount", kind: "number" }),
+  ]
+  const files: Record<string, string> = {
+    "policy.md": "# Policy\n\n- one\n- two\n",
+    "n.txt": "12\n\n",
+  }
+  const readFile = (p: string) => {
+    const f = files[p]
+    if (f === undefined) throw new Error("ENOENT")
+    return f
+  }
+
+  it("reads the value from the file, for any kind, minus trailing newlines", () => {
+    const out = parseFieldAssignments(fields, ["Content=@policy.md", "Headcount=@n.txt"], {
+      readFile,
+    })
+    expect(
+      (out.c as { doc: { content: Array<{ type: string }> } }).doc.content.map((n) => n.type),
+    ).toEqual(["heading", "bulletList"])
+    expect(out.h).toBe(12)
+  })
+
+  it("writes a literal leading @ when doubled", () => {
+    expect(parseFieldAssignments(fields, ["Handle=@@normain"], { readFile })).toEqual({
+      n: "@normain",
+    })
+  })
+
+  it("fails loudly on a missing file, saying how to escape", () => {
+    try {
+      parseFieldAssignments(fields, ["Handle=@normain"], { readFile })
+      expect.unreachable()
+    } catch (e) {
+      expect((e as { exitCode: number }).exitCode).toBe(EXIT.notFound)
+      expect((e as { hint?: string }).hint).toMatch(/@@/)
+    }
   })
 })
 

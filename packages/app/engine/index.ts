@@ -104,6 +104,7 @@ export { MemberService } from "./services/MemberService"
 export { type Backlink, MentionService } from "./services/MentionService"
 // Services
 export { OrgContext, type OrgScope, type ScopeRole } from "./services/OrgContext"
+export { type OrgSettings, OrgSettingsService } from "./services/OrgSettingsService"
 export { PolicyService } from "./services/PolicyService"
 export { type FindRecordsInput, QueryService } from "./services/QueryService"
 export { RecordService } from "./services/RecordService"

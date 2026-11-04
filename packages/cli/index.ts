@@ -154,7 +154,9 @@ export const run = async (argv: ReadonlyArray<string>): Promise<number> => {
   }
 
   if (parsed.values.help) {
-    process.stdout.write(`${command.summary}\n\nUsage: kahuna ${command.usage ?? command.path}\n`)
+    process.stdout.write(
+      `${command.summary}\n\nUsage: kahuna ${command.usage ?? command.path}\n${command.help ? `\n${command.help}\n` : ""}`,
+    )
     return EXIT.ok
   }
 

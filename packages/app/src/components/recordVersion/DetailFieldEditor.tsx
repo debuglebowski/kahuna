@@ -6,6 +6,7 @@ import { Textarea } from "@/components/ui/textarea"
 import type { Field, RecordVersion } from "../../lib/api"
 import { capitalize, FieldValueCell, formatMoney } from "../../lib/fieldDisplay"
 import { memberLabel, useMembers } from "../../lib/members"
+import { fallbackCurrency, useOrgSettings } from "../../lib/orgSettings"
 import { cn } from "../../lib/utils"
 import { EditableCell, isInlineEditable, type SaveCell } from "../InlineCellEditor"
 import { LabelChip } from "../ui"
@@ -119,8 +120,10 @@ function MoneyCell(props: CellProps) {
   const { field, recordVersion } = props
   const stored = recordVersion.state[field.id]
   const { saving, err, commit } = useCellSave(props)
+  const { defaultCurrency } = useOrgSettings()
   const [focused, setFocused] = useState(false)
   const [draft, setDraft] = useState("")
+  const [needsCurrency, setNeedsCurrency] = useState(false)
   const cancelled = useRef(false)
 
   const m = (stored ?? {}) as { amount?: unknown; currency?: unknown }
@@ -141,15 +144,24 @@ function MoneyCell(props: CellProps) {
     if (!match) return // unparseable → revert to the stored value
     const n = Number(match[1]!.replace(/[,\s]/g, ""))
     if (!Number.isFinite(n)) return
-    const cur = (
-      match[2] ?? (typeof m.currency === "string" && m.currency ? m.currency : "USD")
-    ).toUpperCase()
+    // Typed code, else the value's current currency, else the org default. With
+    // none of those, refuse — a guessed currency is wrong data nobody notices.
+    const picked = match[2] ?? fallbackCurrency(stored, defaultCurrency)
+    if (!picked) {
+      setNeedsCurrency(true)
+      return
+    }
+    setNeedsCurrency(false)
+    const cur = picked.toUpperCase()
     if (m.amount === n && m.currency === cur) return
     commit({ amount: n, currency: cur })
   }
 
   return (
-    <Shell saving={saving} err={err}>
+    <Shell
+      saving={saving}
+      err={err ?? (needsCurrency ? "Add a currency, e.g. 1200 SEK (no org default set)" : null)}
+    >
       <input
         aria-label={field.name}
         inputMode="decimal"

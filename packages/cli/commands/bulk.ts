@@ -6,7 +6,15 @@ import { CliError, EXIT } from "../errors.ts"
 import { withVersion } from "../mutate.ts"
 import { note, printRows, renderCsv } from "../output.ts"
 import type { Command } from "../registry.ts"
-import { conceptContext, findConcept, findField, labelOf } from "../resolve.ts"
+import {
+  type CoerceOptions,
+  coerceValue,
+  conceptContext,
+  fetchDefaultCurrency,
+  findConcept,
+  findField,
+  labelOf,
+} from "../resolve.ts"
 import { type Api, makeRuntime } from "../transport.ts"
 
 const withApi = async <T>(f: (api: Api) => Promise<T>): Promise<T> => {
@@ -195,17 +203,42 @@ export const bulkCommands: ReadonlyArray<Command> = [
           if (typeof k === "string") byKey.set(k.toLowerCase(), v)
         }
 
+        // Coerce EVERY row before writing ANY: a bad cell on row 900 must not
+        // leave 899 rows imported and the rest not. Same coercion as `--field`.
+        const needsCurrency = [...byHeader.values()].some((f) => f.kind === "money")
+        const options: CoerceOptions = {
+          defaultCurrency: needsCurrency ? await fetchDefaultCurrency(api) : undefined,
+        }
+        const rowValues: Array<Record<string, unknown>> = []
+        const invalid: Array<{ row: number; error: string }> = []
+        for (const [index, raw] of parsed.entries()) {
+          const values: Record<string, unknown> = {}
+          try {
+            for (const [header, field] of byHeader) {
+              const cell = raw[header]
+              if (cell === undefined) continue
+              values[field.id] = coerceCell(field, cell, options)
+            }
+          } catch (e) {
+            invalid.push({ row: index + 2, error: e instanceof Error ? e.message : String(e) })
+          }
+          rowValues.push(values)
+        }
+        if (invalid.length > 0) {
+          printRows("table", invalid)
+          throw new CliError(
+            `${invalid.length} row(s) have invalid values; nothing was imported.`,
+            EXIT.usage,
+            "Row numbers count the header as line 1.",
+          )
+        }
+
         let created = 0
         let updated = 0
         const failures: Array<{ row: number; error: string }> = []
 
         for (const [index, raw] of parsed.entries()) {
-          const values: Record<string, unknown> = {}
-          for (const [header, field] of byHeader) {
-            const cell = raw[header]
-            if (cell === undefined) continue
-            values[field.id] = cell === "" ? null : coerceCell(field, String(cell))
-          }
+          const values = rowValues[index] ?? {}
 
           const keyValue = keyField ? String(raw[keyField.name] ?? "").toLowerCase() : ""
           const match = keyField && keyValue ? byKey.get(keyValue) : undefined
@@ -258,26 +291,17 @@ export const bulkCommands: ReadonlyArray<Command> = [
   },
 ]
 
-/** Same coercion as `--field name=value`, from a cell rather than an argument. */
-const coerceCell = (field: Field, text: string): unknown => {
-  switch (field.kind) {
-    case "number":
-    case "money": {
-      const n = Number(text)
-      if (Number.isNaN(n)) throw new CliError(`"${text}" is not a number.`, EXIT.usage)
-      return n
-    }
-    case "bool":
-      return ["true", "yes", "1"].includes(text.toLowerCase())
-    case "json":
-      try {
-        return JSON.parse(text)
-      } catch {
-        throw new CliError(`"${field.name}" needs valid JSON.`, EXIT.usage)
-      }
-    default:
-      return text
-  }
+/**
+ * Same coercion as `--field name=value`, from a cell rather than an argument —
+ * except `@path` is NOT expanded: a cell is data, and a CSV must not be able to
+ * make the importer read arbitrary local files. A JSON import's structured cell
+ * (an object for money/richtext/json) is sent through the same parser as its
+ * JSON text, so it is validated, not trusted.
+ */
+const coerceCell = (field: Field, cell: unknown, options: CoerceOptions): unknown => {
+  if (cell === null || cell === "") return null
+  const text = typeof cell === "object" ? JSON.stringify(cell) : String(cell)
+  return coerceValue(field, text, options)
 }
 
 /** Re-exported so `record export` can label rows the way `record list` does. */

@@ -30,6 +30,8 @@ export interface Command {
   readonly summary: string
   /** Usage line shown on a usage error, without the leading `allt`. */
   readonly usage?: string
+  /** Longer notes printed only by `--help` (never on a usage error). */
+  readonly help?: string
   /** Command-specific flags, merged with the global set. */
   readonly options?: ParseArgsConfig["options"]
   readonly run: (ctx: CommandContext) => Promise<void>

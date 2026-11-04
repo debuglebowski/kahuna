@@ -73,6 +73,7 @@ export const AUDITED_RPCS: Readonly<Record<string, Audited>> = {
   archiveAnnotationField: ["config.annotation_field.archived", "annotation_field"],
   restoreAnnotationField: ["config.annotation_field.restored", "annotation_field"],
   reorderAnnotationFields: ["config.annotation_field.reordered", "annotation_field"],
+  updateOrgSettings: ["config.org_settings.updated", "org"],
   // automations: they write to everyone's records
   createAutomation: ["automation.created", "automation"],
   updateAutomation: ["automation.updated", "automation"],

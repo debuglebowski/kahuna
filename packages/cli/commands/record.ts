@@ -6,7 +6,10 @@ import type { Format, Row } from "../output.ts"
 import { note, printOne, printRows } from "../output.ts"
 import type { Command, CommandContext } from "../registry.ts"
 import {
+  assignsMoney,
   conceptContext,
+  FIELD_VALUE_HELP,
+  fetchDefaultCurrency,
   fileNames,
   findField,
   labelOf,
@@ -184,6 +187,7 @@ export const recordCommands: ReadonlyArray<Command> = [
     path: "record create",
     summary: "Create a record",
     usage: "record create <concept> --field name=value [--field ...] [--file property=path ...]",
+    help: FIELD_VALUE_HELP,
     options: {
       field: { type: "string", multiple: true, short: "f" },
       file: { type: "string", multiple: true },
@@ -193,7 +197,12 @@ export const recordCommands: ReadonlyArray<Command> = [
       if (!conceptName) throw new CliError("Which concept?", EXIT.usage)
       await withApi(async (api) => {
         const { concept, fields } = await conceptContext(api, conceptName)
-        const values = parseFieldAssignments(fields, asArray(ctx.flags.field))
+        const assignments = asArray(ctx.flags.field)
+        const values = parseFieldAssignments(fields, assignments, {
+          defaultCurrency: assignsMoney(fields, assignments)
+            ? await fetchDefaultCurrency(api)
+            : undefined,
+        })
         // `--file Attachments=./a.pdf` (repeatable; order kept). Every path is
         // read and every property resolved BEFORE anything is uploaded, so a
         // typo costs nothing.
@@ -239,13 +248,19 @@ export const recordCommands: ReadonlyArray<Command> = [
     path: "record update",
     summary: "Patch fields on a record",
     usage: "record update <id> --field name=value [--field ...]",
+    help: FIELD_VALUE_HELP,
     options: { field: { type: "string", multiple: true, short: "f" } },
     run: async (ctx) => {
       const [id] = ctx.args
       if (!id) throw new CliError("Which record?", EXIT.usage)
       await withApi(async (api) => {
         const detail = await getDetail(api, id)
-        const patch = parseFieldAssignments(detail.fields, asArray(ctx.flags.field))
+        const assignments = asArray(ctx.flags.field)
+        const patch = parseFieldAssignments(detail.fields, assignments, {
+          defaultCurrency: assignsMoney(detail.fields, assignments)
+            ? await fetchDefaultCurrency(api)
+            : undefined,
+        })
         if (Object.keys(patch).length === 0) throw new CliError("Nothing to change.", EXIT.usage)
         if (ctx.flags["dry-run"]) {
           note(`Would patch ${Object.keys(patch).length} field(s) on ${id}.`)

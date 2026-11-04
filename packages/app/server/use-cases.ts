@@ -47,6 +47,7 @@ import {
   MentionService,
   type Note,
   OrgContext,
+  OrgSettingsService,
   PolicyService,
   QueryService,
   RecordService,
@@ -798,6 +799,12 @@ export const getRecordViewPrefs: UC<unknown> = Effect.flatMap(MemberService, (m)
 
 export const updateRecordViewPrefs = (body: RecordViewPrefsBody): UC<unknown> =>
   Effect.flatMap(MemberService, (m) => m.updateViewPrefs(body))
+
+export const getOrgSettings: UC<unknown> = Effect.flatMap(OrgSettingsService, (s) => s.get())
+
+export const updateOrgSettings = (patch: {
+  readonly defaultCurrency?: string | null
+}): UC<unknown> => Effect.flatMap(OrgSettingsService, (s) => s.update(patch))
 
 export const listDeactivatedMembers: UC<unknown> = Effect.flatMap(MemberService, (m) =>
   m.listDeactivations(),

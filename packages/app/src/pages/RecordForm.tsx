@@ -18,6 +18,7 @@ import { LabelMultiSelect } from "../components/LabelMultiSelect"
 import { Button, Field, Input } from "../components/ui"
 import { api, type Field as FieldDef } from "../lib/api"
 import { memberLabel, useMembers } from "../lib/members"
+import { useOrgSettings } from "../lib/orgSettings"
 import { isRichTextEmpty, isRichTextValue } from "../lib/richtext"
 
 /**
@@ -194,6 +195,8 @@ export function RecordForm({
     return seeded
   })
   const [missing, setMissing] = useState<string[]>([])
+  const [noCurrency, setNoCurrency] = useState<string[]>([])
+  const { defaultCurrency } = useOrgSettings()
   const labelVocab = useQuery({ queryKey: ["labels"], queryFn: () => api.listLabels() })
   const [labelIds, setLabelIds] = useState<string[]>(() => [...defaultLabelIds])
 
@@ -225,7 +228,10 @@ export function RecordForm({
         const m = (raw ?? {}) as { amount?: string; currency?: string }
         const amount = Number(m.amount)
         if (m.amount !== undefined && m.amount !== "" && Number.isFinite(amount)) {
-          out[f.id] = { amount, currency: (m.currency || "USD").toUpperCase() }
+          // No typed code and no org default → left out; the submit pre-check
+          // names the field instead of stamping a guessed currency.
+          const currency = (m.currency?.trim() || defaultCurrency || "").toUpperCase()
+          if (currency) out[f.id] = { amount, currency }
         }
         continue
       }
@@ -353,7 +359,7 @@ export function RecordForm({
             />
             <Input
               className="w-20"
-              placeholder="USD"
+              placeholder={defaultCurrency ?? "SEK"}
               value={m.currency ?? ""}
               onChange={(e) => set(f.name, { ...m, currency: e.target.value })}
             />
@@ -478,6 +484,11 @@ export function RecordForm({
       {missing.length > 0 && (
         <p className="text-sm text-destructive">Required: {missing.join(", ")}</p>
       )}
+      {noCurrency.length > 0 && (
+        <p className="text-sm text-destructive">
+          Needs a currency (no org default set): {noCurrency.join(", ")}
+        </p>
+      )}
 
       <div className="flex gap-2">
         <Button
@@ -495,12 +506,21 @@ export function RecordForm({
               ),
             ].map((f) => f.name)
             setMissing(miss)
+            // An amount typed with no currency and no org default to fall back on.
+            const curMiss = editable
+              .filter((f) => {
+                if (f.kind !== "money" || out[f.id] !== undefined) return false
+                const m = (values[f.name] ?? {}) as { amount?: string }
+                return m.amount !== undefined && m.amount !== ""
+              })
+              .map((f) => f.name)
+            setNoCurrency(curMiss)
             const files = Object.fromEntries(
               Object.entries(staged)
                 .filter(([, list]) => list.length > 0)
                 .map(([id, list]) => [id, list.map((s) => s.id)]),
             )
-            if (miss.length === 0) onSubmit(out, files)
+            if (miss.length === 0 && curMiss.length === 0) onSubmit(out, files)
           }}
         >
           {editing ? <Check size={15} /> : <Plus size={15} />}

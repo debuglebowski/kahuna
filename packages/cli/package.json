@@ -20,6 +20,7 @@
     "@kahunalabs/contract": "workspace:*",
     "@types/node": "26.6.5",
     "effect": "4.0.5",
+    "marked": "18.1.1",
     "vitest": "5.0.5"
   },
   "files": [

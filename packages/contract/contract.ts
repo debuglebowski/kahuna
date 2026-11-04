@@ -1305,6 +1305,17 @@ export const RecordViewPrefs = Schema.Struct({
 })
 export type RecordViewPrefs = typeof RecordViewPrefs.Type
 
+/** ISO 4217-shaped currency code: three upper-case letters. */
+export const CurrencyCode = Schema.String.check(Schema.isPattern(/^[A-Z]{3}$/))
+
+/** Org-wide data defaults. NULL = not set. `defaultCurrency` is what a money
+ *  value takes when its writer names no currency; unset means a bare amount is
+ *  refused rather than guessed. */
+export const OrgSettings = Schema.Struct({
+  defaultCurrency: Schema.NullOr(CurrencyCode),
+})
+export type OrgSettings = typeof OrgSettings.Type
+
 export const DeactivatedMember = Schema.Struct({
   userId: Schema.String,
   deactivatedAt: Schema.DateFromString,
@@ -2566,6 +2577,14 @@ export class KahunaRpcs extends RpcGroup.make(
   Rpc.make("updateRecordViewPrefs", {
     payload: { body: RecordViewPrefsBody },
     success: RecordViewPrefs,
+    error: RpcError,
+  }),
+  // Org data defaults: readable by any member (writing a money value needs the
+  // default currency); the write is admin-gated (`configure` on the org).
+  Rpc.make("getOrgSettings", { success: OrgSettings, error: RpcError }),
+  Rpc.make("updateOrgSettings", {
+    payload: { defaultCurrency: Schema.optional(Schema.NullOr(CurrencyCode)) },
+    success: OrgSettings,
     error: RpcError,
   }),
   // Deactivation markers (admin-gated writes; the list is readable by any

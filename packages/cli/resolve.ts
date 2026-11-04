@@ -1,5 +1,7 @@
+import { readFileSync } from "node:fs"
 import type { Concept, Field, RecordVersion } from "@kahunalabs/contract"
 import { CliError, EXIT } from "./errors.ts"
+import { asRichText, markdownToRichText } from "./richtext.ts"
 import type { Api } from "./transport.ts"
 
 /**
@@ -125,6 +127,58 @@ export const conceptContext = async (api: Api, name: string): Promise<ConceptCon
 }
 
 /**
+ * The org's default currency, as far as the CLI could find out: a code, `null`
+ * when the org has none set, or `"unavailable"` when the server could not be
+ * asked (one that predates the setting). Only consulted for a bare amount.
+ */
+export type DefaultCurrency = string | null | "unavailable"
+
+/** `--help` notes for any command taking `--field name=value`. */
+export const FIELD_VALUE_HELP = `Field values are read by the field's kind:
+  money     1200 SEK | SEK 1200 | 1,200.50 EUR | 1200 (org default currency)
+            | {"amount":1200,"currency":"SEK"}
+  richtext  markdown (paragraphs, headings, lists, links, bold/italic, code)
+            | {"doc":{...},"text":"..."} JSON
+  bool      true/false, yes/no, 1/0      json   any JSON
+  name=     (empty) clears the field
+  name=@file.md   reads the value from a file (any kind); @@ = a literal leading @`
+
+export interface CoerceOptions {
+  readonly defaultCurrency?: DefaultCurrency
+  /** Reads `@path` values. Injected so tests need no filesystem. */
+  readonly readFile?: (path: string) => string
+}
+
+/**
+ * `@path` reads the value from a file — the only sane way to pass a policy
+ * document through a shell. Every kind gets it, not just richtext, so the rule
+ * is one rule. A literal leading `@` is written `@@`. Trailing newlines are
+ * dropped, like `$(cat file)`, so `echo 12 > n` works for a number field.
+ */
+const expandFileValue = (
+  field: Field,
+  text: string,
+  readFile: (path: string) => string,
+): string => {
+  if (!text.startsWith("@")) return text
+  if (text.startsWith("@@")) return text.slice(1)
+  const path = text.slice(1)
+  let content: string
+  try {
+    content = readFile(path)
+  } catch {
+    throw new CliError(
+      `Cannot read ${path} (field "${field.name}").`,
+      EXIT.notFound,
+      'A value starting with @ is read from that file. For a literal leading @, double it: "@@".',
+    )
+  }
+  return content.replace(/(?:\r?\n)+$/, "")
+}
+
+const defaultReadFile = (path: string): string => readFileSync(path, "utf8")
+
+/**
  * Turn `--field name=value` pairs into the `{fieldId: value}` map the API takes.
  *
  * Values are coerced by the FIELD's kind, not by guessing from the text: `1` in
@@ -135,6 +189,7 @@ export const conceptContext = async (api: Api, name: string): Promise<ConceptCon
 export const parseFieldAssignments = (
   fields: ReadonlyArray<Field>,
   assignments: ReadonlyArray<string>,
+  options: CoerceOptions = {},
 ): Record<string, unknown> => {
   const out: Record<string, unknown> = {}
   for (const raw of assignments) {
@@ -143,10 +198,37 @@ export const parseFieldAssignments = (
       throw new CliError(`Expected name=value, got "${raw}".`, EXIT.usage)
     }
     const field = findField(fields, raw.slice(0, eq))
-    const text = raw.slice(eq + 1)
-    out[field.id] = coerce(field, text)
+    const text = expandFileValue(field, raw.slice(eq + 1), options.readFile ?? defaultReadFile)
+    out[field.id] = coerceValue(field, text, options)
   }
   return out
+}
+
+/** Does any of these assignments target a money field? Lets a command skip
+ *  the settings round-trip when nothing needs a default currency. */
+export const assignsMoney = (
+  fields: ReadonlyArray<Field>,
+  assignments: ReadonlyArray<string>,
+): boolean =>
+  assignments.some((raw) => {
+    const eq = raw.indexOf("=")
+    if (eq === -1) return false
+    try {
+      return findField(fields, raw.slice(0, eq)).kind === "money"
+    } catch {
+      return false // reported properly by parseFieldAssignments
+    }
+  })
+
+/** The org default currency, or why there isn't one. Never throws: a server
+ *  without the setting must still accept "1200 SEK". */
+export const fetchDefaultCurrency = async (api: Api): Promise<DefaultCurrency> => {
+  try {
+    const settings = await api.call((c) => c.getOrgSettings())
+    return settings.defaultCurrency
+  } catch {
+    return "unavailable"
+  }
 }
 
 /** Splits repeated `--flag key=value` occurrences into pairs. `raw` is
@@ -170,7 +252,99 @@ export const parseKeyValuePairs = (
   })
 }
 
-const coerce = (field: Field, text: string): unknown => {
+/**
+ * An amount, optionally with a three-letter code on either side ("1200",
+ * "1200 SEK", "SEK 1 200", "1,200.50 eur"), or the stored shape as JSON.
+ *
+ * A dot is the only decimal mark; a comma or space is accepted ONLY between
+ * groups of three digits. "1200,50" is refused rather than read either way —
+ * "1,200" meaning 1.2 in one locale and 1200 in another is a silent 1000x error.
+ * No code falls back to the org default; no default is an error, never USD.
+ */
+const AMOUNT = String.raw`-?(?:\d{1,3}(?:[ ,]\d{3})+|\d+)(?:\.\d+)?`
+const MONEY_AFTER = new RegExp(`^(${AMOUNT})\\s*([A-Za-z]{3})?$`)
+const MONEY_BEFORE = new RegExp(`^([A-Za-z]{3})\\s*(${AMOUNT})$`)
+
+export const parseMoney = (
+  field: Field,
+  text: string,
+  defaultCurrency: DefaultCurrency | undefined,
+): { readonly amount: number; readonly currency: string } => {
+  const s = text.trim()
+  const bad = (why: string, hint?: string) =>
+    new CliError(`"${text}" ${why} (field "${field.name}").`, EXIT.usage, hint)
+
+  if (s.startsWith("{")) {
+    let v: unknown
+    try {
+      v = JSON.parse(s)
+    } catch {
+      throw bad("is not valid JSON")
+    }
+    const m = v as { amount?: unknown; currency?: unknown }
+    if (typeof m.amount !== "number" || !Number.isFinite(m.amount)) {
+      throw bad("needs a numeric amount", 'Shape: {"amount": 1200, "currency": "SEK"}')
+    }
+    if (m.currency === undefined) return parseMoney(field, String(m.amount), defaultCurrency)
+    if (typeof m.currency !== "string" || !/^[A-Za-z]{3}$/.test(m.currency)) {
+      throw bad("has no valid currency code", "Use a three-letter code, e.g. SEK.")
+    }
+    return { amount: m.amount, currency: m.currency.toUpperCase() }
+  }
+
+  const after = s.match(MONEY_AFTER)
+  const before = after ? null : s.match(MONEY_BEFORE)
+  const amountText = after?.[1] ?? before?.[2]
+  const code = after?.[2] ?? before?.[1]
+  if (amountText === undefined) {
+    throw bad(
+      "is not an amount",
+      'Write "1200", "1200 SEK" or "1,200.50 EUR" — a dot for decimals, a comma or space only between thousands.',
+    )
+  }
+  const amount = Number(amountText.replace(/[ ,]/g, ""))
+  if (!Number.isFinite(amount)) throw bad("is not an amount")
+  if (code) return { amount, currency: code.toUpperCase() }
+
+  if (typeof defaultCurrency === "string" && defaultCurrency !== "unavailable") {
+    return { amount, currency: defaultCurrency }
+  }
+  throw bad(
+    "has no currency",
+    defaultCurrency === "unavailable"
+      ? `This server has no org default currency setting. Name one: "${amountText} SEK".`
+      : `No org default currency is set. Name one ("${amountText} SEK"), or set a default in Settings → Organization.`,
+  )
+}
+
+/** A richtext value: `{doc, text}` / bare-doc JSON as-is, anything else as markdown. */
+const parseRichText = (field: Field, text: string): unknown => {
+  const s = text.trim()
+  if (s.startsWith("{")) {
+    let v: unknown
+    try {
+      v = JSON.parse(s)
+    } catch {
+      // Not JSON at all — prose that happens to open with a brace.
+      return markdownToRichText(text)
+    }
+    const rt = asRichText(v)
+    if (rt) return rt
+    // Valid JSON that is not rich text is almost certainly a mistake, not prose.
+    throw new CliError(
+      `"${field.name}" got JSON that is not rich text.`,
+      EXIT.usage,
+      'Pass markdown, or {"doc": {"type": "doc", ...}, "text": "..."}. To store literal JSON as text, put it in a ```code block```.',
+    )
+  }
+  return markdownToRichText(text)
+}
+
+/**
+ * One value, coerced by its field's kind. Shared by `--field` and `record
+ * import`, so a CSV cell and an argument can never mean different things.
+ */
+export const coerceValue = (field: Field, text: string, options: CoerceOptions = {}): unknown => {
   // An explicit empty value clears the field, for every kind. `--field x=` is
   // the only way to say "unset" without a separate flag.
   if (text === "") return null
@@ -183,14 +357,17 @@ const coerce = (field: Field, text: string): unknown => {
         EXIT.usage,
         `On create: --file "${field.name}=<path>". On an existing record: attachment upload <path> --record <record-id> --field "${field.name}"`,
       )
-    case "number":
-    case "money": {
+    case "number": {
       const n = Number(text)
       if (Number.isNaN(n)) {
         throw new CliError(`"${text}" is not a number (field "${field.name}").`, EXIT.usage)
       }
       return n
     }
+    case "money":
+      return parseMoney(field, text, options.defaultCurrency)
+    case "richtext":
+      return parseRichText(field, text)
     case "bool": {
       if (["true", "yes", "1"].includes(norm(text))) return true
       if (["false", "no", "0"].includes(norm(text))) return false

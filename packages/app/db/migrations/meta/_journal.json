@@ -211,6 +211,13 @@
       "when": 1793709496007,
       "tag": "0029_graph_style",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1793791061374,
+      "tag": "0030_org_settings",
+      "breakpoints": true
     }
   ]
 }

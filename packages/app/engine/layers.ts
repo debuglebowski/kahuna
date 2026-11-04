@@ -13,6 +13,7 @@ import { GraphLayoutService } from "./services/GraphLayoutService"
 import { LabelService } from "./services/LabelService"
 import { MemberService } from "./services/MemberService"
 import { MentionService } from "./services/MentionService"
+import { OrgSettingsService } from "./services/OrgSettingsService"
 import { PolicyService } from "./services/PolicyService"
 import { QueryService } from "./services/QueryService"
 import { RecordService } from "./services/RecordService"
@@ -37,6 +38,7 @@ export const EngineLive = Layer.mergeAll(
   AttachmentService.layer,
   LabelService.layer,
   MemberService.layer,
+  OrgSettingsService.layer,
   PolicyService.layer,
   AccessRoleService.layer,
   SidebarViewService.layer,
@@ -62,6 +64,7 @@ export type EngineServices =
   | AttachmentService
   | LabelService
   | MemberService
+  | OrgSettingsService
   | PolicyService
   | AccessRoleService
   | SidebarViewService

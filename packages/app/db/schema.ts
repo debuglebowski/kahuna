@@ -482,6 +482,24 @@ export const memberDeactivations = pgTable(
 )
 
 /**
+ * Org-wide preferences that are DATA defaults rather than auth or integration
+ * knobs (those have their own tables in auth-schema.ts). One row per org; an
+ * absent row and a NULL column mean the same thing — "not set" — so every
+ * column is nullable with no default.
+ *
+ * `default_currency`: the ISO 4217 code a money value takes when the writer
+ * names none (CLI `--field "Cost=1200"`, the SPA money editors). NULL means NO
+ * default, and a bare amount is then refused rather than guessed — silently
+ * stamping USD on a Swedish company's contracts is exactly the bug this column
+ * exists to stop. Shape (/^[A-Z]{3}$/) is enforced by the RPC schema.
+ */
+export const orgSettings = pgTable("org_settings", {
+  orgId: text("org_id").primaryKey(),
+  defaultCurrency: text("default_currency"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+})
+
+/**
  * Saved node positions for the org's concept graph canvas — one row per org
  * holding a `{ [conceptId]: { x, y } }` document. Pure presentation state
  * (like `sidebar_views`): opaque to the engine, shared org-wide, last write

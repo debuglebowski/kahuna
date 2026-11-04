@@ -62,6 +62,8 @@ const ORG_SCOPED_TABLES: ReadonlyArray<string> = [
   "member_deactivations",
   "concept_graph_layouts",
   "record_graph_layouts",
+  // org data defaults
+  "org_settings",
   // views + dashboards
   "sidebar_views",
   "dashboards",

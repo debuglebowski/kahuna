@@ -3,6 +3,7 @@ import { ArrowUpCircle, Check } from "lucide-react"
 import { useEffect, useState } from "react"
 import { Badge, Button, Card, CardHeader, Field, Input, Spinner } from "../../components/ui"
 import { api } from "../../lib/api"
+import { useOrgSettings } from "../../lib/orgSettings"
 import { Feedback } from "./parts"
 import { useFullOrg } from "./SettingsLayout"
 
@@ -58,6 +59,60 @@ function VersionCard() {
             )}
           </>
         )}
+      </div>
+    </Card>
+  )
+}
+
+/**
+ * The currency a money value takes when its writer names none (the CLI's
+ * `--field "Cost=1200"`, the money editors). Unset = no fallback: a bare amount
+ * is refused rather than stamped with a guess.
+ */
+function DefaultCurrencyCard() {
+  const qc = useQueryClient()
+  const settings = useOrgSettings()
+  const [code, setCode] = useState("")
+  useEffect(() => {
+    if (settings.data) setCode(settings.data.defaultCurrency ?? "")
+  }, [settings.data])
+
+  const normalized = code.trim().toUpperCase()
+  const valid = normalized === "" || /^[A-Z]{3}$/.test(normalized)
+  const save = useMutation({
+    mutationFn: () => api.updateOrgSettings({ defaultCurrency: normalized || null }),
+    onSuccess: (data) => qc.setQueryData(["orgSettings"], data),
+  })
+
+  return (
+    <Card>
+      <CardHeader
+        title="Default currency"
+        action={
+          <Button onClick={() => save.mutate()} disabled={save.isPending || !valid}>
+            <Check size={15} />
+            {save.isPending ? "Saving…" : "Save"}
+          </Button>
+        }
+      />
+      <div className="max-w-md space-y-4 p-6">
+        <Field
+          label="Currency code"
+          hint="ISO 4217, e.g. SEK. Used when a money value is entered without one. Leave empty to always require a currency."
+        >
+          <Input
+            className="w-28 uppercase"
+            value={code}
+            maxLength={3}
+            placeholder="SEK"
+            onChange={(e) => setCode(e.target.value)}
+          />
+        </Field>
+        <Feedback
+          ok={save.isSuccess}
+          okText="Default currency saved."
+          error={!valid ? "Use a three-letter code, e.g. SEK." : save.error}
+        />
       </div>
     </Card>
   )
@@ -121,6 +176,8 @@ export function Organization() {
           <Feedback ok={save.isSuccess} okText="Organization saved." error={save.error} />
         </div>
       </Card>
+
+      <DefaultCurrencyCard />
 
       <VersionCard />
 

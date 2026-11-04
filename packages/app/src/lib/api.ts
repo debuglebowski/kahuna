@@ -1347,6 +1347,10 @@ export const api = {
   getRecordViewPrefs: () => call((c) => c.getRecordViewPrefs()),
   updateRecordViewPrefs: (body: RecordViewPrefsBody) =>
     call((c) => c.updateRecordViewPrefs({ body })),
+  // Org data defaults (member-readable; the write is admin-gated server-side).
+  getOrgSettings: () => call((c) => c.getOrgSettings()),
+  updateOrgSettings: (patch: { defaultCurrency?: string | null }) =>
+    call((c) => c.updateOrgSettings(patch)),
   listDeactivatedMembers: () => call((c) => c.listDeactivatedMembers()),
   deactivateMember: (userId: string) => call((c) => c.deactivateMember({ userId })),
   reactivateMember: (userId: string) => call((c) => c.reactivateMember({ userId })),
