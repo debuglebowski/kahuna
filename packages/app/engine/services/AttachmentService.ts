@@ -507,14 +507,20 @@ export class AttachmentService extends Effect.Service<AttachmentService>()(
  * one statement; blobs after, best-effort, like `purge` (an orphan blob is
  * harmless, a dangling row would not be). No event: a staged file never had a
  * subject, so there is no feed it ever appeared in. Returns the count removed.
+ *
+ * Compares against the DATABASE clock by default — the same clock that set
+ * `staged_until` (`now() + STAGED_TTL_HOURS` on upload). Using the app's clock
+ * here mixed two clocks: any skew between server and Postgres (e.g. a DB
+ * container whose clock lagged after a host sleep) swept still-valid uploads.
+ * `now` is an explicit override only.
  */
-export const sweepExpiredStaged = (now: Date = new Date()) =>
+export const sweepExpiredStaged = (now?: Date) =>
   Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
     const blob = yield* BlobStore
     const rows = yield* sql<{ readonly content_ref: string }>`
       DELETE FROM attachments
-      WHERE staged_until IS NOT NULL AND staged_until < ${now}
+      WHERE staged_until IS NOT NULL AND staged_until < ${now ?? sql`now()`}
       RETURNING content_ref`
     yield* Effect.forEach(rows, (r) => blob.del(r.content_ref).pipe(Effect.ignore), {
       discard: true,
