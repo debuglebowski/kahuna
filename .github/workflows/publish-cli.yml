@@ -26,17 +26,17 @@ jobs:
     name: publish @kahunalabs/cli
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.6
+          bun-version: 1.4.3
 
       # Trusted publishing needs npm >= 11.5.1 on Node >= 22.14.0. Pinning the
       # Node major and then upgrading npm explicitly, because the npm that ships
       # with a Node release is frequently older than that floor — and the failure
       # is a confusing auth error rather than a version complaint.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "22.x"
           registry-url: "https://registry.npmjs.org"
