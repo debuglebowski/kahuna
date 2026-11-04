@@ -8,7 +8,7 @@
  * BASE/API default to the throwaway stack. SHOT=<path> saves a screenshot. */
 import { spawn } from "node:child_process"
 import { rmSync, unlinkSync, writeFileSync } from "node:fs"
-import { KahunaRpcs } from "@kahunalabs/contract"
+import { KahunaRpcs, layerRpcProtocolHttp } from "@kahunalabs/contract"
 import { Context, Effect, Layer, ManagedRuntime } from "effect"
 import { FetchHttpClient } from "effect/http"
 import { RpcClient, RpcSerialization } from "effect/rpc"
@@ -197,7 +197,7 @@ class ApiClient extends Context.Service<ApiClient, Client>()("verify-file-action
 const runtime = ManagedRuntime.make(
   Layer.effect(ApiClient, makeClient).pipe(
     Layer.provide(
-      RpcClient.layerProtocolHttp({ url: `${API}/api/rpc` }).pipe(
+      layerRpcProtocolHttp({ url: `${API}/api/rpc` }).pipe(
         Layer.provide(FetchHttpClient.layer),
         Layer.provide(CookieFetch),
         Layer.provide(RpcSerialization.layerNdjson),

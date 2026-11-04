@@ -11,6 +11,7 @@ import {
   type GraphLayout,
   type GraphStyle,
   KahunaRpcs,
+  layerRpcProtocolHttp,
   type MentionTarget,
   type RecordViewLayout,
   type RecordViewPrefsBody,
@@ -121,7 +122,7 @@ export interface MomentumValue {
 }
 
 // Build the RPC client once: fetch transport + ndjson, pointed at /api/rpc.
-const ProtocolLive = RpcClient.layerProtocolHttp({ url: "/api/rpc" }).pipe(
+const ProtocolLive = layerRpcProtocolHttp({ url: "/api/rpc" }).pipe(
   Layer.provide(FetchHttpClient.layer),
   Layer.provide(RpcSerialization.layerNdjson),
 )

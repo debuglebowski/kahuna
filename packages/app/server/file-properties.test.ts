@@ -1,5 +1,10 @@
 import { randomUUID } from "node:crypto"
-import { type FileRef, KahunaRpcs, type RecordDetail } from "@kahunalabs/contract"
+import {
+  type FileRef,
+  KahunaRpcs,
+  layerRpcProtocolHttp,
+  type RecordDetail,
+} from "@kahunalabs/contract"
 import { Cause, Context, Effect, Exit, Layer, ManagedRuntime } from "effect"
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http"
 import { RpcClient, RpcSerialization } from "effect/rpc"
@@ -41,7 +46,7 @@ const cookieFor = async (email: string): Promise<string> => {
 const rpcAs = (cookie: string) => {
   const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) =>
     rpcHandler(new Request(input, init))) as typeof fetch
-  const protocol = RpcClient.layerProtocolHttp({
+  const protocol = layerRpcProtocolHttp({
     url: `${HOST}/api/rpc`,
     transformClient: HttpClient.mapRequest(HttpClientRequest.setHeaders({ cookie, origin: HOST })),
   }).pipe(

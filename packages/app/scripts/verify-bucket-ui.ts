@@ -8,7 +8,7 @@
  * slay-managed dev stack is left alone). Mirrors scripts/verify-intro-lab.ts. */
 import { spawn } from "node:child_process"
 import { rmSync } from "node:fs"
-import { KahunaRpcs } from "@kahunalabs/contract"
+import { KahunaRpcs, layerRpcProtocolHttp } from "@kahunalabs/contract"
 import { Context, Effect, Layer, ManagedRuntime } from "effect"
 import { FetchHttpClient } from "effect/http"
 import { RpcClient, RpcSerialization } from "effect/rpc"
@@ -392,7 +392,7 @@ const CookieFetch = Layer.succeed(FetchHttpClient.Fetch, ((
   input: RequestInfo | URL,
   init?: RequestInit,
 ) => fetch(input, { ...init, headers: { ...(init?.headers ?? {}), cookie } })) as typeof fetch)
-const ProtocolLive = RpcClient.layerProtocolHttp({ url: `${API}/api/rpc` }).pipe(
+const ProtocolLive = layerRpcProtocolHttp({ url: `${API}/api/rpc` }).pipe(
   Layer.provide(FetchHttpClient.layer),
   Layer.provide(CookieFetch),
   Layer.provide(RpcSerialization.layerNdjson),

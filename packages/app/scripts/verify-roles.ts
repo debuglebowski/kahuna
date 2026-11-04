@@ -13,7 +13,7 @@
  *   6. The effective-access report is self-serve for yourself, gated for others.
  */
 
-import { KahunaRpcs } from "@kahunalabs/contract"
+import { KahunaRpcs, layerRpcProtocolHttp } from "@kahunalabs/contract"
 import { Context, Effect, Layer, ManagedRuntime } from "effect"
 import { FetchHttpClient } from "effect/http"
 import { RpcClient, RpcSerialization } from "effect/rpc"
@@ -56,7 +56,7 @@ const clientFor = (cookie: string) => {
     input: RequestInfo | URL,
     init?: RequestInit,
   ) => fetch(input, { ...init, headers: { ...(init?.headers ?? {}), cookie } })) as typeof fetch)
-  const Protocol = RpcClient.layerProtocolHttp({ url: `${API}/api/rpc` }).pipe(
+  const Protocol = layerRpcProtocolHttp({ url: `${API}/api/rpc` }).pipe(
     Layer.provide(FetchHttpClient.layer),
     Layer.provide(CookieFetch),
     Layer.provide(RpcSerialization.layerNdjson),

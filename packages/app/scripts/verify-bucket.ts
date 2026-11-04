@@ -8,7 +8,7 @@
  * slay-managed one; point API/ORIGIN at :3100/:5100 to verify the managed stack.
  */
 
-import { KahunaRpcs } from "@kahunalabs/contract"
+import { KahunaRpcs, layerRpcProtocolHttp } from "@kahunalabs/contract"
 import { Context, Effect, Layer, ManagedRuntime } from "effect"
 import { FetchHttpClient } from "effect/http"
 import { RpcClient, RpcSerialization } from "effect/rpc"
@@ -65,7 +65,7 @@ const CookieFetch = Layer.succeed(FetchHttpClient.Fetch, ((
   input: RequestInfo | URL,
   init?: RequestInit,
 ) => fetch(input, { ...init, headers: { ...(init?.headers ?? {}), cookie } })) as typeof fetch)
-const ProtocolLive = RpcClient.layerProtocolHttp({ url: `${API}/api/rpc` }).pipe(
+const ProtocolLive = layerRpcProtocolHttp({ url: `${API}/api/rpc` }).pipe(
   Layer.provide(FetchHttpClient.layer),
   Layer.provide(CookieFetch),
   Layer.provide(RpcSerialization.layerNdjson),

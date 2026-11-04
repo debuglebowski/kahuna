@@ -49,6 +49,7 @@ import { auth } from "./auth"
 import { pool } from "./db"
 import { canConfigure } from "./policy"
 import { instrumentRpcHandlers } from "./rpcAudit"
+import { rpcProtocolRefusal, stampRpcProtocol } from "./rpcProtocol"
 import { EngineBase, ERROR_MAP, resolvePolicy, sessionScope } from "./runtime"
 import { clientIp, securityEvent } from "./securityLog"
 import { isDeactivated, roleOf } from "./session"
@@ -1164,5 +1165,10 @@ const { handler: rpcWebHandler } = HttpEffect.toWebHandlerLayerWith(RpcHttpAppLi
   toHandler: (context) => Effect.succeed(Context.get(context, RpcHttpApp)),
 })
 
-/** A `(Request) => Promise<Response>` for the RPC endpoint, mounted in Bun.serve. */
-export const rpcHandler = (request: Request): Promise<Response> => rpcWebHandler(request)
+/**
+ * A `(Request) => Promise<Response>` for the RPC endpoint, mounted in Bun.serve.
+ * A request from another protocol generation is refused before it is decoded;
+ * every response carries this server's generation (see rpcProtocol.ts).
+ */
+export const rpcHandler = async (request: Request): Promise<Response> =>
+  rpcProtocolRefusal(request) ?? stampRpcProtocol(await rpcWebHandler(request))

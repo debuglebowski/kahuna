@@ -1,5 +1,6 @@
 import { Schema, SchemaTransformation } from "effect"
-import { Rpc, RpcGroup } from "effect/rpc"
+import { HttpClient, HttpClientRequest } from "effect/http"
+import { Rpc, RpcClient, RpcGroup } from "effect/rpc"
 
 /**
  * The Kahuna RPC contract — the single typed source of truth shared by the
@@ -1681,6 +1682,53 @@ export const ExplainAccess = Schema.Struct({
   layers: Schema.Array(AccessExplainLayer),
 })
 export type ExplainAccess = Schema.Schema.Type<typeof ExplainAccess>
+
+// ── protocol generation ───────────────────────────────────────────────────────
+
+/**
+ * The RPC wire generation, bumped whenever the wire changes in a way an existing
+ * client cannot read.
+ *
+ * - 1 — Effect 3 (`@effect/rpc` 0.x). A failure's cause is a tree
+ *   (`{ _tag: "Fail", error }`, `Sequential`, `Parallel` …). Sent no header.
+ * - 2 — Effect 4 (`effect/rpc`). A failure's cause is a flat array of reasons.
+ *   A v1 client cannot decode a v2 error, nor a v2 client a v1 one.
+ *
+ * Every client the repo owns sends it on every request (`layerRpcProtocolHttp`),
+ * the server refuses anything else BEFORE decoding, and stamps it on every
+ * response — so either side can tell which one is out of date.
+ */
+export const RPC_PROTOCOL_VERSION = 2
+
+/** The request AND response header carrying `RPC_PROTOCOL_VERSION`. */
+export const RPC_PROTOCOL_HEADER = "x-kahuna-rpc-protocol"
+
+/**
+ * `RpcClient.layerProtocolHttp` with the protocol header on every request — the
+ * only way a client in this repo should reach `/api/rpc`, so none can forget it.
+ *
+ * The URL is SET, not handed to `layerProtocolHttp`: Effect 4 joins that `url`
+ * with the request's empty path as `<url>/`, so `/api/rpc` would be posted to
+ * `/api/rpc/` — a route the server (and every older server) does not have.
+ */
+export const layerRpcProtocolHttp = (options: {
+  readonly url: string
+  readonly transformClient?: <E, R>(
+    client: HttpClient.HttpClient.With<E, R>,
+  ) => HttpClient.HttpClient.With<E, R>
+}) =>
+  RpcClient.layerProtocolHttp({
+    url: "",
+    transformClient: (client) =>
+      HttpClient.mapRequest(
+        options.transformClient ? options.transformClient(client) : client,
+        (request) =>
+          request.pipe(
+            HttpClientRequest.setUrl(options.url),
+            HttpClientRequest.setHeader(RPC_PROTOCOL_HEADER, String(RPC_PROTOCOL_VERSION)),
+          ),
+      ),
+  })
 
 export class KahunaRpcs extends RpcGroup.make(
   Rpc.make("listConcepts", {
