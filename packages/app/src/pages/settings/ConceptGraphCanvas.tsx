@@ -3,7 +3,6 @@ import { MEMBER_GRAPH_NODE_ID } from "@kahunalabs/contract"
 import { useQuery } from "@tanstack/react-query"
 import {
   Background,
-  Controls,
   type Edge,
   Handle,
   MarkerType,
@@ -18,34 +17,38 @@ import {
   useNodesState,
   useReactFlow,
 } from "@xyflow/react"
-import { ChevronDown, Redo2, Undo2, Users, Workflow } from "lucide-react"
-import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Button } from "@/components/ui/button"
+import { Maximize, Redo2, Undo2, Users, ZoomIn, ZoomOut } from "lucide-react"
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
+  type CSSProperties,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react"
+import { Button } from "@/components/ui/button"
 import { GraphLeaveConfirm, GraphSaveBar } from "../../components/graph/GraphSaveBar"
 import { GraphStylePanel } from "../../components/graph/GraphStylePanel"
 import { EdgeRoutesProvider, RoutedEdge, useEdgeRoutes } from "../../components/graph/RoutedEdge"
+import { SatelliteEdge } from "../../components/graph/SatelliteEdge"
 import { SelfLoopEdge } from "../../components/graph/SelfLoopEdge"
+import { placeSatellites, SATELLITE_GAP } from "../../components/graph/satellites"
 import { useGraphPositions } from "../../components/graph/useGraphPositions"
 import { Card, Spinner } from "../../components/ui"
 import { api, type ConceptGraph, type GraphLayout } from "../../lib/api"
 import {
   computeLayout,
-  DEFAULT_LAYOUT,
   LAYOUT_DIR,
-  LAYOUTS,
   type LayoutDir,
   type LayoutInput,
   type LayoutKind,
   layoutDagre,
   withCanvasMeasures,
 } from "../../lib/graphLayouts"
+import { selfLoopGeometry } from "../../lib/graphRouting"
 import {
+  cardMetrics,
   GRAPH_GRID,
   type GraphStyle,
   normalizeGraphStyle,
@@ -71,29 +74,37 @@ const DIR_HANDLES: Record<LayoutDir, [Position, Position]> = {
  *  ("integration") concepts get a thicker dashed border + a blue-tinted fill and a
  *  bold-italic title so they read as read-only, sync-owned records. */
 function ConceptNode({ data }: NodeProps) {
-  const { label, selected, direction, icon, dimmed, managedBy } = data as {
+  const { label, selected, direction, icon, dimmed, managedBy, scale } = data as {
     label: string
     selected?: boolean
     direction?: LayoutDir
     icon?: string | null
     dimmed?: boolean
     managedBy?: string | null
+    scale?: number
   }
   const [targetPos, sourcePos] = DIR_HANDLES[direction ?? "TB"]
+  const m = cardMetrics(scale ?? 100)
   return (
     <div
+      style={{
+        fontSize: m.fontSize,
+        padding: `${m.padY}px ${m.padX}px`,
+        borderRadius: m.radius,
+      }}
       className={
         (selected
-          ? "cursor-pointer rounded-lg border-2 border-primary bg-background px-4 py-2 text-center text-sm font-medium text-foreground shadow"
-          : `cursor-pointer rounded-lg px-4 py-2 text-center text-sm font-medium text-foreground shadow-sm hover:border-ring ${managedBy ? "border-2 border-dashed border-info/40 bg-[oklch(0.95_0.03_264)]" : "border border-input bg-background"}`) +
+          ? "cursor-pointer rounded-lg border-2 border-primary bg-background text-center font-medium text-foreground shadow"
+          : `cursor-pointer rounded-lg text-center font-medium text-foreground shadow-sm hover:border-ring ${managedBy ? "border-2 border-dashed border-info/40 bg-[oklch(0.95_0.03_264)]" : "border border-input bg-background"}`) +
         (dimmed ? " opacity-30" : "")
       }
     >
       <Handle type="target" position={targetPos} className="!h-2 !w-2 !border-0 !opacity-0" />
       <span
-        className={`inline-flex items-center justify-center gap-1.5${managedBy ? " font-bold italic" : ""}`}
+        style={{ gap: m.gap }}
+        className={`inline-flex items-center justify-center${managedBy ? " font-bold italic" : ""}`}
       >
-        <ConceptIcon value={icon || DEFAULT_CONCEPT_ICON} size={15} />
+        <ConceptIcon value={icon || DEFAULT_CONCEPT_ICON} size={m.icon} />
         {label}
       </span>
       <Handle type="source" position={sourcePos} className="!h-2 !w-2 !border-0 !opacity-0" />
@@ -104,27 +115,75 @@ function ConceptNode({ data }: NodeProps) {
 /** Node id of the built-in Members box. Not a concept id, so the canvas never
  *  routes a click on it; its saved position sits in the layout under this key. */
 const MEMBERS_NODE_ID = MEMBER_GRAPH_NODE_ID
+/** Per-concept Member card ("satellite") ids: derived, never saved. */
+const SATELLITE_PREFIX = `${MEMBERS_NODE_ID}:`
+const satelliteId = (conceptId: string) => `${SATELLITE_PREFIX}${conceptId}`
+const isBuiltin = (id: string) => id === MEMBERS_NODE_ID || id.startsWith(SATELLITE_PREFIX)
+
+/** Satellite card size for these field names at a card size (fixed, so the
+ *  router and placement know it before the DOM is measured). */
+function satelliteSize(fields: ReadonlyArray<string>, scale: number) {
+  const m = cardMetrics(scale)
+  // Real text width (same font as the card), + icon + gap + padding + border + slack.
+  const w = textWidth(fields.join(", "), m.satFont) + m.satIcon + 4 + 2 * m.satPadX + 2 + 4
+  return { w: Math.ceil(Math.min(200 * (scale / 100), w)), h: m.satH }
+}
+
+let measureCtx: CanvasRenderingContext2D | null | undefined
+/** Width of `text` in the page's font at `px` / weight 500 (cards' font-medium).
+ *  Falls back to an em-based estimate where canvas isn't available. */
+function textWidth(text: string, px: number): number {
+  if (measureCtx === undefined)
+    measureCtx =
+      typeof document === "undefined" ? null : document.createElement("canvas").getContext("2d")
+  if (!measureCtx) return text.length * px * 0.62
+  const family = getComputedStyle(document.body).fontFamily || "sans-serif"
+  measureCtx.font = `500 ${px}px ${family}`
+  return measureCtx.measureText(text).width
+}
 
 /** Look shared by every platform-defined (built-in, non-concept) node: a pill —
  *  a different shape from concept boxes — with a faint green tint + thin green
  *  border. Light fill, so it stays readable on the light AND dark canvas surface,
  *  but quieter than a concept (no shadow, muted text). */
 const BUILTIN_NODE =
-  "cursor-default rounded-full border border-success/40 bg-[oklch(0.97_0.02_150)] px-4 py-2 text-center text-sm font-medium text-success"
+  "cursor-default rounded-full border border-success/40 bg-[oklch(0.97_0.02_150)] text-center font-medium text-success"
 
 /** Org members — what `user` fields point at. Built-in, not a concept: {@link BUILTIN_NODE}
  *  pill, not clickable. Always shown, linked or not — members always exist. */
 function MembersNode({ data }: NodeProps) {
-  const { direction, dimmed } = data as { direction?: LayoutDir; dimmed?: boolean }
+  const { direction, dimmed, scale, fields } = data as {
+    direction?: LayoutDir
+    dimmed?: boolean
+    scale?: number
+    /** Set on a per-concept satellite: the member fields it stands for. */
+    fields?: string[]
+  }
   const [targetPos, sourcePos] = DIR_HANDLES[direction ?? "TB"]
+  const m = cardMetrics(scale ?? 100)
+  if (fields) {
+    // Satellite: fixed size (node width/height), icon + the field names.
+    return (
+      <div
+        title={`Member fields: ${fields.join(", ")}`}
+        style={{ fontSize: m.satFont, paddingInline: m.satPadX }}
+        className={`${BUILTIN_NODE} flex h-full w-full items-center justify-center gap-1${dimmed ? " opacity-30" : ""}`}
+      >
+        <Handle type="target" position={Position.Left} className="!h-2 !w-2 !border-0 !opacity-0" />
+        <Users size={m.satIcon} className="shrink-0" />
+        <span className="truncate">{fields.join(", ")}</span>
+      </div>
+    )
+  }
   return (
     <div
       title="Built-in: org members. User fields point here."
+      style={{ fontSize: m.fontSize, padding: `${m.padY}px ${m.padX}px` }}
       className={`${BUILTIN_NODE}${dimmed ? " opacity-30" : ""}`}
     >
       <Handle type="target" position={targetPos} className="!h-2 !w-2 !border-0 !opacity-0" />
-      <span className="inline-flex items-center justify-center gap-1.5">
-        <Users size={15} />
+      <span style={{ gap: m.gap }} className="inline-flex items-center justify-center">
+        <Users size={m.icon} />
         Member
         <span className="rounded-full bg-success/10 px-1.5 py-px text-[10px] font-medium uppercase tracking-wide">
           built-in
@@ -136,7 +195,7 @@ function MembersNode({ data }: NodeProps) {
 }
 
 const nodeTypes = { concept: ConceptNode, members: MembersNode }
-const edgeTypes = { selfloop: SelfLoopEdge, routed: RoutedEdge }
+const edgeTypes = { selfloop: SelfLoopEdge, routed: RoutedEdge, satellite: SatelliteEdge }
 
 /** Layout input: deduplicated relation pairs, self-loops excluded, plus the
  *  Members node + its user-field edges when any exist. */
@@ -238,6 +297,40 @@ function buildFlow(graph: ConceptGraph, saved: GraphLayout): { nodes: Node[]; ed
   return { nodes, edges }
 }
 
+/** Icon button in the canvas dock. */
+function DockButton({
+  label,
+  title,
+  disabled,
+  onClick,
+  children,
+}: {
+  label: string
+  title?: string
+  disabled?: boolean
+  onClick: () => void
+  children: ReactNode
+}) {
+  return (
+    <Button
+      variant="ghost"
+      size="icon-sm"
+      aria-label={label}
+      title={title ?? label}
+      disabled={disabled}
+      onClick={onClick}
+    >
+      {children}
+    </Button>
+  )
+}
+
+/** Card chrome shared by the dock and the save card beside it. */
+const DOCK_CARD =
+  "flex items-center gap-1 rounded-xl border bg-popover p-1.5 text-popover-foreground shadow-lift"
+
+const DockDivider = () => <span aria-hidden="true" className="mx-0.5 h-5 w-px bg-border" />
+
 /** Save the full layout and refresh the cached copy, so a remount (e.g. after
  *  a concept is added) starts from what was just saved. */
 const persistPositions = (positions: GraphLayout) =>
@@ -262,7 +355,7 @@ function Flow({
   savedPositions: GraphLayout
   savedStyle: GraphStyle
 }) {
-  const { fitView } = useReactFlow()
+  const { fitView, zoomIn, zoomOut } = useReactFlow()
   // Look settings: edited locally, persisted with the layout on Save.
   const [style, setStyle] = useState(savedStyle)
   const [styleBaseline, setStyleBaseline] = useState(savedStyle)
@@ -270,6 +363,78 @@ function Flow({
   const initial = useMemo(() => buildFlow(graph, savedPositions), [graph, savedPositions])
   const [nodes, setNodes, onNodesChange] = useNodesState(initial.nodes)
   const [edges, , onEdgesChange] = useEdgesState(initial.edges)
+
+  // Member fields per concept (for per-concept Member cards).
+  const memberFields = useMemo(() => {
+    const m = new Map<string, string[]>()
+    for (const e of graph.userEdges) m.set(e.from, [...(m.get(e.from) ?? []), e.fieldName])
+    return m
+  }, [graph.userEdges])
+  const perConcept = style.builtinCards === "perConcept"
+
+  // What's drawn: the stored nodes with the card size applied, and — in
+  // per-concept mode — the shared Member card swapped for one small satellite
+  // next to each concept with member fields. Satellites are derived from their
+  // parent's box every render (so they follow drags) and never saved.
+  const displayNodes = useMemo(() => {
+    const sized = nodes.map((n) => ({ ...n, data: { ...n.data, scale: style.cardScale } }))
+    if (!perConcept) return sized
+    const shown = sized.filter((n) => n.id !== MEMBERS_NODE_ID)
+    const boxOf = (n: Node) =>
+      n.measured?.width && n.measured.height
+        ? { x: n.position.x, y: n.position.y, w: n.measured.width, h: n.measured.height }
+        : null
+    const obstacles = shown.flatMap((n) => {
+      const b = boxOf(n)
+      return b ? [b] : []
+    })
+    // Self-loops occupy the top-right corner of their card.
+    for (const e of edges)
+      if (e.source === e.target) {
+        const n = shown.find((x) => x.id === e.source)
+        const b = n && boxOf(n)
+        if (b)
+          obstacles.push(...selfLoopGeometry(b, String(e.label ?? ""), style.labelScale).blocked)
+      }
+    const parents = shown.flatMap((n) => {
+      const fields = memberFields.get(n.id)
+      const b = boxOf(n)
+      return fields && b ? [{ id: n.id, box: b, size: satelliteSize(fields, style.cardScale) }] : []
+    })
+    const placed = placeSatellites(parents, obstacles)
+    const satellites: Node[] = parents.map((p) => {
+      const parent = shown.find((n) => n.id === p.id)
+      return {
+        id: satelliteId(p.id),
+        type: "members",
+        position: placed.get(p.id) ?? { x: p.box.x + p.box.w + 24, y: p.box.y },
+        width: p.size.w,
+        height: p.size.h,
+        // Rebuilt every render, so React Flow can't keep what it measured;
+        // declaring size + the one target handle up front makes the node
+        // "initialized" without a measure pass (otherwise its edge never draws).
+        measured: { width: p.size.w, height: p.size.h },
+        handles: [
+          {
+            type: "target" as const,
+            position: Position.Left,
+            x: 0,
+            y: p.size.h / 2,
+            width: 1,
+            height: 1,
+          },
+        ],
+        draggable: false,
+        selectable: false,
+        data: {
+          fields: memberFields.get(p.id),
+          scale: style.cardScale,
+          dimmed: (parent?.data as { dimmed?: boolean } | undefined)?.dimmed,
+        },
+      }
+    })
+    return [...shown, ...satellites]
+  }, [nodes, edges, perConcept, memberFields, style.cardScale, style.labelScale])
 
   // Line settings applied live on top of the stored edges.
   const displayEdges = useMemo(
@@ -282,18 +447,37 @@ function Flow({
         const label = d.rels
           ? d.rels.map((r) => relationLabel(style.labels, r.forward, r.inverse)).join(", ")
           : e.label
+        // Per-concept Member cards: the edge goes to the concept's own card,
+        // which already names the fields — so no label.
+        const toSatellite = perConcept && d.userEdge
         return {
           ...e,
-          label: label || undefined,
+          ...(toSatellite
+            ? {
+                id: `${e.source}->${satelliteId(e.source)}`,
+                target: satelliteId(e.source),
+                type: "satellite",
+              }
+            : {}),
+          label: toSatellite ? undefined : label || undefined,
           data: {
             ...e.data,
             cornerRadius: style.cornerRadius,
             smooth: style.lineShape === "smooth",
+            labelScale: style.labelScale,
           },
           style: { ...e.style, strokeWidth: d.userEdge ? style.lineWidth * 0.85 : style.lineWidth },
         }
       }),
-    [edges, style.labels, style.cornerRadius, style.lineShape, style.lineWidth],
+    [
+      edges,
+      perConcept,
+      style.labels,
+      style.cornerRadius,
+      style.lineShape,
+      style.lineWidth,
+      style.labelScale,
+    ],
   )
 
   // Positions: local until Save; undo/redo (see the hook).
@@ -352,16 +536,50 @@ function Flow({
     )
   }, [selectedId, q, setNodes])
 
-  // Run the chosen auto-layout (some are async — ELK), then refit the viewport.
-  // Applying a layout is a single undoable step — or, with `asBaseline`, the
-  // unsaved-free starting point (first open with nothing saved).
+  // Arrange: run the style's layout method (ELK — async), then refit the
+  // viewport. A single undoable step — or, with `asBaseline`, the unsaved-free
+  // starting point (first open with nothing saved). `opts.style` arranges
+  // with settings not rendered yet (a preset just clicked): card sizes scale
+  // linearly with `cardScale`, so the measured boxes are scaled to match
+  // instead of waiting for a re-measure.
   const align = useCallback(
-    (kind: LayoutKind, opts?: { asBaseline?: boolean }) => {
-      void computeLayout(kind, withCanvasMeasures(toLayoutInput(graph), nodes, displayEdges), {
-        direction: style.direction,
-        nodeSpacing: style.nodeSpacing,
-        layerSpacing: style.layerSpacing,
-        groupSpacing: style.groupSpacing,
+    (opts?: { asBaseline?: boolean; style?: GraphStyle }) => {
+      const st = opts?.style ?? style
+      const kind: LayoutKind = st.layoutMethod === "organic" ? "elk-stress" : "elk-layered"
+      const sepCards = st.builtinCards === "perConcept"
+      // Per-concept Member cards aren't laid out themselves: the shared Member
+      // card and its edges leave the input, and each parent's box is widened
+      // by its satellite so Auto keeps that room free on the right.
+      const base = toLayoutInput(graph)
+      const input = sepCards
+        ? {
+            ...base,
+            nodes: base.nodes.filter((n) => n.id !== MEMBERS_NODE_ID),
+            edges: base.edges.filter((e) => e.target !== MEMBERS_NODE_ID),
+          }
+        : base
+      const measured = withCanvasMeasures(input, nodes, displayEdges)
+      const ratio = st.cardScale / style.cardScale
+      if (measured.sizes && (ratio !== 1 || sepCards)) {
+        const sizes = new Map(
+          [...measured.sizes].map(([id, s]) => [id, { w: s.w * ratio, h: s.h * ratio }] as const),
+        )
+        if (sepCards)
+          for (const [id, fields] of memberFields) {
+            const s = sizes.get(id)
+            if (s)
+              sizes.set(id, {
+                w: s.w + SATELLITE_GAP + satelliteSize(fields, st.cardScale).w,
+                h: s.h,
+              })
+          }
+        Object.assign(measured, { sizes })
+      }
+      void computeLayout(kind, measured, {
+        direction: st.direction,
+        nodeSpacing: st.nodeSpacing,
+        layerSpacing: st.layerSpacing,
+        groupSpacing: st.groupSpacing,
       }).then((positions) => {
         if (opts?.asBaseline)
           adoptAsBaseline(
@@ -388,10 +606,8 @@ function Flow({
       adoptAsBaseline,
       nodes,
       displayEdges,
-      style.direction,
-      style.nodeSpacing,
-      style.layerSpacing,
-      style.groupSpacing,
+      memberFields,
+      style,
     ],
   )
 
@@ -404,17 +620,24 @@ function Flow({
   useEffect(() => {
     if (!nodesInitialized || autoLaidOut.current) return
     autoLaidOut.current = true
-    align(DEFAULT_LAYOUT, { asBaseline: true })
+    align({ asBaseline: true })
   }, [nodesInitialized, align])
 
+  // Satellite connectors are drawn straight (SatelliteEdge), not routed —
+  // their cards still count as obstacles for every other line.
+  const routedEdges = useMemo(
+    () => displayEdges.filter((e) => e.type !== "satellite"),
+    [displayEdges],
+  )
   const routes = useEdgeRoutes(
-    nodes,
-    displayEdges,
+    displayNodes,
+    routedEdges,
     {
       clearance: style.clearance,
       lineSpacing: style.lineSpacing,
       labelsAlongLine: style.labelDirection === "along",
       smooth: style.lineShape === "smooth",
+      labelScale: style.labelScale,
     },
     style.rerouteWhileDragging,
   )
@@ -422,14 +645,14 @@ function Flow({
   return (
     <EdgeRoutesProvider value={routes}>
       <ReactFlow
-        nodes={nodes}
+        nodes={displayNodes}
         edges={displayEdges}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         onNodeClick={(_, node) => {
-          if (node.id !== MEMBERS_NODE_ID) onSelect(node.id)
+          if (!isBuiltin(node.id)) onSelect(node.id)
         }}
         onNodeDragStart={onNodeDragStart}
         onNodeDragStop={onNodeDragStop}
@@ -442,60 +665,52 @@ function Flow({
         style={{ width: "100%", height: "100%" }}
       >
         <Background color="var(--graph-dots)" gap={GRAPH_GRID} />
-        <Controls showInteractive={false} />
-        <Panel position="top-left" className="flex items-center gap-1.5">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="shadow-sm">
-                <Workflow />
-                Layout
-                <ChevronDown className="text-muted-foreground" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-40">
-              {LAYOUTS.map((l) => (
-                <DropdownMenuItem key={l.kind} onSelect={() => align(l.kind)}>
-                  {l.name}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-          <Button
-            variant="outline"
-            size="icon-sm"
-            className="shadow-sm"
-            aria-label="Undo move"
-            title="Undo (⌘Z)"
-            disabled={!canUndo}
-            onClick={undo}
-          >
-            <Undo2 />
-          </Button>
-          <Button
-            variant="outline"
-            size="icon-sm"
-            className="shadow-sm"
-            aria-label="Redo move"
-            title="Redo (⇧⌘Z)"
-            disabled={!canRedo}
-            onClick={redo}
-          >
-            <Redo2 />
-          </Button>
-          <GraphStylePanel
-            style={style}
-            onChange={setStyle}
-            onRerunAuto={() => align(DEFAULT_LAYOUT)}
-          />
-        </Panel>
-        <Panel position="bottom-center">
-          <GraphSaveBar
-            dirty={dirty}
-            saving={saving}
-            error={saveError}
-            onSave={() => void saveAll()}
-            onDiscard={discardAll}
-          />
+        {/* Bottom centre: the dock (settings, history, view) and — while
+            there's something to save — a separate save card beside it. */}
+        <Panel position="bottom-center" className="flex items-center gap-2">
+          <div className={DOCK_CARD}>
+            <GraphStylePanel
+              style={style}
+              onChange={setStyle}
+              onArrange={() => align()}
+              onApplyPreset={(next) => {
+                setStyle(next)
+                align({ style: next })
+              }}
+            />
+            <DockDivider />
+            <DockButton label="Undo move" title="Undo (⌘Z)" disabled={!canUndo} onClick={undo}>
+              <Undo2 />
+            </DockButton>
+            <DockButton label="Redo move" title="Redo (⇧⌘Z)" disabled={!canRedo} onClick={redo}>
+              <Redo2 />
+            </DockButton>
+            <DockDivider />
+            <DockButton label="Zoom out" onClick={() => zoomOut({ duration: 150 })}>
+              <ZoomOut />
+            </DockButton>
+            <DockButton label="Zoom in" onClick={() => zoomIn({ duration: 150 })}>
+              <ZoomIn />
+            </DockButton>
+            <DockButton
+              label="Fit to screen"
+              onClick={() => fitView({ padding: 0.2, duration: 200 })}
+            >
+              <Maximize />
+            </DockButton>
+          </div>
+          {dirty && (
+            <div className={`${DOCK_CARD} animate-in fade-in slide-in-from-bottom-2 duration-200`}>
+              <GraphSaveBar
+                inline
+                dirty={dirty}
+                saving={saving}
+                error={saveError}
+                onSave={() => void saveAll()}
+                onDiscard={discardAll}
+              />
+            </div>
+          )}
         </Panel>
       </ReactFlow>
       <GraphLeaveConfirm

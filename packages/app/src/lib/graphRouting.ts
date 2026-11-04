@@ -114,16 +114,28 @@ export interface RouteOptions {
   readonly labelsAlongLine: boolean
   /** Lines are drawn with {@link smoothPath}; labels are placed on that curve. */
   readonly smooth: boolean
+  /** Edge label size as % of the 11px base — feeds label collision boxes. */
+  readonly labelScale: number
 }
 export const DEFAULT_ROUTE_OPTIONS: RouteOptions = {
   clearance: 14,
   lineSpacing: 12,
   labelsAlongLine: false,
   smooth: false,
+  labelScale: 100,
 }
 
 /** Rough label footprint at the canvases' 11px/500 label style. */
-export const labelSize = (text: string) => ({ w: text.length * 6.2 + 14, h: 20 })
+export const labelSize = (text: string, scalePct = 100) => {
+  const k = scalePct / 100
+  return { w: (text.length * 6.2 + 14) * k, h: 20 * k }
+}
+
+/** Inline style for an edge label at a size % (base: 11px text, 6×2 padding). */
+export const labelStyle = (scalePct = 100) => {
+  const k = scalePct / 100
+  return { fontSize: 11 * k, padding: `${2 * k}px ${6 * k}px`, borderRadius: 4 * k }
+}
 
 const inside = (p: Pt, b: Box) => p.x > b.x && p.x < b.x + b.w && p.y > b.y && p.y < b.y + b.h
 
@@ -186,7 +198,7 @@ const LOOP_INSET = 18
  * lines and labels clear of it). `blocked` lies entirely OUTSIDE the box, so
  * it never swallows the box's own connection pin.
  */
-export function selfLoopGeometry(box: Box, label?: string) {
+export function selfLoopGeometry(box: Box, label?: string, labelScale = 100) {
   const right = box.x + box.w
   const startX = right - Math.min(LOOP_INSET, box.w / 3)
   const entryY = box.y + Math.min(12, box.h / 3)
@@ -205,7 +217,7 @@ export function selfLoopGeometry(box: Box, label?: string) {
     { x: right, y: box.y, w: LOOP_REACH, h: entryY - box.y },
   ]
   if (label) {
-    const { w, h } = labelSize(label)
+    const { w, h } = labelSize(label, labelScale)
     blocked.push({ x: labelAt.x, y: labelAt.y - h / 2, w, h })
   }
   return { points, labelAt, blocked }
@@ -253,7 +265,7 @@ export function routeEdges(
     for (const e of edges) {
       const b = e.source === e.target ? boxes.get(e.source) : undefined
       if (!b) continue
-      for (const r of selfLoopGeometry(b, e.label).blocked) {
+      for (const r of selfLoopGeometry(b, e.label, opts.labelScale).blocked) {
         new A.ShapeRef(router, rectOf(r))
         loopRects.push(r)
       }
@@ -289,7 +301,7 @@ export function routeEdges(
       const drawn = opts.smooth ? flattenSmooth(points) : points
       let label = along(drawn, 0.5)
       if (e.label) {
-        const size = labelSize(e.label)
+        const size = labelSize(e.label, opts.labelScale)
         for (const t of LABEL_SLOTS) {
           const c = along(drawn, t)
           const turned = opts.labelsAlongLine && c.vertical

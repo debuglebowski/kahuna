@@ -397,6 +397,7 @@ export type GraphLayout = typeof GraphLayout.Type
  *  defaults and clamps ranges (packages/app/src/lib/graphStyle.ts), so the
  *  wire shape can grow without a migration. */
 export const GraphStyle = Schema.Struct({
+  layoutMethod: Schema.optional(Schema.Literal("auto", "organic")),
   direction: Schema.optional(Schema.Literal("down", "right")),
   nodeSpacing: Schema.optional(Schema.Number),
   layerSpacing: Schema.optional(Schema.Number),
@@ -408,8 +409,11 @@ export const GraphStyle = Schema.Struct({
   lineWidth: Schema.optional(Schema.Number),
   labels: Schema.optional(Schema.Literal("both", "forward", "none")),
   labelDirection: Schema.optional(Schema.Literal("horizontal", "along")),
+  labelScale: Schema.optional(Schema.Number),
   rerouteWhileDragging: Schema.optional(Schema.Boolean),
   snapToGrid: Schema.optional(Schema.Boolean),
+  cardScale: Schema.optional(Schema.Number),
+  builtinCards: Schema.optional(Schema.Literal("shared", "perConcept")),
 })
 export type GraphStyle = typeof GraphStyle.Type
 

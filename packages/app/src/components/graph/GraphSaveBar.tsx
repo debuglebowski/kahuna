@@ -14,14 +14,33 @@ export function GraphSaveBar({
   error,
   onSave,
   onDiscard,
+  inline = false,
 }: {
   dirty: boolean
   saving: boolean
   error: boolean
   onSave: () => void
   onDiscard: () => void
+  /** Bare contents for embedding in a toolbar dock (no card of its own). */
+  inline?: boolean
 }) {
   if (!dirty) return null
+  if (inline)
+    return (
+      <div className="flex animate-in items-center gap-1.5 pl-1.5 duration-200 fade-in">
+        <span
+          className={`whitespace-nowrap text-sm ${error ? "text-destructive" : "text-muted-foreground"}`}
+        >
+          {error ? "Save failed" : "Unsaved changes"}
+        </span>
+        <Button size="sm" variant="outline" disabled={saving} onClick={onDiscard}>
+          Discard
+        </Button>
+        <Button size="sm" disabled={saving} onClick={onSave}>
+          {saving ? "Saving…" : "Save changes"}
+        </Button>
+      </div>
+    )
   return (
     // `shadow-lift` inverts with the palette, so the bar stays distinct from the
     // canvas in dark mode too.

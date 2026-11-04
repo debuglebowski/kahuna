@@ -1,5 +1,5 @@
 import { BaseEdge, EdgeLabelRenderer, type EdgeProps, useInternalNode } from "@xyflow/react"
-import { roundedPath, selfLoopGeometry, smoothPath } from "../../lib/graphRouting"
+import { labelStyle, roundedPath, selfLoopGeometry, smoothPath } from "../../lib/graphRouting"
 
 /**
  * An edge pointing back at its own node, drawn as a small loop around the
@@ -32,9 +32,10 @@ export function SelfLoopEdge({ id, source, label, markerEnd, style, data }: Edge
           <div
             // Just outside the loop's outer corner, reading away from the box.
             style={{
+              ...labelStyle(typeof data?.labelScale === "number" ? data.labelScale : 100),
               transform: `translate(0, -50%) translate(${labelAt.x}px, ${labelAt.y}px)`,
             }}
-            className="pointer-events-none absolute whitespace-nowrap rounded bg-card px-1.5 py-0.5 text-[11px] font-medium text-foreground"
+            className="pointer-events-none absolute whitespace-nowrap bg-card font-medium text-foreground"
           >
             {label}
           </div>

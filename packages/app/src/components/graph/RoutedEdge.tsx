@@ -10,6 +10,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState } from 
 import {
   type Box,
   DEFAULT_ROUTE_OPTIONS,
+  labelStyle,
   loadAvoid,
   type Route,
   type RouteOptions,
@@ -28,8 +29,9 @@ type Avoid = Awaited<ReturnType<typeof loadAvoid>>
 function boxesOf(nodes: ReadonlyArray<Node>): Map<string, Box> {
   const boxes = new Map<string, Box>()
   for (const n of nodes) {
-    const w = n.measured?.width
-    const h = n.measured?.height
+    // Fixed-size nodes (e.g. derived satellites) may never get `measured`.
+    const w = n.measured?.width ?? n.width
+    const h = n.measured?.height ?? n.height
     if (w && h) boxes.set(n.id, { x: n.position.x, y: n.position.y, w, h })
   }
   return boxes
@@ -96,6 +98,7 @@ export function useEdgeRoutes(
         lineSpacing: opts.lineSpacing,
         labelsAlongLine: opts.labelsAlongLine,
         smooth: opts.smooth,
+        labelScale: opts.labelScale,
       })
       lastRoutes.current = routes
       return routes
@@ -111,6 +114,7 @@ export function useEdgeRoutes(
     opts.lineSpacing,
     opts.labelsAlongLine,
     opts.smooth,
+    opts.labelScale,
   ])
 }
 
@@ -142,12 +146,13 @@ export function RoutedEdge(props: EdgeProps) {
         <EdgeLabelRenderer>
           <div
             style={{
+              ...labelStyle(typeof data?.labelScale === "number" ? data.labelScale : 100),
               // Origin at the element's corner so the chain reads: centre on
               // (0,0), optionally turn, then move to the label point.
               transformOrigin: "0 0",
               transform: `translate(${lx}px, ${ly}px)${route?.labelVertical ? " rotate(-90deg)" : ""} translate(-50%, -50%)`,
             }}
-            className="pointer-events-none absolute whitespace-nowrap rounded bg-card px-1.5 py-0.5 text-[11px] font-medium text-foreground"
+            className="pointer-events-none absolute whitespace-nowrap bg-card font-medium text-foreground"
           >
             {label}
           </div>

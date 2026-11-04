@@ -40,3 +40,15 @@ describe("relationLabel", () => {
     expect(relationLabel("none", "Owner", "Owns")).toBe("")
   })
 })
+
+describe("presets", () => {
+  it("defaults are Balanced; applying a preset matches it; a tweak makes it Custom", async () => {
+    const { GRAPH_PRESETS, matchingPreset } = await import("./graphStyle")
+    expect(matchingPreset(DEFAULT_GRAPH_STYLE)).toBe("balanced")
+    for (const p of GRAPH_PRESETS) {
+      const s = normalizeGraphStyle({ ...DEFAULT_GRAPH_STYLE, ...p.values })
+      expect(matchingPreset(s)).toBe(p.id) // also proves preset values survive clamping
+    }
+    expect(matchingPreset({ ...DEFAULT_GRAPH_STYLE, lineWidth: 2 })).toBeNull()
+  })
+})
