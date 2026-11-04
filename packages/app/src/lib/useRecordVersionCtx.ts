@@ -20,10 +20,7 @@ export function useRecordVersionCtx(id: string): {
 } {
   const collection = recordDetail(id)
   useRegisterCollection(KEY.detail(id), collection)
-  const detailQ = useLiveQuery(
-    (q) => (id ? q.from({ d: collection }) : undefined),
-    [id, collection],
-  )
+  const detailQ = useLiveQuery((q) => (id ? q.from({ d: collection }) : undefined))
   const { data: session } = useSession()
   const org = useFullOrg()
   const { admin } = useIsAdmin()
