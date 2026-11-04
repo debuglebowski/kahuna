@@ -50,4 +50,4 @@ export interface OrgScope {
   readonly policy?: PolicySet
 }
 
-export class OrgContext extends Context.Tag("engine/OrgContext")<OrgContext, OrgScope>() {}
+export class OrgContext extends Context.Service<OrgContext, OrgScope>()("engine/OrgContext") {}

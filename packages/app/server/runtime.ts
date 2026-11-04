@@ -125,7 +125,7 @@ export const ERROR_MAP: Record<string, { status: number; code: string }> = {
 /** Map an engine effect's Exit to a stable, framework-agnostic result. */
 export const toResult = <A, E>(exit: Exit.Exit<A, E>): UseCaseResult<A> => {
   if (exit._tag === "Success") return { ok: true, status: 200, data: exit.value }
-  const failure = Cause.failureOption(exit.cause)
+  const failure = Cause.findErrorOption(exit.cause)
   if (Option.isSome(failure)) {
     const tag = (failure.value as { _tag?: string })._tag
     const mapped = tag ? ERROR_MAP[tag] : undefined

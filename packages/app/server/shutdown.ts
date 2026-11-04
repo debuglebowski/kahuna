@@ -1,6 +1,6 @@
 import { pool } from "./db"
 import { AppRuntime } from "./runtime"
-import { closeHub } from "./stream"
+import { closeHub, stopHub } from "./stream"
 
 /**
  * Graceful shutdown. On SIGINT/SIGTERM, stop taking new work and tear down every
@@ -51,6 +51,7 @@ export const installGracefulShutdown = (server: StoppableServer): void => {
       // grace so a lingering keep-alive can't push us to the hard deadline.
       await Promise.race([server.stop(), delay(STOP_GRACE_MS)])
       await server.stop(true)
+      await stopHub()
       await AppRuntime.dispose()
       await pool.end()
       console.log("Shutdown complete.")

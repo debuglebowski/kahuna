@@ -1,5 +1,5 @@
 import { PgClient } from "@effect/sql-pg"
-import { Effect } from "effect"
+import { Context, Effect, Layer } from "effect"
 import type { Field, FieldConfig, FieldKind } from "../domain/types"
 import { FieldConfigInvalid, FieldInUse, FieldNameConflict, FieldNotFound } from "../errors"
 import { EventStore } from "./EventStore"
@@ -94,8 +94,8 @@ const validateConfig = (
   })
 
 /** Manages field definitions on concepts (the schema-as-data). */
-export class FieldService extends Effect.Service<FieldService>()("engine/FieldService", {
-  effect: Effect.gen(function* () {
+export class FieldService extends Context.Service<FieldService>()("engine/FieldService", {
+  make: Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
     const events = yield* EventStore
 
@@ -420,5 +420,6 @@ export class FieldService extends Effect.Service<FieldService>()("engine/FieldSe
       reorder,
     } as const
   }),
-  dependencies: [EventStore.Default],
-}) {}
+}) {
+  static readonly layer = Layer.effect(this, this.make).pipe(Layer.provide([EventStore.layer]))
+}

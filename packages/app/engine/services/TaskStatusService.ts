@@ -1,5 +1,5 @@
 import { PgClient } from "@effect/sql-pg"
-import { Effect } from "effect"
+import { Context, Effect, Layer } from "effect"
 import type { TaskStatus, TaskStatusCategory } from "../domain/types"
 import { TaskStatusInUse, TaskStatusNameConflict, TaskStatusNotFound } from "../errors"
 import { EventStore } from "./EventStore"
@@ -19,10 +19,10 @@ export interface TaskStatusSpec {
  * Exactly one live status is `isDefault` (applied to new tasks). Definition edits
  * are admin-gated at the RPC boundary. `ensureDefaults` is the seed entry point.
  */
-export class TaskStatusService extends Effect.Service<TaskStatusService>()(
+export class TaskStatusService extends Context.Service<TaskStatusService>()(
   "engine/TaskStatusService",
   {
-    effect: Effect.gen(function* () {
+    make: Effect.gen(function* () {
       const sql = yield* PgClient.PgClient
       const events = yield* EventStore
 
@@ -256,6 +256,7 @@ export class TaskStatusService extends Effect.Service<TaskStatusService>()(
         ensureDefaults,
       } as const
     }),
-    dependencies: [EventStore.Default],
   },
-) {}
+) {
+  static readonly layer = Layer.effect(this, this.make).pipe(Layer.provide([EventStore.layer]))
+}

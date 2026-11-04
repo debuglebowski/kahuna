@@ -47,32 +47,32 @@ describe("concept read visibility", () => {
         const query = yield* QueryService
         const recordVersions = yield* RecordService
         const listed = yield* concepts.list()
-        const byId = yield* Effect.either(concepts.getByIdForRead(seeded.conceptId))
-        const bySlug = yield* Effect.either(concepts.getBySlug(seeded.slug))
-        const rows = yield* Effect.either(query.findRecords({ conceptId: seeded.conceptId }))
-        const one = yield* Effect.either(recordVersions.get(seeded.recordVersion.id))
-        const record = yield* Effect.either(recordVersions.getRecord(seeded.recordVersion.recordId))
-        const versions = yield* Effect.either(
+        const byId = yield* Effect.result(concepts.getByIdForRead(seeded.conceptId))
+        const bySlug = yield* Effect.result(concepts.getBySlug(seeded.slug))
+        const rows = yield* Effect.result(query.findRecords({ conceptId: seeded.conceptId }))
+        const one = yield* Effect.result(recordVersions.get(seeded.recordVersion.id))
+        const record = yield* Effect.result(recordVersions.getRecord(seeded.recordVersion.recordId))
+        const versions = yield* Effect.result(
           recordVersions.listVersions(seeded.recordVersion.recordId),
         )
-        const single = yield* Effect.either(recordVersions.singleRecordOf(seeded.conceptId))
+        const single = yield* Effect.result(recordVersions.singleRecordOf(seeded.conceptId))
         return { listed, byId, bySlug, rows, one, record, versions, single }
       }).pipe(Effect.provide(testLayer(orgId, "member-user", "member"))),
     )
 
     expect(asMember.listed.map((c) => c.id)).not.toContain(seeded.conceptId)
     // Every by-id read fails, and as NotFound — not a distinguishable 403.
-    expect(asMember.byId._tag).toBe("Left")
-    if (asMember.byId._tag === "Left")
-      expect((asMember.byId.left as { _tag: string })._tag).toBe("ConceptNotFound")
-    expect(asMember.bySlug._tag).toBe("Left")
-    expect(asMember.rows._tag).toBe("Left")
-    expect(asMember.one._tag).toBe("Left")
-    if (asMember.one._tag === "Left")
-      expect((asMember.one.left as { _tag: string })._tag).toBe("RecordVersionNotFound")
-    expect(asMember.record._tag).toBe("Left")
-    expect(asMember.versions._tag).toBe("Left")
-    expect(asMember.single._tag).toBe("Left")
+    expect(asMember.byId._tag).toBe("Failure")
+    if (asMember.byId._tag === "Failure")
+      expect((asMember.byId.failure as { _tag: string })._tag).toBe("ConceptNotFound")
+    expect(asMember.bySlug._tag).toBe("Failure")
+    expect(asMember.rows._tag).toBe("Failure")
+    expect(asMember.one._tag).toBe("Failure")
+    if (asMember.one._tag === "Failure")
+      expect((asMember.one.failure as { _tag: string })._tag).toBe("RecordVersionNotFound")
+    expect(asMember.record._tag).toBe("Failure")
+    expect(asMember.versions._tag).toBe("Failure")
+    expect(asMember.single._tag).toBe("Failure")
 
     // ── as an ADMIN, the same reads all succeed ──────────────────────────────
     const asAdmin = await Effect.runPromise(
@@ -155,7 +155,7 @@ describe("concept read visibility", () => {
     const denied = await Effect.runPromise(
       Effect.gen(function* () {
         const relations = yield* RelationService
-        return yield* Effect.either(
+        return yield* Effect.result(
           relations.create({
             fieldId: setup.fieldId,
             fromId: setup.fromId,
@@ -164,7 +164,7 @@ describe("concept read visibility", () => {
         )
       }).pipe(Effect.provide(testLayer(orgId, "member-user", "member"))),
     )
-    expect(denied._tag).toBe("Left")
+    expect(denied._tag).toBe("Failure")
 
     // An admin may still link it, so this is the read gate and not a broken field.
     const allowed = await Effect.runPromise(
@@ -336,7 +336,7 @@ describe("THE WRITE GATE: no writing what you cannot read", () => {
         eff.pipe(
           Effect.provide(asMember),
           Effect.map(() => "succeeded"),
-          Effect.catchAll(() => Effect.succeed("blocked")),
+          Effect.catch(() => Effect.succeed("blocked")),
         ),
       )
 
@@ -501,7 +501,7 @@ describe("record edit is decided separately from record view", () => {
       ).pipe(
         Effect.provide(asReader),
         Effect.map(() => "succeeded"),
-        Effect.catchAll(() => Effect.succeed("blocked")),
+        Effect.catch(() => Effect.succeed("blocked")),
       ),
     )
     expect(wrote).toBe("blocked")
@@ -546,7 +546,7 @@ describe("record edit is decided separately from record view", () => {
       ).pipe(
         Effect.provide(testLayer(orgId, "reader", "member", holding("reader", ["view"]))),
         Effect.map(() => "succeeded"),
-        Effect.catchAll(() => Effect.succeed("blocked")),
+        Effect.catch(() => Effect.succeed("blocked")),
       ),
     )
     expect(blocked).toBe("blocked")
@@ -557,7 +557,7 @@ describe("record edit is decided separately from record view", () => {
       ).pipe(
         Effect.provide(testLayer(orgId, "author", "member", holding("author", ["view", "create"]))),
         Effect.map(() => "succeeded"),
-        Effect.catchAll(() => Effect.succeed("blocked")),
+        Effect.catch(() => Effect.succeed("blocked")),
       ),
     )
     expect(allowed).toBe("succeeded")

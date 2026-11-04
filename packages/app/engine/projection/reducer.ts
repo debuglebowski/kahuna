@@ -1,4 +1,4 @@
-import { Either } from "effect"
+import { Result } from "effect"
 import type { EngineEvent, RecordState, VersionStatus } from "../domain/types"
 import { EventCorruption } from "../errors"
 
@@ -41,12 +41,12 @@ const dropNulls = (state: Record<string, unknown>): RecordState => {
 export const applyEvent = (
   acc: FoldState | null,
   event: EngineEvent,
-): Either.Either<FoldState, EventCorruption> => {
+): Result.Result<FoldState, EventCorruption> => {
   const p = event.payload
 
   if (p._tag === "RecordVersionCreated") {
     if (acc !== null) {
-      return Either.left(
+      return Result.fail(
         new EventCorruption({
           reason: "create event after recordVersion exists",
           eventId: event.id,
@@ -56,7 +56,7 @@ export const applyEvent = (
     // Legacy events lack version metadata ⇒ default to a published seq-1 row, so
     // pre-versioning record versions replay unchanged.
     const versionStatus = p.versionStatus ?? "published"
-    return Either.right({
+    return Result.succeed({
       state: dropNulls({ ...p.fields }),
       version: 0,
       archivedAt: null,
@@ -66,7 +66,7 @@ export const applyEvent = (
   }
 
   if (acc === null) {
-    return Either.left(
+    return Result.fail(
       new EventCorruption({ reason: "mutation event before create", eventId: event.id }),
     )
   }
@@ -75,11 +75,11 @@ export const applyEvent = (
   // before the guard below so an archived → restored → … lifecycle replays.
   if (p._tag === "RecordVersionRestored") {
     if (acc.archivedAt === null) {
-      return Either.left(
+      return Result.fail(
         new EventCorruption({ reason: "restore on a live recordVersion", eventId: event.id }),
       )
     }
-    return Either.right({
+    return Result.succeed({
       state: acc.state,
       version: acc.version + 1,
       archivedAt: null,
@@ -88,7 +88,7 @@ export const applyEvent = (
     })
   }
   if (acc.archivedAt !== null) {
-    return Either.left(
+    return Result.fail(
       new EventCorruption({
         reason: "event after archive (only restore is legal)",
         eventId: event.id,
@@ -105,7 +105,7 @@ export const applyEvent = (
       // NB: WHICH versions may be edited is enforced in RecordService (which knows
       // `versioningEnabled` + `editReach`) — NOT here, because a non-versioned
       // record version is also 'published' yet must stay editable.
-      return Either.right({
+      return Result.succeed({
         state: dropNulls({ ...acc.state, ...p.patch }),
         version: acc.version + 1,
         archivedAt: null,
@@ -116,14 +116,14 @@ export const applyEvent = (
     // emitted for versioned concepts, so it can't misfire on a non-versioned row.
     case "VersionPublished":
       if (acc.versionStatus === "published") {
-        return Either.left(
+        return Result.fail(
           new EventCorruption({
             reason: "publish on an already-published version",
             eventId: event.id,
           }),
         )
       }
-      return Either.right({
+      return Result.succeed({
         state: acc.state,
         version: acc.version + 1,
         archivedAt: acc.archivedAt,
@@ -134,7 +134,7 @@ export const applyEvent = (
     // emit `RecordVersionArchived`. Both mark the record version archived identically.
     case "RecordVersionDeleted":
     case "RecordVersionArchived":
-      return Either.right({
+      return Result.succeed({
         state: acc.state,
         version: acc.version + 1,
         archivedAt: event.occurredAt,
@@ -144,12 +144,12 @@ export const applyEvent = (
     case "AttachmentAdded":
       // Attachments are recorded against the record version but do not change its
       // projected state or version.
-      return Either.right(acc)
+      return Result.succeed(acc)
     case "ComputedBandChanged": {
       // Materialise a coarse band marker for change-detection / automations.
       // Does NOT bump version (the display decay/momentum stay computed-on-read).
       const bands = (acc.state.__bands as Record<string, string> | undefined) ?? {}
-      return Either.right({
+      return Result.succeed({
         state: { ...acc.state, __bands: { ...bands, [p.field]: p.to } },
         version: acc.version,
         archivedAt: acc.archivedAt,
@@ -159,7 +159,7 @@ export const applyEvent = (
     }
     default:
       // Non-record version payloads should never appear in a record version stream.
-      return Either.left(
+      return Result.fail(
         new EventCorruption({
           reason: `unexpected payload ${p._tag} in recordVersion stream`,
           eventId: event.id,

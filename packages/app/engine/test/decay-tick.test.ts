@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest"
-import { Effect, TestClock } from "effect"
+import { Effect } from "effect"
+import { TestClock } from "effect/testing"
 import { ConceptService } from "../services/ConceptService"
 import { FieldService } from "../services/FieldService"
 import { RecordService } from "../services/RecordService"

@@ -1,5 +1,5 @@
 import { PgClient } from "@effect/sql-pg"
-import { Effect } from "effect"
+import { Context, Effect, Layer } from "effect"
 import type { AccessAction } from "../domain/access"
 import { decide } from "../domain/access"
 import type {
@@ -338,10 +338,10 @@ export const nextRunAfter = (t: AutomationTrigger, from: Date): Date | null => {
  * automations.ts) owns matching and execution. That split keeps the engine free
  * of any knowledge of Slack, HTTP or scheduling.
  */
-export class AutomationService extends Effect.Service<AutomationService>()(
+export class AutomationService extends Context.Service<AutomationService>()(
   "engine/AutomationService",
   {
-    effect: Effect.gen(function* () {
+    make: Effect.gen(function* () {
       const sql = yield* PgClient.PgClient
       const resourceRules = yield* ResourceRulesService
       const events = yield* EventStore
@@ -748,8 +748,11 @@ export class AutomationService extends Effect.Service<AutomationService>()(
         setNextRun,
       } as const
     }),
-    dependencies: [ResourceRulesService.Default, EventStore.Default],
   },
-) {}
+) {
+  static readonly layer = Layer.effect(this, this.make).pipe(
+    Layer.provide([ResourceRulesService.layer, EventStore.layer]),
+  )
+}
 
 export type { Automation, AutomationRun }

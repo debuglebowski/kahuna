@@ -213,7 +213,7 @@ const tickOnce = Effect.gen(function* () {
   // runs through the engine rather than as a plain SQL rule above. Not
   // configurable — an unclaimed staged file is never anyone's data.
   const staged = yield* sweepExpiredStaged().pipe(
-    Effect.catchAllCause((cause) =>
+    Effect.catchCause((cause) =>
       Effect.logError("staged upload sweep error", cause).pipe(Effect.as(0)),
     ),
   )
@@ -229,8 +229,8 @@ export const startRetentionTick = (): void => {
   const intervalMs = Number(process.env.RETENTION_TICK_INTERVAL_MS ?? DAY_MS)
   AppRuntime.runFork(
     tickOnce.pipe(
-      Effect.tapErrorCause((cause) => Effect.logError("retention tick error", cause)),
-      Effect.catchAllCause(() => Effect.void),
+      Effect.tapCause((cause) => Effect.logError("retention tick error", cause)),
+      Effect.catchCause(() => Effect.void),
       Effect.repeat(Schedule.spaced(Duration.millis(intervalMs))),
     ),
   )

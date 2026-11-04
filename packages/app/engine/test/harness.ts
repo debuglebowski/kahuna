@@ -2,17 +2,26 @@ import { randomUUID } from "node:crypto"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { PgClient } from "@effect/sql-pg"
-import { Config, Layer } from "effect"
+import { Clock, Config, Layer } from "effect"
 import { LocalFsBlobStore } from "../blob/local"
 import type { AccessAction, AccessResourceType, AccessRule, PolicySet } from "../domain/access"
 import { emptyPolicy, unrestrictedPolicy } from "../domain/access"
 import { EngineLive } from "../layers"
 import { OrgContext, type ScopeRole } from "../services/OrgContext"
 
-/** SqlClient layer pointed at the dedicated test database. */
+/**
+ * SqlClient layer pointed at the dedicated test database.
+ *
+ * Built on the LIVE clock, always. `@effect/sql-pg` 4 is an Effect-native driver:
+ * its pool's idle-TTL reaper and connect timeout are Effect timers on whatever
+ * `Clock` the layer is built under. Under `it.effect` that is the TestClock, and a
+ * `TestClock.setTime` jump then fires the pool's own timers mid-test and wedges it.
+ * The v3 driver (`pg`) ran on Node timers, outside Effect time entirely; this keeps
+ * the database on wall time while the code under test still sees the TestClock.
+ */
 export const PgTestLive = PgClient.layerConfig({
-  url: Config.redacted("TEST_DATABASE_URL"),
-})
+  url: Config.Redacted("TEST_DATABASE_URL"),
+}).pipe(Layer.provide(Layer.succeed(Clock.Clock, Clock.Clock.defaultValue())))
 
 const BlobTestLive = LocalFsBlobStore(path.join(tmpdir(), "kahuna-test-blobs"))
 

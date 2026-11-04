@@ -135,7 +135,7 @@ bun run --cwd packages/app scripts/verify-cli.ts   # end-to-end, needs a live se
 
 The bundle is ~620 KB, ~190 KB installed, with no dependencies. Effect is about
 80% of that: the wire contract is defined with `effect/Schema` and the client is
-`@effect/rpc`, so the CLI carries the server's runtime in order to speak its
+`effect/rpc`, so the CLI carries the server's runtime in order to speak its
 format. That is the price of one shared contract and no drift, and it is a price
 paid once at install.
 

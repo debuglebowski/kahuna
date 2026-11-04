@@ -296,7 +296,7 @@ interface CallResult {
  */
 const slackCall = (run: () => Promise<CallResult>) =>
   Effect.tryPromise({ try: run, catch: (e) => e }).pipe(
-    Effect.catchAll(() => Effect.succeed({ ok: false, note: "Slack call failed" } as CallResult)),
+    Effect.catch(() => Effect.succeed({ ok: false, note: "Slack call failed" } as CallResult)),
   )
 
 const chainOf = (r: CallResult) => (r.ts ? { ts: r.ts, channel: r.channel } : undefined)
@@ -329,9 +329,7 @@ const linearTarget = (orgId: string, subject: ActOn | null) =>
       return { ok: true, conn, issueId }
     },
     catch: (e) => e,
-  }).pipe(
-    Effect.catchAll(() => Effect.succeed({ ok: false as const, note: "Linear lookup failed" })),
-  )
+  }).pipe(Effect.catch(() => Effect.succeed({ ok: false as const, note: "Linear lookup failed" })))
 
 /** Map a thrown Linear error to a short note. A GraphQL error carries no HTTP
  *  status, so `publicConnectorError` would call every one of them "could not
@@ -348,7 +346,7 @@ const linearNote = (e: unknown): string => {
 
 const linearCall = (run: () => Promise<CallResult>) =>
   Effect.tryPromise({ try: run, catch: (e) => e }).pipe(
-    Effect.catchAll((e) => Effect.succeed({ ok: false, note: linearNote(e) } as CallResult)),
+    Effect.catch((e) => Effect.succeed({ ok: false, note: linearNote(e) } as CallResult)),
   )
 
 const runAction = (
@@ -472,7 +470,7 @@ const runAction = (
           },
           catch: (e) => e,
         }).pipe(
-          Effect.catchAll((e) =>
+          Effect.catch((e) =>
             Effect.succeed(
               e instanceof UnsafeUrlError
                 ? { ok: false, note: `blocked: ${e.reason}` }
@@ -646,7 +644,7 @@ const runAction = (
   }).pipe(
     // A typed engine failure (validation, version conflict, managed-concept
     // guard) becomes this action's outcome — the run then stops at this step.
-    Effect.catchAll((e) =>
+    Effect.catch((e) =>
       Effect.succeed({
         kind: action.kind,
         ok: false,
@@ -714,10 +712,10 @@ const executeRun = (input: {
     if (subject) {
       const concept = yield* concepts
         .getById(subject.conceptId)
-        .pipe(Effect.catchAll(() => Effect.succeed(null)))
+        .pipe(Effect.catch(() => Effect.succeed(null)))
       const defs = yield* fields
         .listFields(subject.conceptId)
-        .pipe(Effect.catchAll(() => Effect.succeed([])))
+        .pipe(Effect.catch(() => Effect.succeed([])))
       for (const f of defs) {
         const v = subject.recordVersion.state[f.id]
         if (v != null) fieldValues[f.id] = v
@@ -796,7 +794,7 @@ const executeRun = (input: {
         status,
         actions: outcomes.map((o) => `${o.kind}${o.note ? `: ${o.note}` : ""}`),
       })
-      .pipe(Effect.catchAllCause(() => Effect.void))
+      .pipe(Effect.catchCause(() => Effect.void))
     return status
   })
 
@@ -807,7 +805,7 @@ const overRateCap = (automation: Automation) =>
     const automations = yield* AutomationService
     const recent = yield* automations.recentRunCount(automation.id)
     if (recent < RATE_CAP_PER_MIN) return false
-    yield* automations.pause(automation.id, "rate-cap").pipe(Effect.catchAll(() => Effect.void))
+    yield* automations.pause(automation.id, "rate-cap").pipe(Effect.catch(() => Effect.void))
     return true
   })
 
@@ -868,7 +866,7 @@ export const handleEnvelope = (env: EventEnvelope) =>
       //    stored, but `getAsOf(id, eventId - 1)` replays the stream to just
       //    before this event — event ids are monotonic, so that is exactly
       //    "everything prior".
-      const resolved = yield* resolveSubject(env).pipe(Effect.catchAll(() => Effect.succeed(null)))
+      const resolved = yield* resolveSubject(env).pipe(Effect.catch(() => Effect.succeed(null)))
       // `{{trigger.from}}` / `{{trigger.to}}` — where they come from depends on the
       // event. `ComputedBandChanged`/`TaskStatusChanged` carry literal from/to in
       // the payload. A record edit does NOT: the new value is in `patch` (keyed by
@@ -898,7 +896,7 @@ export const handleEnvelope = (env: EventEnvelope) =>
           OrgContext,
           Effect.promise(() => actorScope(env.org, actorFor(automation.id))),
         ),
-        Effect.catchAllCause((cause) =>
+        Effect.catchCause((cause) =>
           // A crash mid-run must still close the row, or the automation would
           // look permanently "running" and the event could never be retried.
           Effect.gen(function* () {
@@ -910,7 +908,7 @@ export const handleEnvelope = (env: EventEnvelope) =>
                 status: "failed",
                 detail: { error: "internal error" },
               })
-              .pipe(Effect.catchAllCause(() => Effect.void))
+              .pipe(Effect.catchCause(() => Effect.void))
           }),
         ),
       )
@@ -925,7 +923,7 @@ const resolveSubject = (env: EventEnvelope) =>
     const recordVersion = yield* recordVersions.get(env.subjectId)
     const prev = yield* recordVersions
       .getAsOf(env.subjectId, env.id - 1)
-      .pipe(Effect.catchAll(() => Effect.succeed(null)))
+      .pipe(Effect.catch(() => Effect.succeed(null)))
     return {
       subject: { recordVersion, conceptId: recordVersion.conceptId } satisfies ActOn,
       prevState: prev?.state ?? null,
@@ -962,8 +960,8 @@ export const startAutomationRunner = (): void => {
         // automation needs `configure`, and a caller with `configure` can read the
         // record anyway. Narrowing is about blast radius, not secrecy.
         Effect.provideService(OrgContext, systemScope(env.org, AUTOMATION_ACTOR_PREFIX)),
-        Effect.tapErrorCause((cause) => Effect.logError("automation runner error", cause)),
-        Effect.catchAllCause(() => Effect.void),
+        Effect.tapCause((cause) => Effect.logError("automation runner error", cause)),
+        Effect.catchCause(() => Effect.void),
       ),
     )
   })
@@ -996,7 +994,7 @@ const scheduleTickOnce = Effect.gen(function* () {
     RETURNING id, org_id, trigger`
   for (const row of due) {
     yield* runScheduled(row.org_id, row.id).pipe(
-      Effect.catchAllCause((cause) => Effect.logError("scheduled automation failed", cause)),
+      Effect.catchCause((cause) => Effect.logError("scheduled automation failed", cause)),
     )
   }
 })
@@ -1049,7 +1047,7 @@ const runScheduled = (orgId: string, automationId: string) =>
         runId: run.id,
         subject: { recordVersion, conceptId: recordVersion.conceptId },
         prevState: null,
-      }).pipe(Effect.catchAllCause(() => Effect.void))
+      }).pipe(Effect.catchCause(() => Effect.void))
     }
   }).pipe(
     // Same attribution AND the same governance as the event path.
@@ -1068,8 +1066,8 @@ export const startAutomationScheduleTick = (): void => {
   const intervalMs = Number(process.env.AUTOMATION_TICK_INTERVAL_MS ?? 60_000)
   AppRuntime.runFork(
     scheduleTickOnce.pipe(
-      Effect.tapErrorCause((cause) => Effect.logError("automation schedule tick error", cause)),
-      Effect.catchAllCause(() => Effect.void),
+      Effect.tapCause((cause) => Effect.logError("automation schedule tick error", cause)),
+      Effect.catchCause(() => Effect.void),
       Effect.repeat(Schedule.spaced(Duration.millis(intervalMs))),
     ),
   )

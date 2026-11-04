@@ -1,5 +1,3 @@
-import { Etag, FileSystem, HttpPlatform, Path } from "@effect/platform"
-import { RpcMiddleware, RpcSerialization, RpcServer } from "@effect/rpc"
 import type { PgClient } from "@effect/sql-pg"
 import {
   type AccessRole,
@@ -36,7 +34,9 @@ import {
   type TaskStatus,
   type TaskSubjectRef,
 } from "@kahunalabs/contract"
-import { Effect, Layer } from "effect"
+import { Context, Effect, Layer, type Scope } from "effect"
+import { HttpEffect, type HttpServerRequest, type HttpServerResponse } from "effect/http"
+import { RpcMiddleware, RpcSerialization, RpcServer } from "effect/rpc"
 import {
   type AccessAction,
   type AccessResource,
@@ -69,12 +69,18 @@ const LIST_RECORDS_LIMIT = 50_000
  * Per-request auth: derive OrgContext (org_id + actor) from the session cookie
  * in the request headers. Provided to every handler; fails the RPC otherwise.
  */
-export class AuthMiddleware extends RpcMiddleware.Tag<AuthMiddleware>()("kahuna/AuthMiddleware", {
-  provides: OrgContext,
-  failure: RpcError,
+export class AuthMiddleware extends RpcMiddleware.Service<
+  AuthMiddleware,
+  { provides: OrgContext }
+>()("kahuna/AuthMiddleware", {
+  error: RpcError,
 }) {}
 
-const AuthMiddlewareLive = Layer.succeed(AuthMiddleware, (options) =>
+/** Resolve the caller's scope from the request headers — or fail the RPC. */
+const authenticate = (options: {
+  readonly headers: Readonly<Record<string, string>>
+  readonly rpc: { readonly _tag: string }
+}) =>
   Effect.gen(function* () {
     const headers = new Headers(options.headers as Record<string, string>)
     const session = yield* Effect.tryPromise({
@@ -143,7 +149,14 @@ const AuthMiddlewareLive = Layer.succeed(AuthMiddleware, (options) =>
     // engine off `OrgContext.role` (see OrgContext.ts). `sessionScope`'s signature
     // is what guarantees a request can never claim engine ("system") privilege.
     return sessionScope(orgId, session.user.id, role, policy) satisfies OrgScope
-  }),
+  })
+
+// The middleware WRAPS the handler: resolve the scope first, then run the
+// handler with it provided — the order v3's `provides` middleware ran in.
+const AuthMiddlewareLive = Layer.succeed(AuthMiddleware, (handler, options) =>
+  Effect.flatMap(authenticate(options), (scope) =>
+    Effect.provideService(handler, OrgContext, scope),
+  ),
 )
 
 /** User-facing fallbacks for domain errors whose payload carries no human
@@ -196,7 +209,7 @@ const toRpcError = (e: unknown): RpcError => {
 // R-agnostic (it only rewraps the error channel), so it also passes through the
 // `PgClient` a self-transacting use-case carries — see `adminSqlOn`.
 const mapErr = <A, E, R>(eff: Effect.Effect<A, E, R>) =>
-  eff.pipe(Effect.catchAll((e) => Effect.fail(toRpcError(e))))
+  eff.pipe(Effect.catch((e) => Effect.fail(toRpcError(e))))
 
 /**
  * THE WRITE GATE. Resolves `action` against the caller's access rules. No fallback
@@ -249,7 +262,7 @@ const requireAdmin: Effect.Effect<void, RpcError, OrgContext> = requireAction("c
 
 /** Run an admin-only use-case behind the gate, mapping engine errors. */
 const admin = <A>(eff: Effect.Effect<unknown, unknown, OrgContext | EngineServices>) =>
-  requireAdmin.pipe(Effect.zipRight(as<A>(eff)))
+  requireAdmin.pipe(Effect.andThen(as<A>(eff)))
 
 /**
  * `admin`, but decided against ONE resource instead of the org.
@@ -269,7 +282,7 @@ const adminOn = <A>(
   action: AccessAction,
   resource: AccessResource,
   eff: Effect.Effect<unknown, unknown, OrgContext | EngineServices>,
-) => requireAction(action, resource).pipe(Effect.zipRight(as<A>(eff)))
+) => requireAction(action, resource).pipe(Effect.andThen(as<A>(eff)))
 
 /**
  * `adminOn` for a handler that names a FIELD but must be governed by the field's
@@ -284,7 +297,7 @@ const adminOnFieldConcept = <A>(
 ) =>
   as<{ readonly conceptId: string }>(uc.getField(fieldId)).pipe(
     Effect.flatMap((f) => requireAction(action, { type: "concept", id: f.conceptId })),
-    Effect.zipRight(as<A>(eff)),
+    Effect.andThen(as<A>(eff)),
   )
 
 /**
@@ -299,7 +312,7 @@ const adminSqlOn = <A>(
   resource: AccessResource,
   eff: Effect.Effect<unknown, unknown, OrgContext | EngineServices | PgClient.PgClient>,
 ) =>
-  requireAction(action, resource).pipe(Effect.zipRight(mapErr(eff))) as Effect.Effect<
+  requireAction(action, resource).pipe(Effect.andThen(mapErr(eff))) as Effect.Effect<
     A,
     RpcError,
     OrgContext | EngineServices | PgClient.PgClient
@@ -599,7 +612,7 @@ const HandlersLive = ServerRpcs.toLayer(
     // toggle would be a hole in a rule every other write path enforces.
     setConceptSingleRecord: ({ conceptId, singleRecord, fields, files }) =>
       requireAction("configure", { type: "concept", id: conceptId }).pipe(
-        Effect.zipRight(
+        Effect.andThen(
           checkThen(
             (orgId) => assertMembers(orgId, conceptId, fields ?? {}),
             uc.setConceptSingleRecord(conceptId, singleRecord, fields, files),
@@ -948,7 +961,7 @@ const HandlersLive = ServerRpcs.toLayer(
     listDeactivatedMembers: () => as<ReadonlyArray<DeactivatedMember>>(uc.listDeactivatedMembers),
     deactivateMember: ({ userId }) =>
       requireAction("configure", { type: "member" }).pipe(
-        Effect.zipRight(
+        Effect.andThen(
           checkThen(
             (orgId, actor) => assertDeactivatable(orgId, actor, userId),
             uc.deactivateMember(userId),
@@ -1130,18 +1143,26 @@ const HandlersLive = ServerRpcs.toLayer(
   }),
 ).pipe(Layer.provide(EngineBase))
 
-// HttpRouter.DefaultServices (HttpPlatform | Etag | FileSystem | Path) — pure
-// layers (no-op FileSystem) since the RPC handler never touches the filesystem.
-const HttpServices = Layer.mergeAll(HttpPlatform.layer, Etag.layerWeak, Path.layer).pipe(
-  Layer.provideMerge(FileSystem.layerNoop({})),
+const ServerLayer = Layer.mergeAll(HandlersLive, AuthMiddlewareLive, RpcSerialization.layerNdjson)
+
+/** The RPC server's HTTP app. The server fiber it starts lives in this layer's scope. */
+class RpcHttpApp extends Context.Service<
+  RpcHttpApp,
+  Effect.Effect<
+    HttpServerResponse.HttpServerResponse,
+    never,
+    Scope.Scope | HttpServerRequest.HttpServerRequest
+  >
+>()("kahuna/RpcHttpApp") {}
+
+const RpcHttpAppLive = Layer.effect(RpcHttpApp, RpcServer.toHttpEffect(ServerRpcs)).pipe(
+  Layer.provide(ServerLayer),
 )
 
-const ServerLayer = Layer.mergeAll(
-  HandlersLive,
-  AuthMiddlewareLive,
-  RpcSerialization.layerNdjson,
-  HttpServices,
-)
+/** The RPC endpoint as `(Request) => Promise<Response>`, before the protocol gate. */
+const { handler: rpcWebHandler } = HttpEffect.toWebHandlerLayerWith(RpcHttpAppLive, {
+  toHandler: (context) => Effect.succeed(Context.get(context, RpcHttpApp)),
+})
 
 /** A `(Request) => Promise<Response>` for the RPC endpoint, mounted in Bun.serve. */
-export const { handler: rpcHandler } = RpcServer.toWebHandler(ServerRpcs, { layer: ServerLayer })
+export const rpcHandler = (request: Request): Promise<Response> => rpcWebHandler(request)

@@ -1,5 +1,5 @@
 import { PgClient } from "@effect/sql-pg"
-import { Effect } from "effect"
+import { Context, Effect, Layer } from "effect"
 import type { EditReach, RecordViewLayout } from "../domain/types"
 import { scopeCanReadConcept } from "../domain/visibility"
 import {
@@ -25,8 +25,8 @@ const slugify = (s: string): string =>
     .replace(/^_+|_+$/g, "") || "concept"
 
 /** Manages concept definitions (the "types" — Account, Deal, …). */
-export class ConceptService extends Effect.Service<ConceptService>()("engine/ConceptService", {
-  effect: Effect.gen(function* () {
+export class ConceptService extends Context.Service<ConceptService>()("engine/ConceptService", {
+  make: Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
     const resourceRules = yield* ResourceRulesService
     const events = yield* EventStore
@@ -483,5 +483,8 @@ export class ConceptService extends Effect.Service<ConceptService>()("engine/Con
       purge,
     } as const
   }),
-  dependencies: [ResourceRulesService.Default, EventStore.Default, LabelService.Default],
-}) {}
+}) {
+  static readonly layer = Layer.effect(this, this.make).pipe(
+    Layer.provide([ResourceRulesService.layer, EventStore.layer, LabelService.layer]),
+  )
+}

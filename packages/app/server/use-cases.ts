@@ -100,7 +100,7 @@ const ensureUnmanagedRecordVersion = (recordVersionId: string): UC<void> =>
     // get() is live-only; if the record version is archived/gone, skip the guard and let
     // the real mutation surface the proper RecordVersionNotFound. Live managed record versions
     // (the case that matters) are still covered by create/archive guards.
-    Effect.catchAll((e) =>
+    Effect.catch((e) =>
       (e as { _tag?: string })?._tag === "RecordVersionNotFound" ? Effect.void : Effect.fail(e),
     ),
   )
@@ -156,7 +156,7 @@ const ensureWritablePatch = (recordVersionId: string, keys: ReadonlyArray<string
         ),
       ),
     ),
-    Effect.catchAll((e) =>
+    Effect.catch((e) =>
       (e as { _tag?: string })?._tag === "RecordVersionNotFound" ? Effect.void : Effect.fail(e),
     ),
   )
@@ -401,7 +401,7 @@ export const getRecordDetail = (id: string): UC<unknown> =>
         // pinned target that is archived/gone (record versions.get is live-only).
         // Surface both as unavailable rather than silently dropping the edge.
         const other = otherId
-          ? yield* recordVersions.get(otherId).pipe(Effect.catchAll(() => Effect.succeed(null)))
+          ? yield* recordVersions.get(otherId).pipe(Effect.catch(() => Effect.succeed(null)))
           : null
         // A target in a concept this caller may not read: DROP the edge entirely
         // rather than fall into the "(unavailable)" shape below, which would still
@@ -410,13 +410,13 @@ export const getRecordDetail = (id: string): UC<unknown> =>
         if (otherId && !other) {
           const targetRecord = yield* recordVersions
             .getRecord(rel.toRecordId)
-            .pipe(Effect.catchAll(() => Effect.succeed(null)))
+            .pipe(Effect.catch(() => Effect.succeed(null)))
           if (!targetRecord) return null
         }
         if (!other) {
           const record = yield* recordVersions
             .getRecord(rel.toRecordId)
-            .pipe(Effect.catchAll(() => Effect.succeed(null)))
+            .pipe(Effect.catch(() => Effect.succeed(null)))
           const cId = record?.conceptId ?? ""
           return {
             relationId: rel.id,
@@ -453,7 +453,7 @@ export const getRecordDetail = (id: string): UC<unknown> =>
           pinned,
           recordVersion: d,
         }
-      }).pipe(Effect.catchAll(() => Effect.succeed(null)))
+      }).pipe(Effect.catch(() => Effect.succeed(null)))
 
     const related = yield* Effect.all([
       Effect.forEach(outRels, (r) => resolveEntry(r, "out")),
@@ -559,7 +559,7 @@ export const setConceptRecordView = (
 
 export const setConceptTitleField = (id: string, titleFieldId: string | null): UC<unknown> =>
   ensureUnmanagedConcept(id).pipe(
-    Effect.zipRight(Effect.flatMap(ConceptService, (c) => c.setTitleField(id, titleFieldId))),
+    Effect.andThen(Effect.flatMap(ConceptService, (c) => c.setTitleField(id, titleFieldId))),
   )
 
 /**
@@ -579,7 +579,7 @@ export const setConceptSingleRecord = (
   files?: Readonly<Record<string, ReadonlyArray<string>>>,
 ): UC<unknown> =>
   ensureUnmanagedConcept(conceptId).pipe(
-    Effect.zipRight(
+    Effect.andThen(
       Effect.flatMap(RecordService, (i) =>
         i.setConceptSingleRecord({ conceptId, singleRecord, fields, files }),
       ),
@@ -607,7 +607,7 @@ export const getSingleRecord = (conceptId: string): UC<unknown> =>
 
 export const archiveConcept = (id: string): UC<unknown> =>
   ensureUnmanagedConcept(id).pipe(
-    Effect.zipRight(Effect.flatMap(ConceptService, (c) => c.archive(id))),
+    Effect.andThen(Effect.flatMap(ConceptService, (c) => c.archive(id))),
   )
 
 export const restoreConcept = (id: string): UC<unknown> =>
@@ -718,7 +718,7 @@ export const createView = (input: {
   readonly body: SidebarViewBody
 }): UC<unknown> =>
   assertAllowed("create", { type: "view" }).pipe(
-    Effect.zipRight(Effect.flatMap(SidebarViewService, (s) => s.create(input))),
+    Effect.andThen(Effect.flatMap(SidebarViewService, (s) => s.create(input))),
   )
 
 export const updateView = (input: {
@@ -768,7 +768,7 @@ export const createDashboard = (input: {
   readonly conceptId?: string | null
 }): UC<unknown> =>
   assertAllowed("create", { type: "dashboard" }).pipe(
-    Effect.zipRight(Effect.flatMap(DashboardService, (s) => s.create(input))),
+    Effect.andThen(Effect.flatMap(DashboardService, (s) => s.create(input))),
   )
 
 export const updateDashboard = (input: {
@@ -904,17 +904,17 @@ export const updateField = (input: {
   readonly icon?: string | null
 }): UC<unknown> =>
   ensureUnmanagedField(input.id).pipe(
-    Effect.zipRight(Effect.flatMap(FieldService, (f) => f.update(input))),
+    Effect.andThen(Effect.flatMap(FieldService, (f) => f.update(input))),
   )
 
 export const archiveField = (id: string): UC<unknown> =>
-  ensureUnmanagedField(id).pipe(Effect.zipRight(Effect.flatMap(FieldService, (f) => f.archive(id))))
+  ensureUnmanagedField(id).pipe(Effect.andThen(Effect.flatMap(FieldService, (f) => f.archive(id))))
 
 export const restoreField = (id: string): UC<unknown> =>
   Effect.flatMap(FieldService, (f) => f.restore(id))
 
 export const deleteField = (id: string): UC<unknown> =>
-  ensureUnmanagedField(id).pipe(Effect.zipRight(Effect.flatMap(FieldService, (f) => f.purge(id))))
+  ensureUnmanagedField(id).pipe(Effect.andThen(Effect.flatMap(FieldService, (f) => f.purge(id))))
 
 export const reorderFields = (
   conceptId: string,
@@ -975,7 +975,7 @@ const dropUnreadableSubjects = <
         Effect.map(() => true),
         // Archived or purged record versions fail `get` too. Dropping them is right: their
         // events are already unreachable, and keeping them would be a fail-open guess.
-        Effect.catchAll(() => Effect.succeed(false)),
+        Effect.catch(() => Effect.succeed(false)),
       )
       readable.set(id, ok)
     }
@@ -1043,7 +1043,7 @@ export const updateRecord = (
   patch: Record<string, unknown>,
 ): UC<RecordVersion> =>
   ensureWritablePatch(id, Object.keys(patch)).pipe(
-    Effect.zipRight(
+    Effect.andThen(
       Effect.flatMap(RecordService, (i) =>
         i.update({ recordVersionId: id, expectedVersion, patch }),
       ),
@@ -1057,7 +1057,7 @@ export const transitionRecord = (
   to: string,
 ): UC<RecordVersion> =>
   ensureWritablePatch(id, [field]).pipe(
-    Effect.zipRight(
+    Effect.andThen(
       Effect.flatMap(RecordService, (i) =>
         i.transition({ recordVersionId: id, expectedVersion, field, to }),
       ),
@@ -1066,21 +1066,21 @@ export const transitionRecord = (
 
 export const archiveRecordVersion = (id: string, expectedVersion: number): UC<RecordVersion> =>
   ensureUnmanagedRecordVersion(id).pipe(
-    Effect.zipRight(
+    Effect.andThen(
       Effect.flatMap(RecordService, (i) => i.archive({ recordVersionId: id, expectedVersion })),
     ),
   )
 
 export const restoreRecordVersion = (id: string, expectedVersion: number): UC<RecordVersion> =>
   ensureUnmanagedRecordVersion(id).pipe(
-    Effect.zipRight(
+    Effect.andThen(
       Effect.flatMap(RecordService, (i) => i.restore({ recordVersionId: id, expectedVersion })),
     ),
   )
 
 export const deleteRecordVersion = (id: string): UC<RecordVersion> =>
   ensureUnmanagedRecordVersion(id).pipe(
-    Effect.zipRight(Effect.flatMap(RecordService, (i) => i.purge({ recordVersionId: id }))),
+    Effect.andThen(Effect.flatMap(RecordService, (i) => i.purge({ recordVersionId: id }))),
   )
 
 export const linkRelation = (
@@ -1112,13 +1112,13 @@ export const discardDraft = (id: string): UC<RecordVersion> =>
 export const archiveRecord = (recordId: string): UC<unknown> =>
   Effect.flatMap(RecordService, (i) => i.getRecord(recordId)).pipe(
     Effect.flatMap((record) => ensureUnmanagedConcept(record.conceptId)),
-    Effect.zipRight(Effect.flatMap(RecordService, (i) => i.archiveRecord({ recordId }))),
+    Effect.andThen(Effect.flatMap(RecordService, (i) => i.archiveRecord({ recordId }))),
   )
 
 export const restoreRecord = (recordId: string): UC<unknown> =>
   Effect.flatMap(RecordService, (i) => i.getRecord(recordId)).pipe(
     Effect.flatMap((record) => ensureUnmanagedConcept(record.conceptId)),
-    Effect.zipRight(Effect.flatMap(RecordService, (i) => i.restoreRecord({ recordId }))),
+    Effect.andThen(Effect.flatMap(RecordService, (i) => i.restoreRecord({ recordId }))),
   )
 
 /** Relation-picker candidates: the head (latest published) of each record of a
@@ -1169,7 +1169,7 @@ export const uploadAttachment = (
   data: Uint8Array,
 ): UC<Attachment> =>
   ("recordId" in owner ? assertSubjectWritable(owner.recordId) : Effect.void).pipe(
-    Effect.zipRight(
+    Effect.andThen(
       Effect.flatMap(AttachmentService, (a) => a.upload({ owner, filename, mimeType, data })),
     ),
   )
@@ -1219,7 +1219,7 @@ export const reorderFieldFiles = (
   ids: ReadonlyArray<string>,
 ): UC<ReadonlyArray<Attachment>> =>
   assertSubjectWritable(recordId).pipe(
-    Effect.zipRight(Effect.flatMap(AttachmentService, (a) => a.reorder(recordId, fieldId, ids))),
+    Effect.andThen(Effect.flatMap(AttachmentService, (a) => a.reorder(recordId, fieldId, ids))),
   )
 
 export const archiveFile = (id: string): UC<Attachment> =>
@@ -1249,14 +1249,14 @@ export const downloadAttachment = (
 ): UC<{ attachment: Attachment; data: Uint8Array }> =>
   Effect.flatMap(AttachmentService, (a) => a.get(attachmentId)).pipe(
     Effect.flatMap((meta) => (meta.recordId ? assertSubjectReadable(meta.recordId) : Effect.void)),
-    Effect.zipRight(Effect.flatMap(AttachmentService, (a) => a.download(attachmentId))),
+    Effect.andThen(Effect.flatMap(AttachmentService, (a) => a.download(attachmentId))),
   )
 
 // ── annotation layer: notes ────────────────────────────────────────────────────
 
 export const listNotes = (subjectId: string, includeArchived = false): UC<ReadonlyArray<Note>> =>
   assertSubjectReadable(subjectId).pipe(
-    Effect.zipRight(
+    Effect.andThen(
       Effect.flatMap(AnnotationService, (a) => a.listNotes(subjectId, { includeArchived })),
     ),
   )
@@ -1274,7 +1274,7 @@ export const createNote = (input: {
   (input.subjectId === null
     ? assertAllowed("create", { type: "note" })
     : assertSubjectWritable(input.subjectId)
-  ).pipe(Effect.zipRight(Effect.flatMap(AnnotationService, (a) => a.createNote(input))))
+  ).pipe(Effect.andThen(Effect.flatMap(AnnotationService, (a) => a.createNote(input))))
 
 export const updateNote = (input: {
   readonly id: string
@@ -1354,7 +1354,7 @@ export const resolveTaskSubjects = (subjectIds: ReadonlyArray<string>): UC<unkno
           conceptId: head.conceptId,
         }
       }).pipe(
-        Effect.catchAll(() =>
+        Effect.catch(() =>
           Effect.succeed({
             subjectId,
             recordVersionId: null,
@@ -1524,7 +1524,7 @@ export const resolveMentions = (
                 : // `person` is overlaid by the handler; `page` is client-side; an
                   // unknown kind (a newer build's) passes through untouched.
                   fallback
-      return run.pipe(Effect.catchAll(() => fallback))
+      return run.pipe(Effect.catch(() => fallback))
     }
 
     // Deduped by (kind, targetId) — so the response is NOT positionally aligned
@@ -1609,7 +1609,7 @@ export const listBacklinks = (recordId: string): UC<unknown> =>
           fieldName: field?.name ?? null,
           conceptName,
         }
-      }).pipe(Effect.catchAll(() => Effect.succeed(null)))
+      }).pipe(Effect.catch(() => Effect.succeed(null)))
 
     const resolved = yield* Effect.forEach(rows, resolveRow)
     return resolved.filter((r) => r !== null)
@@ -1700,7 +1700,7 @@ export const createTask = (input: {
   (input.subjectId === null
     ? assertAllowed("create", { type: "task" })
     : assertSubjectWritable(input.subjectId)
-  ).pipe(Effect.zipRight(Effect.flatMap(AnnotationService, (a) => a.createTask(input))))
+  ).pipe(Effect.andThen(Effect.flatMap(AnnotationService, (a) => a.createTask(input))))
 
 export const updateTask = (input: {
   readonly id: string
@@ -1964,7 +1964,7 @@ export const testAutomation = (id: string, limit?: number) =>
 // ── roles ───────────────────────────────────────────────────────────────────
 
 export const listRoles = (): UC<unknown> =>
-  Effect.flatMap(AccessRoleService, (r) => r.ensureBuiltins.pipe(Effect.zipRight(r.list())))
+  Effect.flatMap(AccessRoleService, (r) => r.ensureBuiltins.pipe(Effect.andThen(r.list())))
 
 export const rolesOfUser = (userId: string): UC<unknown> =>
   Effect.flatMap(AccessRoleService, (r) => r.rolesOf(userId))

@@ -1,5 +1,5 @@
 import { PgClient } from "@effect/sql-pg"
-import { Effect, Either } from "effect"
+import { Context, Effect, Layer, Result } from "effect"
 import { BlobStore } from "../blob/BlobStore"
 import { decide, decideRecord, recordRulesForConcept } from "../domain/access"
 import { extractMentions, isUuid } from "../domain/mentions"
@@ -283,8 +283,8 @@ const seedFrom = (inst: RecordVersion, archivedAt: Date | null): FoldState => ({
  * `sql.withTransaction` — validate → (lock + version check) → append event →
  * fold via the shared reducer → persist projection + bump version.
  */
-export class RecordService extends Effect.Service<RecordService>()("engine/RecordService", {
-  effect: Effect.gen(function* () {
+export class RecordService extends Context.Service<RecordService>()("engine/RecordService", {
+  make: Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
     const events = yield* EventStore
     const concepts = yield* ConceptService
@@ -578,13 +578,13 @@ export class RecordService extends Effect.Service<RecordService>()("engine/Recor
             conceptName: concept.name,
           })
           const folded = applyEvent(null, event)
-          if (Either.isLeft(folded)) return yield* Effect.fail(folded.left)
+          if (Result.isFailure(folded)) return yield* Effect.fail(folded.failure)
           const updated = yield* sql<RecordVersionRow>`
             UPDATE record_versions
-            SET state = ${sql.json(folded.right.state)}, version = ${folded.right.version},
-                version_status = ${folded.right.versionStatus}, published_at = ${folded.right.publishedAt}
+            SET state = ${sql.json(folded.success.state)}, version = ${folded.success.version},
+                version_status = ${folded.success.versionStatus}, published_at = ${folded.success.publishedAt}
             WHERE id = ${created.id} AND org_id = ${orgId} RETURNING *`
-          yield* reindexRecordVersionMentions(orgId, created.id, folded.right.state, defs)
+          yield* reindexRecordVersionMentions(orgId, created.id, folded.success.state, defs)
           // After the RecordVersionCreated event, so the record's feed reads
           // "created" then "file added". Same transaction: a refused claim (an
           // id not staged by this actor, expired, too many for a single-file
@@ -671,14 +671,14 @@ export class RecordService extends Effect.Service<RecordService>()("engine/Recor
             conceptName: concept.name,
           })
           const folded = applyEvent(seedFrom(current, null), event)
-          if (Either.isLeft(folded)) return yield* Effect.fail(folded.left)
+          if (Result.isFailure(folded)) return yield* Effect.fail(folded.failure)
           const updated = yield* sql<RecordVersionRow>`
-            UPDATE record_versions SET state = ${sql.json(folded.right.state)}, version = ${folded.right.version}
+            UPDATE record_versions SET state = ${sql.json(folded.success.state)}, version = ${folded.success.version}
             WHERE id = ${current.id} AND org_id = ${orgId} RETURNING *`
           // The FOLDED state, not `validated`: an update patches a subset of the
           // fields, and re-indexing from the patch would drop the other fields'
           // mentions along with this record version's rows.
-          yield* reindexRecordVersionMentions(orgId, current.id, folded.right.state, defs)
+          yield* reindexRecordVersionMentions(orgId, current.id, folded.success.state, defs)
           return toRecordVersion(updated[0]!)
         }),
       )
@@ -745,9 +745,9 @@ export class RecordService extends Effect.Service<RecordService>()("engine/Recor
             conceptName: concept.name,
           })
           const folded = applyEvent(seedFrom(current, null), event)
-          if (Either.isLeft(folded)) return yield* Effect.fail(folded.left)
+          if (Result.isFailure(folded)) return yield* Effect.fail(folded.failure)
           const updated = yield* sql<RecordVersionRow>`
-            UPDATE record_versions SET version = ${folded.right.version}, archived_at = ${folded.right.archivedAt}
+            UPDATE record_versions SET version = ${folded.success.version}, archived_at = ${folded.success.archivedAt}
             WHERE id = ${current.id} AND org_id = ${orgId} RETURNING *`
           return toRecordVersion(updated[0]!)
         }),
@@ -798,9 +798,9 @@ export class RecordService extends Effect.Service<RecordService>()("engine/Recor
             conceptName: concept.name,
           })
           const folded = applyEvent(seedFrom(current, current.archivedAt), event)
-          if (Either.isLeft(folded)) return yield* Effect.fail(folded.left)
+          if (Result.isFailure(folded)) return yield* Effect.fail(folded.failure)
           const updated = yield* sql<RecordVersionRow>`
-            UPDATE record_versions SET version = ${folded.right.version}, archived_at = ${folded.right.archivedAt}
+            UPDATE record_versions SET version = ${folded.success.version}, archived_at = ${folded.success.archivedAt}
             WHERE id = ${current.id} AND org_id = ${orgId} RETURNING *`
           return toRecordVersion(updated[0]!)
         }),
@@ -1041,8 +1041,8 @@ export class RecordService extends Effect.Service<RecordService>()("engine/Recor
       knownState?: Record<string, unknown>,
     ) =>
       assertConceptVisible(conceptId, failId).pipe(
-        Effect.zipRight(assertRecordReadable(conceptId, recordId, failId, knownState)),
-        Effect.zipRight(assertRecordEditable(conceptId, recordId, failId, knownState)),
+        Effect.andThen(assertRecordReadable(conceptId, recordId, failId, knownState)),
+        Effect.andThen(assertRecordEditable(conceptId, recordId, failId, knownState)),
       )
 
     const get = (recordVersionId: string) =>
@@ -1066,8 +1066,8 @@ export class RecordService extends Effect.Service<RecordService>()("engine/Recor
         yield* assertRecordReadable(meta.conceptId, meta.recordId, recordVersionId)
         const stream = yield* events.readStream(recordVersionId, { upToEventId: eventId })
         const folded = foldEvents(stream)
-        if (Either.isLeft(folded)) return yield* Effect.fail(folded.left)
-        const fs = folded.right
+        if (Result.isFailure(folded)) return yield* Effect.fail(folded.failure)
+        const fs = folded.success
         if (!fs) return yield* Effect.fail(new RecordVersionNotFound({ recordVersionId }))
         return {
           id: meta.id,
@@ -1092,8 +1092,8 @@ export class RecordService extends Effect.Service<RecordService>()("engine/Recor
           const meta = yield* loadAny(recordVersionId)
           const stream = yield* events.readStream(recordVersionId)
           const folded = foldEvents(stream)
-          if (Either.isLeft(folded)) return yield* Effect.fail(folded.left)
-          const fs = folded.right
+          if (Result.isFailure(folded)) return yield* Effect.fail(folded.failure)
+          const fs = folded.success
           if (!fs) return yield* Effect.fail(new RecordVersionNotFound({ recordVersionId }))
           const updated = yield* sql<RecordVersionRow>`
             UPDATE record_versions
@@ -1170,9 +1170,9 @@ export class RecordService extends Effect.Service<RecordService>()("engine/Recor
               conceptName: concept.name,
             })
             const folded = applyEvent(seedFrom(current, null), event)
-            if (Either.isLeft(folded)) return yield* Effect.fail(folded.left)
+            if (Result.isFailure(folded)) return yield* Effect.fail(folded.failure)
             yield* sql<RecordVersionRow>`
-              UPDATE record_versions SET state = ${sql.json(folded.right.state)}, version = ${folded.right.version}
+              UPDATE record_versions SET state = ${sql.json(folded.success.state)}, version = ${folded.success.version}
               WHERE id = ${current.id} AND org_id = ${orgId}`
             return [event]
           }),
@@ -1236,11 +1236,11 @@ export class RecordService extends Effect.Service<RecordService>()("engine/Recor
             conceptName: concept.name,
           })
           const folded = applyEvent(seedFrom(current, null), event)
-          if (Either.isLeft(folded)) return yield* Effect.fail(folded.left)
+          if (Result.isFailure(folded)) return yield* Effect.fail(folded.failure)
           const updated = yield* sql<RecordVersionRow>`
             UPDATE record_versions
-            SET version = ${folded.right.version}, version_status = ${folded.right.versionStatus},
-                published_at = ${folded.right.publishedAt}
+            SET version = ${folded.success.version}, version_status = ${folded.success.versionStatus},
+                published_at = ${folded.success.publishedAt}
             WHERE id = ${current.id} AND org_id = ${orgId} RETURNING *`
           return toRecordVersion(updated[0]!)
         }),
@@ -1307,11 +1307,11 @@ export class RecordService extends Effect.Service<RecordService>()("engine/Recor
             conceptName: concept.name,
           })
           const folded = applyEvent(null, event)
-          if (Either.isLeft(folded)) return yield* Effect.fail(folded.left)
+          if (Result.isFailure(folded)) return yield* Effect.fail(folded.failure)
           const updated = yield* sql<RecordVersionRow>`
             UPDATE record_versions
-            SET state = ${sql.json(folded.right.state)}, version = ${folded.right.version},
-                version_status = ${folded.right.versionStatus}, published_at = ${folded.right.publishedAt}
+            SET state = ${sql.json(folded.success.state)}, version = ${folded.success.version},
+                version_status = ${folded.success.versionStatus}, published_at = ${folded.success.publishedAt}
             WHERE id = ${draft.id} AND org_id = ${orgId} RETURNING *`
           // The draft carries the head's state verbatim, so it carries its mentions
           // too. Re-derived from that state rather than cloned from the head's rows:
@@ -1319,7 +1319,7 @@ export class RecordService extends Effect.Service<RecordService>()("engine/Recor
           yield* reindexRecordVersionMentions(
             orgId,
             draft.id,
-            folded.right.state,
+            folded.success.state,
             yield* fields.listFields(source.conceptId),
           )
           // Clone the head's outbound relations onto the draft (targets verbatim,
@@ -1629,11 +1629,14 @@ export class RecordService extends Effect.Service<RecordService>()("engine/Recor
       listVersions,
     } as const
   }),
-  dependencies: [
-    ConceptService.Default,
-    FieldService.Default,
-    EventStore.Default,
-    ComputedFields.Default,
-    LabelService.Default,
-  ],
-}) {}
+}) {
+  static readonly layer = Layer.effect(this, this.make).pipe(
+    Layer.provide([
+      ConceptService.layer,
+      FieldService.layer,
+      EventStore.layer,
+      ComputedFields.layer,
+      LabelService.layer,
+    ]),
+  )
+}

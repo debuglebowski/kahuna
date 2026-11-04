@@ -1,5 +1,5 @@
 import { PgClient } from "@effect/sql-pg"
-import { Effect, Ref } from "effect"
+import { Context, Effect, Layer, Ref } from "effect"
 import {
   type AccessAction,
   type AccessCondition,
@@ -106,8 +106,8 @@ interface CacheEntry {
  * The version read is one indexed primary-key lookup — far cheaper than the join
  * it replaces, which is the point.
  */
-export class PolicyService extends Effect.Service<PolicyService>()("engine/PolicyService", {
-  effect: Effect.gen(function* () {
+export class PolicyService extends Context.Service<PolicyService>()("engine/PolicyService", {
+  make: Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
     // Process-wide, not request-scoped: the whole point is to survive across
     // requests. Bounded by (orgs × actors), and entries are replaced not appended.
@@ -216,7 +216,7 @@ export class PolicyService extends Effect.Service<PolicyService>()("engine/Polic
         // A policy read must never take a request down. An unreachable DB fails the
         // request elsewhere (every other query dies too); here we fall back to the
         // empty set, which grants nothing beyond resource defaults — fail closed.
-        Effect.catchAll(() => Effect.succeed(emptyPolicy(actorId))),
+        Effect.catch(() => Effect.succeed(emptyPolicy(actorId))),
       )
 
     /** Drop every cached entry (tests, and after a bulk backfill). */
@@ -224,4 +224,6 @@ export class PolicyService extends Effect.Service<PolicyService>()("engine/Polic
 
     return { resolve, bump, versionOf, invalidateAll } as const
   }),
-}) {}
+}) {
+  static readonly layer = Layer.effect(this, this.make)
+}

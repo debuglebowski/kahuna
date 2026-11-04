@@ -10,7 +10,7 @@ import { newOrgId, testLayer } from "./harness"
  *  transaction. `fields` feeds that record, so a concept with required fields
  *  needs values here. */
 const toggleOn = (
-  recordVersions: RecordService,
+  recordVersions: RecordService["Service"],
   conceptId: string,
   fields: Record<string, unknown> = {},
 ) => recordVersions.setConceptSingleRecord({ conceptId, singleRecord: true, fields })

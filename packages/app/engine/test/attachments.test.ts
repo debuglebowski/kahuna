@@ -248,14 +248,14 @@ describe("attachments", () => {
     // the shared one downloads fine (so this isn't just blanket denial).
     const outcome = await Effect.gen(function* () {
       const attachments = yield* AttachmentService
-      const denied = yield* Effect.either(attachments.download(uploaded.priv.id))
+      const denied = yield* Effect.result(attachments.download(uploaded.priv.id))
       const allowed = yield* attachments.download(uploaded.shared.id)
       return { denied, allowedBytes: allowed.data.length }
     }).pipe(Effect.provide(testLayer(orgId, "someone-else")), Effect.runPromise)
 
-    expect(outcome.denied._tag).toBe("Left")
-    if (outcome.denied._tag === "Left") {
-      expect((outcome.denied.left as { _tag: string })._tag).toBe("AttachmentNotFound")
+    expect(outcome.denied._tag).toBe("Failure")
+    if (outcome.denied._tag === "Failure") {
+      expect((outcome.denied.failure as { _tag: string })._tag).toBe("AttachmentNotFound")
     }
     expect(outcome.allowedBytes).toBe(1)
 
@@ -372,12 +372,13 @@ describe("attachments", () => {
     Effect.gen(function* () {
       const recordVersion = yield* seedItem
       const sql = yield* PgClient.PgClient
-      // SqlError's own message is generic; the violated constraint is on the pg cause.
+      // SqlError's own message is generic; the violated constraint is on the pg
+      // error the reason wraps.
       const violated = (recordId: string | null, bucketId: string | null) =>
         sql`INSERT INTO attachments (org_id, record_id, bucket_id, filename, content_ref)
             VALUES ('x', ${recordId}, ${bucketId}, 'f.txt', 'k')`.pipe(
           Effect.flip,
-          Effect.map((e) => (e.cause as { constraint?: string })?.constraint),
+          Effect.map((e) => (e.reason.cause as { constraint?: string })?.constraint),
         )
 
       // Both owners set, and neither — the attachments_one_owner CHECK.

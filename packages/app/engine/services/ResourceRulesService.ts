@@ -1,5 +1,5 @@
 import { PgClient } from "@effect/sql-pg"
-import { Effect } from "effect"
+import { Context, Effect, Layer } from "effect"
 import type { AccessResourceType } from "../domain/access"
 import { OrgContext } from "./OrgContext"
 import { PolicyService } from "./PolicyService"
@@ -19,10 +19,10 @@ import { PolicyService } from "./PolicyService"
  * deleted, the orphans are silent, and every one of them loads into every resolved
  * policy from then on — forever.
  */
-export class ResourceRulesService extends Effect.Service<ResourceRulesService>()(
+export class ResourceRulesService extends Context.Service<ResourceRulesService>()(
   "engine/ResourceRulesService",
   {
-    effect: Effect.gen(function* () {
+    make: Effect.gen(function* () {
       const sql = yield* PgClient.PgClient
       const policies = yield* PolicyService
 
@@ -61,6 +61,7 @@ export class ResourceRulesService extends Effect.Service<ResourceRulesService>()
 
       return { forget } as const
     }),
-    dependencies: [PolicyService.Default],
   },
-) {}
+) {
+  static readonly layer = Layer.effect(this, this.make).pipe(Layer.provide([PolicyService.layer]))
+}

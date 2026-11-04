@@ -1,5 +1,5 @@
 import { PgClient } from "@effect/sql-pg"
-import { Effect } from "effect"
+import { Context, Effect, Layer } from "effect"
 import type { TaskPriority } from "../domain/types"
 import { TaskPriorityInUse, TaskPriorityNameConflict, TaskPriorityNotFound } from "../errors"
 import { EventStore } from "./EventStore"
@@ -18,10 +18,10 @@ export interface TaskPrioritySpec {
  * (`annotations.priority_id` null), so there is no default machinery. Definition
  * edits are admin-gated at the RPC boundary. `ensureDefaults` is the seed entry.
  */
-export class TaskPriorityService extends Effect.Service<TaskPriorityService>()(
+export class TaskPriorityService extends Context.Service<TaskPriorityService>()(
   "engine/TaskPriorityService",
   {
-    effect: Effect.gen(function* () {
+    make: Effect.gen(function* () {
       const sql = yield* PgClient.PgClient
       const events = yield* EventStore
 
@@ -208,6 +208,7 @@ export class TaskPriorityService extends Effect.Service<TaskPriorityService>()(
         ensureDefaults,
       } as const
     }),
-    dependencies: [EventStore.Default],
   },
-) {}
+) {
+  static readonly layer = Layer.effect(this, this.make).pipe(Layer.provide([EventStore.layer]))
+}

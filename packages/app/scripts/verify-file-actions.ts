@@ -8,10 +8,10 @@
  * BASE/API default to the throwaway stack. SHOT=<path> saves a screenshot. */
 import { spawn } from "node:child_process"
 import { rmSync, unlinkSync, writeFileSync } from "node:fs"
-import { FetchHttpClient } from "@effect/platform"
-import { RpcClient, RpcSerialization } from "@effect/rpc"
 import { KahunaRpcs } from "@kahunalabs/contract"
 import { Context, Effect, Layer, ManagedRuntime } from "effect"
+import { FetchHttpClient } from "effect/http"
+import { RpcClient, RpcSerialization } from "effect/rpc"
 import { newWidget } from "../src/lib/dashboards"
 import { provisionVerifyIdentity } from "./verify-session"
 
@@ -192,10 +192,10 @@ const CookieFetch = Layer.succeed(FetchHttpClient.Fetch, ((
   init?: RequestInit,
 ) => fetch(input, { ...init, headers: { ...(init?.headers ?? {}), cookie } })) as typeof fetch)
 const makeClient = RpcClient.make(KahunaRpcs)
-type Client = Effect.Effect.Success<typeof makeClient>
-class ApiClient extends Context.Tag("verify-file-actions/ApiClient")<ApiClient, Client>() {}
+type Client = Effect.Success<typeof makeClient>
+class ApiClient extends Context.Service<ApiClient, Client>()("verify-file-actions/ApiClient") {}
 const runtime = ManagedRuntime.make(
-  Layer.scoped(ApiClient, makeClient).pipe(
+  Layer.effect(ApiClient, makeClient).pipe(
     Layer.provide(
       RpcClient.layerProtocolHttp({ url: `${API}/api/rpc` }).pipe(
         Layer.provide(FetchHttpClient.layer),

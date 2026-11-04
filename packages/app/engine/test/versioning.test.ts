@@ -11,8 +11,11 @@ import { newOrgId, testLayer } from "./harness"
 
 /** Flip a concept into versioned mode (description is a required update field).
  *  `reach` defaults to today's behaviour: a published version is frozen. */
-const enableVersioning = (concepts: ConceptService, id: string, reach: EditReach = "draft") =>
-  concepts.update({ id, description: null, versioningEnabled: true, editReach: reach })
+const enableVersioning = (
+  concepts: ConceptService["Service"],
+  id: string,
+  reach: EditReach = "draft",
+) => concepts.update({ id, description: null, versioningEnabled: true, editReach: reach })
 
 describe("versioning", () => {
   it.effect("non-versioned concept is unchanged: published seq-1, 1 record per recordVersion", () =>

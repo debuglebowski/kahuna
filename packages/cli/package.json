@@ -17,12 +17,10 @@
     "prepublishOnly": "bun run build"
   },
   "devDependencies": {
-    "@effect/platform": "0.96.1",
-    "@effect/rpc": "0.75.1",
     "@kahunalabs/contract": "workspace:*",
     "@types/node": "25.9.2",
-    "effect": "3.21.3",
-    "vitest": "4.1.11"
+    "effect": "4.0.5",
+    "vitest": "5.0.5"
   },
   "files": [
     "dist",

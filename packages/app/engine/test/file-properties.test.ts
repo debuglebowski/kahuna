@@ -1,6 +1,6 @@
 import { PgClient } from "@effect/sql-pg"
 import { describe, expect, it } from "@effect/vitest"
-import { Effect, Either } from "effect"
+import { Effect, Result } from "effect"
 import { unrestrictedPolicy } from "../domain/access"
 import { AttachmentService, sweepExpiredStaged } from "../services/AttachmentService"
 import { ConceptService } from "../services/ConceptService"
@@ -41,7 +41,7 @@ describe("file properties", () => {
       const { many } = yield* seed
       expect(many.config.multiple).toBe(true)
       const fields = yield* FieldService
-      const bad = yield* Effect.either(
+      const bad = yield* Effect.result(
         fields.addField({
           conceptId: many.conceptId,
           name: "Doc",
@@ -49,7 +49,7 @@ describe("file properties", () => {
           config: { multiple: true },
         }),
       )
-      expect(Either.isLeft(bad)).toBe(true)
+      expect(Result.isFailure(bad)).toBe(true)
     }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
 
@@ -115,8 +115,8 @@ describe("file properties", () => {
         filename: "x",
         data: bytes("x"),
       })
-      const bad = yield* Effect.either(att.reorder(rv.recordId, many.id, [loose.id]))
-      expect(Either.isLeft(bad) && bad.left._tag).toBe("AttachmentNotFound")
+      const bad = yield* Effect.result(att.reorder(rv.recordId, many.id, [loose.id]))
+      expect(Result.isFailure(bad) && bad.failure._tag).toBe("AttachmentNotFound")
     }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
 
@@ -200,7 +200,7 @@ describe("file properties", () => {
       const concepts = yield* ConceptService
       const att = yield* AttachmentService
       const tryUpload = (fieldId: string) =>
-        Effect.either(
+        Effect.result(
           att.upload({
             owner: { recordId: rv.recordId, fieldId },
             filename: "f",
@@ -211,12 +211,12 @@ describe("file properties", () => {
       const all = yield* fields.listFields(concept.id)
       const title = all.find((f) => f.name === "Title")!
       const notFile = yield* tryUpload(title.id)
-      expect(Either.isLeft(notFile) && notFile.left._tag).toBe("FieldValidationError")
+      expect(Result.isFailure(notFile) && notFile.failure._tag).toBe("FieldValidationError")
 
       const other = yield* concepts.create({ name: "Vendor" })
       const foreign = yield* fields.addField({ conceptId: other.id, name: "Docs", kind: "file" })
       const wrongConcept = yield* tryUpload(foreign.id)
-      expect(Either.isLeft(wrongConcept) && wrongConcept.left._tag).toBe("FieldNotFound")
+      expect(Result.isFailure(wrongConcept) && wrongConcept.failure._tag).toBe("FieldNotFound")
 
       const synced = yield* fields.addField({
         conceptId: concept.id,
@@ -225,12 +225,12 @@ describe("file properties", () => {
         managedBy: "linear",
       })
       const managed = yield* tryUpload(synced.id)
-      expect(Either.isLeft(managed) && managed.left._tag).toBe("FieldValidationError")
+      expect(Result.isFailure(managed) && managed.failure._tag).toBe("FieldValidationError")
 
       const gone = yield* fields.addField({ conceptId: concept.id, name: "Gone", kind: "file" })
       yield* fields.archive(gone.id)
       const archived = yield* tryUpload(gone.id)
-      expect(Either.isLeft(archived) && archived.left._tag).toBe("FieldNotFound")
+      expect(Result.isFailure(archived) && archived.failure._tag).toBe("FieldNotFound")
 
       // Nothing leaked into the Files panel from the refused uploads.
       expect((yield* att.list({ recordId: rv.recordId })).length).toBe(0)
@@ -241,23 +241,23 @@ describe("file properties", () => {
     Effect.gen(function* () {
       const { many, rv } = yield* seed
       const records = yield* RecordService
-      const res = yield* Effect.either(
+      const res = yield* Effect.result(
         records.update({
           recordVersionId: rv.id,
           expectedVersion: rv.version,
           patch: { [many.id]: ["x"] },
         }),
       )
-      expect(Either.isLeft(res) && res.left._tag).toBe("FieldValidationError")
+      expect(Result.isFailure(res) && res.failure._tag).toBe("FieldValidationError")
       // An empty list too — it has no element for a per-item check to reject.
-      const empty = yield* Effect.either(
+      const empty = yield* Effect.result(
         records.update({
           recordVersionId: rv.id,
           expectedVersion: rv.version,
           patch: { [many.id]: [] },
         }),
       )
-      expect(Either.isLeft(empty) && empty.left._tag).toBe("FieldValidationError")
+      expect(Result.isFailure(empty) && empty.failure._tag).toBe("FieldValidationError")
     }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
 
@@ -276,8 +276,8 @@ describe("file properties", () => {
         filename: "b",
         data: bytes("b"),
       })
-      const refused = yield* Effect.either(fields.update({ id: many.id, config: {} }))
-      expect(Either.isLeft(refused) && refused.left._tag).toBe("FieldConfigInvalid")
+      const refused = yield* Effect.result(fields.update({ id: many.id, config: {} }))
+      expect(Result.isFailure(refused) && refused.failure._tag).toBe("FieldConfigInvalid")
 
       yield* att.archive(a.id)
       const ok = yield* fields.update({ id: many.id, config: {} })
@@ -335,8 +335,8 @@ describe("file properties", () => {
           const records = yield* RecordService
           const att = yield* AttachmentService
 
-          const bare = yield* Effect.either(records.create({ conceptId: c.id, fields: {} }))
-          expect(Either.isLeft(bare) && bare.left._tag).toBe("FieldValidationError")
+          const bare = yield* Effect.result(records.create({ conceptId: c.id, fields: {} }))
+          expect(Result.isFailure(bare) && bare.failure._tag).toBe("FieldValidationError")
 
           const a = yield* stage("a.pdf")
           const b = yield* stage("b.pdf")
@@ -383,8 +383,8 @@ describe("file properties", () => {
         })
 
         for (const attempt of [att.archive(a.id), att.purge(a.id), att.move(a.id, null)]) {
-          const r = yield* Effect.either(attempt)
-          expect(Either.isLeft(r) && r.left._tag).toBe("FieldValidationError")
+          const r = yield* Effect.result(attempt)
+          expect(Result.isFailure(r) && r.failure._tag).toBe("FieldValidationError")
         }
         // With a second file, the first may go.
         yield* att.upload({
@@ -412,10 +412,10 @@ describe("file properties", () => {
           kind: "file",
           config: { requirement: "required" },
         })
-        const refused = yield* Effect.either(
+        const refused = yield* Effect.result(
           records.publishVersion({ recordVersionId: draft.id, expectedVersion: draft.version }),
         )
-        expect(Either.isLeft(refused) && refused.left._tag).toBe("FieldValidationError")
+        expect(Result.isFailure(refused) && refused.failure._tag).toBe("FieldValidationError")
         yield* att.upload({
           owner: { recordId: draft.recordId, fieldId: docs.id },
           filename: "p",
@@ -440,18 +440,18 @@ describe("file properties", () => {
           const mine = yield* stage("mine.pdf")
 
           expect((yield* att.list()).map((f) => f.id)).not.toContain(mine.id)
-          const peek = yield* Effect.either(asOther(orgId, att.get(mine.id)))
-          expect(Either.isLeft(peek) && peek.left._tag).toBe("AttachmentNotFound")
-          const fetch = yield* Effect.either(asOther(orgId, att.download(mine.id)))
-          expect(Either.isLeft(fetch)).toBe(true)
+          const peek = yield* Effect.result(asOther(orgId, att.get(mine.id)))
+          expect(Result.isFailure(peek) && peek.failure._tag).toBe("AttachmentNotFound")
+          const fetch = yield* Effect.result(asOther(orgId, att.download(mine.id)))
+          expect(Result.isFailure(fetch)).toBe(true)
 
-          const stolen = yield* Effect.either(
+          const stolen = yield* Effect.result(
             asOther(
               orgId,
               records.create({ conceptId: c.id, fields: {}, files: { [docs.id]: [mine.id] } }),
             ),
           )
-          expect(Either.isLeft(stolen) && stolen.left._tag).toBe("AttachmentNotFound")
+          expect(Result.isFailure(stolen) && stolen.failure._tag).toBe("AttachmentNotFound")
           // Rolled back whole: no record was left behind, the upload is still staged.
           const sql = yield* PgClient.PgClient
           const left = yield* sql<{
@@ -472,14 +472,14 @@ describe("file properties", () => {
         const old = yield* stage("old.pdf")
         yield* sql`UPDATE attachments SET staged_until = now() - interval '1 minute' WHERE id = ${old.id}`
 
-        const late = yield* Effect.either(
+        const late = yield* Effect.result(
           records.create({ conceptId: c.id, fields: {}, files: { [docs.id]: [old.id] } }),
         )
-        expect(Either.isLeft(late) && late.left._tag).toBe("AttachmentNotFound")
+        expect(Result.isFailure(late) && late.failure._tag).toBe("AttachmentNotFound")
 
         const fresh = yield* stage("fresh.pdf")
         expect(yield* sweepExpiredStaged()).toBeGreaterThanOrEqual(1)
-        expect(Either.isLeft(yield* Effect.either(att.get(old.id)))).toBe(true)
+        expect(Result.isFailure(yield* Effect.result(att.get(old.id)))).toBe(true)
         expect((yield* att.get(fresh.id)).id).toBe(fresh.id)
       }).pipe(Effect.provide(testLayer(newOrgId()))),
     )
@@ -493,10 +493,10 @@ describe("file properties", () => {
         const one = yield* fields.addField({ conceptId: c.id, name: "Signed", kind: "file" })
         const a = yield* stage("a")
         const b = yield* stage("b")
-        const r = yield* Effect.either(
+        const r = yield* Effect.result(
           records.create({ conceptId: c.id, fields: {}, files: { [one.id]: [a.id, b.id] } }),
         )
-        expect(Either.isLeft(r) && r.left._tag).toBe("FieldValidationError")
+        expect(Result.isFailure(r) && r.failure._tag).toBe("FieldValidationError")
       }).pipe(Effect.provide(testLayer(newOrgId()))),
     )
   })

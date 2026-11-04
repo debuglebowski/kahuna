@@ -1,4 +1,4 @@
-import { Either } from "effect"
+import { Result } from "effect"
 import { describe, expect, it } from "vitest"
 import type { EngineEvent, EventPayload } from "../domain/types"
 import { foldEvents } from "./fold"
@@ -22,17 +22,17 @@ describe("reducer / fold", () => {
       ev(2, { _tag: "RecordVersionUpdated", patch: { value: 2 } }),
       ev(3, { _tag: "RecordVersionUpdated", patch: { status: "qualified" } }),
     ])
-    expect(Either.isRight(result)).toBe(true)
-    if (Either.isRight(result) && result.right) {
-      expect(result.right.state).toEqual({ status: "qualified", value: 2 })
-      expect(result.right.version).toBe(2)
-      expect(result.right.archivedAt).toBeNull()
+    expect(Result.isSuccess(result)).toBe(true)
+    if (Result.isSuccess(result) && result.success) {
+      expect(result.success.state).toEqual({ status: "qualified", value: 2 })
+      expect(result.success.version).toBe(2)
+      expect(result.success.archivedAt).toBeNull()
     }
   })
 
   it("rejects a mutation before create", () => {
     expect(
-      Either.isLeft(applyEvent(null, ev(1, { _tag: "RecordVersionUpdated", patch: {} }))),
+      Result.isFailure(applyEvent(null, ev(1, { _tag: "RecordVersionUpdated", patch: {} }))),
     ).toBe(true)
   })
 
@@ -42,7 +42,7 @@ describe("reducer / fold", () => {
       ev(2, { _tag: "RecordVersionDeleted" }),
       ev(3, { _tag: "RecordVersionUpdated", patch: { a: 1 } }),
     ])
-    expect(Either.isLeft(result)).toBe(true)
+    expect(Result.isFailure(result)).toBe(true)
   })
 
   it("delete sets archivedAt and bumps version", () => {
@@ -50,10 +50,10 @@ describe("reducer / fold", () => {
       ev(1, { _tag: "RecordVersionCreated", conceptId: "c", fields: {} }),
       ev(2, { _tag: "RecordVersionDeleted" }, new Date(5)),
     ])
-    expect(Either.isRight(result)).toBe(true)
-    if (Either.isRight(result) && result.right) {
-      expect(result.right.version).toBe(1)
-      expect(result.right.archivedAt).toEqual(new Date(5))
+    expect(Result.isSuccess(result)).toBe(true)
+    if (Result.isSuccess(result) && result.success) {
+      expect(result.success.version).toBe(1)
+      expect(result.success.archivedAt).toEqual(new Date(5))
     }
   })
 
@@ -64,11 +64,11 @@ describe("reducer / fold", () => {
       ev(3, { _tag: "RecordVersionRestored" }),
       ev(4, { _tag: "RecordVersionUpdated", patch: { a: 2 } }),
     ])
-    expect(Either.isRight(result)).toBe(true)
-    if (Either.isRight(result) && result.right) {
-      expect(result.right.state).toEqual({ a: 2 })
-      expect(result.right.version).toBe(3)
-      expect(result.right.archivedAt).toBeNull()
+    expect(Result.isSuccess(result)).toBe(true)
+    if (Result.isSuccess(result) && result.success) {
+      expect(result.success.state).toEqual({ a: 2 })
+      expect(result.success.version).toBe(3)
+      expect(result.success.archivedAt).toBeNull()
     }
   })
 
@@ -77,7 +77,7 @@ describe("reducer / fold", () => {
       ev(1, { _tag: "RecordVersionCreated", conceptId: "c", fields: {} }),
       ev(2, { _tag: "RecordVersionRestored" }),
     ])
-    expect(Either.isLeft(result)).toBe(true)
+    expect(Result.isFailure(result)).toBe(true)
   })
 
   it("rejects a non-restore event while archived", () => {
@@ -86,12 +86,12 @@ describe("reducer / fold", () => {
       ev(2, { _tag: "RecordVersionArchived" }),
       ev(3, { _tag: "RecordVersionUpdated", patch: { a: 1 } }),
     ])
-    expect(Either.isLeft(result)).toBe(true)
+    expect(Result.isFailure(result)).toBe(true)
   })
 
   it("empty stream folds to null", () => {
     const result = foldEvents([])
-    expect(Either.isRight(result) && result.right === null).toBe(true)
+    expect(Result.isSuccess(result) && result.success === null).toBe(true)
   })
 
   it("an explicit null in a patch clears the field; create strips nulls", () => {
@@ -99,10 +99,10 @@ describe("reducer / fold", () => {
       ev(1, { _tag: "RecordVersionCreated", conceptId: "c", fields: { a: 1, b: null } }),
       ev(2, { _tag: "RecordVersionUpdated", patch: { a: null, c: "x" } }),
     ])
-    expect(Either.isRight(result)).toBe(true)
-    if (Either.isRight(result) && result.right) {
-      expect(result.right.state).toEqual({ c: "x" })
-      expect(result.right.version).toBe(1)
+    expect(Result.isSuccess(result)).toBe(true)
+    if (Result.isSuccess(result) && result.success) {
+      expect(result.success.state).toEqual({ c: "x" })
+      expect(result.success.version).toBe(1)
     }
   })
 
@@ -111,10 +111,10 @@ describe("reducer / fold", () => {
       ev(1, { _tag: "RecordVersionCreated", conceptId: "c", fields: { __labels: ["a"] } }),
       ev(2, { _tag: "RecordVersionUpdated", patch: { __labels: ["a", "b"] } }),
     ])
-    expect(Either.isRight(result)).toBe(true)
-    if (Either.isRight(result) && result.right) {
-      expect(result.right.state.__labels).toEqual(["a", "b"])
-      expect(result.right.version).toBe(1)
+    expect(Result.isSuccess(result)).toBe(true)
+    if (Result.isSuccess(result) && result.success) {
+      expect(result.success.state.__labels).toEqual(["a", "b"])
+      expect(result.success.version).toBe(1)
     }
   })
 })

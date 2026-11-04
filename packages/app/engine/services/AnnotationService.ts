@@ -1,5 +1,5 @@
 import { PgClient } from "@effect/sql-pg"
-import { Effect } from "effect"
+import { Context, Effect, Layer } from "effect"
 import { extractMentions, isUuid } from "../domain/mentions"
 import {
   deriveRichText,
@@ -40,10 +40,10 @@ export interface ListTasksFilter {
  * stream uses subject_kind "note"/"task" (subject_id = the annotation id), so they
  * never enter the record version reducer. Optimistic concurrency mirrors record_versions.
  */
-export class AnnotationService extends Effect.Service<AnnotationService>()(
+export class AnnotationService extends Context.Service<AnnotationService>()(
   "engine/AnnotationService",
   {
-    effect: Effect.gen(function* () {
+    make: Effect.gen(function* () {
       const sql = yield* PgClient.PgClient
       const events = yield* EventStore
       const annotationFields = yield* AnnotationFieldService
@@ -386,7 +386,7 @@ export class AnnotationService extends Effect.Service<AnnotationService>()(
             const fromCategory = from
               ? yield* statuses.getById(from).pipe(
                   Effect.map((s) => s.category),
-                  Effect.catchAll(() => Effect.succeed(null)),
+                  Effect.catch(() => Effect.succeed(null)),
                 )
               : null
             const completedAt =
@@ -761,11 +761,14 @@ export class AnnotationService extends Effect.Service<AnnotationService>()(
         readActivityForSubject,
       } as const
     }),
-    dependencies: [
-      EventStore.Default,
-      AnnotationFieldService.Default,
-      TaskStatusService.Default,
-      TaskPriorityService.Default,
-    ],
   },
-) {}
+) {
+  static readonly layer = Layer.effect(this, this.make).pipe(
+    Layer.provide([
+      EventStore.layer,
+      AnnotationFieldService.layer,
+      TaskStatusService.layer,
+      TaskPriorityService.layer,
+    ]),
+  )
+}

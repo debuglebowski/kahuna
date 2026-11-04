@@ -1,5 +1,5 @@
 import { PgClient } from "@effect/sql-pg"
-import { Duration, Effect, Schedule, Stream } from "effect"
+import { Cause, Duration, Effect, Fiber, Schedule, Stream } from "effect"
 import {
   EVENT_CHANNEL,
   type EventEnvelope,
@@ -203,7 +203,7 @@ const replayEventsSince = (orgId: string, since: number) =>
     )
   })
 
-let hubStarted = false
+let hub: Fiber.Fiber<never, unknown> | undefined
 
 /**
  * Start the single process-wide LISTEN, supervised so it survives DB blips.
@@ -211,41 +211,61 @@ let hubStarted = false
  * the hub registry without opening a real connection.
  */
 export const startHub = (): void => {
-  if (hubStarted) return
-  hubStarted = true
-  const listen = Effect.gen(function* () {
-    const sql = yield* PgClient.PgClient
-    yield* sql.listen(EVENT_CHANNEL).pipe(
-      Stream.runForEach((raw) =>
-        Effect.sync(() => {
-          try {
-            dispatch(JSON.parse(raw) as EventEnvelope)
-          } catch {
-            // ignore malformed payloads
-          }
-        }),
-      ),
-    )
-  }).pipe(
-    Effect.tapErrorCause((cause) => Effect.logError("km LISTEN fiber error", cause)),
+  if (hub) return
+  // `listen` holds a reserved connection for as long as its scope is open, and
+  // fails the queue with the SqlError if that connection drops — so the scope is
+  // per attempt: a retry opens a fresh LISTEN rather than reusing a dead one.
+  const listen = Effect.scoped(
+    Effect.gen(function* () {
+      const sql = yield* PgClient.PgClient
+      const notifications = yield* sql.listen(EVENT_CHANNEL)
+      yield* Stream.fromQueue(notifications).pipe(
+        Stream.runForEach(({ payload }) =>
+          Effect.sync(() => {
+            try {
+              dispatch(JSON.parse(payload) as EventEnvelope)
+            } catch {
+              // ignore malformed payloads
+            }
+          }),
+        ),
+      )
+    }),
+  ).pipe(
+    Effect.tapCause((cause) =>
+      Cause.hasInterruptsOnly(cause)
+        ? Effect.void
+        : Effect.logError("km LISTEN fiber error", cause),
+    ),
     Effect.retry(
-      Schedule.exponential(Duration.seconds(1)).pipe(
-        Schedule.union(Schedule.spaced(Duration.seconds(30))),
-      ),
+      Schedule.min([
+        Schedule.exponential(Duration.seconds(1)),
+        Schedule.spaced(Duration.seconds(30)),
+      ]),
     ),
   )
   // `forever` restarts even on a clean stream end (connection closed without error).
-  AppRuntime.runFork(Effect.forever(listen))
+  hub = AppRuntime.runFork(Effect.forever(listen))
+}
+
+/**
+ * Stop the LISTEN fiber and wait for it to release its connection. Must run
+ * BEFORE `AppRuntime.dispose()`: the pool waits for every checked-out connection
+ * when it closes, and this fiber holds one for as long as it runs.
+ */
+export const stopHub = async (): Promise<void> => {
+  const fiber = hub
+  hub = undefined
+  if (fiber) await Effect.runPromise(Fiber.interrupt(fiber))
 }
 
 /**
  * Close every open SSE stream (clearing its heartbeat) and drop the registry —
  * called on graceful shutdown so these long-lived responses end and the HTTP
  * server can actually drain. The process-wide LISTEN fiber is torn down
- * separately, by disposing the runtime.
+ * separately, by `stopHub`.
  */
 export const closeHub = (): void => {
-  hubStarted = false
   // Snapshot each set: `close()` unregisters, mutating the set mid-iteration.
   for (const set of clients.values()) for (const c of [...set]) c.close()
   clients.clear()

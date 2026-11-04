@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest"
-import { Effect, Either, Exit, TestClock } from "effect"
+import { Effect, Exit, Result } from "effect"
+import { TestClock } from "effect/testing"
 import { foldEvents } from "../projection/fold"
 import { ComputedFields } from "../services/ComputedFields"
 import { ConceptService } from "../services/ConceptService"
@@ -109,10 +110,10 @@ describe("engine (integration)", () => {
 
       const stream = yield* events.readStream(d0.id)
       const folded = foldEvents(stream)
-      expect(Either.isRight(folded)).toBe(true)
-      if (Either.isRight(folded) && folded.right) {
-        expect(folded.right.state).toEqual(d2.state)
-        expect(folded.right.version).toBe(d2.version)
+      expect(Result.isSuccess(folded)).toBe(true)
+      if (Result.isSuccess(folded) && folded.success) {
+        expect(folded.success.state).toEqual(d2.state)
+        expect(folded.success.version).toBe(d2.version)
       }
       const fresh = yield* recordVersions.get(d0.id)
       expect(fresh.state).toEqual({ [m.f.status]: "won" })
@@ -150,13 +151,13 @@ describe("engine (integration)", () => {
       })
       const a = recordVersions
         .update({ recordVersionId: d.id, expectedVersion: 0, patch: { [m.f.status]: "qualified" } })
-        .pipe(Effect.either)
+        .pipe(Effect.result)
       const b = recordVersions
         .update({ recordVersionId: d.id, expectedVersion: 0, patch: { [m.f.status]: "lost" } })
-        .pipe(Effect.either)
+        .pipe(Effect.result)
       const results = yield* Effect.all([a, b], { concurrency: 2 })
-      expect(results.filter(Either.isRight).length).toBe(1)
-      expect(results.filter(Either.isLeft).length).toBe(1)
+      expect(results.filter(Result.isSuccess).length).toBe(1)
+      expect(results.filter(Result.isFailure).length).toBe(1)
     }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
 

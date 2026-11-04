@@ -21,14 +21,16 @@ describe("EventStore NOTIFY (live-sync envelope)", () => {
         const recordVersions = yield* RecordService
         const events = yield* EventStore
 
-        const listener = yield* sql.listen(EVENT_CHANNEL).pipe(
-          Stream.runForEach((raw) =>
+        // `listen` resolves once Postgres has confirmed the LISTEN.
+        const notifications = yield* sql.listen(EVENT_CHANNEL)
+        const listener = yield* Stream.fromQueue(notifications).pipe(
+          Stream.runForEach(({ payload }) =>
             Effect.sync(() => {
-              const env = JSON.parse(raw) as EventEnvelope
+              const env = JSON.parse(payload) as EventEnvelope
               if (env.org === orgId) received.push(env)
             }),
           ),
-          Effect.fork,
+          Effect.forkChild,
         )
         yield* Effect.sleep("250 millis") // let LISTEN register
 
@@ -50,12 +52,17 @@ describe("EventStore NOTIFY (live-sync envelope)", () => {
               return yield* Effect.fail(new Error("boom"))
             }),
           )
-          .pipe(Effect.catchAll(() => Effect.void))
+          .pipe(Effect.catch(() => Effect.void))
 
         yield* Effect.sleep("400 millis") // let notifications drain
         yield* Fiber.interrupt(listener)
         return acc.id
-      }).pipe(Effect.provide(testLayer(orgId)), Effect.scoped),
+      }).pipe(
+        // Scope INSIDE the layer: the pool waits for checked-out connections when
+        // it closes, so the LISTEN connection must be released before it does.
+        Effect.scoped,
+        Effect.provide(testLayer(orgId)),
+      ),
     )
 
     const instanceEnv = received.find((e) => e.subjectId === accId)

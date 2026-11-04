@@ -16,10 +16,10 @@
  * slay-managed one; point API/ORIGIN at :3100/:5100 to verify the managed stack.
  */
 
-import { FetchHttpClient } from "@effect/platform"
-import { RpcClient, RpcSerialization } from "@effect/rpc"
 import { KahunaRpcs } from "@kahunalabs/contract"
 import { Context, Effect, Layer, ManagedRuntime } from "effect"
+import { FetchHttpClient } from "effect/http"
+import { RpcClient, RpcSerialization } from "effect/rpc"
 import { provisionVerifyIdentity } from "./verify-session"
 
 const API = process.env.API ?? "http://localhost:3199"
@@ -75,28 +75,30 @@ const ProtocolLive = RpcClient.layerProtocolHttp({ url: `${API}/api/rpc` }).pipe
   Layer.provide(RpcSerialization.layerNdjson),
 )
 const makeClient = RpcClient.make(KahunaRpcs)
-type Client = Effect.Effect.Success<typeof makeClient>
-class ApiClient extends Context.Tag("verify/ApiClient")<ApiClient, Client>() {}
+type Client = Effect.Success<typeof makeClient>
+class ApiClient extends Context.Service<ApiClient, Client>()("verify/ApiClient") {}
 const runtime = ManagedRuntime.make(
-  Layer.scoped(ApiClient, makeClient).pipe(Layer.provide(ProtocolLive)),
+  Layer.effect(ApiClient, makeClient).pipe(Layer.provide(ProtocolLive)),
 )
 const call = <A, E>(f: (c: Client) => Effect.Effect<A, E>): Promise<A> =>
   runtime.runPromise(Effect.flatMap(ApiClient, f) as Effect.Effect<A, E, never>)
 
 /** The `RpcError.code` a call fails with, or null if it succeeded.
  *
- *  Runs through `Effect.either` rather than catching the rejection: a rejected
+ *  Runs through `Effect.result` rather than catching the rejection: a rejected
  *  `runPromise` throws a `FiberFailure` whose `message` is the rendered cause and
  *  which exposes no `code` at all, so a try/catch can only string-match. Reading
  *  the typed failure channel is what makes "refused with THIS code" assertable
  *  instead of "refused with something whose text mentions…". */
 const failCode = async (f: (c: Client) => Effect.Effect<unknown, unknown>) => {
   const result = await runtime.runPromise(
-    Effect.either(
+    Effect.result(
       Effect.flatMap(ApiClient, f) as Effect.Effect<unknown, { code?: string; message?: string }>,
     ),
   )
-  return result._tag === "Right" ? null : (result.left.code ?? `no code: ${result.left.message}`)
+  return result._tag === "Success"
+    ? null
+    : (result.failure.code ?? `no code: ${result.failure.message}`)
 }
 /** Assert a call is refused with a specific code. */
 const refused = async (

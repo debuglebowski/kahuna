@@ -89,7 +89,7 @@ export const nextPosition = (sql: Sql, recordId: Id, fieldId: Id) =>
 
 /** Archive every OTHER live file in `keep`'s property — the single-file replace.
  *  One AttachmentArchived each, so the feed explains where they went. */
-export const displace = (sql: Sql, events: EventStore, keep: Attachment) =>
+export const displace = (sql: Sql, events: EventStore["Service"], keep: Attachment) =>
   Effect.gen(function* () {
     const { orgId } = yield* OrgContext
     const rows = yield* sql<AttachmentRow>`
@@ -163,7 +163,7 @@ export const assertNotLastRequired = (sql: Sql, a: Attachment) =>
  */
 export const claimStaged = (
   sql: Sql,
-  events: EventStore,
+  events: EventStore["Service"],
   recordId: Id,
   defs: ReadonlyArray<Field>,
   files: Readonly<Record<string, ReadonlyArray<Id>>>,

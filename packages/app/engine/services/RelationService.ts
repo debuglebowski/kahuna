@@ -1,5 +1,5 @@
 import { PgClient } from "@effect/sql-pg"
-import { Effect } from "effect"
+import { Context, Effect, Layer } from "effect"
 import type { Id } from "../domain/types"
 import { canEditVersion } from "../domain/versioning"
 import { scopeCanReadConcept } from "../domain/visibility"
@@ -34,8 +34,8 @@ export interface CreateRelationInput {
 }
 
 /** Typed graph edges between record_versions. Event-sourced like record_versions. */
-export class RelationService extends Effect.Service<RelationService>()("engine/RelationService", {
-  effect: Effect.gen(function* () {
+export class RelationService extends Context.Service<RelationService>()("engine/RelationService", {
+  make: Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
     const events = yield* EventStore
     const fieldsSvc = yield* FieldService
@@ -315,5 +315,8 @@ export class RelationService extends Effect.Service<RelationService>()("engine/R
 
     return { create, remove, listFrom, listTo, latestPublished } as const
   }),
-  dependencies: [EventStore.Default, FieldService.Default],
-}) {}
+}) {
+  static readonly layer = Layer.effect(this, this.make).pipe(
+    Layer.provide([EventStore.layer, FieldService.layer]),
+  )
+}

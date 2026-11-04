@@ -1,5 +1,3 @@
-import { FetchHttpClient } from "@effect/platform"
-import { RpcClient, RpcSerialization } from "@effect/rpc"
 import {
   type AccessActionName,
   type AccessCondition,
@@ -22,6 +20,8 @@ import {
   type TaskStatusCategory,
 } from "@kahunalabs/contract"
 import { Context, Effect, Layer, ManagedRuntime } from "effect"
+import { FetchHttpClient } from "effect/http"
+import { RpcClient, RpcSerialization } from "effect/rpc"
 
 export type {
   AccessActionName,
@@ -127,12 +127,12 @@ const ProtocolLive = RpcClient.layerProtocolHttp({ url: "/api/rpc" }).pipe(
 )
 
 const makeClient = RpcClient.make(KahunaRpcs)
-type Client = Effect.Effect.Success<typeof makeClient>
+type Client = Effect.Success<typeof makeClient>
 
-class ApiClient extends Context.Tag("kahuna/ApiClient")<ApiClient, Client>() {}
+class ApiClient extends Context.Service<ApiClient, Client>()("kahuna/ApiClient") {}
 
 const runtime = ManagedRuntime.make(
-  Layer.scoped(ApiClient, makeClient).pipe(Layer.provide(ProtocolLive)),
+  Layer.effect(ApiClient, makeClient).pipe(Layer.provide(ProtocolLive)),
 )
 
 const call = <A, E>(f: (client: Client) => Effect.Effect<A, E>): Promise<A> =>

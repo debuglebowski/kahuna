@@ -8,10 +8,10 @@
  * slay-managed dev stack is left alone). Mirrors scripts/verify-intro-lab.ts. */
 import { spawn } from "node:child_process"
 import { rmSync } from "node:fs"
-import { FetchHttpClient } from "@effect/platform"
-import { RpcClient, RpcSerialization } from "@effect/rpc"
 import { KahunaRpcs } from "@kahunalabs/contract"
 import { Context, Effect, Layer, ManagedRuntime } from "effect"
+import { FetchHttpClient } from "effect/http"
+import { RpcClient, RpcSerialization } from "effect/rpc"
 import { provisionVerifyIdentity } from "./verify-session"
 
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
@@ -398,10 +398,10 @@ const ProtocolLive = RpcClient.layerProtocolHttp({ url: `${API}/api/rpc` }).pipe
   Layer.provide(RpcSerialization.layerNdjson),
 )
 const makeClient = RpcClient.make(KahunaRpcs)
-type Client = Effect.Effect.Success<typeof makeClient>
-class ApiClient extends Context.Tag("verify-ui/ApiClient")<ApiClient, Client>() {}
+type Client = Effect.Success<typeof makeClient>
+class ApiClient extends Context.Service<ApiClient, Client>()("verify-ui/ApiClient") {}
 const runtime = ManagedRuntime.make(
-  Layer.scoped(ApiClient, makeClient).pipe(Layer.provide(ProtocolLive)),
+  Layer.effect(ApiClient, makeClient).pipe(Layer.provide(ProtocolLive)),
 )
 const dashboards = (await runtime.runPromise(
   Effect.flatMap(ApiClient, (c) => c.listDashboards()) as unknown as Effect.Effect<

@@ -13,10 +13,10 @@
  * alone. Reuses the bucket suite's setup shape. */
 import { spawn } from "node:child_process"
 import { rmSync, unlinkSync, writeFileSync } from "node:fs"
-import { FetchHttpClient } from "@effect/platform"
-import { RpcClient, RpcSerialization } from "@effect/rpc"
 import { KahunaRpcs } from "@kahunalabs/contract"
 import { Context, Effect, Layer, ManagedRuntime } from "effect"
+import { FetchHttpClient } from "effect/http"
+import { RpcClient, RpcSerialization } from "effect/rpc"
 // The editor's own factory, so this tests the default a person actually gets.
 import { newWidget } from "../src/lib/dashboards"
 import { provisionVerifyIdentity } from "./verify-session"
@@ -413,10 +413,10 @@ const ProtocolLive = RpcClient.layerProtocolHttp({ url: `${API}/api/rpc` }).pipe
   Layer.provide(RpcSerialization.layerNdjson),
 )
 const makeClient = RpcClient.make(KahunaRpcs)
-type Client = Effect.Effect.Success<typeof makeClient>
-class ApiClient extends Context.Tag("verify-drop/ApiClient")<ApiClient, Client>() {}
+type Client = Effect.Success<typeof makeClient>
+class ApiClient extends Context.Service<ApiClient, Client>()("verify-drop/ApiClient") {}
 const runtime = ManagedRuntime.make(
-  Layer.scoped(ApiClient, makeClient).pipe(Layer.provide(ProtocolLive)),
+  Layer.effect(ApiClient, makeClient).pipe(Layer.provide(ProtocolLive)),
 )
 // None of the seeded concepts' default record views carry a Files tile, so waiting
 // for one to appear just reports "skipped" and leaves the surface untested — the

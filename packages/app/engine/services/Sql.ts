@@ -1,13 +1,13 @@
-import { SqlClient } from "@effect/sql"
 import { PgClient } from "@effect/sql-pg"
 import { Config, Effect } from "effect"
+import { SqlClient } from "effect/sql"
 
 /**
  * The Postgres-backed `SqlClient` layer, configured from `DATABASE_URL`.
  * This is the single place the engine binds to a concrete database.
  */
 export const PgLive = PgClient.layerConfig({
-  url: Config.redacted("DATABASE_URL"),
+  url: Config.Redacted("DATABASE_URL"),
 })
 
 /**

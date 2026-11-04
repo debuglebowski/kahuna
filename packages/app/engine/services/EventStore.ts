@@ -1,5 +1,5 @@
 import { PgClient } from "@effect/sql-pg"
-import { Clock, Effect } from "effect"
+import { Clock, Context, Effect, Layer } from "effect"
 import type { EngineEvent, EventPayload, Id, OrgId, SubjectKind } from "../domain/types"
 import { OrgContext } from "./OrgContext"
 import { type EventRow, toEvent } from "./rows"
@@ -53,8 +53,8 @@ export interface AppendInput {
  * the projection write commit atomically). It stamps `actor` from OrgContext and
  * `occurred_at` from the Effect Clock (so TestClock controls event time).
  */
-export class EventStore extends Effect.Service<EventStore>()("engine/EventStore", {
-  effect: Effect.gen(function* () {
+export class EventStore extends Context.Service<EventStore>()("engine/EventStore", {
+  make: Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
 
     const append = (input: AppendInput): Effect.Effect<EngineEvent, never, OrgContext> =>
@@ -153,4 +153,6 @@ export class EventStore extends Effect.Service<EventStore>()("engine/EventStore"
 
     return { append, readStream, readAllForOrg, listEvents } as const
   }),
-}) {}
+}) {
+  static readonly layer = Layer.effect(this, this.make)
+}

@@ -1,5 +1,5 @@
 import { PgClient } from "@effect/sql-pg"
-import { Effect } from "effect"
+import { Context, Effect, Layer } from "effect"
 import type { Id } from "../domain/types"
 import { OrgContext } from "./OrgContext"
 
@@ -41,8 +41,8 @@ interface BacklinkRow {
  * boundary, alongside the field-mask projection, exactly as relation targets are
  * resolved in `getInstanceDetail`.
  */
-export class MentionService extends Effect.Service<MentionService>()("engine/MentionService", {
-  effect: Effect.gen(function* () {
+export class MentionService extends Context.Service<MentionService>()("engine/MentionService", {
+  make: Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
 
     /**
@@ -107,4 +107,6 @@ export class MentionService extends Effect.Service<MentionService>()("engine/Men
 
     return { listBacklinks } as const
   }),
-}) {}
+}) {
+  static readonly layer = Layer.effect(this, this.make)
+}

@@ -1,5 +1,5 @@
 import { PgClient } from "@effect/sql-pg"
-import { Effect } from "effect"
+import { Context, Effect, Layer } from "effect"
 import { type AccessAction, decide } from "../domain/access"
 import type { SidebarViewBody } from "../domain/types"
 import { SidebarViewNotFound, SidebarViewProtected } from "../errors"
@@ -15,10 +15,10 @@ import { type SidebarViewRow, toSidebarView } from "./rows"
  * the only scoping is that a user cannot touch ANOTHER user's personal view
  * (enforced by `owner_id IS NULL OR owner_id = actor` on every write).
  */
-export class SidebarViewService extends Effect.Service<SidebarViewService>()(
+export class SidebarViewService extends Context.Service<SidebarViewService>()(
   "engine/SidebarViewService",
   {
-    effect: Effect.gen(function* () {
+    make: Effect.gen(function* () {
       const sql = yield* PgClient.PgClient
       const resourceRules = yield* ResourceRulesService
 
@@ -216,6 +216,9 @@ export class SidebarViewService extends Effect.Service<SidebarViewService>()(
 
       return { list, create, update, remove, reorder } as const
     }),
-    dependencies: [ResourceRulesService.Default],
   },
-) {}
+) {
+  static readonly layer = Layer.effect(this, this.make).pipe(
+    Layer.provide([ResourceRulesService.layer]),
+  )
+}

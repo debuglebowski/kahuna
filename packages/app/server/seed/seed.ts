@@ -12,7 +12,7 @@ import { conceptDashboardSeed } from "../use-cases"
 import { type ConceptSpec, defaultTaskPriorities, defaultTaskStatuses, kahunaSpec } from "./spec"
 
 /** Get a concept by name, creating it if absent (idempotent). */
-const ensureConcept = (concepts: ConceptService, spec: ConceptSpec) =>
+const ensureConcept = (concepts: ConceptService["Service"], spec: ConceptSpec) =>
   concepts.getByName(spec.name).pipe(
     Effect.catchTag("ConceptNotFound", () =>
       concepts.create({

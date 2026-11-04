@@ -8,10 +8,10 @@
  * slay-managed one; point API/ORIGIN at :3100/:5100 to verify the managed stack.
  */
 
-import { FetchHttpClient } from "@effect/platform"
-import { RpcClient, RpcSerialization } from "@effect/rpc"
 import { KahunaRpcs } from "@kahunalabs/contract"
 import { Context, Effect, Layer, ManagedRuntime } from "effect"
+import { FetchHttpClient } from "effect/http"
+import { RpcClient, RpcSerialization } from "effect/rpc"
 import { provisionVerifyIdentity } from "./verify-session"
 
 const API = process.env.API ?? "http://localhost:3199"
@@ -71,10 +71,10 @@ const ProtocolLive = RpcClient.layerProtocolHttp({ url: `${API}/api/rpc` }).pipe
   Layer.provide(RpcSerialization.layerNdjson),
 )
 const makeClient = RpcClient.make(KahunaRpcs)
-type Client = Effect.Effect.Success<typeof makeClient>
-class ApiClient extends Context.Tag("verify/ApiClient")<ApiClient, Client>() {}
+type Client = Effect.Success<typeof makeClient>
+class ApiClient extends Context.Service<ApiClient, Client>()("verify/ApiClient") {}
 const runtime = ManagedRuntime.make(
-  Layer.scoped(ApiClient, makeClient).pipe(Layer.provide(ProtocolLive)),
+  Layer.effect(ApiClient, makeClient).pipe(Layer.provide(ProtocolLive)),
 )
 const call = <A, E>(f: (c: Client) => Effect.Effect<A, E>): Promise<A> =>
   runtime.runPromise(Effect.flatMap(ApiClient, f) as Effect.Effect<A, E, never>)

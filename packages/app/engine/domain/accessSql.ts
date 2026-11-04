@@ -1,5 +1,5 @@
-import type { Statement } from "@effect/sql"
 import type { PgClient } from "@effect/sql-pg"
+import type { Statement } from "effect/sql"
 import {
   type AccessCondition,
   type AccessRule,

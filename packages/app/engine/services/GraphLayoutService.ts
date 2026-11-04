@@ -1,5 +1,5 @@
 import { PgClient } from "@effect/sql-pg"
-import { Effect } from "effect"
+import { Context, Effect, Layer } from "effect"
 import { OrgContext } from "./OrgContext"
 
 /** Node ids on the concept graph that are platform-defined, not concepts (e.g.
@@ -25,10 +25,10 @@ interface LayoutRow {
  * this is shared presentation state, opaque to the engine and not admin-gated:
  * any member may rearrange the shared canvas; last write wins. One row per org.
  */
-export class GraphLayoutService extends Effect.Service<GraphLayoutService>()(
+export class GraphLayoutService extends Context.Service<GraphLayoutService>()(
   "engine/GraphLayoutService",
   {
-    effect: Effect.gen(function* () {
+    make: Effect.gen(function* () {
       const sql = yield* PgClient.PgClient
 
       /** The org's saved positions, or `{}` when nothing has been saved yet. */
@@ -135,6 +135,7 @@ export class GraphLayoutService extends Effect.Service<GraphLayoutService>()(
 
       return { get, save, getForRecord, saveForRecord, getStyle, saveStyle } as const
     }),
-    dependencies: [],
   },
-) {}
+) {
+  static readonly layer = Layer.effect(this, this.make)
+}

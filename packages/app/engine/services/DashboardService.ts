@@ -1,5 +1,5 @@
 import { PgClient } from "@effect/sql-pg"
-import { Effect } from "effect"
+import { Context, Effect, Layer } from "effect"
 import { type AccessAction, decide } from "../domain/access"
 import type { DashboardBody } from "../domain/types"
 import {
@@ -27,10 +27,10 @@ const DEFAULT_DASHBOARD_BODY: DashboardBody = { widgets: [] }
  * touch ANOTHER user's personal dashboard (enforced by `owner_id IS NULL OR
  * owner_id = actor` on every write).
  */
-export class DashboardService extends Effect.Service<DashboardService>()(
+export class DashboardService extends Context.Service<DashboardService>()(
   "engine/DashboardService",
   {
-    effect: Effect.gen(function* () {
+    make: Effect.gen(function* () {
       const sql = yield* PgClient.PgClient
       const resourceRules = yield* ResourceRulesService
 
@@ -336,6 +336,9 @@ export class DashboardService extends Effect.Service<DashboardService>()(
 
       return { list, listAll, listRecordDashboards, create, update, remove, reorder } as const
     }),
-    dependencies: [ResourceRulesService.Default],
   },
-) {}
+) {
+  static readonly layer = Layer.effect(this, this.make).pipe(
+    Layer.provide([ResourceRulesService.layer]),
+  )
+}

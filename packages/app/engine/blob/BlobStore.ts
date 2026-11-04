@@ -16,4 +16,4 @@ export interface BlobStoreApi {
  * A narrow content-addressed byte store. Implementations: local filesystem
  * (default) and S3-compatible. Provided as a layer at the boundary.
  */
-export class BlobStore extends Context.Tag("engine/BlobStore")<BlobStore, BlobStoreApi>() {}
+export class BlobStore extends Context.Service<BlobStore, BlobStoreApi>()("engine/BlobStore") {}

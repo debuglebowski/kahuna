@@ -1,29 +1,55 @@
-import { Rpc, RpcGroup } from "@effect/rpc"
-import { Schema } from "effect"
+import { Schema, SchemaTransformation } from "effect"
+import { Rpc, RpcGroup } from "effect/rpc"
 
 /**
  * The Kahuna RPC contract — the single typed source of truth shared by the
- * server (handlers) and the browser client. Imports ONLY effect + @effect/rpc,
- * so it is safe to bundle into the client (no engine / node deps).
+ * server (handlers) and the browser client. Imports ONLY effect, so it is safe
+ * to bundle into the client (no engine / node deps).
  */
 
 // ── wire schemas ──────────────────────────────────────────────────────────────
+
+/**
+ * An opaque value (record state, event payloads, widget params …) sent with
+ * `JSON.stringify` semantics: a `Date` travels as its ISO string, `undefined`
+ * properties are dropped, `NaN` becomes `null`. Decoding is the identity.
+ *
+ * Not `Schema.Unknown`: over a JSON serialization Effect 4 checks an `Unknown`
+ * slot holds a JSON value AS-IS and refuses the rest, where Effect 3 handed it to
+ * `JSON.stringify` untouched. Read-time state is not JSON as-is — a file
+ * property's value carries `createdAt: Date` — so this keeps the wire exactly as
+ * it was.
+ */
+const Opaque = Schema.declare((_: unknown): _ is unknown => true, {
+  expected: "unknown",
+  toCodecJson: () =>
+    Schema.link<unknown>()(
+      Schema.UndefinedOr(Schema.Json),
+      SchemaTransformation.transform<unknown, Schema.Json | undefined>({
+        decode: (json) => json,
+        encode: (value) => {
+          const text = JSON.stringify(value)
+          return text === undefined ? undefined : (JSON.parse(text) as Schema.Json)
+        },
+      }),
+    ),
+})
 
 /** Synthetic record version-state key carrying a record's own label ids (mirrors the
  *  engine's `LABELS_KEY`). Sent inside `createRecord.fields` / `updateRecord.patch`. */
 export const LABELS_KEY = "__labels"
 
-const State = Schema.Record({ key: Schema.String, value: Schema.Unknown })
+const State = Schema.Record(Schema.String, Opaque)
 
 /** Product version lifecycle (mirrors the engine's `VersionStatus`). */
-export const VersionStatus = Schema.Literal("draft", "published")
+export const VersionStatus = Schema.Literals(["draft", "published"])
 export type VersionStatus = typeof VersionStatus.Type
 
 /** How far back edits reach on a versioned concept (mirrors the engine's
  *  `EditReach`). `draft` = a published version is frozen, edits need a fresh
  *  draft. `any` = any published version may be AMENDED in place, which everyone
  *  referencing that version sees. Ignored when versioning is off. */
-export const EditReach = Schema.Literal("draft", "any")
+export const EditReach = Schema.Literals(["draft", "any"])
 
 /** DEFAULT read reach for a concept or field: org-wide, owners/admins only, or
  *  nobody-without-an-explicit-rule. The default layer of the access model; access
@@ -42,9 +68,9 @@ const RecordVersionFields = {
   versionStatus: VersionStatus,
   /** Sequence within the lineage (1,2,3…). */
   versionSeq: Schema.Number,
-  publishedAt: Schema.NullOr(Schema.Date),
-  createdAt: Schema.Date,
-  archivedAt: Schema.NullOr(Schema.Date),
+  publishedAt: Schema.NullOr(Schema.DateFromString),
+  createdAt: Schema.DateFromString,
+  archivedAt: Schema.NullOr(Schema.DateFromString),
 }
 export const RecordVersion = Schema.Struct(RecordVersionFields)
 export type RecordVersion = typeof RecordVersion.Type
@@ -53,7 +79,7 @@ export type RecordVersion = typeof RecordVersion.Type
 export const KmRecord = Schema.Struct({
   id: Schema.String,
   conceptId: Schema.String,
-  archivedAt: Schema.NullOr(Schema.Date),
+  archivedAt: Schema.NullOr(Schema.DateFromString),
 })
 export type KmRecord = typeof KmRecord.Type
 
@@ -136,7 +162,7 @@ export const Concept = Schema.Struct({
    *  Integration-set + UI-locked on a managed concept. */
   titleFieldId: Schema.NullOr(Schema.String),
   /** Archive marker: non-null = archived (hidden from the live list, restorable). */
-  archivedAt: Schema.NullOr(Schema.Date),
+  archivedAt: Schema.NullOr(Schema.DateFromString),
   /** Total records (live + archived) — present only on a `withCounts` list. */
   recordCount: Schema.optional(Schema.Number),
 })
@@ -149,11 +175,11 @@ export const Label = Schema.Struct({
   color: Schema.NullOr(Schema.String),
   /** A plain flag for now (rendered with a crown); future features key off it. */
   primary: Schema.Boolean,
-  archivedAt: Schema.NullOr(Schema.Date),
+  archivedAt: Schema.NullOr(Schema.DateFromString),
 })
 export type Label = typeof Label.Type
 
-export const FieldKind = Schema.Literal(
+export const FieldKind = Schema.Literals([
   "text",
   "number",
   "date",
@@ -166,20 +192,18 @@ export const FieldKind = Schema.Literal(
   "json",
   "money",
   "richtext",
-)
+])
 export type FieldKind = typeof FieldKind.Type
 
 /** Mirrors the engine's `FieldConfig` (kept here so the contract stays engine-free). */
 export const FieldConfig = Schema.Struct({
   options: Schema.optional(Schema.Array(Schema.String)),
   /** enum: display color per option (`value -> #rrggbb`); missing = neutral. */
-  optionColors: Schema.optional(Schema.Record({ key: Schema.String, value: Schema.String })),
-  transitions: Schema.optional(
-    Schema.Record({ key: Schema.String, value: Schema.Array(Schema.String) }),
-  ),
+  optionColors: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  transitions: Schema.optional(Schema.Record(Schema.String, Schema.Array(Schema.String))),
   /** relation: the target concept's id (the relation's identity is the field id). */
   target: Schema.optional(Schema.String),
-  cardinality: Schema.optional(Schema.Literal("one", "many")),
+  cardinality: Schema.optional(Schema.Literals(["one", "many"])),
   /** relation: how the TARGET side names the connection (e.g. "Employees" on
    *  Company reads "Employer" from the Person side); absent = field name. */
   inverseName: Schema.optional(Schema.String),
@@ -188,8 +212,8 @@ export const FieldConfig = Schema.Struct({
   /** relation: open referenced records with this record-dashboard id (a 'record'
    *  dashboard owned by `target`); absent = that concept's default record view. */
   recordDashboardId: Schema.optional(Schema.NullOr(Schema.String)),
-  computedKind: Schema.optional(Schema.Literal("decay", "momentum")),
-  params: Schema.optional(Schema.Record({ key: Schema.String, value: Schema.Unknown })),
+  computedKind: Schema.optional(Schema.Literals(["decay", "momentum"])),
+  params: Schema.optional(Schema.Record(Schema.String, Opaque)),
   /** any scalar kind: store/validate a list of values. `file`: any number of
    *  files (ordered) instead of exactly one. */
   multiple: Schema.optional(Schema.Boolean),
@@ -198,7 +222,7 @@ export const FieldConfig = Schema.Struct({
   /** scalar kinds: how required a value is. `required` blocks create/clearing
    *  (and publish on versioned concepts); `flagged` only surfaces missing values
    *  in the UI. Absent = optional. */
-  requirement: Schema.optional(Schema.Literal("required", "flagged", "optional")),
+  requirement: Schema.optional(Schema.Literals(["required", "flagged", "optional"])),
   /** text/number/date/enum/user/money: no two records may hold the same value —
    *  archived included (only purge releases), text case-insensitive (never
    *  combined with `multiple`). */
@@ -223,7 +247,7 @@ export const Field = Schema.Struct({
   /** Display order within the concept (ascending); ties broken by name. */
   position: Schema.Number,
   /** Archive marker: non-null = archived (hidden from the live list, restorable). */
-  archivedAt: Schema.NullOr(Schema.Date),
+  archivedAt: Schema.NullOr(Schema.DateFromString),
 })
 export type Field = typeof Field.Type
 
@@ -243,15 +267,15 @@ export const Attachment = Schema.Struct({
   position: Schema.Number,
   /** Set ⇔ a STAGED upload: no owner yet, visible to its uploader only, removed
    *  at this time unless a `createRecord({ files })` claims it. */
-  stagedUntil: Schema.NullOr(Schema.Date),
+  stagedUntil: Schema.NullOr(Schema.DateFromString),
   filename: Schema.String,
   mimeType: Schema.NullOr(Schema.String),
   sizeBytes: Schema.NullOr(Schema.Number),
   /** Uploader (bauth_user.id); drives archive/delete rights (uploader or admin). */
   createdBy: Schema.NullOr(Schema.String),
-  createdAt: Schema.Date,
+  createdAt: Schema.DateFromString,
   /** Archive marker: non-null = archived (hidden from the live list, restorable). */
-  archivedAt: Schema.NullOr(Schema.Date),
+  archivedAt: Schema.NullOr(Schema.DateFromString),
 })
 export type Attachment = typeof Attachment.Type
 
@@ -268,23 +292,23 @@ export const FileRef = Schema.Struct({
   mimeType: Schema.NullOr(Schema.String),
   sizeBytes: Schema.NullOr(Schema.Number),
   createdBy: Schema.NullOr(Schema.String),
-  createdAt: Schema.Date,
+  createdAt: Schema.DateFromString,
 })
 export type FileRef = typeof FileRef.Type
 
 export const FeedItem = Schema.Struct({
   id: Schema.Number,
-  occurredAt: Schema.Date,
+  occurredAt: Schema.DateFromString,
   actor: Schema.NullOr(Schema.String),
   eventType: Schema.String,
   subjectKind: Schema.String,
   subjectId: Schema.String,
   /** Raw engine event payload (field patch, note body, task transition, …) —
    *  the feed derives inline snippets and the expanded detail view from it. */
-  payload: Schema.optional(Schema.Unknown),
+  payload: Schema.optional(Opaque),
   /** Field-edit events only: the value each patched field held before, keyed
    *  by field id — folded server-side (events store only the new values). */
-  previous: Schema.optional(Schema.Unknown),
+  previous: Schema.optional(Opaque),
 })
 export type FeedItem = typeof FeedItem.Type
 
@@ -302,7 +326,7 @@ export const RelatedRecord = Schema.Struct({
    *  by field id, which the client can't resolve without that concept's fields). */
   label: Schema.String,
   /** `out` = this record version is the relation's `from`; `in` = it is the `to`. */
-  direction: Schema.Literal("out", "in"),
+  direction: Schema.Literals(["out", "in"]),
   conceptId: Schema.String,
   conceptName: Schema.String,
   /** True if this edge pins a specific published version; false = "Latest" (general). */
@@ -351,7 +375,7 @@ export const ConceptGraphEdge = Schema.Struct({
   relationType: Schema.String,
   /** Inverse-side label (config.inverseName); null = unnamed. */
   inverseName: Schema.NullOr(Schema.String),
-  cardinality: Schema.Literal("one", "many"),
+  cardinality: Schema.Literals(["one", "many"]),
   fieldName: Schema.String,
 })
 export type ConceptGraphEdge = typeof ConceptGraphEdge.Type
@@ -386,34 +410,34 @@ export type ConceptGraph = typeof ConceptGraph.Type
 /** Saved canvas positions for the concept graph: concept id → { x, y }.
  *  Shared org-wide presentation state (like sidebar views — no admin gate).
  *  Coordinates must be finite — NaN/Infinity would poison the stored layout. */
-const FiniteNumber = Schema.Number.pipe(Schema.finite())
-export const GraphLayout = Schema.Record({
-  key: Schema.String,
-  value: Schema.Struct({ x: FiniteNumber, y: FiniteNumber }),
-})
+const FiniteNumber = Schema.Number.check(Schema.isFinite())
+export const GraphLayout = Schema.Record(
+  Schema.String,
+  Schema.Struct({ x: FiniteNumber, y: FiniteNumber }),
+)
 export type GraphLayout = typeof GraphLayout.Type
 
 /** Concept graph look settings. Every field optional: the client fills
  *  defaults and clamps ranges (packages/app/src/lib/graphStyle.ts), so the
  *  wire shape can grow without a migration. */
 export const GraphStyle = Schema.Struct({
-  layoutMethod: Schema.optional(Schema.Literal("auto", "organic")),
-  direction: Schema.optional(Schema.Literal("down", "right")),
+  layoutMethod: Schema.optional(Schema.Literals(["auto", "organic"])),
+  direction: Schema.optional(Schema.Literals(["down", "right"])),
   nodeSpacing: Schema.optional(Schema.Number),
   layerSpacing: Schema.optional(Schema.Number),
   groupSpacing: Schema.optional(Schema.Number),
   cornerRadius: Schema.optional(Schema.Number),
-  lineShape: Schema.optional(Schema.Literal("square", "smooth")),
+  lineShape: Schema.optional(Schema.Literals(["square", "smooth"])),
   lineSpacing: Schema.optional(Schema.Number),
   clearance: Schema.optional(Schema.Number),
   lineWidth: Schema.optional(Schema.Number),
-  labels: Schema.optional(Schema.Literal("both", "forward", "none")),
-  labelDirection: Schema.optional(Schema.Literal("horizontal", "along")),
+  labels: Schema.optional(Schema.Literals(["both", "forward", "none"])),
+  labelDirection: Schema.optional(Schema.Literals(["horizontal", "along"])),
   labelScale: Schema.optional(Schema.Number),
   rerouteWhileDragging: Schema.optional(Schema.Boolean),
   snapToGrid: Schema.optional(Schema.Boolean),
   cardScale: Schema.optional(Schema.Number),
-  builtinCards: Schema.optional(Schema.Literal("shared", "perConcept")),
+  builtinCards: Schema.optional(Schema.Literals(["shared", "perConcept"])),
 })
 export type GraphStyle = typeof GraphStyle.Type
 
@@ -427,7 +451,7 @@ export type GraphStyle = typeof GraphStyle.Type
  *  conditions are opaque persisted documents old clients must keep parsing). */
 export const SidebarCondition = Schema.Struct({
   field: Schema.String,
-  op: Schema.Literal(
+  op: Schema.Literals([
     "eq",
     "hasLabel",
     "neq",
@@ -447,13 +471,13 @@ export const SidebarCondition = Schema.Struct({
     // exists to compare against. Elsewhere they never match (see conditions.ts).
     "changedTo",
     "changedFrom",
-  ),
-  value: Schema.Unknown,
+  ]),
+  value: Opaque,
 })
 export type SidebarCondition = typeof SidebarCondition.Type
 
 /** How a condition set combines: every condition or at least one (absent = all). */
-const ConditionMatch = { match: Schema.optional(Schema.Literal("all", "any")) }
+const ConditionMatch = { match: Schema.optional(Schema.Literals(["all", "any"])) }
 
 // ── sidebar views (configurable nav layouts) ───────────────────────────────────
 // A View is an ordered stack of sections, switched via the sidebar pager. The
@@ -504,8 +528,8 @@ const WidgetLayout = Schema.Struct({
   y: Schema.Number,
   w: Schema.Number,
   h: Schema.Number,
-  wUnit: Schema.optional(Schema.Literal("fr", "px", "pct")),
-  hUnit: Schema.optional(Schema.Literal("fr", "px", "pct")),
+  wUnit: Schema.optional(Schema.Literals(["fr", "px", "pct"])),
+  hUnit: Schema.optional(Schema.Literals(["fr", "px", "pct"])),
   wFr: Schema.optional(Schema.Number),
 })
 
@@ -514,7 +538,7 @@ const WidgetLayout = Schema.Struct({
  *  parent's direction (0 when none are left). `tiles`/`pct` are fixed sizes;
  *  `min`/`max` (tiles) clamp the result. */
 const Dim = Schema.Struct({
-  unit: Schema.Literal("tiles", "fr", "pct"),
+  unit: Schema.Literals(["tiles", "fr", "pct"]),
   value: Schema.Number,
   min: Schema.optional(Schema.Number),
   max: Schema.optional(Schema.Number),
@@ -556,7 +580,7 @@ const RecordRelationScoped = { relationFieldId: Schema.optional(Schema.NullOr(Sc
  *  vocabulary rename; drop once `dashboards.body` has no more legacy rows. */
 const ShortcutItem = Schema.Struct({
   id: Schema.String,
-  kind: Schema.Literal("recordVersion", "instance", "dashboard", "url"),
+  kind: Schema.Literals(["recordVersion", "instance", "dashboard", "url"]),
   ref: Schema.String,
   label: Schema.optional(Schema.NullOr(Schema.String)),
   icon: Schema.optional(Schema.NullOr(Schema.String)),
@@ -569,13 +593,13 @@ const MetricWidget = Schema.Struct({
   type: Schema.Literal("metric"),
   conditions: Schema.Array(SidebarCondition),
   ...ConditionMatch,
-  agg: Schema.Literal("count", "sum", "avg"),
+  agg: Schema.Literals(["count", "sum", "avg"]),
   field: Schema.optional(Schema.NullOr(Schema.String)),
   /** Caption under the hero number; absent/empty = auto ("Deals" / "sum of X"). */
   label: Schema.optional(Schema.NullOr(Schema.String)),
-  format: Schema.optional(Schema.Literal("plain", "compact", "currency", "percent")),
+  format: Schema.optional(Schema.Literals(["plain", "compact", "currency", "percent"])),
   /** Secondary stat: change vs the value N days ago (record version-createdAt based). */
-  delta: Schema.optional(Schema.Literal("off", "7d", "30d")),
+  delta: Schema.optional(Schema.Literals(["off", "7d", "30d"])),
   includeArchived: Schema.optional(Schema.Boolean),
 })
 const ListWidget = Schema.Struct({
@@ -588,7 +612,7 @@ const ListWidget = Schema.Struct({
   orderBy: Schema.optional(Schema.NullOr(Schema.String)),
   limit: Schema.optional(Schema.NullOr(Schema.Number)),
   columns: Schema.optional(Schema.Array(Schema.String)),
-  archived: Schema.optional(Schema.Literal("exclude", "include", "only")),
+  archived: Schema.optional(Schema.Literals(["exclude", "include", "only"])),
   /** `grouped` variant: enum field id to section rows by; absent = prompt to
    *  pick one (no implicit default). */
   groupBy: Schema.optional(Schema.NullOr(Schema.String)),
@@ -609,22 +633,22 @@ const BreakdownWidget = Schema.Struct({
   groupBy: Schema.String,
   /** Presentation: vertical bars / pie (recharts), ranked horizontal bars,
    *  donut-with-total, a 100%-stacked composition bar, or a numeric table. */
-  chart: Schema.Literal("bar", "pie", "bars-h", "donut", "stacked", "table"),
+  chart: Schema.Literals(["bar", "pie", "bars-h", "donut", "stacked", "table"]),
   /** `field` = the enum's configured option order (falls back to label). */
-  sort: Schema.optional(Schema.Literal("count", "label", "field")),
+  sort: Schema.optional(Schema.Literals(["count", "label", "field"])),
   /** Value labels on bars / in the legend. */
-  values: Schema.optional(Schema.Literal("count", "percent", "both")),
+  values: Schema.optional(Schema.Literals(["count", "percent", "both"])),
   /** Collapse groups past this many into an "Other" bucket; null/absent = all. */
   maxGroups: Schema.optional(Schema.NullOr(Schema.Number)),
   /** Table chart only: add a per-group trend sparkline + delta over this window. */
-  delta: Schema.optional(Schema.Literal("off", "7d", "30d")),
+  delta: Schema.optional(Schema.Literals(["off", "7d", "30d"])),
 })
 const AttentionWidget = Schema.Struct({
   ...widgetBase,
   ...ConceptScoped,
   type: Schema.Literal("attention"),
   computedField: Schema.optional(Schema.NullOr(Schema.String)),
-  bands: Schema.optional(Schema.Array(Schema.Literal("cooling", "cold", "heating", "steady"))),
+  bands: Schema.optional(Schema.Array(Schema.Literals(["cooling", "cold", "heating", "steady"]))),
   limit: Schema.optional(Schema.NullOr(Schema.Number)),
   /** "34d" quiet-duration per stale row (default on). */
   showDays: Schema.optional(Schema.Boolean),
@@ -637,9 +661,9 @@ const TrendWidget = Schema.Struct({
   ...ConceptScoped,
   type: Schema.Literal("trend"),
   eventTypes: Schema.optional(Schema.Array(Schema.String)),
-  bucket: Schema.Literal("day", "week"),
-  since: Schema.Literal("7d", "30d", "90d"),
-  chart: Schema.optional(Schema.Literal("area", "bars")),
+  bucket: Schema.Literals(["day", "week"]),
+  since: Schema.Literals(["7d", "30d", "90d"]),
+  chart: Schema.optional(Schema.Literals(["area", "bars"])),
   /** Header verdict: % change vs the prior period of the same length. */
   showDelta: Schema.optional(Schema.Boolean),
 })
@@ -679,7 +703,7 @@ const AnalyticsWidget = Schema.Struct({
   provider: Schema.Literal("posthog"),
   /** `active_users` = distinct people, `event_count` = raw event volume,
    *  `custom` = the provider query in `query` answers instead. */
-  metric: Schema.Literal("active_users", "event_count", "custom"),
+  metric: Schema.Literals(["active_users", "event_count", "custom"]),
   /** Raw provider query (HogQL), used only when `metric` is "custom". Must
    *  return columns aliased `bucket`, `value` and optionally `series`; the
    *  window (`{from}`/`{to}`) and the resolved record value (`{recordValue}`)
@@ -688,11 +712,11 @@ const AnalyticsWidget = Schema.Struct({
   /** Restrict to one event name; absent/null = all events. Structured only. */
   event: Schema.optional(Schema.NullOr(Schema.String)),
   /** Bucket width. Structured only — a custom query buckets itself. */
-  interval: Schema.Literal("day", "week", "month"),
-  since: Schema.Literal("7d", "30d", "90d"),
+  interval: Schema.Literals(["day", "week", "month"]),
+  since: Schema.Literals(["7d", "30d", "90d"]),
   /** Provider property to split into one series per value ("the label Y"). */
   breakdown: Schema.optional(Schema.NullOr(Schema.String)),
-  chart: Schema.optional(Schema.Literal("area", "bars", "table")),
+  chart: Schema.optional(Schema.Literals(["area", "bars", "table"])),
   /** Header verdict: % change vs the prior period of the same length. */
   showDelta: Schema.optional(Schema.Boolean),
   recordFilter: Schema.optional(Schema.NullOr(AnalyticsRecordFilter)),
@@ -702,17 +726,19 @@ const TasksWidget = Schema.Struct({
   ...widgetBase,
   type: Schema.Literal("tasks"),
   /** Default assignee scope; the in-tile toolbar can change it at runtime. */
-  assignee: Schema.optional(Schema.Literal("all", "me", "none")),
+  assignee: Schema.optional(Schema.Literals(["all", "me", "none"])),
   showToolbar: Schema.optional(Schema.Boolean),
   showComposer: Schema.optional(Schema.Boolean),
   showDone: Schema.optional(Schema.Boolean),
-  groupBy: Schema.optional(Schema.Literal("schedule", "status", "priority", "none")),
+  groupBy: Schema.optional(Schema.Literals(["schedule", "status", "priority", "none"])),
   /** Which row metadata to render; absent = all. */
-  rowMeta: Schema.optional(Schema.Array(Schema.Literal("due", "priority", "labels", "assignee"))),
+  rowMeta: Schema.optional(
+    Schema.Array(Schema.Literals(["due", "priority", "labels", "assignee"])),
+  ),
   /** Only tasks in these statuses; absent/empty = all. */
   statusIds: Schema.optional(Schema.Array(Schema.String)),
   /** `week` = due within the next 7 days (incl. today). */
-  due: Schema.optional(Schema.Literal("any", "overdue", "week")),
+  due: Schema.optional(Schema.Literals(["any", "overdue", "week"])),
   /** FILTER, not data scoping: only tasks annotating that concept's records
    *  (task → record → conceptId, resolved via `resolveTaskSubjects`). */
   conceptId: Schema.optional(Schema.NullOr(Schema.String)),
@@ -722,8 +748,8 @@ const MembersWidget = Schema.Struct({
   type: Schema.Literal("members"),
   showToolbar: Schema.optional(Schema.Boolean),
   /** Row metadata toggles (rows variant); absent = role + email. */
-  fields: Schema.optional(Schema.Array(Schema.Literal("role", "email", "joined"))),
-  sort: Schema.optional(Schema.Literal("name", "role", "joined")),
+  fields: Schema.optional(Schema.Array(Schema.Literals(["role", "email", "joined"]))),
+  sort: Schema.optional(Schema.Literals(["name", "role", "joined"])),
   /** Cap shown members, with a "view all" link; null/absent = all. */
   limit: Schema.optional(Schema.NullOr(Schema.Number)),
 })
@@ -742,12 +768,12 @@ const GoalWidget = Schema.Struct({
   type: Schema.Literal("goal"),
   conditions: Schema.Array(SidebarCondition),
   ...ConditionMatch,
-  agg: Schema.Literal("count", "sum", "avg"),
+  agg: Schema.Literals(["count", "sum", "avg"]),
   field: Schema.optional(Schema.NullOr(Schema.String)),
   /** Manual target number; null = not configured yet. */
   target: Schema.optional(Schema.NullOr(Schema.Number)),
   /** `reach` = progress toward >= target (quota); `stay` = keep <= target (budget). */
-  direction: Schema.optional(Schema.Literal("reach", "stay")),
+  direction: Schema.optional(Schema.Literals(["reach", "stay"])),
   showPercent: Schema.optional(Schema.Boolean),
 })
 // Shortcuts — hand-picked jump-off points; fully manual by design (no filters).
@@ -767,12 +793,12 @@ const NoteWidget = Schema.Struct({
   type: Schema.Literal("note"),
   content: Schema.optional(
     Schema.Struct({
-      doc: Schema.Record({ key: Schema.String, value: Schema.Unknown }),
+      doc: Schema.Record(Schema.String, Opaque),
       text: Schema.String,
     }),
   ),
-  appearance: Schema.optional(Schema.Literal("plain", "info", "warn", "success")),
-  overflow: Schema.optional(Schema.Literal("clip", "scroll")),
+  appearance: Schema.optional(Schema.Literals(["plain", "info", "warn", "success"])),
+  overflow: Schema.optional(Schema.Literals(["clip", "scroll"])),
 })
 // Kanban — record versions as cards in columns keyed by an enum field (renderer: P2).
 const KanbanWidget = Schema.Struct({
@@ -813,12 +839,12 @@ const CalendarSource = Schema.Struct({
 const CalendarWidget = Schema.Struct({
   ...widgetBase,
   type: Schema.Literal("calendar"),
-  mode: Schema.Literal("month", "week", "agenda"),
+  mode: Schema.Literals(["month", "week", "agenda"]),
   sources: Schema.Array(CalendarSource),
   /** Overlay org tasks by due date as an extra source. */
   includeTasks: Schema.optional(Schema.Boolean),
   /** Month-mode cell rendering: full event cells vs dots + count. */
-  density: Schema.optional(Schema.Literal("full", "dots")),
+  density: Schema.optional(Schema.Literals(["full", "dots"])),
 })
 // Timeline/Gantt — record versions as bars between two date fields (renderer: P3).
 const GanttWidget = Schema.Struct({
@@ -827,7 +853,7 @@ const GanttWidget = Schema.Struct({
   type: Schema.Literal("gantt"),
   conditions: Schema.Array(SidebarCondition),
   ...ConditionMatch,
-  scale: Schema.Literal("day", "week", "month"),
+  scale: Schema.Literals(["day", "week", "month"]),
   /** Start date field id; a record version with no end renders a milestone. */
   startField: Schema.String,
   endField: Schema.optional(Schema.NullOr(Schema.String)),
@@ -837,7 +863,7 @@ const GanttWidget = Schema.Struct({
   /** Number field (0–100) filling the bar; absent = plain bars. */
   progressField: Schema.optional(Schema.NullOr(Schema.String)),
   showTodayLine: Schema.optional(Schema.Boolean),
-  window: Schema.optional(Schema.Literal("fit", "90d", "quarter")),
+  window: Schema.optional(Schema.Literals(["fit", "90d", "quarter"])),
 })
 // Files — uploads browsed at a scope (renderer: P4). Three scopes read files that
 // belong to records; `widget` owns its own, attached to no record at all.
@@ -848,7 +874,7 @@ const FilesWidget = Schema.Struct({
   /** recordVersion = one record's files; concept = recent across its records;
    *  org = all; widget = this widget's own `bucketId` files (no record involved).
    *  `"instance"` accepted for one release to decode pre-rename rows. */
-  scope: Schema.Literal("recordVersion", "instance", "concept", "org", "widget"),
+  scope: Schema.Literals(["recordVersion", "instance", "concept", "org", "widget"]),
   /** Record-version id for `scope: "recordVersion"` on a dashboard (no implicit
    *  context). */
   recordVersionId: Schema.optional(Schema.NullOr(Schema.String)),
@@ -867,9 +893,9 @@ const FilesWidget = Schema.Struct({
   bucketShared: Schema.optional(Schema.Boolean),
   /** Off = read-only browse (no drop-zone). */
   allowUpload: Schema.optional(Schema.Boolean),
-  sort: Schema.optional(Schema.Literal("newest", "name", "size")),
+  sort: Schema.optional(Schema.Literals(["newest", "name", "size"])),
   limit: Schema.optional(Schema.NullOr(Schema.Number)),
-  fileType: Schema.optional(Schema.Literal("all", "image", "doc", "pdf", "other")),
+  fileType: Schema.optional(Schema.Literals(["all", "image", "doc", "pdf", "other"])),
 })
 // Document — one record's rich text field, edited inline on the canvas. Bound to
 // a specific record (`recordVersionId`) + a `richtext` field (`fieldId`);
@@ -935,7 +961,7 @@ const RecordActivityWidget = Schema.Struct({
   type: Schema.Literal("record-activity"),
 })
 
-export const DashboardWidget = Schema.Union(
+export const DashboardWidget = Schema.Union([
   MetricWidget,
   ListWidget,
   BreakdownWidget,
@@ -963,7 +989,7 @@ export const DashboardWidget = Schema.Union(
   RecordTasksWidget,
   RecordActivityWidget,
   RecordMentionsWidget,
-)
+])
 export type DashboardWidget = typeof DashboardWidget.Type
 
 // ── auto-layout tree ───────────────────────────────────────────────────────────
@@ -998,23 +1024,23 @@ export interface DashboardGroup {
 }
 export type DashboardNode = DashboardWidget | DashboardGroup
 
-const DashboardGroup: Schema.Schema<DashboardGroup> = Schema.Struct({
+const DashboardGroup: Schema.Codec<DashboardGroup> = Schema.Struct({
   id: Schema.String,
   type: Schema.Literal("group"),
-  direction: Schema.Literal("row", "col"),
-  display: Schema.optional(Schema.Literal("flow", "tabs")),
+  direction: Schema.Literals(["row", "col"]),
+  display: Schema.optional(Schema.Literals(["flow", "tabs"])),
   label: Schema.optional(Schema.NullOr(Schema.String)),
   active: Schema.optional(Schema.NullOr(Schema.String)),
-  tabBar: Schema.optional(Schema.Literal("top", "bottom", "left", "right")),
+  tabBar: Schema.optional(Schema.Literals(["top", "bottom", "left", "right"])),
   w: Schema.optional(Dim),
   h: Schema.optional(Dim),
-  children: Schema.Array(Schema.suspend((): Schema.Schema<DashboardNode> => DashboardNode)),
+  children: Schema.Array(Schema.suspend((): Schema.Codec<DashboardNode> => DashboardNode)),
 })
-const DashboardNode: Schema.Schema<DashboardNode> = Schema.Union(DashboardWidget, DashboardGroup)
+const DashboardNode: Schema.Codec<DashboardNode> = Schema.Union([DashboardWidget, DashboardGroup])
 
 export const DashboardBody = Schema.Struct({
   /** Root container layout (the 48×48 window). New bodies set these. */
-  direction: Schema.optional(Schema.Literal("row", "col")),
+  direction: Schema.optional(Schema.Literals(["row", "col"])),
   children: Schema.optional(Schema.Array(DashboardNode)),
   /** LEGACY flat widget list — pre-auto-layout bodies; client migrates to a tree. */
   widgets: Schema.optional(Schema.Array(DashboardWidget)),
@@ -1035,14 +1061,14 @@ export const Dashboard = Schema.Struct({
   /** "page" (default/legacy) = free-standing canvas; "record" = a per-concept
    *  single-record version template. Optional for rollout: an older server omits it and
    *  the client treats it as "page". */
-  kind: Schema.optional(Schema.Literal("page", "record")),
+  kind: Schema.optional(Schema.Literals(["page", "record"])),
   /** The owning concept for a "record" dashboard; null for "page". Record
    *  dashboards are ordered by `position`; the first is what a bare reference
    *  opens (no default flag). */
   conceptId: Schema.optional(Schema.NullOr(Schema.String)),
   /** Last-write etag for optimistic concurrency (see `updateDashboard.expectedUpdatedAt`).
    *  Optional for rollout: an older server omits it, leaving the guard inactive. */
-  updatedAt: Schema.optional(Schema.Date),
+  updatedAt: Schema.optional(Schema.DateFromString),
 })
 export type Dashboard = typeof Dashboard.Type
 
@@ -1050,18 +1076,18 @@ export type Dashboard = typeof Dashboard.Type
 // Notes/tasks hang off a record (`subjectId` = records.id) or off nothing
 // (org-level task). `customFields` is the open bag keyed by AnnotationField id.
 
-export const AnnotationType = Schema.Literal("note", "task")
+export const AnnotationType = Schema.Literals(["note", "task"])
 export type AnnotationType = typeof AnnotationType.Type
 
 /** `done` = completed (sets `completedAt`); `cancelled` = closed without
  *  completing (never sets it). */
-export const TaskStatusCategory = Schema.Literal("todo", "active", "done", "cancelled")
+export const TaskStatusCategory = Schema.Literals(["todo", "active", "done", "cancelled"])
 export type TaskStatusCategory = typeof TaskStatusCategory.Type
 
 /** A rich-text value: ProseMirror doc + server-derived plain text (the same
  *  envelope record version `richtext` fields use; the server re-derives `text`). */
 export const RichTextEnvelope = Schema.Struct({
-  doc: Schema.Record({ key: Schema.String, value: Schema.Unknown }),
+  doc: Schema.Record(Schema.String, Opaque),
   text: Schema.String,
 })
 export type RichTextEnvelope = typeof RichTextEnvelope.Type
@@ -1073,7 +1099,7 @@ export const TaskPriority = Schema.Struct({
   name: Schema.String,
   color: Schema.NullOr(Schema.String),
   position: Schema.Number,
-  archivedAt: Schema.NullOr(Schema.Date),
+  archivedAt: Schema.NullOr(Schema.DateFromString),
 })
 export type TaskPriority = typeof TaskPriority.Type
 
@@ -1085,7 +1111,7 @@ export const TaskStatus = Schema.Struct({
   category: TaskStatusCategory,
   isDefault: Schema.Boolean,
   position: Schema.Number,
-  archivedAt: Schema.NullOr(Schema.Date),
+  archivedAt: Schema.NullOr(Schema.DateFromString),
 })
 export type TaskStatus = typeof TaskStatus.Type
 
@@ -1098,7 +1124,7 @@ export const AnnotationField = Schema.Struct({
   config: FieldConfig,
   icon: Schema.NullOr(Schema.String),
   position: Schema.Number,
-  archivedAt: Schema.NullOr(Schema.Date),
+  archivedAt: Schema.NullOr(Schema.DateFromString),
 })
 export type AnnotationField = typeof AnnotationField.Type
 
@@ -1110,9 +1136,9 @@ export const Note = Schema.Struct({
   createdBy: Schema.NullOr(Schema.String),
   customFields: State,
   version: Schema.Number,
-  createdAt: Schema.Date,
-  updatedAt: Schema.Date,
-  archivedAt: Schema.NullOr(Schema.Date),
+  createdAt: Schema.DateFromString,
+  updatedAt: Schema.DateFromString,
+  archivedAt: Schema.NullOr(Schema.DateFromString),
 })
 export type Note = typeof Note.Type
 
@@ -1134,17 +1160,17 @@ export const Task = Schema.Struct({
   /** Hidden from "open" lists until this passes (ISO string); read-time check. */
   snoozedUntil: Schema.NullOr(Schema.String),
   /** Blocked marker; non-null = blocked (with optional reason + blocking task). */
-  blockedAt: Schema.NullOr(Schema.Date),
+  blockedAt: Schema.NullOr(Schema.DateFromString),
   blockedReason: Schema.NullOr(Schema.String),
   blockedByTaskId: Schema.NullOr(Schema.String),
   /** Set on entering the `done` category, cleared on leaving; `cancelled` never sets it. */
-  completedAt: Schema.NullOr(Schema.Date),
+  completedAt: Schema.NullOr(Schema.DateFromString),
   createdBy: Schema.NullOr(Schema.String),
   customFields: State,
   version: Schema.Number,
-  createdAt: Schema.Date,
-  updatedAt: Schema.Date,
-  archivedAt: Schema.NullOr(Schema.Date),
+  createdAt: Schema.DateFromString,
+  updatedAt: Schema.DateFromString,
+  archivedAt: Schema.NullOr(Schema.DateFromString),
 })
 export type Task = typeof Task.Type
 
@@ -1165,14 +1191,14 @@ export type TaskSubjectRef = typeof TaskSubjectRef.Type
 
 /** What an `@` mention can point at. Mirrored by `engine/domain/mentions.ts` and
  *  the web client's `lib/mentionKinds.tsx`. */
-export const MentionKind = Schema.Literal(
+export const MentionKind = Schema.Literals([
   "record",
   "person",
   "page",
   "concept",
   "dashboard",
   "file",
-)
+])
 export type MentionKind = typeof MentionKind.Type
 
 /** One mention, as stored in the document: the three node attrs. */
@@ -1229,7 +1255,7 @@ export type MentionRef = typeof MentionRef.Type
  */
 export const BacklinkRef = Schema.Struct({
   /** Which rich-text home the mention was written in. */
-  source: Schema.Literal("record", "task"),
+  source: Schema.Literals(["record", "task"]),
   /** Where to go. Null for a task, which has no deep link yet. */
   href: Schema.NullOr(Schema.String),
   label: Schema.String,
@@ -1265,10 +1291,10 @@ export type RecordGraphConfig = typeof RecordGraphConfig.Type
 
 export const RecordViewPrefsBody = Schema.Struct({
   defaultView: Schema.NullOr(Schema.String),
-  byConcept: Schema.Record({ key: Schema.String, value: Schema.String }),
-  customByConcept: Schema.Record({ key: Schema.String, value: RecordViewLayout }),
+  byConcept: Schema.Record(Schema.String, Schema.String),
+  customByConcept: Schema.Record(Schema.String, RecordViewLayout),
   /** Graph-tile settings keyed by concept id; optional — pre-existing rows lack it. */
-  graphByConcept: Schema.optional(Schema.Record({ key: Schema.String, value: RecordGraphConfig })),
+  graphByConcept: Schema.optional(Schema.Record(Schema.String, RecordGraphConfig)),
 })
 export type RecordViewPrefsBody = typeof RecordViewPrefsBody.Type
 
@@ -1280,7 +1306,7 @@ export type RecordViewPrefs = typeof RecordViewPrefs.Type
 
 export const DeactivatedMember = Schema.Struct({
   userId: Schema.String,
-  deactivatedAt: Schema.Date,
+  deactivatedAt: Schema.DateFromString,
 })
 export type DeactivatedMember = typeof DeactivatedMember.Type
 
@@ -1291,7 +1317,7 @@ export type DeactivatedMember = typeof DeactivatedMember.Type
 // parsing on an older build. Concepts/fields/labels are referenced by id.
 
 export const AutomationTrigger = Schema.Struct({
-  kind: Schema.Literal(
+  kind: Schema.Literals([
     "record.created",
     "record.changed",
     "record.archived",
@@ -1300,7 +1326,7 @@ export const AutomationTrigger = Schema.Struct({
     "task.created",
     "task.status.changed",
     "schedule",
-  ),
+  ]),
   /** Restrict to one concept (record.* + task.created); absent = any. */
   conceptId: Schema.optional(Schema.NullOr(Schema.String)),
   /** `record.changed`: fire only when THIS field is in the patch.
@@ -1311,7 +1337,7 @@ export const AutomationTrigger = Schema.Struct({
   /** `task.status.changed`: the destination status id. */
   statusId: Schema.optional(Schema.NullOr(Schema.String)),
   /** `schedule` cadence + when. `day` is capped at 28 so every month has it. */
-  every: Schema.optional(Schema.Literal("day", "week", "month")),
+  every: Schema.optional(Schema.Literals(["day", "week", "month"])),
   hour: Schema.optional(Schema.Number),
   weekday: Schema.optional(Schema.Number),
   day: Schema.optional(Schema.Number),
@@ -1321,7 +1347,7 @@ export type AutomationTrigger = typeof AutomationTrigger.Type
 const SetFieldAction = Schema.Struct({
   kind: Schema.Literal("setField"),
   fieldId: Schema.String,
-  value: Schema.Unknown,
+  value: Opaque,
 })
 const AddLabelAction = Schema.Struct({
   kind: Schema.Literal("addLabel"),
@@ -1346,7 +1372,7 @@ const CreateTaskAction = Schema.Struct({
 const CreateRecordAction = Schema.Struct({
   kind: Schema.Literal("createRecord"),
   conceptId: Schema.String,
-  fields: Schema.Record({ key: Schema.String, value: Schema.Unknown }),
+  fields: Schema.Record(Schema.String, Opaque),
 })
 /** Archive, never purge: an automation may only do reversible things. */
 const ArchiveRecordAction = Schema.Struct({
@@ -1360,7 +1386,7 @@ const NotifySlackAction = Schema.Struct({
 const WebhookAction = Schema.Struct({
   kind: Schema.Literal("webhook"),
   url: Schema.String,
-  body: Schema.optional(Schema.Record({ key: Schema.String, value: Schema.Unknown })),
+  body: Schema.optional(Schema.Record(Schema.String, Opaque)),
 })
 
 // ── Slack ────────────────────────────────────────────────────────────────────
@@ -1392,7 +1418,7 @@ const SlackReactionAction = Schema.Struct({
 // ── Linear ───────────────────────────────────────────────────────────────────
 const LinearUpdateIssueAction = Schema.Struct({
   kind: Schema.Literal("linear.updateIssue"),
-  input: Schema.Record({ key: Schema.String, value: Schema.Unknown }),
+  input: Schema.Record(Schema.String, Opaque),
 })
 const LinearCloseIssueAction = Schema.Struct({ kind: Schema.Literal("linear.closeIssue") })
 const LinearCommentAction = Schema.Struct({
@@ -1410,7 +1436,7 @@ const LinearCreateIssueAction = Schema.Struct({
   description: Schema.optional(Schema.String),
 })
 
-export const AutomationAction = Schema.Union(
+export const AutomationAction = Schema.Union([
   SetFieldAction,
   AddLabelAction,
   RemoveLabelAction,
@@ -1428,7 +1454,7 @@ export const AutomationAction = Schema.Union(
   LinearCommentAction,
   LinearAssignAction,
   LinearCreateIssueAction,
-)
+])
 export type AutomationAction = typeof AutomationAction.Type
 
 export const Automation = Schema.Struct({
@@ -1437,17 +1463,17 @@ export const Automation = Schema.Struct({
   enabled: Schema.Boolean,
   trigger: AutomationTrigger,
   conditions: Schema.Array(SidebarCondition),
-  match: Schema.Literal("all", "any"),
+  match: Schema.Literals(["all", "any"]),
   actions: Schema.Array(AutomationAction),
-  nextRunAt: Schema.NullOr(Schema.Date),
-  lastRunAt: Schema.NullOr(Schema.Date),
+  nextRunAt: Schema.NullOr(Schema.DateFromString),
+  lastRunAt: Schema.NullOr(Schema.DateFromString),
   runCount: Schema.Number,
   /** Non-null ⇒ the automation paused ITSELF (rate cap). */
   pausedReason: Schema.NullOr(Schema.String),
   createdBy: Schema.NullOr(Schema.String),
-  createdAt: Schema.Date,
-  updatedAt: Schema.Date,
-  archivedAt: Schema.NullOr(Schema.Date),
+  createdAt: Schema.DateFromString,
+  updatedAt: Schema.DateFromString,
+  archivedAt: Schema.NullOr(Schema.DateFromString),
 })
 export type Automation = typeof Automation.Type
 
@@ -1456,7 +1482,7 @@ export const AutomationRun = Schema.Struct({
   automationId: Schema.String,
   eventId: Schema.NullOr(Schema.Number),
   subjectId: Schema.NullOr(Schema.String),
-  status: Schema.Literal("ok", "skipped", "failed"),
+  status: Schema.Literals(["ok", "skipped", "failed"]),
   detail: Schema.Struct({
     reason: Schema.optional(Schema.String),
     actions: Schema.optional(
@@ -1471,8 +1497,8 @@ export const AutomationRun = Schema.Struct({
     failedAt: Schema.optional(Schema.Number),
     error: Schema.optional(Schema.String),
   }),
-  startedAt: Schema.Date,
-  finishedAt: Schema.NullOr(Schema.Date),
+  startedAt: Schema.DateFromString,
+  finishedAt: Schema.NullOr(Schema.DateFromString),
 })
 export type AutomationRun = typeof AutomationRun.Type
 
@@ -1493,13 +1519,13 @@ export class RpcError extends Schema.TaggedError<RpcError>()("RpcError", {
   status: Schema.Number,
 }) {}
 
-const Fields = Schema.Record({ key: Schema.String, value: Schema.Unknown })
+const Fields = Schema.Record(Schema.String, Opaque)
 
 // ── procedures ────────────────────────────────────────────────────────────────
 
 /** The resource kinds an access rule can target. Mirrors `AccessResourceType` in
  *  engine/domain/access.ts — kept as a literal union so the wire rejects unknowns. */
-export const AccessResourceType = Schema.Literal(
+export const AccessResourceType = Schema.Literals([
   "org",
   "concept",
   "record",
@@ -1510,7 +1536,7 @@ export const AccessResourceType = Schema.Literal(
   "note",
   "member",
   "role",
-)
+])
 export type AccessResourceType = typeof AccessResourceType.Type
 
 /**
@@ -1532,31 +1558,31 @@ export const AccessResourceTypeOut = Schema.String
 /** A grantable action. There is no wildcard anywhere any more — not on the wire and
  *  not in the engine — so a rule is exactly the actions it names. `share` is gone
  *  with it: nothing ever decided it. */
-export const AccessActionName = Schema.Literal(
+export const AccessActionName = Schema.Literals([
   "view",
   "create",
   "edit",
   "archive",
   "delete",
   "configure",
-)
+])
 export type AccessActionName = typeof AccessActionName.Type
 
 /** A condition narrowing a rule to a subset of records. Mirrors `AccessCondition`
  *  in engine/domain/access.ts. Every variant must compile to SQL, which is why the
  *  set is small and closed — see the note there. */
-export const AccessCondition = Schema.Union(
+export const AccessCondition = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("actorIs"), who: Schema.Literal("creator") }),
   Schema.Struct({ kind: Schema.Literal("fieldIs"), fieldId: Schema.String }),
   Schema.Struct({
     kind: Schema.Literal("where"),
-    state: Schema.Record({ key: Schema.String, value: Schema.Unknown }),
+    state: Schema.Record(Schema.String, Opaque),
   }),
-)
+])
 export type AccessCondition = Schema.Schema.Type<typeof AccessCondition>
 
 /** Which category a role lives in, and therefore who may hold it. */
-export const AccessRoleKind = Schema.Literal("user", "automation")
+export const AccessRoleKind = Schema.Literals(["user", "automation"])
 export type AccessRoleKind = Schema.Schema.Type<typeof AccessRoleKind>
 
 /** A role: a named, reusable bag of rules. `key` non-null = a seeded managed one. */
@@ -1586,7 +1612,7 @@ export type AccessRole = Schema.Schema.Type<typeof AccessRole>
 /** One rule on a role, as the role editor lists them. */
 export const AccessRule = Schema.Struct({
   id: Schema.String,
-  effect: Schema.Literal("allow", "deny"),
+  effect: Schema.Literals(["allow", "deny"]),
   actions: Schema.Array(Schema.String),
   resourceType: AccessResourceTypeOut,
   resourceId: Schema.NullOr(Schema.String),
@@ -1614,7 +1640,7 @@ export const EffectiveAccess = Schema.Struct({
        *  this rule's tier, computed once server-side so the client never re-derives
        *  the precedence-0/-1 special cases itself. */
       layerLabel: Schema.String,
-      effect: Schema.Literal("allow", "deny"),
+      effect: Schema.Literals(["allow", "deny"]),
       actions: Schema.Array(Schema.String),
       resourceType: AccessResourceTypeOut,
       resourceId: Schema.NullOr(Schema.String),
@@ -1634,7 +1660,7 @@ export const AccessExplainLayer = Schema.Struct({
   roleIds: Schema.Array(Schema.NullOr(Schema.String)),
   label: Schema.String,
   ruleIds: Schema.Array(Schema.String),
-  verdict: Schema.Literal("allow", "deny", "silent"),
+  verdict: Schema.Literals(["allow", "deny", "silent"]),
   decided: Schema.Boolean,
 })
 export type AccessExplainLayer = Schema.Schema.Type<typeof AccessExplainLayer>
@@ -1730,9 +1756,7 @@ export class KahunaRpcs extends RpcGroup.make(
       singleRecord: Schema.Boolean,
       fields: Schema.optional(Fields),
       /** Staged file-property values for the seeded record (see createRecord). */
-      files: Schema.optional(
-        Schema.Record({ key: Schema.String, value: Schema.Array(Schema.String) }),
-      ),
+      files: Schema.optional(Schema.Record(Schema.String, Schema.Array(Schema.String))),
     },
     success: Concept,
     error: RpcError,
@@ -1911,9 +1935,7 @@ export class KahunaRpcs extends RpcGroup.make(
     payload: {
       conceptId: Schema.String,
       fields: Fields,
-      files: Schema.optional(
-        Schema.Record({ key: Schema.String, value: Schema.Array(Schema.String) }),
-      ),
+      files: Schema.optional(Schema.Record(Schema.String, Schema.Array(Schema.String))),
     },
     success: RecordVersion,
     error: RpcError,
@@ -2020,7 +2042,7 @@ export class KahunaRpcs extends RpcGroup.make(
     payload: {
       name: Schema.String,
       icon: Schema.optional(Schema.NullOr(Schema.String)),
-      scope: Schema.Literal("personal", "org"),
+      scope: Schema.Literals(["personal", "org"]),
       body: SidebarViewBody,
     },
     success: SidebarView,
@@ -2032,7 +2054,7 @@ export class KahunaRpcs extends RpcGroup.make(
       name: Schema.optional(Schema.String),
       icon: Schema.optional(Schema.NullOr(Schema.String)),
       hidden: Schema.optional(Schema.Boolean),
-      scope: Schema.optional(Schema.Literal("personal", "org")),
+      scope: Schema.optional(Schema.Literals(["personal", "org"])),
       body: Schema.optional(SidebarViewBody),
     },
     success: SidebarView,
@@ -2064,11 +2086,11 @@ export class KahunaRpcs extends RpcGroup.make(
     payload: {
       name: Schema.String,
       icon: Schema.optional(Schema.NullOr(Schema.String)),
-      scope: Schema.Literal("personal", "org"),
+      scope: Schema.Literals(["personal", "org"]),
       body: DashboardBody,
       /** "record" creates a per-concept template (forced org-shared, appended last);
        *  "conceptId" is then required. Absent/"page" = a free-standing dashboard. */
-      kind: Schema.optional(Schema.Literal("page", "record")),
+      kind: Schema.optional(Schema.Literals(["page", "record"])),
       conceptId: Schema.optional(Schema.NullOr(Schema.String)),
     },
     success: Dashboard,
@@ -2080,7 +2102,7 @@ export class KahunaRpcs extends RpcGroup.make(
       name: Schema.optional(Schema.String),
       icon: Schema.optional(Schema.NullOr(Schema.String)),
       hidden: Schema.optional(Schema.Boolean),
-      scope: Schema.optional(Schema.Literal("personal", "org")),
+      scope: Schema.optional(Schema.Literals(["personal", "org"])),
       body: Schema.optional(DashboardBody),
       /** Repoint a RECORD dashboard at a different concept. Its widgets reference
        *  the old concept's fields, so the caller resets `body` alongside this.
@@ -2088,7 +2110,7 @@ export class KahunaRpcs extends RpcGroup.make(
       conceptId: Schema.optional(Schema.NullOr(Schema.String)),
       /** Optimistic-concurrency guard: if set and it no longer matches the row's
        *  current `updatedAt`, the update is rejected (someone else edited it). */
-      expectedUpdatedAt: Schema.optional(Schema.Date),
+      expectedUpdatedAt: Schema.optional(Schema.DateFromString),
     },
     success: Dashboard,
     error: RpcError,
@@ -2535,7 +2557,7 @@ export class KahunaRpcs extends RpcGroup.make(
       name: Schema.String,
       trigger: AutomationTrigger,
       conditions: Schema.optional(Schema.Array(SidebarCondition)),
-      match: Schema.optional(Schema.Literal("all", "any")),
+      match: Schema.optional(Schema.Literals(["all", "any"])),
       actions: Schema.Array(AutomationAction),
       enabled: Schema.optional(Schema.Boolean),
     },
@@ -2548,7 +2570,7 @@ export class KahunaRpcs extends RpcGroup.make(
       name: Schema.optional(Schema.String),
       trigger: Schema.optional(AutomationTrigger),
       conditions: Schema.optional(Schema.Array(SidebarCondition)),
-      match: Schema.optional(Schema.Literal("all", "any")),
+      match: Schema.optional(Schema.Literals(["all", "any"])),
       actions: Schema.optional(Schema.Array(AutomationAction)),
       enabled: Schema.optional(Schema.Boolean),
     },
@@ -2702,7 +2724,7 @@ export class KahunaRpcs extends RpcGroup.make(
   Rpc.make("addRule", {
     payload: {
       roleId: Schema.String,
-      effect: Schema.Literal("allow", "deny"),
+      effect: Schema.Literals(["allow", "deny"]),
       actions: Schema.Array(AccessActionName),
       resourceType: AccessResourceType,
       resourceId: Schema.optional(Schema.NullOr(Schema.String)),
@@ -2716,7 +2738,7 @@ export class KahunaRpcs extends RpcGroup.make(
   Rpc.make("updateRule", {
     payload: {
       ruleId: Schema.String,
-      effect: Schema.Literal("allow", "deny"),
+      effect: Schema.Literals(["allow", "deny"]),
       actions: Schema.Array(AccessActionName),
       resourceType: AccessResourceType,
       resourceId: Schema.optional(Schema.NullOr(Schema.String)),
@@ -2745,7 +2767,7 @@ export class KahunaRpcs extends RpcGroup.make(
         Schema.Struct({
           resourceType: AccessResourceType,
           /** "concept" scopes by CONTAINER — the records half, whose rows are concepts. */
-          scopeBy: Schema.optional(Schema.Literal("resource", "concept")),
+          scopeBy: Schema.optional(Schema.Literals(["resource", "concept"])),
           entries: Schema.Array(
             Schema.Struct({
               /** `null` = the blanket row. */

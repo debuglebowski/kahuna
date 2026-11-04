@@ -1,5 +1,5 @@
 import { PgClient } from "@effect/sql-pg"
-import { Effect } from "effect"
+import { Context, Effect, Layer } from "effect"
 import type { AccessAction, AccessCondition, AccessResourceType } from "../domain/access"
 import { ENFORCED_ACTIONS } from "../domain/access"
 import { isAutomationActor } from "../domain/types"
@@ -253,10 +253,10 @@ export const BUILTIN_ROLES: ReadonlyArray<RoleSpec> = [
  * Every write bumps the org's policy generation via `PolicyService.bump`, so a
  * change lands on the very next request without a TTL or a cache flush.
  */
-export class AccessRoleService extends Effect.Service<AccessRoleService>()(
+export class AccessRoleService extends Context.Service<AccessRoleService>()(
   "engine/AccessRoleService",
   {
-    effect: Effect.gen(function* () {
+    make: Effect.gen(function* () {
       const sql = yield* PgClient.PgClient
       const policies = yield* PolicyService
       const events = yield* EventStore
@@ -1180,6 +1180,9 @@ export class AccessRoleService extends Effect.Service<AccessRoleService>()(
         configureHolders,
       } as const
     }),
-    dependencies: [PolicyService.Default, EventStore.Default],
   },
-) {}
+) {
+  static readonly layer = Layer.effect(this, this.make).pipe(
+    Layer.provide([PolicyService.layer, EventStore.layer]),
+  )
+}

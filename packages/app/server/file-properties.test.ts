@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto"
-import { FetchHttpClient, HttpClient, HttpClientRequest } from "@effect/platform"
-import { RpcClient, RpcSerialization } from "@effect/rpc"
 import { type FileRef, KahunaRpcs, type RecordDetail } from "@kahunalabs/contract"
 import { Cause, Context, Effect, Exit, Layer, ManagedRuntime } from "effect"
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http"
+import { RpcClient, RpcSerialization } from "effect/rpc"
 import { describe, expect, it } from "vitest"
 import { type EngineServices, emptyPolicy, type OrgContext } from "#engine"
 import { auth } from "./auth"
@@ -50,9 +50,9 @@ const rpcAs = (cookie: string) => {
     Layer.provide(RpcSerialization.layerNdjson),
   )
   const make = RpcClient.make(KahunaRpcs)
-  type Client = Effect.Effect.Success<typeof make>
-  class Api extends Context.Tag("test/Api")<Api, Client>() {}
-  const runtime = ManagedRuntime.make(Layer.scoped(Api, make).pipe(Layer.provide(protocol)))
+  type Client = Effect.Success<typeof make>
+  class Api extends Context.Service<Api, Client>()("test/Api") {}
+  const runtime = ManagedRuntime.make(Layer.effect(Api, make).pipe(Layer.provide(protocol)))
   return {
     call: async <A, E>(f: (c: Client) => Effect.Effect<A, E>): Promise<A> => {
       const exit = await runtime.runPromiseExit(Effect.flatMap(Api, f))

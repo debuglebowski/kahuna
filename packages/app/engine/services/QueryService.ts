@@ -1,5 +1,5 @@
 import { PgClient } from "@effect/sql-pg"
-import { Effect } from "effect"
+import { Context, Effect, Layer } from "effect"
 import { compileRecordFilter, filterFragment } from "../domain/accessSql"
 import type { ConceptRef } from "../domain/types"
 import { scopeConceptRead } from "../domain/visibility"
@@ -23,8 +23,8 @@ export type FindRecordsInput = ConceptRef & {
 }
 
 /** Read-side: JSONB-filtered, relation-aware record version queries — always org-scoped. */
-export class QueryService extends Effect.Service<QueryService>()("engine/QueryService", {
-  effect: Effect.gen(function* () {
+export class QueryService extends Context.Service<QueryService>()("engine/QueryService", {
+  make: Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
     const concepts = yield* ConceptService
 
@@ -105,5 +105,6 @@ export class QueryService extends Effect.Service<QueryService>()("engine/QuerySe
 
     return { findRecords } as const
   }),
-  dependencies: [ConceptService.Default],
-}) {}
+}) {
+  static readonly layer = Layer.effect(this, this.make).pipe(Layer.provide([ConceptService.layer]))
+}

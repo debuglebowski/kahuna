@@ -1,5 +1,5 @@
 import { PgClient } from "@effect/sql-pg"
-import { Clock, Effect } from "effect"
+import { Clock, Context, Effect, Layer } from "effect"
 import { type DecayParams, decay } from "../computed/decay"
 import { type MomentumParams, momentum } from "../computed/momentum"
 import type { Field, RecordVersion } from "../domain/types"
@@ -11,8 +11,8 @@ import { OrgContext } from "./OrgContext"
  * COPY of the record version using `now` from the Effect Clock (so they always
  * reflect the current moment, and TestClock makes them deterministic in tests).
  */
-export class ComputedFields extends Effect.Service<ComputedFields>()("engine/ComputedFields", {
-  effect: Effect.gen(function* () {
+export class ComputedFields extends Context.Service<ComputedFields>()("engine/ComputedFields", {
+  make: Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
     const fields = yield* FieldService
 
@@ -84,5 +84,6 @@ export class ComputedFields extends Effect.Service<ComputedFields>()("engine/Com
 
     return { decorate } as const
   }),
-  dependencies: [FieldService.Default],
-}) {}
+}) {
+  static readonly layer = Layer.effect(this, this.make).pipe(Layer.provide([FieldService.layer]))
+}

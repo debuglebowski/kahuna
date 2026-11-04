@@ -11,7 +11,7 @@ export type Id = string
 export type OrgId = string
 export type Actor = string
 
-export const FieldKind = Schema.Literal(
+export const FieldKind = Schema.Literals([
   "text",
   "number",
   "date",
@@ -28,7 +28,7 @@ export const FieldKind = Schema.Literal(
   "money",
   // rich text: a { doc, text } envelope — ProseMirror JSON + extracted plain text.
   "richtext",
-)
+])
 export type FieldKind = typeof FieldKind.Type
 
 /** Per-field configuration, stored in `fields.config` (jsonb). */

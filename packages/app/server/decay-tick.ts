@@ -30,13 +30,13 @@ const runForOrg = (orgId: string) =>
       const rows = yield* query.findRecords({ conceptId: concept_id, limit: 1000 })
       const active = rows.filter((r) => r.state.status !== "won" && r.state.status !== "lost")
       for (const r of active) {
-        yield* recordVersions.recomputeBands(r.id).pipe(Effect.catchAllCause(() => Effect.void))
+        yield* recordVersions.recomputeBands(r.id).pipe(Effect.catchCause(() => Effect.void))
       }
     }
   }).pipe(
     Effect.provideService(OrgContext, systemScope(orgId, TICK_ACTOR)),
     // An org with no decay concepts just gets skipped.
-    Effect.catchAllCause(() => Effect.void),
+    Effect.catchCause(() => Effect.void),
   )
 
 const tickOnce = Effect.gen(function* () {
@@ -55,8 +55,8 @@ export const startDecayTick = (): void => {
   const intervalMs = Number(process.env.DECAY_TICK_INTERVAL_MS ?? 3_600_000)
   AppRuntime.runFork(
     tickOnce.pipe(
-      Effect.tapErrorCause((cause) => Effect.logError("decay tick error", cause)),
-      Effect.catchAllCause(() => Effect.void),
+      Effect.tapCause((cause) => Effect.logError("decay tick error", cause)),
+      Effect.catchCause(() => Effect.void),
       Effect.repeat(Schedule.spaced(Duration.millis(intervalMs))),
     ),
   )

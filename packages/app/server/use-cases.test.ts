@@ -257,9 +257,11 @@ describe("archive / restore / delete (end-to-end use-case wiring)", () => {
     expect(has(await run(org, listRecords(c.id)), inst.id)).toBe(false)
     expect(has(await run(org, listRecords(c.id, { includeArchived: true })), inst.id)).toBe(true)
 
-    // A concept with any record (even archived) refuses a hard delete. The thrown
-    // ConceptInUse serialises as its fields, so match the distinctive instanceCount.
-    await expect(run(org, deleteConcept(c.id))).rejects.toThrow(/instanceCount/)
+    // A concept with any record (even archived) refuses a hard delete.
+    await expect(run(org, deleteConcept(c.id))).rejects.toMatchObject({
+      _tag: "ConceptInUse",
+      instanceCount: 1,
+    })
 
     await run(org, restoreRecordVersion(inst.id, archived.version))
     expect(has(await run(org, listRecords(c.id)), inst.id)).toBe(true)
@@ -739,7 +741,9 @@ describe("single-record concepts (use-case layer)", () => {
     const deal = (await run(org, createRecord(source.id, {}))) as WithId
     await run(org, linkRelation(rel.id, deal.id, detail.recordVersion.id))
 
-    await expect(run(org, deleteConcept(target.id))).rejects.toThrow(/relationCount/)
+    await expect(run(org, deleteConcept(target.id))).rejects.toMatchObject({
+      _tag: "RecordVersionInUse",
+    })
 
     // Rolled back whole: the concept survives, the record survives, and — the
     // part a non-transactional composition would get wrong — the flag is still on

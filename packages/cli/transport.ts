@@ -1,7 +1,7 @@
-import { FetchHttpClient, HttpClient, HttpClientRequest } from "@effect/platform"
-import { RpcClient, RpcSerialization } from "@effect/rpc"
 import { KahunaRpcs } from "@kahunalabs/contract"
 import { Cause, Context, Effect, Exit, Layer, ManagedRuntime } from "effect"
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http"
+import { RpcClient, RpcSerialization } from "effect/rpc"
 import type { Session } from "./config.ts"
 import { CliError, EXIT } from "./errors.ts"
 
@@ -55,10 +55,10 @@ export const makeRuntime = (session: Session) => {
   }).pipe(Layer.provide(FetchHttpClient.layer), Layer.provide(RpcSerialization.layerNdjson))
 
   const make = RpcClient.make(KahunaRpcs)
-  type Client = Effect.Effect.Success<typeof make>
-  class ApiClient extends Context.Tag("kahuna/cli/ApiClient")<ApiClient, Client>() {}
+  type Client = Effect.Success<typeof make>
+  class ApiClient extends Context.Service<ApiClient, Client>()("kahuna/cli/ApiClient") {}
 
-  const runtime = ManagedRuntime.make(Layer.scoped(ApiClient, make).pipe(Layer.provide(protocol)))
+  const runtime = ManagedRuntime.make(Layer.effect(ApiClient, make).pipe(Layer.provide(protocol)))
 
   return {
     /**

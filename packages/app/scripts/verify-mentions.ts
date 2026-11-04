@@ -18,10 +18,10 @@
  * slay-managed one; point API/ORIGIN at :3100/:5100 to verify the managed stack.
  */
 
-import { FetchHttpClient } from "@effect/platform"
-import { RpcClient, RpcSerialization } from "@effect/rpc"
 import { KahunaRpcs } from "@kahunalabs/contract"
 import { Context, Effect, Layer, ManagedRuntime } from "effect"
+import { FetchHttpClient } from "effect/http"
+import { RpcClient, RpcSerialization } from "effect/rpc"
 import { auth } from "../server/auth"
 import { createUserDirect } from "../server/provision"
 import { provisionVerifyIdentity } from "./verify-session"
@@ -66,17 +66,17 @@ const clientFor = (cookie: string) => {
     Layer.provide(RpcSerialization.layerNdjson),
   )
   const make = RpcClient.make(KahunaRpcs)
-  type C = Effect.Effect.Success<typeof make>
-  class Tag extends Context.Tag(`verify/Api-${cookie.slice(0, 8)}`)<Tag, C>() {}
-  const rt = ManagedRuntime.make(Layer.scoped(Tag, make).pipe(Layer.provide(Protocol)))
+  type C = Effect.Success<typeof make>
+  class Tag extends Context.Service<Tag, C>()(`verify/Api-${cookie.slice(0, 8)}`) {}
+  const rt = ManagedRuntime.make(Layer.effect(Tag, make).pipe(Layer.provide(Protocol)))
   return {
     call: <A, E>(f: (c: C) => Effect.Effect<A, E>): Promise<A> =>
       rt.runPromise(Effect.flatMap(Tag, f) as Effect.Effect<A, E, never>),
     code: async (f: (c: C) => Effect.Effect<unknown, unknown>): Promise<string | null> => {
       const r = await rt.runPromise(
-        Effect.either(Effect.flatMap(Tag, f) as Effect.Effect<unknown, { code?: string }>),
+        Effect.result(Effect.flatMap(Tag, f) as Effect.Effect<unknown, { code?: string }>),
       )
-      return r._tag === "Right" ? null : (r.left.code ?? "no-code")
+      return r._tag === "Success" ? null : (r.failure.code ?? "no-code")
     },
   }
 }

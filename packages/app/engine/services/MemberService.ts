@@ -1,5 +1,5 @@
 import { PgClient } from "@effect/sql-pg"
-import { Effect } from "effect"
+import { Context, Effect, Layer } from "effect"
 import type { RecordViewPrefs, RecordViewPrefsBody } from "../domain/types"
 import { OrgContext } from "./OrgContext"
 import {
@@ -18,8 +18,8 @@ import {
  * `purgeMemberData` (removing the BetterAuth membership), are auth-tier
  * concerns enforced at the server boundary — the engine only owns the rows.
  */
-export class MemberService extends Effect.Service<MemberService>()("engine/MemberService", {
-  effect: Effect.gen(function* () {
+export class MemberService extends Context.Service<MemberService>()("engine/MemberService", {
+  make: Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
 
     /** The CALLER's record version-view layout prefs; defaults if never saved. */
@@ -122,5 +122,6 @@ export class MemberService extends Effect.Service<MemberService>()("engine/Membe
       purgeMemberData,
     } as const
   }),
-  dependencies: [],
-}) {}
+}) {
+  static readonly layer = Layer.effect(this, this.make)
+}

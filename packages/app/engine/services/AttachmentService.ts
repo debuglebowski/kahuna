@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto"
 import { PgClient } from "@effect/sql-pg"
-import { Effect } from "effect"
+import { Context, Effect, Layer } from "effect"
 import { BlobStore } from "../blob/BlobStore"
 import type { Attachment, Id } from "../domain/types"
 import {
@@ -62,10 +62,10 @@ export interface ListFilesFilter {
  * an `events` row on the attachment's own stream (subjectKind "attachment",
  * payload carrying the host record or bucket) for the activity feed / live-sync.
  */
-export class AttachmentService extends Effect.Service<AttachmentService>()(
+export class AttachmentService extends Context.Service<AttachmentService>()(
   "engine/AttachmentService",
   {
-    effect: Effect.gen(function* () {
+    make: Effect.gen(function* () {
       const sql = yield* PgClient.PgClient
       const events = yield* EventStore
       const blob = yield* BlobStore
@@ -497,9 +497,10 @@ export class AttachmentService extends Effect.Service<AttachmentService>()(
         setBucketShared,
       } as const
     }),
-    dependencies: [EventStore.Default],
   },
-) {}
+) {
+  static readonly layer = Layer.effect(this, this.make).pipe(Layer.provide([EventStore.layer]))
+}
 
 /**
  * Remove STAGED uploads no create claimed before `staged_until` — rows and

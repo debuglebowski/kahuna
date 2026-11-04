@@ -1,5 +1,5 @@
 import { PgClient } from "@effect/sql-pg"
-import { Effect } from "effect"
+import { Context, Effect, Layer } from "effect"
 import type { Label } from "../domain/types"
 import { LabelNameConflict, LabelNotFound } from "../errors"
 import { EventStore } from "./EventStore"
@@ -12,8 +12,8 @@ import { type LabelRow, toLabel } from "./rows"
  * rename needs no backfill) and it is soft-deleted so historical references on
  * record versions / concepts stay resolvable. Mirrors `ConceptService`.
  */
-export class LabelService extends Effect.Service<LabelService>()("engine/LabelService", {
-  effect: Effect.gen(function* () {
+export class LabelService extends Context.Service<LabelService>()("engine/LabelService", {
+  make: Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
     const events = yield* EventStore
 
@@ -222,5 +222,6 @@ export class LabelService extends Effect.Service<LabelService>()("engine/LabelSe
       purge,
     } as const
   }),
-  dependencies: [EventStore.Default],
-}) {}
+}) {
+  static readonly layer = Layer.effect(this, this.make).pipe(Layer.provide([EventStore.layer]))
+}

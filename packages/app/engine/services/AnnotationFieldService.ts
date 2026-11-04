@@ -1,5 +1,5 @@
 import { PgClient } from "@effect/sql-pg"
-import { Effect } from "effect"
+import { Context, Effect, Layer } from "effect"
 import type { AnnotationField, AnnotationType, FieldConfig, FieldKind } from "../domain/types"
 import {
   AnnotationFieldConfigInvalid,
@@ -71,10 +71,10 @@ const validateConfig = (
  * notes/tasks, scoped by `annotationType` instead of a concept. A near-clone of
  * `FieldService`, restricted to scalar kinds. Admin-gated at the RPC boundary.
  */
-export class AnnotationFieldService extends Effect.Service<AnnotationFieldService>()(
+export class AnnotationFieldService extends Context.Service<AnnotationFieldService>()(
   "engine/AnnotationFieldService",
   {
-    effect: Effect.gen(function* () {
+    make: Effect.gen(function* () {
       const sql = yield* PgClient.PgClient
       const events = yield* EventStore
 
@@ -272,6 +272,7 @@ export class AnnotationFieldService extends Effect.Service<AnnotationFieldServic
 
       return { list, getById, add, update, archive, restore, reorder } as const
     }),
-    dependencies: [EventStore.Default],
   },
-) {}
+) {
+  static readonly layer = Layer.effect(this, this.make).pipe(Layer.provide([EventStore.layer]))
+}

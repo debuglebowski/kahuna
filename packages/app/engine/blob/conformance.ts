@@ -37,7 +37,7 @@ export interface BlobConformanceCase {
 
 const withStore = (
   layer: Layer.Layer<BlobStore>,
-  body: (blob: Effect.Effect.Success<typeof BlobStore>) => Effect.Effect<void, unknown>,
+  body: (blob: BlobStore["Service"]) => Effect.Effect<void, unknown>,
 ) =>
   Effect.runPromise(
     Effect.provide(
@@ -97,8 +97,8 @@ export const BLOB_CONFORMANCE_CASES: ReadonlyArray<BlobConformanceCase> = [
     run: (layer) =>
       withStore(layer, (blob) =>
         Effect.gen(function* () {
-          const result = yield* Effect.either(blob.get(freshKey()))
-          assert(result._tag === "Left", "missing key should fail, not succeed")
+          const result = yield* Effect.result(blob.get(freshKey()))
+          assert(result._tag === "Failure", "missing key should fail, not succeed")
         }),
       ),
   },
@@ -110,8 +110,8 @@ export const BLOB_CONFORMANCE_CASES: ReadonlyArray<BlobConformanceCase> = [
           const key = freshKey()
           yield* blob.put(key, bytes("doomed"))
           yield* blob.del(key)
-          const result = yield* Effect.either(blob.get(key))
-          assert(result._tag === "Left", "blob still readable after del")
+          const result = yield* Effect.result(blob.get(key))
+          assert(result._tag === "Failure", "blob still readable after del")
         }),
       ),
   },
@@ -126,8 +126,8 @@ export const BLOB_CONFORMANCE_CASES: ReadonlyArray<BlobConformanceCase> = [
           // Reachable in normal operation (a purge racing an owner cascade), and
           // "already gone" is the postcondition, not an error. The local driver
           // failed this until the ENOENT swallow in local.ts.
-          const again = yield* Effect.either(blob.del(key))
-          assert(again._tag === "Right", "second del failed")
+          const again = yield* Effect.result(blob.del(key))
+          assert(again._tag === "Success", "second del failed")
         }),
       ),
   },

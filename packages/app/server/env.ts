@@ -7,7 +7,7 @@ import path from "node:path"
  * Bun only auto-loads `.env` from the process CWD, but this server is launched
  * from `packages/app` (which has no `.env`) — the repo's single `.env` lives at
  * the root. Without this, `DATABASE_URL` is absent and the engine's `PgClient`
- * (`Config.redacted("DATABASE_URL")`, no fallback) crashes on the first RPC.
+ * (`Config.Redacted("DATABASE_URL")`, no fallback) crashes on the first RPC.
  *
  * THE DEPTH IS LOAD-BEARING and the failure is silent: a wrong number of `..`
  * segments lands on a path that does not exist, the `catch` below swallows it,
