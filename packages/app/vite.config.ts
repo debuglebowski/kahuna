@@ -3,7 +3,7 @@ import tailwindcss from "@tailwindcss/vite"
 import react from "@vitejs/plugin-react"
 import { defineConfig } from "vite"
 
-export default defineConfig(({ mode }) => ({
+export default defineConfig({
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: [
@@ -16,13 +16,6 @@ export default defineConfig(({ mode }) => ({
         replacement: `${fileURLToPath(new URL("./node_modules/libavoid-js/dist/libavoid.wasm", import.meta.url))}$1`,
       },
     ],
-  },
-  // react-grid-layout's `react-draggable` reads `process.env.*` at runtime inside
-  // the drag/resize lifecycle; the browser has no `process`, so without these the
-  // handlers throw "process is not defined" and drag/resize silently abort.
-  define: {
-    "process.env.DRAGGABLE_DEBUG": "false",
-    "process.env.NODE_ENV": JSON.stringify(mode),
   },
   server: {
     // 5173 is permanently held by SlayZone's electron-vite, so Vite's default
@@ -37,4 +30,4 @@ export default defineConfig(({ mode }) => ({
       "/api": process.env.API_PROXY ?? "http://localhost:3100",
     },
   },
-}))
+})
