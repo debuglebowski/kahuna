@@ -371,7 +371,7 @@ describe("the trace", () => {
       const stream = yield* events.readStream(inst.id)
       const ran = stream.find((e) => e.eventType === "AutomationRan")
       expect(ran).toBeDefined()
-      expect((ran?.payload as { name?: string }).name).toBe("Won deals")
+      expect((ran!.payload as { name?: string }).name).toBe("Won deals")
 
       // ...and the marker must NOT bump `version`, or it would collide with a
       // user's optimistic-concurrency check on their next save.

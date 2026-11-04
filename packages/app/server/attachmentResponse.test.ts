@@ -29,21 +29,18 @@ describe("attachment preview responses", () => {
     expect(appSecurityHeaders()["content-security-policy"]).toContain("object-src 'self'")
   })
 
-  it.each([
-    "text/html",
-    "TEXT/HTML; charset=utf-8",
-    "image/svg+xml",
-    "application/xml",
-    null,
-  ])("forces %s to a download even with an inline request and a misleading filename", (mime) => {
-    const res = response(mime, true, "looks-safe.pdf")
-    expect(res.headers.get("content-disposition")).toMatch(/^attachment;/)
-    expect(res.headers.get("content-type")).toBe("application/octet-stream")
-    expect(res.headers.get("x-frame-options")).toBe("DENY")
-    expect(res.headers.get("content-security-policy")).toBe(
-      "default-src 'none'; sandbox; frame-ancestors 'none'",
-    )
-  })
+  it.each(["text/html", "TEXT/HTML; charset=utf-8", "image/svg+xml", "application/xml", null])(
+    "forces %s to a download even with an inline request and a misleading filename",
+    (mime) => {
+      const res = response(mime, true, "looks-safe.pdf")
+      expect(res.headers.get("content-disposition")).toMatch(/^attachment;/)
+      expect(res.headers.get("content-type")).toBe("application/octet-stream")
+      expect(res.headers.get("x-frame-options")).toBe("DENY")
+      expect(res.headers.get("content-security-policy")).toBe(
+        "default-src 'none'; sandbox; frame-ancestors 'none'",
+      )
+    },
+  )
 
   it("keeps download and error responses unframeable", () => {
     expect(response("text/plain", false).headers.get("x-frame-options")).toBe("DENY")

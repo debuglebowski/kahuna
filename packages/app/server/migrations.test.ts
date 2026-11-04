@@ -145,7 +145,7 @@ const inspect = async (url: string): Promise<DbState> => {
   }
 }
 
-const SCRATCH_DB = "km_migrations_test"
+const SCRATCH_DB = `km_migrations_test${process.env.KAHUNA_TEST_DB ? `_${process.env.KAHUNA_TEST_DB}` : ""}`
 
 describe("migrations", () => {
   afterAll(async () => {
