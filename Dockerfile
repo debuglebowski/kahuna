@@ -8,7 +8,8 @@
 #
 # Three stages. `build` does a full install and runs Vite. `prod-deps` does a
 # separate --production install, which skips the root's build/lint tooling (biome
-# alone is 95MB across two platform binaries, plus typescript and rolldown). It
+# alone is 95MB across two platform binaries, plus rolldown); typescript still
+# arrives as a peer dependency and is pruned explicitly, see below. It
 # does NOT skip workspace members' devDependencies: bun installs those anyway, so
 # test/build tooling (vite, vitest) is still present in the runtime image. Keep it
 # patched; the image scan covers it.
@@ -61,6 +62,23 @@ COPY packages ./packages
 
 RUN bun install --frozen-lockfile --production
 
+# `--production` drops the root devDependencies, but NOT typescript: bun
+# auto-installs peer dependencies, and @tanstack/db (+ db-ivm,
+# query-db-collection) declares `typescript >=4.7` as a peer, so the store still
+# holds typescript AND its platform binary. Since TS 7 that binary is a Go
+# executable, which the image scan flags for Go stdlib CVEs. Nothing at runtime
+# imports typescript (the peer is types-only, and @tanstack/* is SPA code that
+# the server never loads), so delete it here: the store entries, the platform
+# binaries, and every link pointing at them. biome likewise, should a future
+# install ever drag it in. The runtime stage asserts both are gone.
+RUN set -eux; \
+    rm -rf node_modules/.bun/typescript@* node_modules/.bun/@typescript+* \
+        node_modules/.bun/@biomejs+*; \
+    find node_modules packages -depth \( -path '*/node_modules/typescript' \
+        -o -path '*/node_modules/@typescript' -o -path '*/node_modules/@biomejs' \
+        -o -path '*/.bin/tsc' -o -path '*/.bin/tsserver' -o -path '*/.bin/biome' \) \
+        -exec rm -rf {} +
+
 # ---- runtime ---------------------------------------------------------------
 FROM oven/bun:1.4.2-alpine AS runtime
 
@@ -96,6 +114,13 @@ RUN apk upgrade --no-cache && apk add --no-cache tini
 # whose every runtime dependency is missing.
 COPY --from=prod-deps /srv/kahuna/node_modules ./node_modules
 COPY --from=prod-deps /srv/kahuna/packages/app/node_modules ./packages/app/node_modules
+# Build/lint tooling must never reach the runtime image (see the prune in
+# prod-deps): TS 7's Go binary alone fails the image scan. Fail the build if a
+# dependency change ever lets either back in.
+RUN if find node_modules packages \( -path '*/node_modules/typescript' \
+        -o -path '*/node_modules/@typescript' -o -path '*/node_modules/@biomejs' \
+        -o -name 'typescript@*' -o -name '@typescript+*' -o -name '@biomejs+*' \) \
+        | grep .; then echo "build tooling leaked into the runtime image" >&2; exit 1; fi
 # `packages/app/package.json` carries the `imports` map (#engine, #db) that every
 # server module resolves through, so it is required at RUNTIME, not just at build
 # time. The root manifest comes too: it defines the workspace the node_modules
