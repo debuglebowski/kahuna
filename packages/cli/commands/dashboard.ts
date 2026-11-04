@@ -1,9 +1,10 @@
-import type {
-  Dashboard,
-  DashboardBody,
-  DashboardGroup,
-  DashboardNode,
-  DashboardWidget,
+import {
+  type Dashboard,
+  type DashboardBody,
+  type DashboardGroup,
+  type DashboardNode,
+  type DashboardWidget,
+  toTreeBody,
 } from "@kahunalabs/contract"
 import { requireSession } from "../config.ts"
 import { CliError, EXIT } from "../errors.ts"
@@ -208,19 +209,9 @@ const resolveDashboard = (all: ReadonlyArray<Dashboard>, name: string): Dashboar
 const findDashboard = async (api: Api, name: string): Promise<Dashboard> =>
   resolveDashboard(await api.call((c) => c.listAllDashboards()), name)
 
-/** Refuses a body still in the legacy flat `body.widgets` shape (pre-auto-
- *  layout, never opened in the app since). Nothing here migrates it — that's
- *  the client's job on load — so failing loud beats silently no-op-ing. */
-const requireTreeBody = (dashboard: Dashboard): TreeBody => {
-  if (!dashboard.body.children) {
-    throw new CliError(
-      `"${dashboard.name}" hasn't been opened in the app since before widget editing existed.`,
-      EXIT.usage,
-      "Open it once in Kahuna to migrate its layout, then retry.",
-    )
-  }
-  return dashboard.body as TreeBody
-}
+/** The dashboard's body as a tree. A legacy flat body (pre-auto-layout) is
+ *  upgraded with the same `toTreeBody` the SPA uses; the next write persists it. */
+const treeBodyOf = (dashboard: Dashboard): TreeBody => toTreeBody(dashboard.body)
 
 const nodeLabel = (n: DashboardNode): string | null =>
   n.type === "group" ? (n.label ?? null) : ((n as { title: string | null }).title ?? null)
@@ -397,7 +388,7 @@ const runNodeSet = async (
   for (const k of unsets) guardStructuralKey(k)
   await withApi(async (api) => {
     const dashboard = await findDashboard(api, dashName)
-    const body = requireTreeBody(dashboard)
+    const body = treeBodyOf(dashboard)
     const target = findNode(flattenNodes(body), ref)
     const isGroup = target.type === "group"
     if (isGroup !== (expect === "group")) {
@@ -632,7 +623,7 @@ export const dashboardCommands: ReadonlyArray<Command> = [
       if (!name) throw new CliError("Which dashboard?", EXIT.usage)
       await withApi(async (api) => {
         const dashboard = await findDashboard(api, name)
-        const body = requireTreeBody(dashboard)
+        const body = treeBodyOf(dashboard)
         const flat = flattenNodes(body)
         if (flat.length === 0) {
           note("(empty)")
@@ -659,7 +650,7 @@ export const dashboardCommands: ReadonlyArray<Command> = [
       if (!name || !ref) throw new CliError("Need <dashboard> <widget>.", EXIT.usage)
       await withApi(async (api) => {
         const dashboard = await findDashboard(api, name)
-        const body = requireTreeBody(dashboard)
+        const body = treeBodyOf(dashboard)
         const target = findNode(flattenNodes(body), ref)
         const node = getAt(body.children, target.path)
         printOne(ctx.format, node as unknown as Record<string, unknown>)
@@ -701,7 +692,7 @@ export const dashboardCommands: ReadonlyArray<Command> = [
       const title = ctx.flags.title as string | undefined
       await withApi(async (api) => {
         const dashboard = await findDashboard(api, dashName)
-        const body = requireTreeBody(dashboard)
+        const body = treeBodyOf(dashboard)
         const parentId = resolveParentId(body, ctx.flags.parent as string | undefined)
         const node: Record<string, unknown> = {
           id: crypto.randomUUID(),
@@ -741,7 +732,7 @@ export const dashboardCommands: ReadonlyArray<Command> = [
       if (!dashName || !ref) throw new CliError("Need <dashboard> <widget>.", EXIT.usage)
       await withApi(async (api) => {
         const dashboard = await findDashboard(api, dashName)
-        const body = requireTreeBody(dashboard)
+        const body = treeBodyOf(dashboard)
         const target = findNode(flattenNodes(body), ref)
         const nextBody: TreeBody = { ...body, children: removeAt(body.children, target.path) }
         if (ctx.flags["dry-run"]) {
@@ -777,7 +768,7 @@ export const dashboardCommands: ReadonlyArray<Command> = [
       }
       await withApi(async (api) => {
         const dashboard = await findDashboard(api, dashName)
-        const body = requireTreeBody(dashboard)
+        const body = treeBodyOf(dashboard)
         const target = findNode(flattenNodes(body), ref)
         const node = getAt(body.children, target.path)
         const afterRemoval: TreeBody = { ...body, children: removeAt(body.children, target.path) }
@@ -818,7 +809,7 @@ export const dashboardCommands: ReadonlyArray<Command> = [
         throw new CliError("--direction takes row or col.", EXIT.usage)
       await withApi(async (api) => {
         const dashboard = await findDashboard(api, dashName)
-        const body = requireTreeBody(dashboard)
+        const body = treeBodyOf(dashboard)
         const parentId = resolveParentId(body, ctx.flags.parent as string | undefined)
         const node: DashboardGroup = {
           id: crypto.randomUUID(),

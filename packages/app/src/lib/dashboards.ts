@@ -1,3 +1,4 @@
+import { toTreeBody } from "@kahunalabs/contract"
 import type { CSSProperties } from "react"
 import type { DashboardBody, DashboardNode, DashboardWidget } from "./api"
 
@@ -133,10 +134,8 @@ const normalizeLegacyValues = (w: DashboardWidget): DashboardWidget => {
  * row); the user re-arranges from there.
  */
 export const migrate = (body: DashboardBody): NormBody => {
-  if (body.children !== undefined) {
-    return { direction: body.direction ?? "col", children: body.children.map(normNode) }
-  }
-  return { direction: "col", children: (body.widgets ?? []).map(normNode) }
+  const tree = toTreeBody(body)
+  return { direction: tree.direction, children: tree.children.map(normNode) }
 }
 
 /** Back to the stored shape for persistence (the contract validates it). */

@@ -1050,6 +1050,24 @@ export const DashboardBody = Schema.Struct({
 })
 export type DashboardBody = typeof DashboardBody.Type
 
+/** A body in the auto-layout tree shape (`children` present). */
+export type DashboardTreeBody = DashboardBody & {
+  readonly direction: "row" | "col"
+  readonly children: ReadonlyArray<DashboardNode>
+}
+
+/**
+ * The ONE legacy→tree upgrade. A pre-auto-layout body (flat `widgets`, RGL
+ * `cols`/`rowHeight`) becomes a `col` root holding every widget in order; a tree
+ * body passes through. Pure + shared so the SPA (render/edit) and the CLI (edit)
+ * can't disagree on what a legacy body means. Persisting the result is the
+ * caller's job — this never writes.
+ */
+export const toTreeBody = (body: DashboardBody): DashboardTreeBody =>
+  body.children !== undefined
+    ? { ...body, direction: body.direction ?? "col", children: body.children }
+    : { direction: "col", children: body.widgets ?? [] }
+
 export const Dashboard = Schema.Struct({
   id: Schema.String,
   /** null = org-shared (any member); non-null = personal to that user. */
