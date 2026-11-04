@@ -11,15 +11,12 @@ describe("filePreviewKind", () => {
     expect(filePreviewKind({ mimeType })).toBe(kind)
   })
 
-  it.each([
-    "text/html",
-    "image/svg+xml",
-    "application/xml",
-    "application/json",
-    null,
-  ])("does not embed unsupported MIME %s", (mimeType) => {
-    expect(filePreviewKind({ mimeType })).toBeNull()
-  })
+  it.each(["text/html", "image/svg+xml", "application/xml", "application/json", null])(
+    "does not embed unsupported MIME %s",
+    (mimeType) => {
+      expect(filePreviewKind({ mimeType })).toBeNull()
+    },
+  )
 })
 
 /**

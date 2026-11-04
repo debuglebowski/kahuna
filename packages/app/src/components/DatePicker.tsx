@@ -54,7 +54,7 @@ export function DatePicker({
               setOpen(false)
             }
           }}
-          initialFocus
+          autoFocus
         />
         {onClear && (
           <div className="border-t border-border p-1">

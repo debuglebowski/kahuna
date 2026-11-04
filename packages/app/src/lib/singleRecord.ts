@@ -34,10 +34,7 @@ export function useSingleRecord(conceptId: string): {
 } {
   const collection = singleRecordOfConcept(conceptId)
   useRegisterCollection(KEY.singleRecord(conceptId), collection)
-  const q = useLiveQuery(
-    (b) => (conceptId ? b.from({ d: collection }) : undefined),
-    [conceptId, collection],
-  )
+  const q = useLiveQuery((b) => (conceptId ? b.from({ d: collection }) : undefined))
   const detail = q.data?.[0]
   return {
     detail,

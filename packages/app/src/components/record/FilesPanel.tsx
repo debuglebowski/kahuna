@@ -36,7 +36,7 @@ export function FilesPanel({
   const [showArchived, setShowArchived] = useState(false)
   const collection = filesBySubject(subjectId)
   useRegisterCollection(KEY.files(subjectId), collection)
-  const q = useLiveQuery((qb) => qb.from({ f: collection }), [subjectId, collection])
+  const q = useLiveQuery((qb) => qb.from({ f: collection }))
   const refetch = () => {
     void collection.utils.refetch()
     onChanged?.()

@@ -38,7 +38,7 @@ export function ActivityFeed({
 }) {
   const collection = activityBySubject(subjectId)
   useRegisterCollection(KEY.activity(subjectId), collection)
-  const q = useLiveQuery((qb) => qb.from({ a: collection }), [subjectId, collection])
+  const q = useLiveQuery((qb) => qb.from({ a: collection }))
   // Status names for task-transition snippets. Read-only: no SSE registration
   // (TaskList owns that key while mounted; double-registration would drop it).
   const statusesQ = useLiveQuery((qb) => qb.from({ s: taskStatusesCollection }))

@@ -154,7 +154,7 @@ export function NotesPanel({
   const [showArchived, setShowArchived] = useState(false)
   const collection = notesBySubject(subjectId)
   useRegisterCollection(KEY.notes(subjectId), collection)
-  const q = useLiveQuery((qb) => qb.from({ n: collection }), [subjectId, collection])
+  const q = useLiveQuery((qb) => qb.from({ n: collection }))
   const refetch = () => collection.utils.refetch()
 
   const byUser = new Map(members.map((m) => [m.userId, m]))

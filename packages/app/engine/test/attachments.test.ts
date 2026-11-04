@@ -165,8 +165,8 @@ describe("attachments", () => {
       // The event carries the bucket instead of a host record.
       const stream = yield* events.readStream(att.id)
       expect(stream.map((e) => e.eventType)).toEqual(["AttachmentAdded"])
-      expect((stream[0]?.payload as { bucketId?: string }).bucketId).toBe(bucketId)
-      expect((stream[0]?.payload as { subjectId?: string }).subjectId).toBeUndefined()
+      expect((stream[0]!.payload as { bucketId?: string }).bucketId).toBe(bucketId)
+      expect((stream[0]!.payload as { subjectId?: string }).subjectId).toBeUndefined()
     }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
 
@@ -345,7 +345,7 @@ describe("attachments", () => {
       // Tombstones survive, carrying the bucket.
       const stream = yield* events.readStream(a.id)
       expect(stream.map((e) => e.eventType)).toEqual(["AttachmentAdded", "AttachmentPurged"])
-      expect((stream[1]?.payload as { bucketId?: string }).bucketId).toBe(bucketId)
+      expect((stream[1]!.payload as { bucketId?: string }).bucketId).toBe(bucketId)
 
       // An empty/unknown bucket purges to nothing rather than failing.
       expect((yield* attachments.purgeBucket(randomUUID())).length).toBe(0)
