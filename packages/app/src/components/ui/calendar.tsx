@@ -6,44 +6,56 @@ import { cn } from "@/lib/utils"
 
 export type CalendarProps = ComponentProps<typeof DayPicker>
 
-/** shadcn-style calendar (react-day-picker v8), restyled with the app's tokens. */
+/**
+ * shadcn-style calendar (react-day-picker v10), restyled with the app's tokens.
+ *
+ * Ported from the v8 markup, so two structural differences matter:
+ * - The nav is no longer inside the caption: it's a sibling of the months,
+ *   overlaid on the caption row (`months` is the positioning context).
+ * - Modifier classes (`selected`, `today`, `outside`, `disabled`) land on the
+ *   cell, not the button — and so does `aria-selected`. Button styling is
+ *   therefore reached through `[&>button]`.
+ */
 function Calendar({ className, classNames, showOutsideDays = true, ...props }: CalendarProps) {
   return (
     <DayPicker
       showOutsideDays={showOutsideDays}
       className={cn("p-3", className)}
       classNames={{
-        months: "flex flex-col gap-2 sm:flex-row",
+        months: "relative flex flex-col gap-2 sm:flex-row",
         month: "flex flex-col gap-4",
-        caption: "relative flex items-center justify-center pt-1",
+        month_caption: "flex items-center justify-center pt-1",
         caption_label: "text-sm font-medium",
-        nav: "flex items-center gap-1",
-        nav_button: cn(
+        nav: "absolute inset-x-1 top-0 z-10 flex items-center justify-between",
+        button_previous: cn(
           buttonVariants({ variant: "outline" }),
-          "size-7 bg-transparent p-0 opacity-50 hover:opacity-100",
+          "size-7 bg-transparent p-0 opacity-50 hover:opacity-100 aria-disabled:pointer-events-none",
         ),
-        nav_button_previous: "absolute left-1",
-        nav_button_next: "absolute right-1",
-        table: "w-full border-collapse space-x-1",
-        head_row: "flex",
-        head_cell: "w-8 rounded-md text-[0.8rem] font-normal text-muted-foreground",
-        row: "mt-2 flex w-full",
-        cell: "relative p-0 text-center text-sm focus-within:relative focus-within:z-20 [&:has([aria-selected])]:bg-accent first:[&:has([aria-selected])]:rounded-l-md last:[&:has([aria-selected])]:rounded-r-md",
-        day: cn(
-          buttonVariants({ variant: "ghost" }),
-          "size-8 p-0 font-normal aria-selected:opacity-100",
+        button_next: cn(
+          buttonVariants({ variant: "outline" }),
+          "size-7 bg-transparent p-0 opacity-50 hover:opacity-100 aria-disabled:pointer-events-none",
         ),
-        day_selected:
-          "bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground focus:bg-primary focus:text-primary-foreground",
-        day_today: "bg-accent text-accent-foreground",
-        day_outside: "text-muted-foreground aria-selected:text-muted-foreground",
-        day_disabled: "text-muted-foreground opacity-50",
-        day_hidden: "invisible",
+        month_grid: "w-full border-collapse space-x-1",
+        weekdays: "flex",
+        weekday: "w-8 rounded-md text-[0.8rem] font-normal text-muted-foreground",
+        week: "mt-2 flex w-full",
+        day: "relative p-0 text-center text-sm focus-within:relative focus-within:z-20 aria-selected:bg-accent first:aria-selected:rounded-l-md last:aria-selected:rounded-r-md",
+        day_button: cn(buttonVariants({ variant: "ghost" }), "size-8 p-0 font-normal"),
+        selected:
+          "[&>button]:bg-primary [&>button]:text-primary-foreground [&>button]:hover:bg-primary [&>button]:hover:text-primary-foreground [&>button]:focus:bg-primary [&>button]:focus:text-primary-foreground",
+        today: "[&>button]:bg-accent [&>button]:text-accent-foreground",
+        outside: "[&>button]:text-muted-foreground aria-selected:[&>button]:text-muted-foreground",
+        disabled: "[&>button]:text-muted-foreground [&>button]:opacity-50",
+        hidden: "invisible",
         ...classNames,
       }}
       components={{
-        IconLeft: ({ className: c, ...p }) => <ChevronLeft className={cn("size-4", c)} {...p} />,
-        IconRight: ({ className: c, ...p }) => <ChevronRight className={cn("size-4", c)} {...p} />,
+        Chevron: ({ className: c, orientation }) =>
+          orientation === "left" ? (
+            <ChevronLeft className={cn("size-4", c)} />
+          ) : (
+            <ChevronRight className={cn("size-4", c)} />
+          ),
       }}
       {...props}
     />
