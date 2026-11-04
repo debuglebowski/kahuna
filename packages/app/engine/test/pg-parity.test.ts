@@ -112,30 +112,32 @@ describe("sql-pg 4 type parity", () => {
     ),
   )
 
-  it.effect("jsonb writes: sql.json, a stringified ::jsonb, and a bare string into a jsonb column", () =>
-    run((sql) =>
-      sql.withTransaction(
-        Effect.gen(function* () {
-          // A transaction pins one connection, so the TEMP table is visible to
-          // every statement below, and is dropped with it.
-          yield* sql`CREATE TEMP TABLE pg_parity (doc jsonb, ids jsonb) ON COMMIT DROP`
-          // 1. sql.json now binds a real jsonb parameter, so a top-level ARRAY
-          //    lands as a JSON array. (Under `pg` it became a Postgres array
-          //    literal, which is why the engine stringifies arrays instead.)
-          // 2. That `${JSON.stringify(x)}::jsonb` idiom must keep working.
-          // 3. So must a bare stringified value into a jsonb column with no cast
-          //    (AnnotationService's `label_ids = ${JSON.stringify(ids)}`).
-          yield* sql`INSERT INTO pg_parity (doc, ids) VALUES (${sql.json(["a", { b: 1 }])}, ${JSON.stringify(["x"])}::jsonb)`
-          yield* sql`INSERT INTO pg_parity (doc, ids) VALUES (${sql.json({ k: [1, 2] })}, ${JSON.stringify(["y", "z"])})`
-          const rows = yield* sql<{ dt: string; it: string; doc: unknown; ids: unknown }>`
+  it.effect(
+    "jsonb writes: sql.json, a stringified ::jsonb, and a bare string into a jsonb column",
+    () =>
+      run((sql) =>
+        sql.withTransaction(
+          Effect.gen(function* () {
+            // A transaction pins one connection, so the TEMP table is visible to
+            // every statement below, and is dropped with it.
+            yield* sql`CREATE TEMP TABLE pg_parity (doc jsonb, ids jsonb) ON COMMIT DROP`
+            // 1. sql.json now binds a real jsonb parameter, so a top-level ARRAY
+            //    lands as a JSON array. (Under `pg` it became a Postgres array
+            //    literal, which is why the engine stringifies arrays instead.)
+            // 2. That `${JSON.stringify(x)}::jsonb` idiom must keep working.
+            // 3. So must a bare stringified value into a jsonb column with no cast
+            //    (AnnotationService's `label_ids = ${JSON.stringify(ids)}`).
+            yield* sql`INSERT INTO pg_parity (doc, ids) VALUES (${sql.json(["a", { b: 1 }])}, ${JSON.stringify(["x"])}::jsonb)`
+            yield* sql`INSERT INTO pg_parity (doc, ids) VALUES (${sql.json({ k: [1, 2] })}, ${JSON.stringify(["y", "z"])})`
+            const rows = yield* sql<{ dt: string; it: string; doc: unknown; ids: unknown }>`
             SELECT jsonb_typeof(doc) AS dt, jsonb_typeof(ids) AS it, doc, ids FROM pg_parity ORDER BY dt`
-          expect(rows).toEqual([
-            { dt: "array", it: "array", doc: ["a", { b: 1 }], ids: ["x"] },
-            { dt: "object", it: "array", doc: { k: [1, 2] }, ids: ["y", "z"] },
-          ])
-        }),
+            expect(rows).toEqual([
+              { dt: "array", it: "array", doc: ["a", { b: 1 }], ids: ["x"] },
+              { dt: "object", it: "array", doc: { k: [1, 2] }, ids: ["y", "z"] },
+            ])
+          }),
+        ),
       ),
-    ),
   )
 
   it.effect("undefined and null bind as SQL NULL", () =>
@@ -180,14 +182,18 @@ describe("sql-pg 4 transactions", () => {
       const sql = yield* PgClient.PgClient
       const tag = `pg-parity-${randomUUID()}`
       // A real table, so a second pooled connection can look for the row.
-      yield* sql.withTransaction(
-        Effect.gen(function* () {
-          yield* sql`INSERT INTO events (org_id, occurred_at, actor, subject_kind, subject_id, event_type, payload)
+      yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            yield* sql`INSERT INTO events (org_id, occurred_at, actor, subject_kind, subject_id, event_type, payload)
             VALUES (${tag}, now(), 'pg-parity', 'concept', ${randomUUID()}, 'Probe', ${sql.json({})})`
-          return yield* Effect.fail("rollback" as const)
-        }),
-      ).pipe(Effect.flip)
-      const after = yield* sql<{ n: number }>`SELECT COUNT(*)::int AS n FROM events WHERE org_id = ${tag}`
+            return yield* Effect.fail("rollback" as const)
+          }),
+        )
+        .pipe(Effect.flip)
+      const after = yield* sql<{
+        n: number
+      }>`SELECT COUNT(*)::int AS n FROM events WHERE org_id = ${tag}`
       expect(after[0]!.n).toBe(0)
     }).pipe(Effect.provide(PgTestLive)),
   )
