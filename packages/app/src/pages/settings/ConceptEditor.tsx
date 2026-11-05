@@ -61,6 +61,7 @@ import {
   TabBarItem,
 } from "../../components/ui"
 import {
+  type ApprovalPolicy,
   api,
   type Concept,
   type Dashboard,
@@ -242,6 +243,7 @@ interface Draft {
   defaultLabelIds: string[]
   versioningEnabled: boolean
   editReach: EditReach
+  approvalPolicy: ApprovalPolicy
 }
 
 /** Which destructive confirm dialog is open inside the modal (null = none). */
@@ -298,6 +300,7 @@ export function ConceptEditor({
     defaultLabelIds: [...concept.defaultLabelIds],
     versioningEnabled: concept.versioningEnabled,
     editReach: concept.editReach,
+    approvalPolicy: concept.approvalPolicy,
   }))
   const [dirty, setDirty] = useState(false)
   // Record-view deletion confirm (the Layout tab manages per-concept record views).
@@ -351,6 +354,7 @@ export function ConceptEditor({
         color: draft.color,
         versioningEnabled: draft.versioningEnabled,
         editReach: draft.editReach,
+        approvalPolicy: draft.approvalPolicy,
         staticLabelIds: draft.staticLabelIds,
         defaultLabelIds: draft.defaultLabelIds.filter((id) => !draft.staticLabelIds.includes(id)),
       }),
@@ -842,15 +846,16 @@ export function ConceptEditor({
                 </div>
 
                 {/* Reach is subordinate to versioning — with versioning off every row
-                    is editable anyway, so the control is dead and reads disabled. */}
-                <div className="flex items-center gap-3 pl-7">
+                    is editable anyway, so the control is dead and reads disabled.
+                    One grid for the sub-settings so labels and selects line up. */}
+                <div className="grid w-fit grid-cols-[max-content_16rem_auto] items-center gap-x-3 gap-y-3 pl-7">
                   <span className="text-sm text-muted-foreground">Editable versions</span>
                   <Select
                     value={draft.editReach}
                     disabled={!admin || !draft.versioningEnabled}
                     onValueChange={(v) => patch({ editReach: v as EditReach })}
                   >
-                    <SelectTrigger className="w-64">
+                    <SelectTrigger className="w-full">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -861,6 +866,24 @@ export function ConceptEditor({
                   <InfoHint
                     text={`"Draft only" freezes a version once published — changes need a new draft. "Any version" lets a published version be amended in place, e.g. to fix a typo. An amendment is live immediately to everyone referencing that version, including items pinned to it, and is recorded in the activity feed as "amended this version".`}
                     label="Editable versions — more info"
+                  />
+                  <span className="text-sm text-muted-foreground">Approval</span>
+                  <Select
+                    value={draft.approvalPolicy}
+                    disabled={!admin || !draft.versioningEnabled}
+                    onValueChange={(v) => patch({ approvalPolicy: v as ApprovalPolicy })}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Not required</SelectItem>
+                      <SelectItem value="all">Every publish needs approval</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <InfoHint
+                    text={`With "Every publish needs approval", publishing sends the version to a named approver, who signs off in Kahuna — it publishes when they approve, and the version history records who approved it. Without it, you can still ask for approval when publishing.`}
+                    label="Approval — more info"
                   />
                 </div>
               </div>

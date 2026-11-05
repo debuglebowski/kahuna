@@ -17,7 +17,7 @@ import {
 import { EventStore } from "./EventStore"
 import { FieldService } from "./FieldService"
 import { OrgContext } from "./OrgContext"
-import { type RelationRow, toRelation } from "./rows"
+import { type RelationRow, toRelation, toRelease } from "./rows"
 
 export interface CreateRelationInput {
   /** The relation field def (kind=relation) this edge realises. */
@@ -56,8 +56,9 @@ export class RelationService extends Context.Service<RelationService>()("engine/
           readonly version_status: string
           readonly versioning_enabled: boolean
           readonly edit_reach: string | null
+          readonly release: unknown
         }>`
-          SELECT i.concept_id, i.version_status, c.versioning_enabled, c.edit_reach
+          SELECT i.concept_id, i.version_status, i.release, c.versioning_enabled, c.edit_reach
           FROM record_versions i JOIN concepts c ON c.id = i.concept_id AND c.org_id = i.org_id
           WHERE i.id = ${recordVersionId} AND i.org_id = ${orgId} AND i.archived_at IS NULL LIMIT 1`
         const row = rows[0]
@@ -69,7 +70,10 @@ export class RelationService extends Context.Service<RelationService>()("engine/
               versioningEnabled: row.versioning_enabled ?? false,
               editReach: row.edit_reach === "any" ? "any" : "draft",
             },
-            { versionStatus: row.version_status === "draft" ? "draft" : "published" },
+            {
+              versionStatus: row.version_status === "draft" ? "draft" : "published",
+              release: toRelease(row.release),
+            },
           ),
         }
       })
@@ -115,15 +119,22 @@ export class RelationService extends Context.Service<RelationService>()("engine/
             readonly record_id: string
             readonly version_status: string
             readonly archived_at: Date | null
+            readonly release: unknown
           }>`
-            SELECT concept_id, record_id, version_status, archived_at FROM record_versions
+            SELECT concept_id, record_id, version_status, archived_at, release FROM record_versions
             WHERE id = ${input.toVersionId} AND org_id = ${orgId} LIMIT 1`
           const row = rows[0]
           if (!row)
             return yield* Effect.fail(
               new RecordVersionNotFound({ recordVersionId: input.toVersionId }),
             )
-          if (row.version_status !== "published" || row.archived_at !== null) {
+          // An imported history row is published but holds no real content of its
+          // own — pinning one would freeze a reference onto a stand-in.
+          if (
+            row.version_status !== "published" ||
+            row.archived_at !== null ||
+            toRelease(row.release).historical
+          ) {
             return yield* Effect.fail(new RelationPinToDraft({ versionId: input.toVersionId }))
           }
           return {

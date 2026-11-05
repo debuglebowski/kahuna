@@ -11,6 +11,7 @@ import {
   AnnotationFieldService,
   AnnotationService,
   type AnnotationType,
+  type ApprovalPolicy,
   type Attachment,
   AttachmentService,
   AUTOMATION_ACTOR_PREFIX,
@@ -527,6 +528,7 @@ export const updateConcept = (
     readonly color?: string | null
     readonly versioningEnabled?: boolean
     readonly editReach?: EditReach
+    readonly approvalPolicy?: ApprovalPolicy
     readonly staticLabelIds?: ReadonlyArray<string>
     readonly defaultLabelIds?: ReadonlyArray<string>
   },
@@ -543,6 +545,7 @@ export const updateConcept = (
         color: patch.color,
         versioningEnabled: patch.versioningEnabled,
         editReach: patch.editReach,
+        approvalPolicy: patch.approvalPolicy,
         staticLabelIds: patch.staticLabelIds,
         defaultLabelIds: patch.defaultLabelIds,
       }),
@@ -1106,8 +1109,138 @@ export const listVersions = (recordId: string): UC<ReadonlyArray<RecordVersion>>
 export const newVersion = (recordId: string): UC<RecordVersion> =>
   Effect.flatMap(RecordService, (i) => i.newVersion({ recordId }))
 
-export const publishVersion = (id: string, expectedVersion: number): UC<RecordVersion> =>
-  Effect.flatMap(RecordService, (i) => i.publishVersion({ recordVersionId: id, expectedVersion }))
+type TxUC<A> = Effect.Effect<A, unknown, OrgContext | EngineServices | PgClient.PgClient>
+
+/** Release text as sent on publish / info edits. */
+type ReleaseInput = {
+  readonly name?: string | null
+  readonly note?: string | null
+  readonly effectiveDate?: string | null
+}
+
+/**
+ * Publish a draft — or, with an approver, request approval. A request also opens
+ * a to-do (annotation task) on the record, assigned to the approver: it's how
+ * they learn there's something to sign off, and it shows in their /tasks. Task +
+ * request are one transaction, so neither exists without the other. Its id rides
+ * the request (`pending.taskId`) so the resolution can close it.
+ */
+export const publishVersion = (
+  input: {
+    readonly id: string
+    readonly expectedVersion: number
+    readonly approverId?: string | null
+  } & ReleaseInput,
+): TxUC<RecordVersion> =>
+  Effect.gen(function* () {
+    const records = yield* RecordService
+    const base = {
+      recordVersionId: input.id,
+      expectedVersion: input.expectedVersion,
+      name: input.name,
+      note: input.note,
+      effectiveDate: input.effectiveDate,
+      approverId: input.approverId,
+    }
+    if (!input.approverId) return yield* records.publishVersion(base)
+    const sql = yield* PgClient.PgClient
+    const annotations = yield* AnnotationService
+    return yield* sql.withTransaction(
+      Effect.gen(function* () {
+        const current = yield* records.get(input.id)
+        const concept = yield* Effect.flatMap(ConceptService, (c) => c.getById(current.conceptId))
+        const subjects = (yield* resolveTaskSubjects([current.recordId])) as ReadonlyArray<{
+          readonly label: string
+        }>
+        const label = subjects[0]?.label ?? "(untitled)"
+        const versionName = input.name?.trim() || `v${current.versionSeq}`
+        const task = yield* annotations.createTask({
+          subjectId: current.recordId,
+          title: `Approve ${concept.name} "${label}" ${versionName}`,
+          assignee: input.approverId,
+        })
+        return yield* records.publishVersion({ ...base, taskId: task.id })
+      }),
+    )
+  })
+
+/** Close the approver's to-do once its request resolves: `done` on approve,
+ *  `cancelled` on reject / withdraw (falling back to any `done` status). Runs
+ *  AFTER the resolution committed and swallows its own failures — a to-do the
+ *  user already deleted or closed must never undo a sign-off. */
+const closeApprovalTask = (
+  taskId: string | null,
+  category: "done" | "cancelled",
+): Effect.Effect<void, never, OrgContext | EngineServices> =>
+  taskId === null
+    ? Effect.void
+    : Effect.gen(function* () {
+        const annotations = yield* AnnotationService
+        const task = yield* annotations.getTask(taskId)
+        const statuses = yield* Effect.flatMap(TaskStatusService, (s) => s.list())
+        const current = statuses.find((st) => st.id === task.statusId)
+        if (current && (current.category === "done" || current.category === "cancelled")) return
+        const target =
+          statuses.find((st) => st.category === category) ??
+          statuses.find((st) => st.category === "done")
+        if (!target) return
+        yield* annotations.setTaskStatus({
+          id: taskId,
+          expectedVersion: task.version,
+          statusId: target.id,
+        })
+      }).pipe(Effect.catch(() => Effect.void))
+
+/** Run an approval resolution, then close the request's to-do. The task id is
+ *  read BEFORE (resolving clears `pending`). */
+const resolveApproval = (
+  id: string,
+  category: "done" | "cancelled",
+  run: (records: RecordService["Service"]) => Effect.Effect<RecordVersion, unknown, OrgContext>,
+): UC<RecordVersion> =>
+  Effect.gen(function* () {
+    const records = yield* RecordService
+    const before = yield* records.get(id)
+    const resolved = yield* run(records)
+    yield* closeApprovalTask(before.release.pending?.taskId ?? null, category)
+    return resolved
+  })
+
+export const approveVersion = (id: string): UC<RecordVersion> =>
+  resolveApproval(id, "done", (r) => r.approveVersion({ recordVersionId: id }))
+
+export const rejectVersion = (id: string, reason?: string | null): UC<RecordVersion> =>
+  resolveApproval(id, "cancelled", (r) => r.rejectVersion({ recordVersionId: id, reason }))
+
+export const withdrawApproval = (id: string): UC<RecordVersion> =>
+  resolveApproval(id, "cancelled", (r) => r.withdrawApproval({ recordVersionId: id }))
+
+export const setVersionInfo = (
+  input: {
+    readonly id: string
+    readonly attributedAuthor?: string | null
+    readonly attributedApprover?: string | null
+  } & ReleaseInput,
+): UC<RecordVersion> =>
+  Effect.flatMap(RecordService, (r) =>
+    r.setVersionInfo({
+      recordVersionId: input.id,
+      name: input.name,
+      note: input.note,
+      effectiveDate: input.effectiveDate,
+      attributedAuthor: input.attributedAuthor,
+      attributedApprover: input.attributedApprover,
+    }),
+  )
+
+export const importHistoricalVersion = (input: {
+  readonly recordId: string
+  readonly name: string
+  readonly note?: string | null
+  readonly effectiveDate: string
+  readonly attributedAuthor?: string | null
+  readonly attributedApprover?: string | null
+}): UC<RecordVersion> => Effect.flatMap(RecordService, (r) => r.importHistoricalVersion(input))
 
 export const discardDraft = (id: string): UC<RecordVersion> =>
   Effect.flatMap(RecordService, (i) => i.discardDraft({ recordVersionId: id }))

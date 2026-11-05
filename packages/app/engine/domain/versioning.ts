@@ -5,7 +5,11 @@ import type { EditReach, VersionStatus } from "./types"
  * shared by the record version guard and the relation source guard so the two can't
  * drift. Pure (no db) so it also documents the rule in one readable place.
  *
- * Three ways to be editable:
+ * Never editable, whatever the concept says: a draft awaiting approval (the
+ * approver signs off on exactly what they were shown) and an imported HISTORY
+ * row (its content was never captured — amending it would invent a past).
+ *
+ * Otherwise, three ways to be editable:
  *  - the concept isn't versioned at all (every record version is a plain editable row —
  *    note such rows are `published` too, which is why the status alone won't do);
  *  - it's the open draft;
@@ -16,11 +20,16 @@ import type { EditReach, VersionStatus } from "./types"
  */
 export const canEditVersion = (
   concept: { readonly versioningEnabled: boolean; readonly editReach: EditReach },
-  recordVersion: { readonly versionStatus: VersionStatus },
+  recordVersion: {
+    readonly versionStatus: VersionStatus
+    readonly release?: { readonly pending: unknown; readonly historical: boolean }
+  },
 ): boolean =>
-  !concept.versioningEnabled ||
-  recordVersion.versionStatus === "draft" ||
-  concept.editReach === "any"
+  !recordVersion.release?.pending &&
+  !recordVersion.release?.historical &&
+  (!concept.versioningEnabled ||
+    recordVersion.versionStatus === "draft" ||
+    concept.editReach === "any")
 
 /** Is this write an AMENDMENT (an edit to an already-published version) rather
  *  than an ordinary edit? Decides `VersionAmended` vs `RecordVersionUpdated`. Assumes

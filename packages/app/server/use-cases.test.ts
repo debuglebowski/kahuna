@@ -799,7 +799,13 @@ describe("single-record concepts (use-case layer)", () => {
       recordVersion: { id: string; recordId: string; version: number }
     }
     // Publish, then open a second version — two record version rows on one lineage.
-    await run(org, publishVersion(detail.recordVersion.id, detail.recordVersion.version))
+    await run(
+      org,
+      publishVersion({
+        id: detail.recordVersion.id,
+        expectedVersion: detail.recordVersion.version,
+      }),
+    )
     await run(org, newVersion(detail.recordVersion.recordId))
     expect((await run(org, listVersions(detail.recordVersion.recordId))).length).toBe(2)
 

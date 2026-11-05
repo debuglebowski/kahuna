@@ -1,5 +1,12 @@
 import { Result } from "effect"
-import type { EngineEvent, RecordState, VersionStatus } from "../domain/types"
+import {
+  EMPTY_RELEASE,
+  type EngineEvent,
+  type RecordState,
+  type ReleaseInfo,
+  type VersionRelease,
+  type VersionStatus,
+} from "../domain/types"
 import { EventCorruption } from "../errors"
 
 /**
@@ -19,7 +26,24 @@ export interface FoldState {
   readonly archivedAt: Date | null
   readonly versionStatus: VersionStatus
   readonly publishedAt: Date | null
+  /** Release metadata (name / note / approval), folded from the version's
+   *  publish + approval + info events. */
+  readonly release: VersionRelease
 }
+
+/** Overlay the release-text keys PRESENT in `info` (explicit null clears). */
+const withInfo = (r: VersionRelease, info: ReleaseInfo): VersionRelease => ({
+  ...r,
+  ...(info.name !== undefined ? { name: info.name } : {}),
+  ...(info.note !== undefined ? { note: info.note } : {}),
+  ...(info.effectiveDate !== undefined ? { effectiveDate: info.effectiveDate } : {}),
+})
+
+const infoOf = (p: ReleaseInfo): ReleaseInfo => ({
+  name: p.name,
+  note: p.note,
+  effectiveDate: p.effectiveDate,
+})
 
 /** An explicit `null` field value means "clear" — the key is dropped from the
  *  projected state rather than stored. Replay-safe: nulls only entered payloads
@@ -62,6 +86,7 @@ export const applyEvent = (
       archivedAt: null,
       versionStatus,
       publishedAt: versionStatus === "published" ? event.occurredAt : null,
+      release: p.historical ? { ...EMPTY_RELEASE, historical: true } : EMPTY_RELEASE,
     })
   }
 
@@ -79,13 +104,7 @@ export const applyEvent = (
         new EventCorruption({ reason: "restore on a live recordVersion", eventId: event.id }),
       )
     }
-    return Result.succeed({
-      state: acc.state,
-      version: acc.version + 1,
-      archivedAt: null,
-      versionStatus: acc.versionStatus,
-      publishedAt: acc.publishedAt,
-    })
+    return Result.succeed({ ...acc, version: acc.version + 1, archivedAt: null })
   }
   if (acc.archivedAt !== null) {
     return Result.fail(
@@ -106,15 +125,14 @@ export const applyEvent = (
       // `versioningEnabled` + `editReach`) — NOT here, because a non-versioned
       // record version is also 'published' yet must stay editable.
       return Result.succeed({
+        ...acc,
         state: dropNulls({ ...acc.state, ...p.patch }),
         version: acc.version + 1,
         archivedAt: null,
-        versionStatus: acc.versionStatus,
-        publishedAt: acc.publishedAt,
       })
     // Draft → published. One-shot: a second publish is corruption. Only ever
     // emitted for versioned concepts, so it can't misfire on a non-versioned row.
-    case "VersionPublished":
+    case "VersionPublished": {
       if (acc.versionStatus === "published") {
         return Result.fail(
           new EventCorruption({
@@ -123,24 +141,89 @@ export const applyEvent = (
           }),
         )
       }
+      // An approved publish carries the request's text; the AUTHOR is whoever
+      // requested it (the approver's actor is on `VersionApproved`). A direct
+      // publish's author is its own actor.
+      const pending = acc.release.pending
+      const release = withInfo(acc.release, infoOf(p))
       return Result.succeed({
-        state: acc.state,
+        ...acc,
         version: acc.version + 1,
-        archivedAt: acc.archivedAt,
         versionStatus: "published",
         publishedAt: event.occurredAt,
+        release: {
+          ...release,
+          publishedBy: pending ? pending.requestedBy : event.actor,
+          pending: null,
+          lastRejection: null,
+        },
+      })
+    }
+    case "VersionApprovalRequested":
+      if (acc.versionStatus === "published" || acc.release.pending) {
+        return Result.fail(
+          new EventCorruption({
+            reason: "approval request on a published or already-pending version",
+            eventId: event.id,
+          }),
+        )
+      }
+      return Result.succeed({
+        ...acc,
+        version: acc.version + 1,
+        release: {
+          ...acc.release,
+          pending: {
+            approverId: p.approverId,
+            requestedBy: event.actor,
+            requestedAt: event.occurredAt.toISOString(),
+            name: p.name ?? null,
+            note: p.note ?? null,
+            effectiveDate: p.effectiveDate ?? null,
+            taskId: p.taskId ?? null,
+          },
+        },
+      })
+    case "VersionApproved":
+    case "VersionApprovalRejected":
+    case "VersionApprovalWithdrawn": {
+      if (!acc.release.pending) {
+        return Result.fail(
+          new EventCorruption({ reason: `${p._tag} without a pending request`, eventId: event.id }),
+        )
+      }
+      const at = event.occurredAt.toISOString()
+      const release: VersionRelease =
+        p._tag === "VersionApproved"
+          ? // Keep `pending` — the `VersionPublished` that follows reads the
+            // requester + text off it, then clears it.
+            { ...acc.release, approvedBy: event.actor, approvedAt: at }
+          : p._tag === "VersionApprovalRejected"
+            ? {
+                ...acc.release,
+                pending: null,
+                lastRejection: { by: event.actor, at, reason: p.reason ?? null },
+              }
+            : { ...acc.release, pending: null }
+      return Result.succeed({ ...acc, version: acc.version + 1, release })
+    }
+    case "VersionInfoSet":
+      return Result.succeed({
+        ...acc,
+        version: acc.version + 1,
+        release: {
+          ...withInfo(acc.release, infoOf(p)),
+          ...(p.attributedAuthor !== undefined ? { attributedAuthor: p.attributedAuthor } : {}),
+          ...(p.attributedApprover !== undefined
+            ? { attributedApprover: p.attributedApprover }
+            : {}),
+        },
       })
     // `RecordVersionDeleted` is the legacy archive tag (kept for replay); new archives
     // emit `RecordVersionArchived`. Both mark the record version archived identically.
     case "RecordVersionDeleted":
     case "RecordVersionArchived":
-      return Result.succeed({
-        state: acc.state,
-        version: acc.version + 1,
-        archivedAt: event.occurredAt,
-        versionStatus: acc.versionStatus,
-        publishedAt: acc.publishedAt,
-      })
+      return Result.succeed({ ...acc, version: acc.version + 1, archivedAt: event.occurredAt })
     case "AttachmentAdded":
       // Attachments are recorded against the record version but do not change its
       // projected state or version.
@@ -150,11 +233,8 @@ export const applyEvent = (
       // Does NOT bump version (the display decay/momentum stay computed-on-read).
       const bands = (acc.state.__bands as Record<string, string> | undefined) ?? {}
       return Result.succeed({
+        ...acc,
         state: { ...acc.state, __bands: { ...bands, [p.field]: p.to } },
-        version: acc.version,
-        archivedAt: acc.archivedAt,
-        versionStatus: acc.versionStatus,
-        publishedAt: acc.publishedAt,
       })
     }
     default:

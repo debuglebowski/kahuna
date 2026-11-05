@@ -43,6 +43,7 @@ import type {
   TaskStatusCategory,
   VersionStatus,
 } from "../domain/types"
+import { EMPTY_RELEASE, type VersionRelease } from "../domain/types"
 
 /** Raw DB row shapes (snake_case, as returned by `SELECT *`). */
 export interface ConceptRow {
@@ -59,6 +60,7 @@ export interface ConceptRow {
   readonly default_label_ids: unknown
   readonly versioning_enabled: boolean
   readonly edit_reach: string | null
+  readonly approval_policy: string | null
   readonly single_record: boolean
   /** Org-wide default record version-detail layout (`{ tiles }`); null = built-in preset. */
   readonly record_view: unknown
@@ -108,6 +110,7 @@ export interface RecordVersionRow {
   readonly version_status: string
   readonly version_seq: number | string
   readonly published_at: Date | null
+  readonly release: unknown
   readonly created_at: Date
   readonly archived_at: Date | null
 }
@@ -222,6 +225,8 @@ export const toConcept = (r: ConceptRow): Concept => ({
   // Exhaustive coercion (not a cast): a legacy/unknown value reads as the safe
   // default, which is the historical freeze.
   editReach: r.edit_reach === "any" ? "any" : "draft",
+  // Exhaustive coercion again; unknown reads as no approval (the pre-feature behaviour).
+  approvalPolicy: r.approval_policy === "all" ? "all" : "none",
   singleRecord: r.single_record ?? false,
   // Same exhaustive-coercion rule as `editReach` above, but the OPPOSITE polarity:
   recordView: toInstanceViewLayout(r.record_view),
@@ -273,9 +278,48 @@ export const toRecordVersion = (r: RecordVersionRow): RecordVersion => ({
   versionStatus: (r.version_status ?? "published") as VersionStatus,
   versionSeq: Number(r.version_seq ?? 1),
   publishedAt: r.published_at,
+  release: toRelease(r.release),
   createdAt: r.created_at,
   archivedAt: r.archived_at,
 })
+
+const str = (v: unknown): string | null => (typeof v === "string" ? v : null)
+
+/** Coerce the `release` jsonb projection (legacy rows hold `{}`) into a full
+ *  `VersionRelease` — every key defaulted, so readers never see `undefined`. */
+export const toRelease = (raw: unknown): VersionRelease => {
+  const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>
+  const p = r.pending as Record<string, unknown> | null | undefined
+  const rej = r.lastRejection as Record<string, unknown> | null | undefined
+  return {
+    ...EMPTY_RELEASE,
+    name: str(r.name),
+    note: str(r.note),
+    effectiveDate: str(r.effectiveDate),
+    publishedBy: str(r.publishedBy),
+    approvedBy: str(r.approvedBy),
+    approvedAt: str(r.approvedAt),
+    attributedAuthor: str(r.attributedAuthor),
+    attributedApprover: str(r.attributedApprover),
+    historical: r.historical === true,
+    pending:
+      p && typeof p === "object" && typeof p.approverId === "string"
+        ? {
+            approverId: p.approverId,
+            requestedBy: str(p.requestedBy),
+            requestedAt: str(p.requestedAt) ?? "",
+            name: str(p.name),
+            note: str(p.note),
+            effectiveDate: str(p.effectiveDate),
+            taskId: str(p.taskId),
+          }
+        : null,
+    lastRejection:
+      rej && typeof rej === "object" && typeof rej.at === "string"
+        ? { by: str(rej.by), at: rej.at, reason: str(rej.reason) }
+        : null,
+  }
+}
 
 export const toRelation = (r: RelationRow): Relation => ({
   id: r.id,

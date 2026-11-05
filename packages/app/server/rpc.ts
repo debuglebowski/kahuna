@@ -171,6 +171,9 @@ const ERROR_MESSAGE: Record<string, string> = {
   // depends on the concept's edit-reach setting.
   VersionFrozen: "This version is published and can't be edited.",
   VersionConflict: "This record was changed elsewhere. Reload and try again.",
+  VersionPendingApproval:
+    "This version is waiting for approval. Withdraw the request to change it.",
+  NotTheApprover: "Only the approver named on the request can approve or reject it.",
   RecordVersionNotFound: "This record no longer exists.",
   ConceptNotFound: "This concept no longer exists.",
   FieldNotFound: "This field no longer exists.",
@@ -528,10 +531,10 @@ const guarded = <A>(
   })
 
 /** Run an auth-tier pre-check (resolved against the request's scope), then the use-case. */
-const checkThen = <A>(
+const checkThen = <A, R = OrgContext | EngineServices>(
   precheck: (orgId: string, actor: string) => Promise<void>,
-  run: Effect.Effect<A, unknown, OrgContext | EngineServices>,
-): Effect.Effect<A, RpcError, OrgContext | EngineServices> =>
+  run: Effect.Effect<A, unknown, R>,
+): Effect.Effect<A, RpcError, R | OrgContext> =>
   Effect.gen(function* () {
     const { orgId, actor } = yield* OrgContext
     yield* Effect.tryPromise({
@@ -582,6 +585,7 @@ const HandlersLive = ServerRpcs.toLayer(
       color,
       versioningEnabled,
       editReach,
+      approvalPolicy,
       staticLabelIds,
       defaultLabelIds,
     }) =>
@@ -596,6 +600,7 @@ const HandlersLive = ServerRpcs.toLayer(
           color,
           versioningEnabled,
           editReach,
+          approvalPolicy,
           staticLabelIds,
           defaultLabelIds,
         }),
@@ -698,7 +703,30 @@ const HandlersLive = ServerRpcs.toLayer(
     // member write (it only removes never-published work).
     listVersions: ({ recordId }) => mapErr(uc.listVersions(recordId)),
     newVersion: ({ recordId }) => mapErr(uc.newVersion(recordId)),
-    publishVersion: ({ id, expectedVersion }) => mapErr(uc.publishVersion(id, expectedVersion)),
+    // A named approver must be an ACTIVE member (membership is auth-tier, so it's
+    // checked here). Whether they can read the record isn't pre-checked: approve
+    // runs the read gate as them, so an approver who can't see it can't sign off.
+    publishVersion: ({ id, expectedVersion, name, note, effectiveDate, approverId }) =>
+      checkThen(
+        (orgId) => assertAssigneeMember(orgId, approverId),
+        uc.publishVersion({ id, expectedVersion, name, note, effectiveDate, approverId }),
+      ),
+    // Approve/reject are gated by being the NAMED approver (engine), on read access.
+    approveVersion: ({ id }) => mapErr(uc.approveVersion(id)),
+    rejectVersion: ({ id, reason }) => mapErr(uc.rejectVersion(id, reason)),
+    withdrawApproval: ({ id }) => mapErr(uc.withdrawApproval(id)),
+    setVersionInfo: ({ id, name, note, effectiveDate, attributedAuthor, attributedApprover }) =>
+      mapErr(
+        uc.setVersionInfo({
+          id,
+          name,
+          note,
+          effectiveDate,
+          attributedAuthor,
+          attributedApprover,
+        }),
+      ),
+    importHistoricalVersion: (input) => mapErr(uc.importHistoricalVersion(input)),
     discardDraft: ({ id }) => mapErr(uc.discardDraft(id)),
     archiveRecord: ({ recordId }) => as<KmRecord>(uc.archiveRecord(recordId)),
     restoreRecord: ({ recordId }) => as<KmRecord>(uc.restoreRecord(recordId)),

@@ -120,6 +120,9 @@ export interface Concept {
    *  'draft' (default) = a published version is frozen. 'any' = any published
    *  version may be amended in place. See {@link EditReach}. */
   readonly editReach: EditReach
+  /** Which publishes need sign-off from a named approver; only meaningful when
+   *  `versioningEnabled`. See {@link ApprovalPolicy}. */
+  readonly approvalPolicy: ApprovalPolicy
   /** Opt-in "single record": this concept holds exactly ONE record, which always
    *  exists and can be neither archived nor purged while the flag is on. Enforced
    *  at the RECORD level (≤1 live lineage), so it composes with `versioningEnabled`
@@ -214,6 +217,85 @@ export type VersionStatus = "draft" | "published"
  *    `getAsOf` still reconstructs the pre-amendment state. */
 export type EditReach = "draft" | "any"
 
+/** Which publishes on a versioned concept need sign-off (per-concept setting).
+ *  - `none`: anyone who may write the record publishes directly (they MAY still
+ *    name an approver). The default.
+ *  - `all`: every publish is a request to a named approver, who signs off inside
+ *    Kahuna (their own authenticated event). */
+export type ApprovalPolicy = "none" | "all"
+
+/** An open approval request on a draft. While set, the draft is LOCKED: the
+ *  approver signs off on exactly what they were shown. */
+export interface PendingApproval {
+  readonly approverId: string
+  readonly requestedBy: string | null
+  /** ISO timestamp. */
+  readonly requestedAt: string
+  readonly name: string | null
+  readonly note: string | null
+  readonly effectiveDate: string | null
+  /** The approver's to-do (an annotation task) opened with the request, closed
+   *  when it resolves. Opaque to the engine; null if none was opened. */
+  readonly taskId: string | null
+}
+
+/**
+ * A version's release metadata — the policy "Document History" row. Folded from
+ * the version's own events (publish / approval / info edits), so a replay
+ * rebuilds it. Stored as ONE jsonb projection column.
+ *
+ * Two kinds of "who": `publishedBy` / `approvedBy` are user ids taken from the
+ * event ACTOR (authenticated, never typed in), while `attributedAuthor` /
+ * `attributedApprover` are free-text names recorded for imported history and
+ * backfills. They stay separate so a reader can always tell signed-off-in-Kahuna
+ * from recorded-after-the-fact.
+ */
+export interface VersionRelease {
+  /** Display name, e.g. "1.2.0". Unique within a lineage. */
+  readonly name: string | null
+  readonly note: string | null
+  /** The document date (YYYY-MM-DD) the history shows; `publishedAt` stays the
+   *  real system timestamp. Null ⇒ display the publish date. */
+  readonly effectiveDate: string | null
+  readonly publishedBy: string | null
+  readonly approvedBy: string | null
+  /** ISO timestamp. */
+  readonly approvedAt: string | null
+  readonly attributedAuthor: string | null
+  readonly attributedApprover: string | null
+  /** An imported history row: published, content NOT captured (cloned from the
+   *  oldest real version). Frozen and never a pin target. */
+  readonly historical: boolean
+  readonly pending: PendingApproval | null
+  /** The last refused request, so the requester sees why. Cleared on publish. */
+  readonly lastRejection: {
+    readonly by: string | null
+    readonly at: string
+    readonly reason: string | null
+  } | null
+}
+
+export const EMPTY_RELEASE: VersionRelease = {
+  name: null,
+  note: null,
+  effectiveDate: null,
+  publishedBy: null,
+  approvedBy: null,
+  approvedAt: null,
+  attributedAuthor: null,
+  attributedApprover: null,
+  historical: false,
+  pending: null,
+  lastRejection: null,
+}
+
+/** The editable release text, as carried by publish / request / info events. */
+export interface ReleaseInfo {
+  readonly name?: string | null
+  readonly note?: string | null
+  readonly effectiveDate?: string | null
+}
+
 /** DEFAULT read reach for a concept's records (or a field's values).
  *  - `visible`: any member of the org may read it. The default.
  *  - `admin`: only owners/admins. A member sees it as if it does not exist —
@@ -245,6 +327,8 @@ export interface RecordVersion {
   readonly versionSeq: number
   /** When this version was published; null while a draft. */
   readonly publishedAt: Date | null
+  /** Release metadata (name, note, approver, …). See {@link VersionRelease}. */
+  readonly release: VersionRelease
   readonly createdAt: Date
   readonly archivedAt: Date | null
 }
@@ -278,6 +362,8 @@ export type EventPayload =
       readonly recordId?: Id
       readonly versionSeq?: number
       readonly versionStatus?: VersionStatus
+      // An imported history row (see `VersionRelease.historical`). Absent ⇒ false.
+      readonly historical?: boolean
     }
   | { readonly _tag: "RecordVersionUpdated"; readonly patch: RecordState }
   // An edit to an ALREADY-PUBLISHED version (only reachable on a versioned concept
@@ -295,7 +381,26 @@ export type EventPayload =
   // Draft → published transition (one-shot, immutable). Folds `versionStatus` to
   // 'published' + sets `publishedAt`, bumping the event counter. Only after this
   // does the version become referenceable ("Latest").
-  | { readonly _tag: "VersionPublished" }
+  | ({ readonly _tag: "VersionPublished" } & ReleaseInfo)
+  // Approval lifecycle on a draft (required under `approvalPolicy: "all"`, else
+  // optional). Request
+  // locks the draft; approve is the APPROVER's own event (actor = approver) and is
+  // immediately followed by `VersionPublished`; reject / withdraw unlock it.
+  | ({
+      readonly _tag: "VersionApprovalRequested"
+      readonly approverId: string
+      readonly taskId?: string | null
+    } & ReleaseInfo)
+  | { readonly _tag: "VersionApproved" }
+  | { readonly _tag: "VersionApprovalRejected"; readonly reason?: string | null }
+  | { readonly _tag: "VersionApprovalWithdrawn" }
+  // Release metadata edit on a published version (backfill / import). Only the
+  // keys present change; an explicit null clears.
+  | ({
+      readonly _tag: "VersionInfoSet"
+      readonly attributedAuthor?: string | null
+      readonly attributedApprover?: string | null
+    } & ReleaseInfo)
   // Audit tombstone for a hard delete: the row + attachments are gone, but the
   // prior events stay as history. Never folded (the subject no longer loads), so
   // the reducer doesn't handle it — it only surfaces in the activity feed.
@@ -398,6 +503,7 @@ export type EventPayload =
       readonly color?: string | null
       readonly versioningEnabled?: boolean
       readonly editReach?: EditReach
+      readonly approvalPolicy?: ApprovalPolicy
       readonly singleRecord?: boolean
       readonly staticLabelIds?: ReadonlyArray<Id>
       readonly defaultLabelIds?: ReadonlyArray<Id>

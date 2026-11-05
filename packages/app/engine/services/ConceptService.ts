@@ -1,6 +1,6 @@
 import { PgClient } from "@effect/sql-pg"
 import { Context, Effect, Layer } from "effect"
-import type { EditReach, RecordViewLayout } from "../domain/types"
+import type { ApprovalPolicy, EditReach, RecordViewLayout } from "../domain/types"
 import { scopeCanReadConcept } from "../domain/visibility"
 import {
   ConceptInUse,
@@ -201,6 +201,9 @@ export class ConceptService extends Context.Service<ConceptService>()("engine/Co
       // either direction: tightening back to 'draft' simply re-freezes published
       // versions, which is always a legal state.
       readonly editReach?: EditReach
+      // Which publishes need an approver ('none' | 'all'). No guard either way:
+      // an open request stays resolvable after a switch back to 'none'.
+      readonly approvalPolicy?: ApprovalPolicy
     }) =>
       sql.withTransaction(
         Effect.gen(function* () {
@@ -212,6 +215,8 @@ export class ConceptService extends Context.Service<ConceptService>()("engine/Co
               ? current.versioningEnabled
               : input.versioningEnabled
           const editReach = input.editReach === undefined ? current.editReach : input.editReach
+          const approvalPolicy =
+            input.approvalPolicy === undefined ? current.approvalPolicy : input.approvalPolicy
           // Guard a disable: refuse if any record has multiple versions or a draft,
           // which would otherwise orphan versions with no defined "latest".
           if (current.versioningEnabled && versioningEnabled === false) {
@@ -258,6 +263,7 @@ export class ConceptService extends Context.Service<ConceptService>()("engine/Co
             SET description = ${input.description}, name = ${finalName},
                 plural_name = ${pluralName}, icon = ${icon}, color = ${color},
                 versioning_enabled = ${versioningEnabled}, edit_reach = ${editReach},
+                approval_policy = ${approvalPolicy},
                 static_label_ids = ${JSON.stringify(staticIds)}::jsonb,
                 default_label_ids = ${JSON.stringify(defaultIds)}::jsonb
             WHERE org_id = ${orgId} AND id = ${input.id}
@@ -280,6 +286,9 @@ export class ConceptService extends Context.Service<ConceptService>()("engine/Co
                 ? { versioningEnabled: concept.versioningEnabled }
                 : {}),
               ...(input.editReach !== undefined ? { editReach: concept.editReach } : {}),
+              ...(input.approvalPolicy !== undefined
+                ? { approvalPolicy: concept.approvalPolicy }
+                : {}),
               ...(input.staticLabelIds ? { staticLabelIds: concept.staticLabelIds } : {}),
               ...(input.defaultLabelIds ? { defaultLabelIds: concept.defaultLabelIds } : {}),
             },

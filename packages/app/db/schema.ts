@@ -70,6 +70,10 @@ export const concepts = pgTable(
     // amendment is visible to everyone referencing it (that's the point: an
     // erratum). Amendments stay auditable: every write is an appended event.
     editReach: text("edit_reach").notNull().default("draft"),
+    // Which publishes need a named approver's sign-off ('none' | 'all'); only
+    // meaningful when `versioning_enabled`. 'all' = every publish becomes a
+    // request the approver signs off inside Kahuna (their own event).
+    approvalPolicy: text("approval_policy").notNull().default("none"),
     // Opt-in "single record": when true this concept holds exactly ONE record —
     // always present (created in the same transaction that flips the flag) and
     // neither archivable nor purgeable while the flag is on. Enforced at the RECORD
@@ -226,11 +230,22 @@ export const recordVersions = pgTable(
     versionStatus: text("version_status").notNull().default("published"),
     versionSeq: integer("version_seq").notNull().default(1),
     publishedAt: timestamp("published_at", { withTimezone: true }),
+    // Release metadata — the policy "Document History" row: name ("1.2.0"),
+    // change note, document date, author/approver, any open approval
+    // request. A PROJECTION like `state`: folded from the version's own events
+    // (engine `VersionRelease`), so a rebuild reconstructs it. One jsonb column
+    // rather than a dozen, so no projection write can forget a piece of it.
+    release: jsonb("release").notNull().default(sql`'{}'::jsonb`),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     archivedAt: timestamp("archived_at", { withTimezone: true }),
   },
   (t) => [
     index("record_versions_org_concept_idx").on(t.orgId, t.conceptId),
+    // A version name is never reused within a lineage — archived versions keep
+    // theirs, exactly like `version_seq`.
+    uniqueIndex("record_versions_record_name_uq")
+      .on(t.recordId, sql`(${t.release}->>'name')`)
+      .where(sql`${t.release}->>'name' IS NOT NULL`),
     // Supports `state @> {...}` containment filters (QueryService.where).
     index("record_versions_state_gin").using("gin", sql`${t.state} jsonb_path_ops`),
     // Head-only lists: the latest published, non-archived version per record.

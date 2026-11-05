@@ -12,6 +12,12 @@ const LABELS: Record<string, string> = {
   // An edit to an ALREADY-PUBLISHED version, distinct from an ordinary edit so the
   // feed reads as a correction to history (see the concept's "edit reach" setting).
   VersionAmended: "amended this version",
+  VersionPublished: "published this version",
+  VersionApprovalRequested: "requested approval",
+  VersionApproved: "approved this version",
+  VersionApprovalRejected: "rejected the approval request",
+  VersionApprovalWithdrawn: "withdrew the approval request",
+  VersionInfoSet: "edited the version info",
   RecordVersionArchived: "archived this record",
   RecordVersionRestored: "restored this record",
   RecordVersionPurged: "deleted this record",
@@ -135,6 +141,12 @@ export const eventSnippet = (
     case "RecordVersionUpdated":
     case "VersionAmended":
       return fieldList(Object.keys(rec(p.patch)), r)
+    case "VersionPublished":
+    case "VersionApprovalRequested":
+    case "VersionInfoSet":
+      return [str(p.name), str(p.note)].filter(Boolean).join(" — ") || null
+    case "VersionApprovalRejected":
+      return str(p.reason)
     case "ComputedBandChanged": {
       const field = str(p.field)
       const to = str(p.to)

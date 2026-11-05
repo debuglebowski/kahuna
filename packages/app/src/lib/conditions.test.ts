@@ -1,3 +1,4 @@
+import { EMPTY_RELEASE } from "@kahunalabs/contract"
 import { describe, expect, it } from "vitest"
 import type { RecordVersion, SidebarCondition } from "./api"
 import { LABELS_KEY, matchCondition, matchRecordVersion } from "./conditions"
@@ -13,6 +14,7 @@ const inst = (state: Record<string, unknown>): RecordVersion => {
     versionStatus: "published",
     versionSeq: 1,
     publishedAt: new Date(0),
+    release: EMPTY_RELEASE,
     createdAt: new Date(0),
     archivedAt: null,
   }

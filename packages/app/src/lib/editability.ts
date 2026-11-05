@@ -22,11 +22,16 @@ import type { Concept, RecordVersion } from "./api"
  */
 export const canEditVersion = (
   concept: Pick<Concept, "versioningEnabled" | "editReach"> | null | undefined,
-  recordVersion: Pick<RecordVersion, "versionStatus"> | null | undefined,
+  recordVersion:
+    | (Pick<RecordVersion, "versionStatus"> & { readonly release?: RecordVersion["release"] })
+    | null
+    | undefined,
 ): boolean => {
   // Nothing loaded yet ⇒ don't claim frozen; the server is the real gate, and
   // guessing "frozen" would flicker the UI read-only on every load.
   if (!concept || !recordVersion) return true
+  // Locked whatever the concept says: awaiting approval, or an imported history row.
+  if (recordVersion.release?.pending || recordVersion.release?.historical) return false
   return (
     !concept.versioningEnabled ||
     recordVersion.versionStatus === "draft" ||

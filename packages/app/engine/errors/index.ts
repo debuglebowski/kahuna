@@ -148,6 +148,26 @@ export class VersionFrozen extends Schema.TaggedError<VersionFrozen>()("VersionF
   recordVersionId: Schema.String,
 }) {}
 
+/** The draft awaits an approver's sign-off and is locked (edit, discard, re-request
+ *  refused) until approved, rejected or withdrawn. */
+export class VersionPendingApproval extends Schema.TaggedError<VersionPendingApproval>()(
+  "VersionPendingApproval",
+  { recordVersionId: Schema.String },
+) {}
+
+/** Only the approver named on the request may approve or reject it. */
+export class NotTheApprover extends Schema.TaggedError<NotTheApprover>()("NotTheApprover", {
+  recordVersionId: Schema.String,
+}) {}
+
+/** A publish / approval request / info edit carries invalid release metadata:
+ *  missing change kind or approver, self-approval, a taken name, a bad date. The
+ *  prose `message` is user-facing. */
+export class VersionReleaseInvalid extends Schema.TaggedError<VersionReleaseInvalid>()(
+  "VersionReleaseInvalid",
+  { message: Schema.String, recordVersionId: Schema.optional(Schema.String) },
+) {}
+
 /** Only one draft may be open per record at a time — publish or discard it first. */
 export class DraftAlreadyExists extends Schema.TaggedError<DraftAlreadyExists>()(
   "DraftAlreadyExists",
@@ -343,6 +363,9 @@ export type EngineError =
   | EventCorruption
   | RecordNotFound
   | VersionFrozen
+  | VersionPendingApproval
+  | NotTheApprover
+  | VersionReleaseInvalid
   | DraftAlreadyExists
   | RelationPinToDraft
   | RecordNotPublished

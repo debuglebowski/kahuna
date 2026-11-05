@@ -2,6 +2,7 @@ import {
   type AccessActionName,
   type AccessCondition,
   type AccessResourceType,
+  type ApprovalPolicy,
   type AutomationAction,
   type AutomationTrigger,
   type DashboardBody,
@@ -32,6 +33,7 @@ export type {
   AccessRule,
   AnnotationField,
   AnnotationType,
+  ApprovalPolicy,
   Attachment,
   Automation,
   AutomationAction,
@@ -84,8 +86,17 @@ export type {
   TaskStatus,
   TaskStatusCategory,
   TaskSubjectRef,
+  VersionRelease,
   VersionStatus,
 } from "@kahunalabs/contract"
+
+/** Release text sent on publish / info edits (each optional; null clears). */
+export interface ReleaseInput {
+  readonly name?: string | null
+  readonly note?: string | null
+  /** YYYY-MM-DD. */
+  readonly effectiveDate?: string | null
+}
 
 /** Who a new upload belongs to: a record, or a Files widget's own bucket
  *  (`shared: false` hides it from org-scope widgets). Mirrors the engine's
@@ -554,6 +565,7 @@ export const api = {
       color?: string | null
       versioningEnabled?: boolean
       editReach?: EditReach
+      approvalPolicy?: ApprovalPolicy
       staticLabelIds?: ReadonlyArray<string>
       defaultLabelIds?: ReadonlyArray<string>
     },
@@ -568,6 +580,7 @@ export const api = {
         color: patch.color,
         versioningEnabled: patch.versioningEnabled,
         editReach: patch.editReach,
+        approvalPolicy: patch.approvalPolicy,
         staticLabelIds: patch.staticLabelIds,
         defaultLabelIds: patch.defaultLabelIds,
       }),
@@ -657,8 +670,34 @@ export const api = {
   // ── versioning ──────────────────────────────────────────────────────────────
   listVersions: (recordId: string) => call((c) => c.listVersions({ recordId })),
   newVersion: (recordId: string) => call((c) => c.newVersion({ recordId })),
-  publishVersion: (id: string, expectedVersion: number) =>
-    call((c) => c.publishVersion({ id, expectedVersion })),
+  /** Publish a draft — or, with `approverId`, request approval (the result is
+   *  then still a draft, with `release.pending` set). */
+  publishVersion: (
+    id: string,
+    expectedVersion: number,
+    release: ReleaseInput & { readonly approverId?: string | null } = {},
+  ) => call((c) => c.publishVersion({ id, expectedVersion, ...release })),
+  approveVersion: (id: string) => call((c) => c.approveVersion({ id })),
+  rejectVersion: (id: string, reason?: string | null) =>
+    call((c) => c.rejectVersion({ id, reason })),
+  withdrawApproval: (id: string) => call((c) => c.withdrawApproval({ id })),
+  /** Backfill release info on a published version (only keys sent change). */
+  setVersionInfo: (
+    id: string,
+    info: ReleaseInput & {
+      readonly attributedAuthor?: string | null
+      readonly attributedApprover?: string | null
+    },
+  ) => call((c) => c.setVersionInfo({ id, ...info })),
+  /** Add a pre-Kahuna Document History row before the first version (newest first). */
+  importHistoricalVersion: (input: {
+    readonly recordId: string
+    readonly name: string
+    readonly effectiveDate: string
+    readonly note?: string | null
+    readonly attributedAuthor?: string | null
+    readonly attributedApprover?: string | null
+  }) => call((c) => c.importHistoricalVersion(input)),
   discardDraft: (id: string) => call((c) => c.discardDraft({ id })),
   archiveRecord: (recordId: string) => call((c) => c.archiveRecord({ recordId })),
   restoreRecord: (recordId: string) => call((c) => c.restoreRecord({ recordId })),

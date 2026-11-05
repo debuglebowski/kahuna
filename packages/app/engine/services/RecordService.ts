@@ -11,6 +11,7 @@ import {
   LABELS_KEY,
   type RecordState,
   type RecordVersion,
+  type ReleaseInfo,
 } from "../domain/types"
 import { canEditVersion, isAmendment } from "../domain/versioning"
 import { scopeCanReadConcept, scopeConceptRead } from "../domain/visibility"
@@ -19,6 +20,7 @@ import {
   DraftAlreadyExists,
   FieldValidationError,
   IllegalTransition,
+  NotTheApprover,
   RecordNotFound,
   RecordNotPublished,
   RecordVersionInUse,
@@ -27,6 +29,8 @@ import {
   SingleRecordProtected,
   VersionConflict,
   VersionFrozen,
+  VersionPendingApproval,
+  VersionReleaseInvalid,
 } from "../errors"
 import { foldEvents } from "../projection/fold"
 import { applyEvent, type FoldState } from "../projection/reducer"
@@ -276,6 +280,7 @@ const seedFrom = (inst: RecordVersion, archivedAt: Date | null): FoldState => ({
   archivedAt,
   versionStatus: inst.versionStatus,
   publishedAt: inst.publishedAt,
+  release: inst.release,
 })
 
 /**
@@ -582,7 +587,8 @@ export class RecordService extends Context.Service<RecordService>()("engine/Reco
           const updated = yield* sql<RecordVersionRow>`
             UPDATE record_versions
             SET state = ${sql.json(folded.success.state)}, version = ${folded.success.version},
-                version_status = ${folded.success.versionStatus}, published_at = ${folded.success.publishedAt}
+                version_status = ${folded.success.versionStatus}, published_at = ${folded.success.publishedAt},
+                release = ${sql.json(folded.success.release)}
             WHERE id = ${created.id} AND org_id = ${orgId} RETURNING *`
           yield* reindexRecordVersionMentions(orgId, created.id, folded.success.state, defs)
           // After the RecordVersionCreated event, so the record's feed reads
@@ -634,6 +640,10 @@ export class RecordService extends Context.Service<RecordService>()("engine/Reco
           // must go to a fresh draft (newVersion) — UNLESS the concept opts into
           // amendments (`editReach: "any"`). Non-versioned record versions are 'published'
           // too but always stay editable; `canEditVersion` folds all three cases.
+          // Awaiting approval: locked, with its own error so the UI can say why.
+          if (current.release.pending) {
+            return yield* Effect.fail(new VersionPendingApproval({ recordVersionId: current.id }))
+          }
           if (!canEditVersion(concept, current)) {
             return yield* Effect.fail(new VersionFrozen({ recordVersionId: current.id }))
           }
@@ -735,6 +745,11 @@ export class RecordService extends Context.Service<RecordService>()("engine/Reco
             return yield* Effect.fail(
               new SingleRecordProtected({ conceptId: concept.id, recordVersionId: current.id }),
             )
+          }
+          // The reducer only allows restore after an archive, so a pending request
+          // archived here could never be resolved. Withdraw it first.
+          if (current.release.pending) {
+            return yield* Effect.fail(new VersionPendingApproval({ recordVersionId: current.id }))
           }
           const event = yield* events.append({
             subjectKind: "recordVersion",
@@ -1080,6 +1095,7 @@ export class RecordService extends Context.Service<RecordService>()("engine/Reco
           versionStatus: fs.versionStatus,
           versionSeq: meta.versionSeq,
           publishedAt: fs.publishedAt,
+          release: fs.release,
           createdAt: meta.createdAt,
           archivedAt: fs.archivedAt,
         } satisfies RecordVersion
@@ -1098,7 +1114,8 @@ export class RecordService extends Context.Service<RecordService>()("engine/Reco
           const updated = yield* sql<RecordVersionRow>`
             UPDATE record_versions
             SET state = ${sql.json(fs.state)}, version = ${fs.version}, archived_at = ${fs.archivedAt},
-                version_status = ${fs.versionStatus}, published_at = ${fs.publishedAt}
+                version_status = ${fs.versionStatus}, published_at = ${fs.publishedAt},
+                release = ${sql.json(fs.release)}
             WHERE id = ${meta.id} AND org_id = ${orgId} RETURNING *`
           return toRecordVersion(updated[0]!)
         }),
@@ -1179,24 +1196,116 @@ export class RecordService extends Context.Service<RecordService>()("engine/Reco
         )
       })
 
+    // ── release metadata + approval ───────────────────────────────────────────
+    //
+    // A version's "Document History" row: name, change note, document
+    // date, author, approver. Everything is an appended event folded into the
+    // `release` projection (see `VersionRelease`), so a replay rebuilds it.
+
+    /** Lock one live version row for a release write. */
+    const lockVersion = (recordVersionId: string) =>
+      Effect.gen(function* () {
+        const { orgId } = yield* OrgContext
+        const rows = yield* sql<RecordVersionRow>`
+          SELECT * FROM record_versions
+          WHERE id = ${recordVersionId} AND org_id = ${orgId} AND archived_at IS NULL
+          FOR UPDATE`
+        const row = rows[0]
+        if (!row) return yield* Effect.fail(new RecordVersionNotFound({ recordVersionId }))
+        return row
+      })
+
+    /** Append each event in order, folding as we go, then persist the projection
+     *  once. Every release write goes through here, so none can forget a column. */
+    const appendAndPersist = (
+      current: RecordVersion,
+      payloads: ReadonlyArray<EngineEvent["payload"]>,
+      concept: { readonly id: string; readonly name: string },
+    ) =>
+      Effect.gen(function* () {
+        const { orgId } = yield* OrgContext
+        let acc: FoldState = seedFrom(current, null)
+        for (const payload of payloads) {
+          const event = yield* events.append({
+            subjectKind: "recordVersion",
+            subjectId: current.id,
+            eventType: payload._tag,
+            payload,
+            conceptId: concept.id,
+            conceptName: concept.name,
+          })
+          const folded = applyEvent(acc, event)
+          if (Result.isFailure(folded)) return yield* Effect.fail(folded.failure)
+          acc = folded.success
+        }
+        const updated = yield* sql<RecordVersionRow>`
+          UPDATE record_versions
+          SET version = ${acc.version}, version_status = ${acc.versionStatus},
+              published_at = ${acc.publishedAt}, release = ${sql.json(acc.release)}
+          WHERE id = ${current.id} AND org_id = ${orgId} RETURNING *`
+        return toRecordVersion(updated[0]!)
+      })
+
+    const invalid = (message: string, recordVersionId?: string) =>
+      Effect.fail(new VersionReleaseInvalid({ message, recordVersionId }))
+
+    /** Trim; blank ⇒ null; bounded. `undefined` (key absent) passes through. */
+    const cleanText = (v: string | null | undefined, label: string, max: number) =>
+      Effect.gen(function* () {
+        if (v === undefined || v === null) return v
+        const t = v.trim()
+        if (t.length > max) return yield* invalid(`${label} is too long (max ${max} characters).`)
+        return t === "" ? null : t
+      })
+
+    const cleanDate = (v: string | null | undefined) =>
+      Effect.gen(function* () {
+        if (v === undefined || v === null) return v
+        const t = v.trim()
+        const d = /^\d{4}-\d{2}-\d{2}$/.test(t) ? new Date(`${t}T00:00:00Z`) : null
+        if (!d || Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== t)
+          return yield* invalid(`"${v}" is not a date (use YYYY-MM-DD).`)
+        return t
+      })
+
+    /** Validate the release text; a NAME must be unused within the lineage —
+     *  published names, archived ones, and names held by an open request alike. */
+    const cleanInfo = (input: ReleaseInfo, recordId: string, selfId: string | null) =>
+      Effect.gen(function* () {
+        const name = yield* cleanText(input.name, "Version name", 64)
+        const note = yield* cleanText(input.note, "Change note", 4000)
+        const effectiveDate = yield* cleanDate(input.effectiveDate)
+        if (name) {
+          const { orgId } = yield* OrgContext
+          const clash = yield* sql<{ readonly id: string }>`
+            SELECT id FROM record_versions
+            WHERE org_id = ${orgId} AND record_id = ${recordId}
+              AND (release->>'name' = ${name} OR release->'pending'->>'name' = ${name})
+              AND id IS DISTINCT FROM ${selfId}
+            LIMIT 1`
+          if (clash[0]) return yield* invalid(`This record already has a version named "${name}".`)
+        }
+        return { name, note, effectiveDate } satisfies ReleaseInfo
+      })
+
     /** Publish a draft version: draft → published (one-shot, permanent). After
-     *  this the version is frozen and becomes the record's "Latest". */
-    const publishVersion = (input: {
-      readonly recordVersionId: string
-      readonly expectedVersion: number
-    }) =>
+     *  this the version is frozen and becomes the record's "Latest".
+     *
+     *  Becomes an APPROVAL REQUEST instead when an approver is named — which the
+     *  concept's `approvalPolicy: "all"` makes mandatory. */
+    const publishVersion = (
+      input: {
+        readonly recordVersionId: string
+        readonly expectedVersion: number
+        readonly approverId?: string | null
+        /** The approver's to-do, opened by the caller in the same transaction. */
+        readonly taskId?: string | null
+      } & ReleaseInfo,
+    ) =>
       sql.withTransaction(
         Effect.gen(function* () {
-          const { orgId } = yield* OrgContext
-          const rows = yield* sql<RecordVersionRow>`
-            SELECT * FROM record_versions
-            WHERE id = ${input.recordVersionId} AND org_id = ${orgId} AND archived_at IS NULL
-            FOR UPDATE`
-          const row = rows[0]
-          if (!row)
-            return yield* Effect.fail(
-              new RecordVersionNotFound({ recordVersionId: input.recordVersionId }),
-            )
+          const { actor } = yield* OrgContext
+          const row = yield* lockVersion(input.recordVersionId)
           // See THE WRITE GATE: reads refusing this record must mean writes do too.
           yield* assertRecordWritable(
             row.concept_id,
@@ -1217,8 +1326,70 @@ export class RecordService extends Context.Service<RecordService>()("engine/Reco
           if (current.versionStatus === "published") {
             return yield* Effect.fail(new VersionFrozen({ recordVersionId: current.id }))
           }
+          if (current.release.pending) {
+            return yield* Effect.fail(new VersionPendingApproval({ recordVersionId: current.id }))
+          }
+          const concept = yield* concepts.getById(current.conceptId)
+          const info = yield* cleanInfo(input, current.recordId, current.id)
+          const approverId = input.approverId?.trim() || null
+          if (concept.approvalPolicy === "all" && !approverId) {
+            return yield* invalid("Every publish on this concept needs an approver.", current.id)
+          }
+          if (approverId && approverId === actor) {
+            return yield* invalid("You can't approve your own change.", current.id)
+          }
           // Publish gate: a draft may predate a field's `required` rule (the rule
           // was added/flipped after creation) — it can't become "Latest" incomplete.
+          // Checked before a request too: an approver shouldn't sign off on a draft
+          // that then can't publish.
+          const defs = yield* fields.listFields(current.conceptId)
+          yield* checkRequired(
+            defs,
+            current.state,
+            "all",
+            yield* liveFileCounts(sql, current.recordId),
+          )
+          return yield* appendAndPersist(
+            current,
+            [
+              approverId
+                ? {
+                    _tag: "VersionApprovalRequested",
+                    approverId,
+                    taskId: input.taskId ?? null,
+                    ...info,
+                  }
+                : { _tag: "VersionPublished", ...info },
+            ],
+            concept,
+          )
+        }),
+      )
+
+    /** The named approver signs off: `VersionApproved` (their own event) then
+     *  `VersionPublished` carrying the request's text, in one transaction.
+     *
+     *  Deliberately gated on READ, not write (an exception to THE WRITE GATE): an
+     *  approver signs off on a policy without being able to edit it. Being the
+     *  named approver is the authorisation; the request was made by a writer. */
+    const approveVersion = (input: { readonly recordVersionId: string }) =>
+      sql.withTransaction(
+        Effect.gen(function* () {
+          const { actor } = yield* OrgContext
+          const row = yield* lockVersion(input.recordVersionId)
+          yield* assertConceptVisible(row.concept_id, input.recordVersionId)
+          yield* assertRecordReadable(
+            row.concept_id,
+            row.record_id,
+            input.recordVersionId,
+            row.state,
+          )
+          const current = toRecordVersion(row)
+          const pending = current.release.pending
+          if (!pending) return yield* invalid("No approval request is open.", current.id)
+          if (pending.approverId !== actor) {
+            return yield* Effect.fail(new NotTheApprover({ recordVersionId: current.id }))
+          }
           const defs = yield* fields.listFields(current.conceptId)
           yield* checkRequired(
             defs,
@@ -1227,22 +1398,234 @@ export class RecordService extends Context.Service<RecordService>()("engine/Reco
             yield* liveFileCounts(sql, current.recordId),
           )
           const concept = yield* concepts.getById(current.conceptId)
+          return yield* appendAndPersist(
+            current,
+            [
+              { _tag: "VersionApproved" },
+              {
+                _tag: "VersionPublished",
+                name: pending.name,
+                note: pending.note,
+                effectiveDate: pending.effectiveDate,
+              },
+            ],
+            concept,
+          )
+        }),
+      )
+
+    /** The named approver refuses; the draft unlocks for the requester to rework. */
+    const rejectVersion = (input: {
+      readonly recordVersionId: string
+      readonly reason?: string | null
+    }) =>
+      sql.withTransaction(
+        Effect.gen(function* () {
+          const { actor } = yield* OrgContext
+          const row = yield* lockVersion(input.recordVersionId)
+          yield* assertConceptVisible(row.concept_id, input.recordVersionId)
+          yield* assertRecordReadable(
+            row.concept_id,
+            row.record_id,
+            input.recordVersionId,
+            row.state,
+          )
+          const current = toRecordVersion(row)
+          const pending = current.release.pending
+          if (!pending) return yield* invalid("No approval request is open.", current.id)
+          if (pending.approverId !== actor) {
+            return yield* Effect.fail(new NotTheApprover({ recordVersionId: current.id }))
+          }
+          const reason = yield* cleanText(input.reason, "Reason", 4000)
+          const concept = yield* concepts.getById(current.conceptId)
+          return yield* appendAndPersist(
+            current,
+            [{ _tag: "VersionApprovalRejected", reason: reason ?? null }],
+            concept,
+          )
+        }),
+      )
+
+    /** Pull an open request back (to edit the draft, or to pick another approver).
+     *  Anyone who may write the record — normally the requester. */
+    const withdrawApproval = (input: { readonly recordVersionId: string }) =>
+      sql.withTransaction(
+        Effect.gen(function* () {
+          const row = yield* lockVersion(input.recordVersionId)
+          yield* assertRecordWritable(
+            row.concept_id,
+            row.record_id,
+            input.recordVersionId,
+            row.state,
+          )
+          const current = toRecordVersion(row)
+          if (!current.release.pending)
+            return yield* invalid("No approval request is open.", current.id)
+          const concept = yield* concepts.getById(current.conceptId)
+          return yield* appendAndPersist(current, [{ _tag: "VersionApprovalWithdrawn" }], concept)
+        }),
+      )
+
+    /** Set release info on an already-published version — the backfill path
+     *  (imported records start at v1 with no name). Refused on a version approved
+     *  INSIDE Kahuna: its name/note/kind are what the approver signed off on. */
+    const setVersionInfo = (
+      input: {
+        readonly recordVersionId: string
+        readonly attributedAuthor?: string | null
+        readonly attributedApprover?: string | null
+      } & ReleaseInfo,
+    ) =>
+      sql.withTransaction(
+        Effect.gen(function* () {
+          const row = yield* lockVersion(input.recordVersionId)
+          yield* assertRecordWritable(
+            row.concept_id,
+            row.record_id,
+            input.recordVersionId,
+            row.state,
+          )
+          const current = toRecordVersion(row)
+          const concept = yield* concepts.getById(current.conceptId)
+          if (!concept.versioningEnabled)
+            return yield* invalid("This concept doesn't keep versions.", current.id)
+          if (current.versionStatus !== "published")
+            return yield* invalid(
+              "A draft's name and note are set when it's published.",
+              current.id,
+            )
+          if (current.release.approvedBy)
+            return yield* invalid(
+              "This version was approved in Kahuna; its release info is signed off and can't change.",
+              current.id,
+            )
+          const info = yield* cleanInfo(input, current.recordId, current.id)
+          const attributedAuthor = yield* cleanText(input.attributedAuthor, "Author", 200)
+          const attributedApprover = yield* cleanText(input.attributedApprover, "Approver", 200)
+          const payload = {
+            _tag: "VersionInfoSet" as const,
+            ...(input.name !== undefined ? { name: info.name } : {}),
+            ...(input.note !== undefined ? { note: info.note } : {}),
+            ...(input.effectiveDate !== undefined ? { effectiveDate: info.effectiveDate } : {}),
+            ...(attributedAuthor !== undefined ? { attributedAuthor } : {}),
+            ...(attributedApprover !== undefined ? { attributedApprover } : {}),
+          }
+          if (Object.keys(payload).length === 1) return current
+          return yield* appendAndPersist(current, [payload], concept)
+        }),
+      )
+
+    /** The date a version represents in the history: its document date, else the
+     *  day it was published, else the day it was created. */
+    const historyDateOf = (v: RecordVersion): string =>
+      v.release.effectiveDate ?? (v.publishedAt ?? v.createdAt).toISOString().slice(0, 10)
+
+    /**
+     * Import one Document History row from before the record came into Kahuna,
+     * as a published HISTORY version placed BEFORE every existing version.
+     *
+     * Its seq is MIN(seq)−1 (0, −1, …), so "Latest" (MAX seq) and the head index
+     * are untouched and the lineage still reads oldest → newest by seq. That makes
+     * the import order newest-first, and the date must not be after the current
+     * oldest version's. Its content was never captured: the state is cloned from
+     * the oldest REAL version, and the row is frozen and never a pin target. No
+     * relations, no mentions — backlinks belong to real versions.
+     */
+    const importHistoricalVersion = (input: {
+      readonly recordId: string
+      readonly name: string
+      readonly note?: string | null
+      readonly effectiveDate: string
+      readonly attributedAuthor?: string | null
+      readonly attributedApprover?: string | null
+    }) =>
+      sql.withTransaction(
+        Effect.gen(function* () {
+          const { orgId } = yield* OrgContext
+          const recordRows = yield* sql<RecordRow>`
+            SELECT * FROM records WHERE id = ${input.recordId} AND org_id = ${orgId} FOR UPDATE`
+          const recordRow = recordRows[0]
+          if (!recordRow)
+            return yield* Effect.fail(new RecordNotFound({ recordId: input.recordId }))
+          yield* assertRecordWritable(recordRow.concept_id, input.recordId, input.recordId)
+          const concept = yield* concepts.getById(recordRow.concept_id)
+          if (!concept.versioningEnabled)
+            return yield* invalid("This concept doesn't keep versions.")
+          const info = yield* cleanInfo(
+            {
+              name: input.name,
+              note: input.note,
+              effectiveDate: input.effectiveDate,
+            },
+            input.recordId,
+            null,
+          )
+          if (!info.name) return yield* invalid("A history row needs a version name.")
+          if (!info.effectiveDate) return yield* invalid("A history row needs a date.")
+          const attributedAuthor = yield* cleanText(input.attributedAuthor, "Author", 200)
+          const attributedApprover = yield* cleanText(input.attributedApprover, "Approver", 200)
+          const lineage = (yield* sql<RecordVersionRow>`
+            SELECT * FROM record_versions
+            WHERE org_id = ${orgId} AND record_id = ${input.recordId}
+            ORDER BY version_seq ASC`).map(toRecordVersion)
+          const oldest = lineage[0]
+          const source = lineage.find((v) => !v.release.historical)
+          if (!oldest || !source)
+            return yield* Effect.fail(new RecordNotPublished({ recordId: input.recordId }))
+          const oldestDate = historyDateOf(oldest)
+          if (info.effectiveDate > oldestDate) {
+            return yield* invalid(
+              `History is imported newest first, before the oldest version (${oldest.release.name ?? `v${oldest.versionSeq}`}, ${oldestDate}); ${info.effectiveDate} is after it.`,
+            )
+          }
+          const seq = oldest.versionSeq - 1
+          const inserted = yield* sql<RecordVersionRow>`
+            INSERT INTO record_versions (org_id, concept_id, record_id, state, version, version_status, version_seq)
+            VALUES (${orgId}, ${concept.id}, ${input.recordId}, ${sql.json({})}, 0, 'published', ${seq})
+            RETURNING *`
+          const created = toRecordVersion(inserted[0]!)
           const event = yield* events.append({
             subjectKind: "recordVersion",
-            subjectId: current.id,
-            eventType: "VersionPublished",
-            payload: { _tag: "VersionPublished" },
+            subjectId: created.id,
+            eventType: "RecordVersionCreated",
+            payload: {
+              _tag: "RecordVersionCreated",
+              conceptId: concept.id,
+              fields: source.state,
+              recordId: input.recordId,
+              versionSeq: seq,
+              versionStatus: "published",
+              historical: true,
+            },
             conceptId: concept.id,
             conceptName: concept.name,
           })
-          const folded = applyEvent(seedFrom(current, null), event)
+          const folded = applyEvent(null, event)
           if (Result.isFailure(folded)) return yield* Effect.fail(folded.failure)
-          const updated = yield* sql<RecordVersionRow>`
+          yield* sql`
             UPDATE record_versions
-            SET version = ${folded.success.version}, version_status = ${folded.success.versionStatus},
-                published_at = ${folded.success.publishedAt}
-            WHERE id = ${current.id} AND org_id = ${orgId} RETURNING *`
-          return toRecordVersion(updated[0]!)
+            SET state = ${sql.json(folded.success.state)}, version = ${folded.success.version},
+                published_at = ${folded.success.publishedAt}, release = ${sql.json(folded.success.release)}
+            WHERE id = ${created.id} AND org_id = ${orgId}`
+          const base: RecordVersion = {
+            ...created,
+            state: folded.success.state,
+            version: folded.success.version,
+            publishedAt: folded.success.publishedAt,
+            release: folded.success.release,
+          }
+          return yield* appendAndPersist(
+            base,
+            [
+              {
+                _tag: "VersionInfoSet",
+                ...info,
+                attributedAuthor: attributedAuthor ?? null,
+                attributedApprover: attributedApprover ?? null,
+              },
+            ],
+            concept,
+          )
         }),
       )
 
@@ -1311,7 +1694,8 @@ export class RecordService extends Context.Service<RecordService>()("engine/Reco
           const updated = yield* sql<RecordVersionRow>`
             UPDATE record_versions
             SET state = ${sql.json(folded.success.state)}, version = ${folded.success.version},
-                version_status = ${folded.success.versionStatus}, published_at = ${folded.success.publishedAt}
+                version_status = ${folded.success.versionStatus}, published_at = ${folded.success.publishedAt},
+                release = ${sql.json(folded.success.release)}
             WHERE id = ${draft.id} AND org_id = ${orgId} RETURNING *`
           // The draft carries the head's state verbatim, so it carries its mentions
           // too. Re-derived from that state rather than cloned from the head's rows:
@@ -1371,6 +1755,12 @@ export class RecordService extends Context.Service<RecordService>()("engine/Reco
             )
             if (recordVersion.versionStatus !== "draft") {
               return yield* Effect.fail(new VersionFrozen({ recordVersionId: recordVersion.id }))
+            }
+            // Discarding would orphan the approver's open request; withdraw first.
+            if (recordVersion.release.pending) {
+              return yield* Effect.fail(
+                new VersionPendingApproval({ recordVersionId: recordVersion.id }),
+              )
             }
             // Discarding the only-ever draft purges the empty lineage below — which
             // on a single-record concept would delete the record the flag promises
@@ -1618,6 +2008,11 @@ export class RecordService extends Context.Service<RecordService>()("engine/Reco
       rebuild,
       recomputeBands,
       publishVersion,
+      approveVersion,
+      rejectVersion,
+      withdrawApproval,
+      setVersionInfo,
+      importHistoricalVersion,
       newVersion,
       discardDraft,
       archiveRecord,

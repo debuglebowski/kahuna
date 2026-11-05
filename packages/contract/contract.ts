@@ -57,6 +57,105 @@ export const EditReach = Schema.Literals(["draft", "any"])
  *  rules are exceptions over it. */
 export type EditReach = typeof EditReach.Type
 
+/** Which publishes on a versioned concept need a named approver's sign-off
+ *  (mirrors the engine's `ApprovalPolicy`): `none` (optional), or `all`. */
+export const ApprovalPolicy = Schema.Literals(["none", "all"])
+export type ApprovalPolicy = typeof ApprovalPolicy.Type
+
+/** An open approval request on a draft. While present the draft is locked. */
+export const PendingApproval = Schema.Struct({
+  approverId: Schema.String,
+  requestedBy: Schema.NullOr(Schema.String),
+  /** ISO timestamp. */
+  requestedAt: Schema.String,
+  name: Schema.NullOr(Schema.String),
+  note: Schema.NullOr(Schema.String),
+  effectiveDate: Schema.NullOr(Schema.String),
+  /** The approver's to-do task opened with the request (null if none). */
+  taskId: Schema.NullOr(Schema.String),
+})
+export type PendingApproval = typeof PendingApproval.Type
+
+/**
+ * A version's release metadata: the policy "Document History" row (mirrors the
+ * engine's `VersionRelease`). `publishedBy` / `approvedBy` are user ids from
+ * authenticated events; `attributedAuthor` / `attributedApprover` are free-text
+ * names recorded for imported history and backfills. Display prefers the former.
+ */
+export const VersionRelease = Schema.Struct({
+  name: Schema.NullOr(Schema.String),
+  note: Schema.NullOr(Schema.String),
+  /** Document date, YYYY-MM-DD. Null ⇒ show the publish date. */
+  effectiveDate: Schema.NullOr(Schema.String),
+  publishedBy: Schema.NullOr(Schema.String),
+  approvedBy: Schema.NullOr(Schema.String),
+  approvedAt: Schema.NullOr(Schema.String),
+  attributedAuthor: Schema.NullOr(Schema.String),
+  attributedApprover: Schema.NullOr(Schema.String),
+  /** Imported history row: content not captured (cloned from the oldest real version). */
+  historical: Schema.Boolean,
+  pending: Schema.NullOr(PendingApproval),
+  lastRejection: Schema.NullOr(
+    Schema.Struct({
+      by: Schema.NullOr(Schema.String),
+      at: Schema.String,
+      reason: Schema.NullOr(Schema.String),
+    }),
+  ),
+})
+export type VersionRelease = typeof VersionRelease.Type
+
+/** A version with no release metadata yet (every pre-feature row). */
+export const EMPTY_RELEASE: VersionRelease = {
+  name: null,
+  note: null,
+  effectiveDate: null,
+  publishedBy: null,
+  approvedBy: null,
+  approvedAt: null,
+  attributedAuthor: null,
+  attributedApprover: null,
+  historical: false,
+  pending: null,
+  lastRejection: null,
+}
+
+/**
+ * Suggest the next version name from the previous one by bumping its LAST
+ * number: "1.1.0" → "1.1.1", "v3" → "v4", "Rev 7" → "Rev 8". No previous name,
+ * or one without a number, suggests "1.0". Names are free text — this is only a
+ * pre-fill the user edits, never a scheme. Shared by the SPA and the CLI.
+ */
+export const nextVersionName = (previous: string | null | undefined): string => {
+  const p = previous?.trim()
+  const m = p ? /(\d+)(\D*)$/.exec(p) : null
+  if (!p || !m) return "1.0"
+  const digits = m[1] as string
+  const bumped = String(Number(digits) + 1).padStart(digits.length, "0")
+  return `${p.slice(0, m.index)}${bumped}${m[2]}`
+}
+
+/** The newest NAMED published version's name in a lineage (by seq), or null. The
+ *  input to {@link nextVersionName}. */
+export const latestVersionName = (
+  versions: ReadonlyArray<{
+    readonly versionSeq: number
+    readonly versionStatus: VersionStatus
+    readonly release: { readonly name: string | null }
+  }>,
+): string | null =>
+  [...versions]
+    .filter((v) => v.versionStatus === "published" && v.release.name)
+    .sort((a, b) => b.versionSeq - a.versionSeq)[0]?.release.name ?? null
+
+/** The date a version stands for in the history: its document date, else the
+ *  publish day, else the creation day (YYYY-MM-DD). */
+export const versionDate = (v: {
+  readonly publishedAt: Date | null
+  readonly createdAt: Date
+  readonly release: { readonly effectiveDate: string | null }
+}): string => v.release.effectiveDate ?? (v.publishedAt ?? v.createdAt).toISOString().slice(0, 10)
+
 const RecordVersionFields = {
   id: Schema.String,
   conceptId: Schema.String,
@@ -70,10 +169,20 @@ const RecordVersionFields = {
   /** Sequence within the lineage (1,2,3…). */
   versionSeq: Schema.Number,
   publishedAt: Schema.NullOr(Schema.DateFromString),
+  /** Release metadata: name, change note, approval. */
+  release: VersionRelease,
   createdAt: Schema.DateFromString,
   archivedAt: Schema.NullOr(Schema.DateFromString),
 }
 export const RecordVersion = Schema.Struct(RecordVersionFields)
+
+/** Release text as sent on publish / info edits (each optional; null clears). */
+const ReleaseInfoFields = {
+  name: Schema.optional(Schema.NullOr(Schema.String)),
+  note: Schema.optional(Schema.NullOr(Schema.String)),
+  /** YYYY-MM-DD. */
+  effectiveDate: Schema.optional(Schema.NullOr(Schema.String)),
+}
 export type RecordVersion = typeof RecordVersion.Type
 
 /** A logical record (lineage) — referenced as "Latest"; whole-record archive lives here. */
@@ -150,6 +259,8 @@ export const Concept = Schema.Struct({
   /** Which of this concept's versions are editable; only meaningful when
    *  `versioningEnabled`. See {@link EditReach}. */
   editReach: EditReach,
+  /** Which publishes need a named approver (only meaningful with versioning on). */
+  approvalPolicy: ApprovalPolicy,
   /** Opt-in "single record": the concept holds exactly ONE record, always
    *  present and neither archivable nor purgeable while on. Reachable at
    *  `/c/<slug>`. Toggled ONLY via `setConceptSingleRecord` (never
@@ -1807,6 +1918,8 @@ export class KahunaRpcs extends RpcGroup.make(
       // Allow amending published versions (admin). Needs no guard either way:
       // tightening back to 'draft' just re-freezes them.
       editReach: Schema.optional(EditReach),
+      // 'all' = every publish becomes a request a named approver signs off.
+      approvalPolicy: Schema.optional(ApprovalPolicy),
       staticLabelIds: Schema.optional(Schema.Array(Schema.String)),
       defaultLabelIds: Schema.optional(Schema.Array(Schema.String)),
     },
@@ -2070,8 +2183,61 @@ export class KahunaRpcs extends RpcGroup.make(
     error: RpcError,
   }),
   // Freeze a draft: draft → published (permanent). Bumps the event counter.
+  // With an approver (required under approvalPolicy 'all')
+  // it instead opens an approval request and locks the draft; the result is the
+  // still-draft version with `release.pending` set.
   Rpc.make("publishVersion", {
-    payload: { id: Schema.String, expectedVersion: Schema.Number },
+    payload: {
+      id: Schema.String,
+      expectedVersion: Schema.Number,
+      ...ReleaseInfoFields,
+      approverId: Schema.optional(Schema.NullOr(Schema.String)),
+    },
+    success: RecordVersion,
+    error: RpcError,
+  }),
+  // The named approver signs off → the draft publishes with the request's text.
+  // Needs READ access to the record, not write.
+  Rpc.make("approveVersion", {
+    payload: { id: Schema.String },
+    success: RecordVersion,
+    error: RpcError,
+  }),
+  // The named approver refuses; the draft unlocks.
+  Rpc.make("rejectVersion", {
+    payload: { id: Schema.String, reason: Schema.optional(Schema.NullOr(Schema.String)) },
+    success: RecordVersion,
+    error: RpcError,
+  }),
+  // A record writer pulls an open request back; the draft unlocks.
+  Rpc.make("withdrawApproval", {
+    payload: { id: Schema.String },
+    success: RecordVersion,
+    error: RpcError,
+  }),
+  // Backfill release info on a PUBLISHED version (only keys present change; null
+  // clears). Refused on a version approved inside Kahuna.
+  Rpc.make("setVersionInfo", {
+    payload: {
+      id: Schema.String,
+      ...ReleaseInfoFields,
+      attributedAuthor: Schema.optional(Schema.NullOr(Schema.String)),
+      attributedApprover: Schema.optional(Schema.NullOr(Schema.String)),
+    },
+    success: RecordVersion,
+    error: RpcError,
+  }),
+  // Import one pre-Kahuna Document History row as a published history version
+  // placed BEFORE every existing version (so import newest first).
+  Rpc.make("importHistoricalVersion", {
+    payload: {
+      recordId: Schema.String,
+      name: Schema.String,
+      note: Schema.optional(Schema.NullOr(Schema.String)),
+      effectiveDate: Schema.String,
+      attributedAuthor: Schema.optional(Schema.NullOr(Schema.String)),
+      attributedApprover: Schema.optional(Schema.NullOr(Schema.String)),
+    },
     success: RecordVersion,
     error: RpcError,
   }),
