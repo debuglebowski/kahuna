@@ -321,3 +321,90 @@ describe("file properties", () => {
     }
   })
 })
+
+describe("multiple fields and enums", () => {
+  const category = field({
+    id: "fc",
+    name: "Category",
+    kind: "enum",
+    config: { options: ["Legal", "Finance", "HR"], multiple: true },
+  })
+  const status = field({
+    id: "fs",
+    name: "Status",
+    kind: "enum",
+    config: { options: ["Open", "Closed"] },
+  })
+  const tags = field({ id: "ft", name: "Tags", kind: "text", config: { multiple: true } })
+  const scores = field({ id: "fn", name: "Scores", kind: "number", config: { multiple: true } })
+  const costs = field({ id: "fm", name: "Costs", kind: "money", config: { multiple: true } })
+
+  it("sends a list for a multiple field, even with one item", () => {
+    expect(parseFieldAssignments([category], ["Category=Legal"])).toEqual({ fc: ["Legal"] })
+  })
+
+  it("accepts a,b — a; b — and a JSON array", () => {
+    expect(coerceValue(category, "Legal,HR")).toEqual(["Legal", "HR"])
+    expect(coerceValue(category, "Legal; HR")).toEqual(["Legal", "HR"])
+    expect(coerceValue(category, '["Legal","HR"]')).toEqual(["Legal", "HR"])
+  })
+
+  it("splits on ; when present, so commas survive inside items (export round-trip)", () => {
+    expect(coerceValue(tags, "a, b; c")).toEqual(["a, b", "c"])
+    expect(coerceValue(tags, '["x, y"]')).toEqual(["x, y"])
+  })
+
+  it("drops blank items and keeps [non-json] text", () => {
+    expect(coerceValue(tags, "a,,b,")).toEqual(["a", "b"])
+    expect(coerceValue(tags, "[draft] notes")).toEqual(["[draft] notes"])
+  })
+
+  it("coerces each item by the field's kind", () => {
+    expect(coerceValue(scores, "1, 2.5")).toEqual([1, 2.5])
+    expect(coerceValue(scores, '[1, "2"]')).toEqual([1, 2])
+    expect(() => coerceValue(scores, "1,lots")).toThrow(/not a number/)
+    expect(coerceValue(tags, "[1]")).toEqual(["1"])
+    expect(() => coerceValue(tags, "[null]")).toThrow(/null/)
+  })
+
+  it("money splits only on ; — a comma is a thousands separator", () => {
+    expect(coerceValue(costs, "1,200 SEK; 5 EUR")).toEqual([
+      { amount: 1200, currency: "SEK" },
+      { amount: 5, currency: "EUR" },
+    ])
+    expect(coerceValue(costs, '[{"amount":3,"currency":"usd"}]')).toEqual([
+      { amount: 3, currency: "USD" },
+    ])
+    try {
+      coerceValue(costs, "1200 SEK, 5 EUR")
+      expect.unreachable()
+    } catch (e) {
+      expect(String((e as { hint?: string }).hint)).toContain(";")
+    }
+  })
+
+  it("an empty value still clears; [] is an explicit empty list", () => {
+    expect(coerceValue(category, "")).toBeNull()
+    expect(coerceValue(category, "[]")).toEqual([])
+  })
+
+  it("validates enum items against options, forgiving case", () => {
+    expect(coerceValue(category, "legal, finance")).toEqual(["Legal", "Finance"])
+    expect(coerceValue(status, "closed")).toBe("Closed")
+    try {
+      coerceValue(category, "Legal,Ops")
+      expect.unreachable()
+    } catch (e) {
+      const err = e as { message: string; hint?: string; exitCode: number }
+      expect(err.message).toContain('"Ops"')
+      expect(err.message).toContain("Category")
+      expect(err.hint).toContain("Legal, Finance, HR")
+      expect(err.exitCode).toBe(EXIT.usage)
+    }
+    expect(() => coerceValue(status, "Pending")).toThrow(/not an option/)
+  })
+
+  it("leaves a single (non-multiple) text field a plain string", () => {
+    expect(coerceValue(field({ kind: "text" }), "a,b")).toBe("a,b")
+  })
+})

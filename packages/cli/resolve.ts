@@ -140,6 +140,9 @@ export const FIELD_VALUE_HELP = `Field values are read by the field's kind:
   richtext  markdown (paragraphs, headings, lists, links, bold/italic, code)
             | {"doc":{...},"text":"..."} JSON
   bool      true/false, yes/no, 1/0      json   any JSON
+  enum      one of the field's options (case-insensitive)
+  multiple  a,b | a; b | ["a","b"] — each item read by the kind above
+            (money: ";" only, a comma is a thousands separator)
   name=     (empty) clears the field
   name=@file.md   reads the value from a file (any kind); @@ = a literal leading @`
 
@@ -341,6 +344,81 @@ const parseRichText = (field: Field, text: string): unknown => {
 }
 
 /**
+ * An enum value must be one of the field's options. Matched exactly first, then
+ * case-insensitively when that picks exactly one — a CSV saying "legal" for
+ * "Legal" is a typo worth forgiving; anything else is refused HERE with the
+ * options listed, not left to a server error that names none of the input.
+ */
+const parseEnum = (field: Field, text: string): string => {
+  const options = field.config.options ?? []
+  const s = text.trim()
+  if (options.includes(s)) return s
+  const loose = options.filter((o) => norm(o) === norm(s))
+  if (loose.length === 1 && loose[0] !== undefined) return loose[0]
+  throw new CliError(
+    `"${s}" is not an option of "${field.name}".`,
+    EXIT.usage,
+    options.length > 0
+      ? `Options: ${options.join(", ")}`
+      : `"${field.name}" has no options defined yet.`,
+  )
+}
+
+/** Kinds whose `config.multiple` means "a list of values". relation uses
+ *  `cardinality`, file is refused outright, and json/richtext already take any
+ *  shape — none of them split. */
+const LISTABLE = new Set<Field["kind"]>(["text", "number", "date", "enum", "user", "bool", "money"])
+
+/**
+ * A `multiple` field's value: a JSON array (`["a","b"]`), else a separated list.
+ * The separator is `;` when the text has one — what `record export` writes, so
+ * an export re-imports unchanged — otherwise `,`. Money splits ONLY on `;`: a
+ * comma is a thousands separator there, and "1,200 SEK" read as two amounts is
+ * a silent 1000x error. Each item is coerced by the field's kind; blank items
+ * are dropped, so a trailing separator is harmless.
+ */
+const parseList = (field: Field, text: string, options: CoerceOptions): unknown[] => {
+  const s = text.trim()
+  if (s.startsWith("[")) {
+    let v: unknown
+    try {
+      v = JSON.parse(s)
+    } catch {
+      v = undefined
+    }
+    if (Array.isArray(v)) {
+      return v.map((item) => {
+        if (item === null || item === undefined) {
+          throw new CliError(`"${field.name}" got a null in its list.`, EXIT.usage)
+        }
+        const t = typeof item === "string" ? item : JSON.stringify(item)
+        return coerceOne(field, t, options)
+      })
+    }
+    // Not a JSON array — "[draft] notes" is text; fall through to splitting.
+  }
+  const sep = field.kind === "money" || s.includes(";") ? ";" : ","
+  return s
+    .split(sep)
+    .map((item) => item.trim())
+    .filter((item) => item !== "")
+    .map((item) => {
+      try {
+        return coerceOne(field, item, options)
+      } catch (e) {
+        if (field.kind === "money" && e instanceof CliError) {
+          throw new CliError(
+            e.message,
+            e.exitCode,
+            'Several amounts: separate with ";" ("1200 SEK; 5 EUR"), or pass a JSON array.',
+          )
+        }
+        throw e
+      }
+    })
+}
+
+/**
  * One value, coerced by its field's kind. Shared by `--field` and `record
  * import`, so a CSV cell and an argument can never mean different things.
  */
@@ -348,6 +426,14 @@ export const coerceValue = (field: Field, text: string, options: CoerceOptions =
   // An explicit empty value clears the field, for every kind. `--field x=` is
   // the only way to say "unset" without a separate flag.
   if (text === "") return null
+  // A `multiple` field takes a list; sending a bare string is a server refusal
+  // whose message ("expects a list") names nothing the user typed.
+  if (field.config.multiple && LISTABLE.has(field.kind)) return parseList(field, text, options)
+  return coerceOne(field, text, options)
+}
+
+/** A single (non-list) value, coerced by its field's kind. */
+const coerceOne = (field: Field, text: string, options: CoerceOptions): unknown => {
   switch (field.kind) {
     // Files are attachments, never state — say how to set one instead of letting
     // the server refuse a filename it can't use.
@@ -373,6 +459,8 @@ export const coerceValue = (field: Field, text: string, options: CoerceOptions =
       if (["false", "no", "0"].includes(norm(text))) return false
       throw new CliError(`"${text}" is not true/false (field "${field.name}").`, EXIT.usage)
     }
+    case "enum":
+      return parseEnum(field, text)
     case "json":
       try {
         return JSON.parse(text)

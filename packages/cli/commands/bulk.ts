@@ -27,6 +27,26 @@ const withApi = async <T>(f: (api: Api) => Promise<T>): Promise<T> => {
 }
 
 /**
+ * A list value as one cell `record import` reads back: items joined by "; ",
+ * money as "1200 SEK". If any item itself holds a ";", the split would break
+ * it, so the cell is a JSON array instead — import takes both.
+ */
+export const listCell = (items: ReadonlyArray<unknown>): string => {
+  const parts = items.map((v) => {
+    const m = v as { amount?: unknown; currency?: unknown } | null
+    if (
+      m &&
+      typeof m === "object" &&
+      typeof m.amount === "number" &&
+      typeof m.currency === "string"
+    )
+      return `${m.amount} ${m.currency}`
+    return typeof v === "object" && v !== null ? JSON.stringify(v) : String(v)
+  })
+  return parts.some((p) => p.includes(";")) ? JSON.stringify(items) : parts.join("; ")
+}
+
+/**
  * Export uses FIELD NAMES as columns, not ids.
  *
  * A UUID-keyed export is unreadable and — worse — un-editable: the point of
@@ -62,7 +82,7 @@ const exportRows = async (
       if (f.kind === "relation" && typeof raw === "string") {
         row[f.name] = labelsByRecord.get(raw) ?? raw
       } else if (Array.isArray(raw)) {
-        row[f.name] = raw.join("; ")
+        row[f.name] = listCell(raw)
       } else {
         row[f.name] = raw
       }
@@ -298,7 +318,7 @@ export const bulkCommands: ReadonlyArray<Command> = [
  * (an object for money/richtext/json) is sent through the same parser as its
  * JSON text, so it is validated, not trusted.
  */
-const coerceCell = (field: Field, cell: unknown, options: CoerceOptions): unknown => {
+export const coerceCell = (field: Field, cell: unknown, options: CoerceOptions): unknown => {
   if (cell === null || cell === "") return null
   const text = typeof cell === "object" ? JSON.stringify(cell) : String(cell)
   return coerceValue(field, text, options)
