@@ -7,6 +7,14 @@ const response = (mimeType: string | null, inline = true, filename = "test.txt")
   withApiSecurityHeaders(attachmentResponse({ filename, mimeType }, bytes, inline))
 
 describe("attachment preview responses", () => {
+  it("serves a non-Latin-1 filename: ASCII fallback, the real name in filename*", () => {
+    const name = "SOC 2 — Bericht für 2025.pdf"
+    const res = response("application/pdf", false, name)
+    const disposition = res.headers.get("content-disposition") ?? ""
+    expect(disposition).toContain('filename="SOC 2 _ Bericht f_r 2025.pdf"')
+    expect(disposition).toContain(`filename*=UTF-8''${encodeURIComponent(name)}`)
+  })
+
   it("lets the app frame text while preserving its opaque, script-free sandbox", async () => {
     const res = response("text/plain; charset=utf-8")
     expect(res.headers.get("content-disposition")).toMatch(/^inline;/)

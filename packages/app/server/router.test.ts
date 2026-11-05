@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto"
+import { UPLOAD_FILENAME_HEADER } from "@kahunalabs/contract"
 import { describe, expect, it } from "vitest"
+import { MAX_UPLOAD_BYTES } from "#engine"
 import { auth } from "./auth"
 import { pool } from "./db"
 import { createUserDirect } from "./provision"
@@ -319,4 +321,116 @@ describe("SSO provider management over HTTP", () => {
     expect(isBlockedSsoPath("/api/auth/sign-in/sso")).toBe(false)
     expect(isBlockedSsoPath("/api/auth/sso/callback/org-1")).toBe(false)
   })
+})
+
+describe("attachment upload route (raw body, streamed)", () => {
+  const MiB = 1024 * 1024
+
+  /** `size` zero bytes in 1 MiB chunks; `pulled()` says whether anything was read.
+   *  highWaterMark 0: nothing is pulled until a consumer reads. */
+  const body = (size: number) => {
+    let left = size
+    let pulled = false
+    const stream = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          pulled = true
+          if (left <= 0) return controller.close()
+          const n = Math.min(left, MiB)
+          left -= n
+          controller.enqueue(new Uint8Array(n))
+        },
+      },
+      { highWaterMark: 0 },
+    )
+    return { stream, pulled: () => pulled }
+  }
+
+  const upload = (
+    headers: Headers,
+    bucketId: string,
+    stream: ReadableStream<Uint8Array>,
+    extra: Record<string, string>,
+  ) => {
+    const h = new Headers(headers)
+    for (const [k, v] of Object.entries(extra)) h.set(k, v)
+    return handleApi(
+      new Request(`http://localhost/api/buckets/${bucketId}/attachments?shared=true`, {
+        method: "POST",
+        headers: h,
+        body: stream,
+        duplex: "half",
+      } as RequestInit),
+    )
+  }
+
+  it("refuses a declared length one byte over the cap with 413, before reading the body", async () => {
+    // No session needed: the length check runs before anything else.
+    const b = body(MAX_UPLOAD_BYTES + 1)
+    const res = await upload(new Headers(), randomUUID(), b.stream, {
+      "content-length": String(MAX_UPLOAD_BYTES + 1),
+      [UPLOAD_FILENAME_HEADER]: "big.bin",
+    })
+    expect(res?.status).toBe(413)
+    const json = (await res!.json()) as { error: string; detail: { maxBytes: number } }
+    expect(json.error).toBe("ATTACHMENT_TOO_LARGE")
+    expect(json.detail.maxBytes).toBe(MAX_UPLOAD_BYTES)
+    expect(b.pulled()).toBe(false)
+  })
+
+  it("refuses a multipart body (a stale SPA) and a missing filename", async () => {
+    const multipart = await upload(new Headers(), randomUUID(), body(1).stream, {
+      "content-type": "multipart/form-data; boundary=x",
+      [UPLOAD_FILENAME_HEADER]: "a.txt",
+    })
+    expect(multipart?.status).toBe(415)
+    const nameless = await upload(new Headers(), randomUUID(), body(1).stream, {})
+    expect(nameless?.status).toBe(400)
+  })
+
+  it("accepts exactly MAX_UPLOAD_BYTES, streams it back, and keeps a percent-encoded name", async () => {
+    const owner = await signUpAndOrg()
+    const bucketId = randomUUID()
+    const name = "SOC 2 Type II — 2025 (final).pdf"
+    const res = await upload(owner.headers, bucketId, body(MAX_UPLOAD_BYTES).stream, {
+      "content-type": "application/pdf",
+      [UPLOAD_FILENAME_HEADER]: encodeURIComponent(name),
+    })
+    expect(res?.status).toBe(200)
+    const att = (await res!.json()) as {
+      id: string
+      filename: string
+      sizeBytes: number
+      mimeType: string
+    }
+    expect(att).toMatchObject({ filename: name, sizeBytes: MAX_UPLOAD_BYTES })
+    expect(att.mimeType).toBe("application/pdf")
+
+    const dl = await handleApi(
+      new Request(`http://localhost/api/attachments/${att.id}/download`, {
+        headers: owner.headers,
+      }),
+    )
+    expect(dl?.status).toBe(200)
+    let read = 0
+    const reader = dl!.body!.getReader()
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      read += value.byteLength
+    }
+    expect(read).toBe(MAX_UPLOAD_BYTES)
+  }, 120_000)
+
+  it("cuts off an undeclared (chunked) body one byte over the cap", async () => {
+    const owner = await signUpAndOrg()
+    const bucketId = randomUUID()
+    const res = await upload(owner.headers, bucketId, body(MAX_UPLOAD_BYTES + 1).stream, {
+      [UPLOAD_FILENAME_HEADER]: "over.bin",
+    })
+    expect(res?.status).toBe(413)
+    expect(((await res!.json()) as { error: string }).error).toBe("ATTACHMENT_TOO_LARGE")
+    const rows = await pool.query("SELECT 1 FROM attachments WHERE bucket_id = $1", [bucketId])
+    expect(rows.rowCount).toBe(0)
+  }, 120_000)
 })

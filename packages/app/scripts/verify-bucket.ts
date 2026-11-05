@@ -8,7 +8,12 @@
  * slay-managed one; point API/ORIGIN at :3100/:5100 to verify the managed stack.
  */
 
-import { KahunaRpcs, layerRpcProtocolHttp } from "@kahunalabs/contract"
+import {
+  KahunaRpcs,
+  layerRpcProtocolHttp,
+  MAX_UPLOAD_BYTES,
+  UPLOAD_FILENAME_HEADER,
+} from "@kahunalabs/contract"
 import { Context, Effect, Layer, ManagedRuntime } from "effect"
 import { FetchHttpClient } from "effect/http"
 import { RpcClient, RpcSerialization } from "effect/rpc"
@@ -89,11 +94,15 @@ const bucketId = crypto.randomUUID()
 const privateBucket = crypto.randomUUID()
 // `Uint8Array<ArrayBuffer>`, not a bare `Uint8Array`: the default type param is
 // `ArrayBufferLike`, which includes SharedArrayBuffer and so is not a `BlobPart`.
-const upload = (bucket: string, name: string, body: Uint8Array<ArrayBuffer>, shared: boolean) => {
-  const form = new FormData()
-  form.append("file", new File([body], name, { type: "application/pdf" }))
-  return req(`/api/buckets/${bucket}/attachments?shared=${shared}`, { method: "POST", body: form })
-}
+const upload = (bucket: string, name: string, body: Uint8Array<ArrayBuffer>, shared: boolean) =>
+  req(`/api/buckets/${bucket}/attachments?shared=${shared}`, {
+    method: "POST",
+    body,
+    headers: {
+      "content-type": "application/pdf",
+      [UPLOAD_FILENAME_HEADER]: encodeURIComponent(name),
+    },
+  })
 const up1 = await upload(
   bucketId,
   "handbook.pdf",
@@ -145,22 +154,54 @@ ok(
   `${dlShared.status}`,
 )
 
-// ── 25 MB cap ──
-const bigForm = new FormData()
-bigForm.append(
-  "file",
-  new File([new Uint8Array(26 * 1024 * 1024)], "huge.bin", { type: "application/octet-stream" }),
-)
-const big = await req(`/api/buckets/${bucketId}/attachments?shared=true`, {
-  method: "POST",
-  body: bigForm,
-})
-const bigBody = await big.json().catch(() => null)
+// ── the cap: exactly MAX_UPLOAD_BYTES is accepted, one byte more is refused ──
+// Sent as streams of zero-filled 1 MiB chunks, so this driver never holds 100 MB
+// either. The server's RSS during the accepted upload is the real test of the
+// streaming path — watch it (ps -o rss -p <pid>) while this runs.
+const zeros = (size: number) => {
+  let left = size
+  return new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (left <= 0) return controller.close()
+      const n = Math.min(left, 1024 * 1024)
+      left -= n
+      controller.enqueue(new Uint8Array(n))
+    },
+  })
+}
+const raw = (name: string, size: number, declare: boolean) =>
+  req(`/api/buckets/${bucketId}/attachments?shared=true`, {
+    method: "POST",
+    body: zeros(size),
+    headers: {
+      "content-type": "application/octet-stream",
+      [UPLOAD_FILENAME_HEADER]: name,
+      ...(declare ? { "content-length": String(size) } : {}),
+    },
+  })
+const atCap = await raw("at-cap.bin", MAX_UPLOAD_BYTES, true)
+const atCapBody = await atCap.json().catch(() => null)
 ok(
-  "26 MB upload refused with 413",
-  big.status === 413 && bigBody?.error === "ATTACHMENT_TOO_LARGE",
-  `${big.status} ${JSON.stringify(bigBody)?.slice(0, 140)}`,
+  `${MAX_UPLOAD_BYTES / 1024 / 1024} MB upload accepted`,
+  atCap.ok && atCapBody?.sizeBytes === MAX_UPLOAD_BYTES,
+  `${atCap.status} ${JSON.stringify(atCapBody)?.slice(0, 140)}`,
 )
+const over = await raw("over.bin", MAX_UPLOAD_BYTES + 1, true)
+const overBody = await over.json().catch(() => null)
+ok(
+  "one byte over refused with 413",
+  over.status === 413 && overBody?.error === "ATTACHMENT_TOO_LARGE",
+  `${over.status} ${JSON.stringify(overBody)?.slice(0, 140)}`,
+)
+// Same, with no Content-Length (chunked): the engine cuts the stream off.
+const overChunked = await raw("over-chunked.bin", MAX_UPLOAD_BYTES + 1, false)
+const overChunkedBody = await overChunked.json().catch(() => null)
+ok(
+  "one byte over, chunked, refused with 413",
+  overChunked.status === 413 && overChunkedBody?.error === "ATTACHMENT_TOO_LARGE",
+  `${overChunked.status} ${JSON.stringify(overChunkedBody)?.slice(0, 140)}`,
+)
+if (atCapBody?.id) await call((c) => c.deleteFile({ id: atCapBody.id }))
 
 // ── flipping sharing after the fact (the widget's toggle on an existing bucket) ──
 // The flag is stamped per row at upload, so this is what makes "private" mean

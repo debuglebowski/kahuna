@@ -1,6 +1,12 @@
 // Pure core
 
-export { BlobError, BlobStore, type BlobStoreApi } from "./blob/BlobStore"
+export {
+  BlobError,
+  BlobStore,
+  type BlobStoreApi,
+  bytesStream,
+  collectBytes,
+} from "./blob/BlobStore"
 export { LocalFsBlobStore } from "./blob/local"
 export {
   DEFAULT_DECAY_BANDS,

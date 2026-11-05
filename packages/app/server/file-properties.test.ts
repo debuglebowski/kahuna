@@ -4,6 +4,7 @@ import {
   KahunaRpcs,
   layerRpcProtocolHttp,
   type RecordDetail,
+  UPLOAD_FILENAME_HEADER,
 } from "@kahunalabs/contract"
 import { Cause, Context, Effect, Exit, Layer, ManagedRuntime } from "effect"
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http"
@@ -69,14 +70,12 @@ const rpcAs = (cookie: string) => {
 }
 
 const upload = async (cookie: string, recordId: string, name: string, fieldId?: string) => {
-  const form = new FormData()
-  form.append("file", new Blob([new TextEncoder().encode(name)]), name)
   const qs = fieldId ? `?field=${fieldId}` : ""
   const res = await handleApi(
     new Request(`${HOST}/api/records/${recordId}/attachments${qs}`, {
       method: "POST",
-      body: form,
-      headers: { cookie, origin: HOST },
+      body: new TextEncoder().encode(name),
+      headers: { cookie, origin: HOST, [UPLOAD_FILENAME_HEADER]: encodeURIComponent(name) },
     }),
   )
   if (!res) throw new Error("route not matched")
@@ -287,13 +286,11 @@ describe("file properties (HTTP + RPC)", () => {
         }),
       )
       const stage = async (cookie: string, name: string) => {
-        const form = new FormData()
-        form.append("file", new Blob([new TextEncoder().encode(name)]), name)
         const res = await handleApi(
           new Request(`${HOST}/api/attachments/staged`, {
             method: "POST",
-            body: form,
-            headers: { cookie, origin: HOST },
+            body: new TextEncoder().encode(name),
+            headers: { cookie, origin: HOST, [UPLOAD_FILENAME_HEADER]: encodeURIComponent(name) },
           }),
         )
         return {

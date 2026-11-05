@@ -24,7 +24,7 @@ export const isInlineSafe = (mimeType: string | null | undefined): boolean => {
 /** The actual download route's response builder, kept free of DB/auth dependencies. */
 export const attachmentResponse = (
   attachment: { filename: string; mimeType: string | null },
-  data: Uint8Array,
+  body: ReadableStream<Uint8Array> | Uint8Array,
   requestedInline: boolean,
 ): Response => {
   const inline = requestedInline && isInlineSafe(attachment.mimeType)
@@ -33,8 +33,12 @@ export const attachmentResponse = (
     : baseType(attachment.mimeType) === "application/pdf"
       ? "pdf"
       : "sandboxed"
-  const safeName = attachment.filename.replace(/["\\\r\n]/g, "_")
-  return new Response(data as unknown as BodyInit, {
+  // The plain `filename=` is the fallback for clients that ignore `filename*`, and
+  // header values must be Latin-1: a raw "—" or "ü" here made the Response
+  // constructor THROW, so the file could be uploaded but never downloaded. ASCII
+  // only; the real name rides in `filename*`.
+  const safeName = attachment.filename.replace(/[^\x20-\x7e]|["\\]/g, "_")
+  return new Response(body as unknown as BodyInit, {
     headers: {
       ...attachmentSecurityHeaders(preview),
       // Never trust a filename extension to select inline rendering. nosniff

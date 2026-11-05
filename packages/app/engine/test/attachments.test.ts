@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto"
 import { PgClient } from "@effect/sql-pg"
 import { describe, expect, it } from "@effect/vitest"
 import { Effect } from "effect"
+import { collectBytes } from "../blob/BlobStore"
 import { AttachmentService, MAX_UPLOAD_BYTES } from "../services/AttachmentService"
 import { ConceptService } from "../services/ConceptService"
 import { EventStore } from "../services/EventStore"
@@ -15,6 +16,25 @@ const seedItem = Effect.gen(function* () {
   yield* concepts.create({ name: "Artifact" })
   return yield* recordVersions.create({ conceptName: "Artifact", fields: {} })
 })
+
+/** `download` hands back a stream (the HTTP route pipes it out); drain it. */
+const downloadBytes = (id: string) =>
+  Effect.flatMap(AttachmentService, (a) => a.download(id)).pipe(
+    Effect.flatMap(({ body }) => Effect.promise(() => collectBytes(body))),
+  )
+
+/** `size` zero bytes in 1 MiB chunks — a request body, not one big buffer. */
+const zeroStream = (size: number) => {
+  let left = size
+  return new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (left <= 0) return controller.close()
+      const n = Math.min(left, 1024 * 1024)
+      left -= n
+      controller.enqueue(new Uint8Array(n))
+    },
+  })
+}
 
 describe("attachments", () => {
   it.effect(
@@ -49,7 +69,7 @@ describe("attachments", () => {
             .length,
         ).toBe(0)
 
-        const { data } = yield* attachments.download(att.id)
+        const data = yield* downloadBytes(att.id)
         expect(Array.from(data)).toEqual(Array.from(bytes))
 
         // The event rides the attachment's own stream and never enters the
@@ -83,7 +103,7 @@ describe("attachments", () => {
             .length,
         ).toBe(1)
         // Archived files stay downloadable.
-        expect((yield* attachments.download(att.id)).data.length).toBe(3)
+        expect((yield* downloadBytes(att.id)).length).toBe(3)
 
         const restored = yield* attachments.restore(att.id)
         expect(restored.archivedAt).toBeNull()
@@ -161,7 +181,7 @@ describe("attachments", () => {
       expect(att.bucketShared).toBe(true)
 
       expect((yield* attachments.list({ bucketId })).map((a) => a.id)).toEqual([att.id])
-      expect(Array.from((yield* attachments.download(att.id)).data)).toEqual(Array.from(bytes))
+      expect(Array.from(yield* downloadBytes(att.id))).toEqual(Array.from(bytes))
       // The event carries the bucket instead of a host record.
       const stream = yield* events.readStream(att.id)
       expect(stream.map((e) => e.eventType)).toEqual(["AttachmentAdded"])
@@ -206,7 +226,7 @@ describe("attachments", () => {
       ])
       // …and its UPLOADER can still download it directly (this layer's actor is
       // the uploader). Another member cannot — see the next test.
-      expect((yield* attachments.download(hidden.id)).data.length).toBe(1)
+      expect((yield* downloadBytes(hidden.id)).length).toBe(1)
 
       // Record-shaped scopes can never surface bucket files: no record, no concept.
       const itemIds = (yield* attachments.list({ recordId: recordVersion.recordId })).map(
@@ -249,8 +269,8 @@ describe("attachments", () => {
     const outcome = await Effect.gen(function* () {
       const attachments = yield* AttachmentService
       const denied = yield* Effect.result(attachments.download(uploaded.priv.id))
-      const allowed = yield* attachments.download(uploaded.shared.id)
-      return { denied, allowedBytes: allowed.data.length }
+      const allowed = yield* downloadBytes(uploaded.shared.id)
+      return { denied, allowedBytes: allowed.length }
     }).pipe(Effect.provide(testLayer(orgId, "someone-else")), Effect.runPromise)
 
     expect(outcome.denied._tag).toBe("Failure")
@@ -261,8 +281,7 @@ describe("attachments", () => {
 
     // The uploader still gets their own bytes.
     const own = await Effect.gen(function* () {
-      const attachments = yield* AttachmentService
-      return (yield* attachments.download(uploaded.priv.id)).data.length
+      return (yield* downloadBytes(uploaded.priv.id)).length
     }).pipe(Effect.provide(testLayer(orgId, "uploader")), Effect.runPromise)
     expect(own).toBe(1)
   })
@@ -365,6 +384,80 @@ describe("attachments", () => {
         .pipe(Effect.flip)
       expect(err._tag).toBe("AttachmentTooLarge")
       expect((yield* attachments.list({ bucketId })).length).toBe(0)
+    }).pipe(Effect.provide(testLayer(newOrgId()))),
+  )
+
+  // The cap is exact and enforced on the STREAM — the path the HTTP route takes.
+  // `zeroStream` keeps memory at one 1 MiB chunk; the stored blob is real.
+  it.effect(
+    "a streamed upload of exactly MAX_UPLOAD_BYTES is stored whole",
+    () =>
+      Effect.gen(function* () {
+        const attachments = yield* AttachmentService
+        const bucketId = randomUUID()
+        const att = yield* attachments.upload({
+          owner: { bucketId },
+          filename: "at-limit.bin",
+          data: zeroStream(MAX_UPLOAD_BYTES),
+        })
+        expect(att.sizeBytes).toBe(MAX_UPLOAD_BYTES)
+        const { body } = yield* attachments.download(att.id)
+        let read = 0
+        yield* Effect.promise(async () => {
+          const reader = body.getReader()
+          for (;;) {
+            const { done, value } = await reader.read()
+            if (done) break
+            read += value.byteLength
+          }
+        })
+        expect(read).toBe(MAX_UPLOAD_BYTES)
+        yield* attachments.purgeBucket(bucketId)
+      }).pipe(Effect.provide(testLayer(newOrgId()))),
+    60_000,
+  )
+
+  it.effect(
+    "a streamed upload one byte over MAX_UPLOAD_BYTES is cut off and stores nothing",
+    () =>
+      Effect.gen(function* () {
+        const attachments = yield* AttachmentService
+        const sql = yield* PgClient.PgClient
+        const bucketId = randomUUID()
+        const err = yield* attachments
+          .upload({
+            owner: { bucketId },
+            filename: "over.bin",
+            data: zeroStream(MAX_UPLOAD_BYTES + 1),
+          })
+          .pipe(Effect.flip)
+        expect(err._tag).toBe("AttachmentTooLarge")
+        expect((err as { sizeBytes: number }).sizeBytes).toBe(MAX_UPLOAD_BYTES + 1)
+        const rows = yield* sql`SELECT 1 FROM attachments WHERE bucket_id = ${bucketId}`
+        expect(rows.length).toBe(0)
+      }).pipe(Effect.provide(testLayer(newOrgId()))),
+    60_000,
+  )
+
+  it.effect("a refused owner is refused before a byte is read", () =>
+    Effect.gen(function* () {
+      const attachments = yield* AttachmentService
+      let pulled = false
+      // highWaterMark 0: nothing is pulled until a consumer reads.
+      const body = new ReadableStream<Uint8Array>(
+        {
+          pull(controller) {
+            pulled = true
+            controller.close()
+          },
+        },
+        { highWaterMark: 0 },
+      )
+      const err = yield* attachments
+        .upload({ owner: { recordId: randomUUID() }, filename: "x.bin", data: body })
+        .pipe(Effect.flip)
+      expect(err._tag).toBe("RecordNotFound")
+      expect(pulled).toBe(false)
     }).pipe(Effect.provide(testLayer(newOrgId()))),
   )
 

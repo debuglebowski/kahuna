@@ -363,8 +363,19 @@ export const Field = Schema.Struct({
 })
 export type Field = typeof Field.Type
 
+/** Upload ceiling, in bytes — the ONE definition: the engine enforces it, the
+ *  upload route answers 413 above it, the SPA refuses before sending. Bytes are
+ *  streamed to blob storage (never buffered whole), so this is policy, not a
+ *  memory bound. Bun's `maxRequestBodySize` is derived from it (server/index.ts);
+ *  a proxy/ingress in front of the deployment must allow it too. */
+export const MAX_UPLOAD_BYTES = 100 * 1024 * 1024
+
+/** An upload's body is the raw file; its name rides in this header,
+ *  percent-encoded (`encodeURIComponent`) — header values are Latin-1. */
+export const UPLOAD_FILENAME_HEADER = "x-file-name"
+
 /** A file (the binary side of the annotation substrate). Bytes move over plain
- *  HTTP (multipart up, binary down — see server/router.ts); this is the metadata
+ *  HTTP (raw body up, binary down — see server/router.ts); this is the metadata
  *  the RPCs list and mutate. Exactly one owner: `recordId` = the host lineage of a
  *  record, `bucketId` = a Files widget that owns its files outright. */
 export const Attachment = Schema.Struct({

@@ -1,7 +1,69 @@
+import { Readable } from "node:stream"
 import { DefaultAzureCredential } from "@azure/identity"
-import { BlobServiceClient, StorageSharedKeyCredential } from "@azure/storage-blob"
+import {
+  BlobServiceClient,
+  type BlockBlobClient,
+  StorageSharedKeyCredential,
+} from "@azure/storage-blob"
 import { Effect, Layer } from "effect"
 import { BlobError, BlobStore } from "#engine"
+
+/** Block size for staged uploads: the most one upload holds in memory. */
+const BLOCK_BYTES = 4 * 1024 * 1024
+
+/** Block ids must be base64 and all the same length within one blob. */
+const blockId = (i: number) => Buffer.from(String(i).padStart(8, "0")).toString("base64")
+
+/**
+ * Stream `body` into a block blob: fill one `BLOCK_BYTES` buffer, stage it, repeat;
+ * then commit the list. Memory stays at one block however large the file.
+ *
+ * Hand-rolled on purpose. The SDK's `uploadStream` does the same thing but hangs
+ * (or 400s) under Bun — fine under Node, so a vitest run would never show it — and
+ * `uploadData` needs the whole file as one buffer, which is what this replaces.
+ * `stageBlock` with a Buffer body is the request shape `uploadData` already used.
+ *
+ * A stream that errors stops before the commit: the staged blocks stay
+ * uncommitted — never readable, an existing blob under the key untouched — and
+ * Azure garbage-collects them.
+ */
+const putBlocks = async (
+  blob: BlockBlobClient,
+  body: ReadableStream<Uint8Array>,
+  contentType?: string,
+) => {
+  const ids: string[] = []
+  let block = Buffer.allocUnsafe(BLOCK_BYTES)
+  let filled = 0
+  const stage = async () => {
+    const id = blockId(ids.length)
+    await blob.stageBlock(id, block.subarray(0, filled), filled)
+    ids.push(id)
+    block = Buffer.allocUnsafe(BLOCK_BYTES)
+    filled = 0
+  }
+  const reader = body.getReader()
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      let offset = 0
+      while (offset < value.byteLength) {
+        const n = Math.min(BLOCK_BYTES - filled, value.byteLength - offset)
+        block.set(value.subarray(offset, offset + n), filled)
+        filled += n
+        offset += n
+        if (filled === BLOCK_BYTES) await stage()
+      }
+    }
+  } finally {
+    reader.releaseLock()
+  }
+  if (filled > 0) await stage()
+  await blob.commitBlockList(ids, {
+    blobHTTPHeaders: contentType ? { blobContentType: contentType } : undefined,
+  })
+}
 
 export interface AzureConfig {
   /** Container name. Must already exist — we never create it (see below). */
@@ -34,22 +96,22 @@ export const AzureBlobStore = (cfg: AzureConfig) =>
   Layer.sync(BlobStore, () => {
     const container = azureServiceClient(cfg).getContainerClient(cfg.container)
     return {
-      put: (key, data, contentType) =>
+      put: (key, body, contentType) =>
         Effect.tryPromise({
-          try: () =>
-            container
-              .getBlockBlobClient(key)
-              // `uploadData` (not `upload`) — it takes a Uint8Array directly and
-              // splits anything large into staged blocks, where `upload` caps at
-              // a single 5000 MiB request.
-              .uploadData(data, {
-                blobHTTPHeaders: contentType ? { blobContentType: contentType } : undefined,
-              }),
+          try: () => putBlocks(container.getBlockBlobClient(key), body, contentType),
           catch: (e) => new BlobError({ message: `azure put ${key}: ${String(e)}` }),
-        }).pipe(Effect.asVoid),
+        }),
       get: (key) =>
         Effect.tryPromise({
-          try: () => container.getBlockBlobClient(key).downloadToBuffer(),
+          // `download()` resolves once the response headers are in, so a missing
+          // key (404) rejects HERE; the body then streams.
+          try: async () => {
+            const res = await container.getBlockBlobClient(key).download()
+            if (!res.readableStreamBody) throw new Error("no body")
+            return Readable.toWeb(
+              res.readableStreamBody as Readable,
+            ) as unknown as ReadableStream<Uint8Array>
+          },
           catch: (e) => new BlobError({ message: `azure get ${key}: ${String(e)}` }),
         }),
       del: (key) =>

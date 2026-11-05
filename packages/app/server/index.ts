@@ -1,6 +1,6 @@
 import "./env" // Load repo-root .env into process.env before any DB-touching import.
 import path from "node:path"
-import { healthCheck } from "#engine"
+import { healthCheck, MAX_UPLOAD_BYTES } from "#engine"
 import { auth } from "./auth"
 import { startAutomationRunner, startAutomationScheduleTick } from "./automations"
 import { withClientIpHeader } from "./clientIp"
@@ -43,6 +43,11 @@ const server = Bun.serve({
   // kill fired BETWEEN pings and tore the live-sync stream down on a loop.
   // 60s keeps streams alive while still shedding genuinely dead connections.
   idleTimeout: 60,
+  // Explicit, not Bun's 128 MB default: the largest body anything accepts is an
+  // upload (MAX_UPLOAD_BYTES, raw — no multipart framing), and RPC bodies are
+  // tiny. The upload route answers a declared over-cap length itself with a
+  // clear 413; this is the backstop for everything else.
+  maxRequestBodySize: MAX_UPLOAD_BYTES + 1024 * 1024,
   async fetch(req) {
     const url = new URL(req.url)
     // Security headers on EVERY response. `handleApi` is the one exception: the

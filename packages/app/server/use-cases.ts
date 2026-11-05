@@ -1306,7 +1306,7 @@ export const uploadAttachment = (
   owner: UploadOwner,
   filename: string,
   mimeType: string | undefined,
-  data: Uint8Array,
+  data: Uint8Array | ReadableStream<Uint8Array>,
 ): UC<Attachment> =>
   ("recordId" in owner ? assertSubjectWritable(owner.recordId) : Effect.void).pipe(
     Effect.andThen(
@@ -1386,7 +1386,7 @@ export const setBucketShared = (bucketId: string, shared: boolean): UC<ReadonlyA
 // a guessed attachment id return bytes for a record the caller cannot read.
 export const downloadAttachment = (
   attachmentId: string,
-): UC<{ attachment: Attachment; data: Uint8Array }> =>
+): UC<{ attachment: Attachment; body: ReadableStream<Uint8Array> }> =>
   Effect.flatMap(AttachmentService, (a) => a.get(attachmentId)).pipe(
     Effect.flatMap((meta) => (meta.recordId ? assertSubjectReadable(meta.recordId) : Effect.void)),
     Effect.andThen(Effect.flatMap(AttachmentService, (a) => a.download(attachmentId))),

@@ -1,3 +1,4 @@
+import { UPLOAD_FILENAME_HEADER } from "@kahunalabs/contract"
 import { and, eq, sql } from "drizzle-orm"
 import { member, organization, user } from "#db"
 import { MAX_UPLOAD_BYTES, type UploadOwner } from "#engine"
@@ -92,36 +93,43 @@ import { versionInfo } from "./version"
 const json = (r: UseCaseResult<unknown>) =>
   Response.json(r.ok ? r.data : { error: r.code, detail: r.detail }, { status: r.status })
 
+const tooLarge = (sizeBytes: number) =>
+  Response.json(
+    { error: "ATTACHMENT_TOO_LARGE", detail: { sizeBytes, maxBytes: MAX_UPLOAD_BYTES } },
+    { status: 413 },
+  )
+
 /**
- * The two multipart upload routes, sharing everything but the owner. Content-Length
- * is checked BEFORE `formData()` so an oversized body is refused without buffering
- * it; the engine re-checks the real byte count (this header is client-supplied, and
- * multipart framing inflates it slightly).
+ * The three upload routes, sharing everything but the owner. The body IS the
+ * file (raw bytes, `content-type` = its type, filename in `x-file-name`) and is
+ * streamed straight into blob storage — never `formData()`, which buffers the
+ * whole body, and a 100 MB upload or two would OOM the 1 GiB replica.
+ *
+ * A declared Content-Length over the cap is refused before a byte is read. The
+ * engine counts the real bytes as they stream and cuts the body off past the cap,
+ * which covers a chunked body that declares nothing.
  */
 const uploadRoute = async (req: Request, owner: UploadOwner): Promise<Response> => {
-  const declared = Number(req.headers.get("content-length") ?? 0)
-  if (declared > MAX_UPLOAD_BYTES)
+  const declared = req.headers.get("content-length")
+  if (declared !== null && Number(declared) > MAX_UPLOAD_BYTES) return tooLarge(Number(declared))
+  // The pre-streaming wire format. Only a browser tab still running an old build
+  // sends it; say so rather than storing the multipart framing as the file.
+  if (req.headers.get("content-type")?.toLowerCase().startsWith("multipart/form-data"))
     return Response.json(
-      {
-        error: "ATTACHMENT_TOO_LARGE",
-        detail: { sizeBytes: declared, maxBytes: MAX_UPLOAD_BYTES },
-      },
-      { status: 413 },
+      { error: "multipart uploads are not supported — reload the app" },
+      { status: 415 },
     )
-  const form = await req.formData().catch(() => null)
-  const file = form?.get("file")
-  if (!(file instanceof File))
-    return Response.json({ error: "file field required" }, { status: 400 })
-  // Bun hands back a plain Blob (no `name`) for a zero-byte multipart part, and it
-  // still passes `instanceof File` — so an empty file reached the insert with
-  // filename undefined, tripping the NOT NULL and surfacing as an opaque 500.
-  // Refuse it here: a nameless or empty upload is a client mistake, not a defect.
-  if (!file.name) return Response.json({ error: "file name required" }, { status: 400 })
-  if (file.size === 0) return Response.json({ error: "file is empty" }, { status: 400 })
-  const data = new Uint8Array(await file.arrayBuffer())
-  return json(
-    await runScoped(req, uploadAttachment(owner, file.name, file.type || undefined, data)),
-  )
+  let filename = ""
+  try {
+    filename = decodeURIComponent(req.headers.get(UPLOAD_FILENAME_HEADER) ?? "").trim()
+  } catch {
+    return Response.json({ error: `malformed ${UPLOAD_FILENAME_HEADER}` }, { status: 400 })
+  }
+  if (!filename) return Response.json({ error: "file name required" }, { status: 400 })
+  if (!req.body || declared === "0")
+    return Response.json({ error: "file is empty" }, { status: 400 })
+  const mimeType = req.headers.get("content-type") || undefined
+  return json(await runScoped(req, uploadAttachment(owner, filename, mimeType, req.body)))
 }
 
 /**
@@ -298,7 +306,7 @@ export const handleApi = async (req: Request): Promise<Response | null> => {
     if (seg[3] === "callback" && m === "POST") return handleClayCallback(req)
   }
 
-  // Multipart upload onto a record, or into a Files widget's own bucket
+  // Raw-body upload onto a record, or into a Files widget's own bucket
   // (reads/mutations of the metadata are typed RPCs — listFiles/archiveFile/
   // restoreFile/deleteFile/purgeBucket).
   // `?field=<fieldId>` uploads straight into that file property of the record
@@ -601,11 +609,12 @@ export const handleApi = async (req: Request): Promise<Response | null> => {
         { error: result.code },
         { status: result.status, headers: attachmentSecurityHeaders() },
       )
-    const { attachment, data } = result.data as {
+    // Streamed from blob storage, never held whole in memory.
+    const { attachment, body } = result.data as {
       attachment: { filename: string; mimeType: string | null }
-      data: Uint8Array
+      body: ReadableStream<Uint8Array>
     }
-    return attachmentResponse(attachment, data, url.searchParams.has("inline"))
+    return attachmentResponse(attachment, body, url.searchParams.has("inline"))
   }
 
   return null

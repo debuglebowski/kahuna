@@ -13,6 +13,7 @@ import {
   type GraphStyle,
   KahunaRpcs,
   layerRpcProtocolHttp,
+  MAX_UPLOAD_BYTES,
   type MentionTarget,
   type RecordViewLayout,
   type RecordViewPrefsBody,
@@ -20,6 +21,7 @@ import {
   type SidebarCondition,
   type SidebarViewBody,
   type TaskStatusCategory,
+  UPLOAD_FILENAME_HEADER,
 } from "@kahunalabs/contract"
 import { Context, Effect, Layer, ManagedRuntime } from "effect"
 import { FetchHttpClient } from "effect/http"
@@ -117,9 +119,35 @@ export type FileOwner =
   | { readonly recordId: string; readonly fieldId?: string }
   | { readonly bucketId: string; readonly shared?: boolean }
 
-/** The server's cap, in MB, for the one message the user can act on. Kept in sync
- *  with `MAX_UPLOAD_BYTES` (the engine can't be imported into the browser bundle). */
-export const MAX_UPLOAD_MB = 25
+/** The server's cap, in MB, for the one message the user can act on. Derived from
+ *  the contract's `MAX_UPLOAD_BYTES` — the same constant the engine enforces. */
+export const MAX_UPLOAD_MB = MAX_UPLOAD_BYTES / (1024 * 1024)
+
+/**
+ * POST one file as the raw request body (see `uploadRoute` in server/router.ts —
+ * the server streams it to storage instead of buffering a multipart form). An
+ * over-cap file is refused HERE, before 100+ MB crosses the network only to be
+ * answered with a 413.
+ */
+const postFile = async (url: string, file: File): Promise<Response> => {
+  const tooLarge = () => new Error(`"${file.name}" is too large — the limit is ${MAX_UPLOAD_MB} MB`)
+  if (file.size > MAX_UPLOAD_BYTES) throw tooLarge()
+  const res = await fetch(url, {
+    method: "POST",
+    body: file,
+    // No type known → no content-type, so the row's mimeType stays null as before.
+    headers: {
+      ...(file.type ? { "content-type": file.type } : {}),
+      [UPLOAD_FILENAME_HEADER]: encodeURIComponent(file.name),
+    },
+  })
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null
+    if (res.status === 413 || body?.error === "ATTACHMENT_TOO_LARGE") throw tooLarge()
+    throw new Error(body?.error ? `Upload failed: ${body.error}` : "Upload failed")
+  }
+  return res
+}
 
 /** Computed-field shapes (carried inside a record version's `state`). */
 export interface DecayValue {
@@ -861,29 +889,13 @@ export const api = {
    *  Callers refetch their list — the raw JSON body isn't schema-decoded
    *  like RPC results, so don't return it. */
   uploadFile: async (owner: FileOwner, file: File): Promise<void> => {
-    const form = new FormData()
-    form.append("file", file)
-    const res = await fetch(uploadUrlFor(owner), { method: "POST", body: form })
-    if (!res.ok) {
-      const body = (await res.json().catch(() => null)) as { error?: string } | null
-      if (body?.error === "ATTACHMENT_TOO_LARGE")
-        throw new Error(`"${file.name}" is too large — the limit is ${MAX_UPLOAD_MB} MB`)
-      throw new Error(body?.error ? `Upload failed: ${body.error}` : "Upload failed")
-    }
+    await postFile(uploadUrlFor(owner), file)
   },
   /** Upload a file for a record that doesn't exist yet (the create form). Owner-
    *  less and visible to you alone until `createRecord({ files })` claims it;
    *  expires unclaimed after a day. Returns the staged attachment's id. */
   stageFile: async (file: File): Promise<{ id: string; filename: string }> => {
-    const form = new FormData()
-    form.append("file", file)
-    const res = await fetch("/api/attachments/staged", { method: "POST", body: form })
-    if (!res.ok) {
-      const body = (await res.json().catch(() => null)) as { error?: string } | null
-      if (body?.error === "ATTACHMENT_TOO_LARGE")
-        throw new Error(`"${file.name}" is too large — the limit is ${MAX_UPLOAD_MB} MB`)
-      throw new Error(body?.error ? `Upload failed: ${body.error}` : "Upload failed")
-    }
+    const res = await postFile("/api/attachments/staged", file)
     const row = (await res.json()) as { id: string; filename: string }
     return { id: row.id, filename: row.filename }
   },

@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto"
 import { PgClient } from "@effect/sql-pg"
+import { MAX_UPLOAD_BYTES } from "@kahunalabs/contract"
 import { Context, Effect, Layer } from "effect"
-import { BlobStore } from "../blob/BlobStore"
+import { BlobStore, bytesStream } from "../blob/BlobStore"
 import type { Attachment, Id } from "../domain/types"
 import {
   AttachmentNotFound,
@@ -15,9 +16,43 @@ import { type FilePropertyDef, ownerPayload, resolveFileProperty } from "./fileP
 import { OrgContext } from "./OrgContext"
 import { type AttachmentRow, toAttachment } from "./rows"
 
-/** Upload ceiling. The HTTP routes buffer the whole body in memory before this
- *  service sees it, so the cap is about process memory, not storage policy. */
-export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+/** Upload ceiling — defined once in the contract (the SPA checks it too). */
+export { MAX_UPLOAD_BYTES }
+
+/**
+ * Pass `source` through, counting bytes; error the stream as soon as the count
+ * passes `max`, so an over-cap body is cut off mid-transfer instead of being
+ * stored and then rejected. `bytes()` is the running total — read it after the
+ * put to size the row, or to tell "over the cap" from any other stream failure.
+ */
+const countingStream = (source: ReadableStream<Uint8Array>, max: number) => {
+  let bytes = 0
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
+  // A reader-driven wrapper, NOT `source.pipeThrough(new TransformStream(…))`:
+  // under Bun (1.3.x), piping a request body that is read after an `await` throws
+  // inside Bun's own pipe implementation — uncaught, and it took the server down
+  // on the first upload. Node never shows it, so only a Bun run catches it.
+  const stream = new ReadableStream<Uint8Array>(
+    {
+      async pull(controller) {
+        reader ??= source.getReader()
+        const { done, value } = await reader.read()
+        if (done) return controller.close()
+        bytes += value.byteLength
+        if (bytes > max) {
+          controller.error(new Error(`upload exceeds ${max} bytes`))
+          // Stop reading the client's body — nothing past the cap is consumed.
+          await reader.cancel().catch(() => {})
+          return
+        }
+        controller.enqueue(value)
+      },
+      cancel: (reason) => (reader ?? source).cancel(reason),
+    },
+    { highWaterMark: 0 },
+  )
+  return { stream, bytes: () => bytes }
+}
 
 /** Who owns the new file — exactly one, mirroring the `attachments_one_owner`
  *  CHECK. `recordId` = a record's file (with `fieldId`, the value of that file
@@ -38,7 +73,9 @@ export interface UploadInput {
   readonly owner: UploadOwner
   readonly filename: string
   readonly mimeType?: string
-  readonly data: Uint8Array
+  /** A stream is consumed straight into blob storage (the HTTP route passes the
+   *  request body); bytes are for callers that already hold them. */
+  readonly data: Uint8Array | ReadableStream<Uint8Array>
 }
 
 /** Exactly one scope: `recordId` (or `recordVersionId`, resolved to its lineage) = one
@@ -75,65 +112,106 @@ export class AttachmentService extends Context.Service<AttachmentService>()(
       const nextPosition = (recordId: Id, fieldId: Id) => fp.nextPosition(sql, recordId, fieldId)
       const displace = (keep: Attachment) => fp.displace(sql, events, keep)
 
-      const upload = (input: UploadInput) =>
-        sql.withTransaction(
-          Effect.gen(function* () {
-            const { orgId, actor } = yield* OrgContext
-            if (input.data.length > MAX_UPLOAD_BYTES)
-              return yield* Effect.fail(
-                new AttachmentTooLarge({
-                  sizeBytes: input.data.length,
-                  maxBytes: MAX_UPLOAD_BYTES,
-                }),
-              )
-            const recordId = "recordId" in input.owner ? input.owner.recordId : null
-            const bucketId = "bucketId" in input.owner ? input.owner.bucketId : null
-            // A bucket is a client-minted uuid living in a dashboard body — there
-            // is no row to validate. A record must exist and be live: whole-record
-            // archive blocks new uploads (block-not-cascade).
-            const fieldId = "recordId" in input.owner ? (input.owner.fieldId ?? null) : null
-            let field: FilePropertyDef | null = null
-            if (recordId) {
-              const owner = yield* sql<{ readonly id: string }>`
-              SELECT id FROM records
-              WHERE id = ${recordId} AND org_id = ${orgId} AND archived_at IS NULL LIMIT 1`
-              if (!owner[0]) return yield* Effect.fail(new RecordNotFound({ recordId }))
-              if (fieldId) field = yield* fileProperty(recordId, fieldId)
-            }
-            const shared = "bucketId" in input.owner ? (input.owner.shared ?? true) : true
-            const position = field ? yield* nextPosition(recordId!, field.id) : 0
-            const staged = "staged" in input.owner
-            const stagedUntil = staged
-              ? sql`now() + make_interval(hours => ${fp.STAGED_TTL_HOURS})`
-              : sql`NULL`
+      /** Who owns the upload, validated: a record must exist and be live (whole-
+       *  record archive blocks new uploads, block-not-cascade); `?field=` must be a
+       *  file property of it. A bucket is a client-minted uuid living in a
+       *  dashboard body — there is no row to validate. */
+      const resolveOwner = (owner: UploadOwner) =>
+        Effect.gen(function* () {
+          const { orgId } = yield* OrgContext
+          const recordId = "recordId" in owner ? owner.recordId : null
+          const fieldId = "recordId" in owner ? (owner.fieldId ?? null) : null
+          let field: FilePropertyDef | null = null
+          if (recordId) {
+            const row = yield* sql<{ readonly id: string }>`
+            SELECT id FROM records
+            WHERE id = ${recordId} AND org_id = ${orgId} AND archived_at IS NULL LIMIT 1`
+            if (!row[0]) return yield* Effect.fail(new RecordNotFound({ recordId }))
+            if (fieldId) field = yield* fileProperty(recordId, fieldId)
+          }
+          return { recordId, field }
+        })
 
-            const key = `${orgId}/${randomUUID()}`
-            yield* blob.put(key, input.data, input.mimeType)
-            const rows = yield* sql<AttachmentRow>`
-            INSERT INTO attachments (org_id, record_id, bucket_id, bucket_shared, field_id, position, staged_until, filename, content_ref, mime_type, size_bytes, created_by)
-            VALUES (${orgId}, ${recordId}, ${bucketId}, ${shared}, ${field?.id ?? null}, ${position}, ${stagedUntil}, ${input.filename}, ${key}, ${input.mimeType ?? null}, ${input.data.length}, ${actor})
-            RETURNING *`
-            const attachment = toAttachment(rows[0]!)
-            // A staged upload has no subject yet; its AttachmentAdded is emitted
-            // when a create claims it (fileProperties.claimStaged).
-            if (staged) return attachment
-            yield* events.append({
-              subjectKind: "attachment",
-              subjectId: attachment.id,
-              eventType: "AttachmentAdded",
-              payload: {
-                _tag: "AttachmentAdded",
-                attachmentId: attachment.id,
-                filename: attachment.filename,
-                ...ownerPayload(attachment),
-              },
-            })
-            // A single-file property holds ONE live file: the new upload replaces
-            // the old, which is archived (soft, restorable) rather than lost.
-            if (field && !field.multiple) yield* displace(attachment)
-            return attachment
-          }),
-        )
+      /**
+       * Three steps, deliberately NOT one transaction: (1) validate the owner, so
+       * a doomed upload is refused before a byte moves; (2) stream the bytes to
+       * blob storage with no DB connection held — a 100 MB upload over a slow
+       * link would otherwise pin a pooled connection (and an open transaction)
+       * for minutes; (3) the row, events and single-file displacement in one
+       * short transaction, re-validating the owner (it may have been archived
+       * meanwhile). A failure after (2) deletes the blob, so nothing is orphaned.
+       */
+      const upload = (input: UploadInput) =>
+        Effect.gen(function* () {
+          const { orgId, actor } = yield* OrgContext
+          const tooLarge = (sizeBytes: number) =>
+            Effect.fail(new AttachmentTooLarge({ sizeBytes, maxBytes: MAX_UPLOAD_BYTES }))
+          if (input.data instanceof Uint8Array && input.data.length > MAX_UPLOAD_BYTES)
+            return yield* tooLarge(input.data.length)
+          yield* resolveOwner(input.owner)
+
+          const key = `${orgId}/${randomUUID()}`
+          const counted = countingStream(
+            input.data instanceof Uint8Array ? bytesStream(input.data) : input.data,
+            MAX_UPLOAD_BYTES,
+          )
+          yield* blob.put(key, counted.stream, input.mimeType).pipe(
+            Effect.catch((e) =>
+              // The driver already discards a failed write; `del` is belt and
+              // braces for one that half-committed.
+              Effect.andThen(
+                Effect.ignore(blob.del(key)),
+                Effect.fail<AttachmentTooLarge | typeof e>(
+                  counted.bytes() > MAX_UPLOAD_BYTES
+                    ? new AttachmentTooLarge({
+                        sizeBytes: counted.bytes(),
+                        maxBytes: MAX_UPLOAD_BYTES,
+                      })
+                    : e,
+                ),
+              ),
+            ),
+          )
+          const sizeBytes = counted.bytes()
+
+          return yield* sql
+            .withTransaction(
+              Effect.gen(function* () {
+                const { recordId, field } = yield* resolveOwner(input.owner)
+                const bucketId = "bucketId" in input.owner ? input.owner.bucketId : null
+                const shared = "bucketId" in input.owner ? (input.owner.shared ?? true) : true
+                const position = field ? yield* nextPosition(recordId!, field.id) : 0
+                const staged = "staged" in input.owner
+                const stagedUntil = staged
+                  ? sql`now() + make_interval(hours => ${fp.STAGED_TTL_HOURS})`
+                  : sql`NULL`
+                const rows = yield* sql<AttachmentRow>`
+                INSERT INTO attachments (org_id, record_id, bucket_id, bucket_shared, field_id, position, staged_until, filename, content_ref, mime_type, size_bytes, created_by)
+                VALUES (${orgId}, ${recordId}, ${bucketId}, ${shared}, ${field?.id ?? null}, ${position}, ${stagedUntil}, ${input.filename}, ${key}, ${input.mimeType ?? null}, ${sizeBytes}, ${actor})
+                RETURNING *`
+                const attachment = toAttachment(rows[0]!)
+                // A staged upload has no subject yet; its AttachmentAdded is emitted
+                // when a create claims it (fileProperties.claimStaged).
+                if (staged) return attachment
+                yield* events.append({
+                  subjectKind: "attachment",
+                  subjectId: attachment.id,
+                  eventType: "AttachmentAdded",
+                  payload: {
+                    _tag: "AttachmentAdded",
+                    attachmentId: attachment.id,
+                    filename: attachment.filename,
+                    ...ownerPayload(attachment),
+                  },
+                })
+                // A single-file property holds ONE live file: the new upload replaces
+                // the old, which is archived (soft, restorable) rather than lost.
+                if (field && !field.multiple) yield* displace(attachment)
+                return attachment
+              }),
+            )
+            .pipe(Effect.onError(() => Effect.ignore(blob.del(key))))
+        })
 
       const list = (filter: ListFilesFilter = {}) =>
         Effect.gen(function* () {
@@ -211,8 +289,11 @@ export class AttachmentService extends Context.Service<AttachmentService>()(
             return yield* Effect.fail(new AttachmentNotFound({ attachmentId }))
           }
           const attachment = toAttachment(row)
-          const data = yield* blob.get(attachment.contentRef)
-          return { attachment, data } as { attachment: Attachment; data: Uint8Array }
+          const body = yield* blob.get(attachment.contentRef)
+          return { attachment, body } as {
+            attachment: Attachment
+            body: ReadableStream<Uint8Array>
+          }
         })
 
       /** Metadata for one attachment, without fetching the blob — for resolving an
