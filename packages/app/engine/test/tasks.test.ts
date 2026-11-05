@@ -145,6 +145,30 @@ describe("tasks: description / labels", () => {
   )
 })
 
+describe("tasks: list filters", () => {
+  // Reported 2026-11-05: `task list --assignee <id>` returned 0 rows while 69
+  // tasks were assigned. Pins that the filter itself matches exactly that id,
+  // past the first page of unfiltered rows, and nothing else.
+  it.effect("assignee filters to exactly that user's tasks", () =>
+    Effect.gen(function* () {
+      yield* seedStatuses
+      const tasks = yield* AnnotationService
+      for (let i = 0; i < 69; i++) {
+        yield* tasks.createTask({ subjectId: null, title: `vendor ${i}`, assignee: "user-a" })
+      }
+      yield* tasks.createTask({ subjectId: null, title: "other", assignee: "user-b" })
+      yield* tasks.createTask({ subjectId: null, title: "nobody's" })
+
+      const mine = yield* tasks.listTasks({ assignee: "user-a" })
+      expect(mine).toHaveLength(69)
+      expect(mine.every((t) => t.assignee === "user-a")).toBe(true)
+      expect(yield* tasks.listTasks({ assignee: "user-b" })).toHaveLength(1)
+      expect(yield* tasks.listTasks({ assignee: "nobody" })).toHaveLength(0)
+      expect(yield* tasks.listTasks({})).toHaveLength(71)
+    }).pipe(Effect.provide(testLayer(newOrgId()))),
+  )
+})
+
 describe("tasks: snooze + blocked", () => {
   it.effect("snooze sets/clears snoozedUntil; junk dates rejected", () =>
     Effect.gen(function* () {

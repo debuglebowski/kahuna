@@ -149,3 +149,54 @@ export const signOut = async (session: Session): Promise<void> => {
     cookie: session.cookie,
   }).catch(() => undefined)
 }
+
+/** One organization member, as the CLI needs it to turn a name into a user id. */
+export interface OrgMember {
+  readonly userId: string
+  readonly name: string | null
+  readonly email: string | null
+}
+
+/**
+ * The member directory — plain HTTP, because membership lives in BetterAuth
+ * and there is no RPC for it (the same endpoint the SPA's member pickers read).
+ * `membersLimit` is explicit: BetterAuth otherwise caps the list at its
+ * `membershipLimit` (100), and a member past the cap would read as "no such
+ * member" rather than as a truncated list.
+ */
+export const orgMembers = async (session: Session): Promise<ReadonlyArray<OrgMember>> => {
+  const res = await request(
+    session.host,
+    "/api/auth/organization/get-full-organization?membersLimit=100000",
+    { cookie: session.cookie },
+  )
+  if (!res.ok) {
+    throw new CliError(
+      `Could not read the member list (HTTP ${res.status}).`,
+      exitCodeForStatus(res.status),
+    )
+  }
+  const body = (await res.json()) as {
+    members?: ReadonlyArray<{
+      userId: string
+      user?: { name?: string | null; email?: string | null } | null
+    }>
+  } | null
+  return (body?.members ?? []).map((m) => ({
+    userId: m.userId,
+    name: m.user?.name ?? null,
+    email: m.user?.email ?? null,
+  }))
+}
+
+/** The signed-in user's id — what `me` means. The stored config has only an email
+ *  (and a browser login may not even have that). */
+export const sessionUserId = async (session: Session): Promise<string> => {
+  const res = await request(session.host, "/api/auth/get-session", { cookie: session.cookie })
+  const body = res.ok ? ((await res.json()) as { user?: { id?: string } } | null) : null
+  const id = body?.user?.id
+  if (!id) {
+    throw new CliError("Not signed in.", EXIT.unauthenticated, "Run `kahuna auth login` first.")
+  }
+  return id
+}

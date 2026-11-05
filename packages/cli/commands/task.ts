@@ -1,9 +1,13 @@
-import type { Task, TaskStatus } from "@kahunalabs/contract"
-import { requireSession } from "../config.ts"
+import { readFileSync } from "node:fs"
+import type { Label, RichTextEnvelope, Task, TaskPriority, TaskStatus } from "@kahunalabs/contract"
+import { requireSession, type Session } from "../config.ts"
 import { CliError, EXIT } from "../errors.ts"
 import { requireConfirmation, withVersion } from "../mutate.ts"
 import { note, printRows } from "../output.ts"
+import { matchMember } from "../people.ts"
 import type { Command } from "../registry.ts"
+import { orgMembers, sessionUserId } from "../rest.ts"
+import { markdownToRichText } from "../richtext.ts"
 import { type Api, makeRuntime } from "../transport.ts"
 
 /**
@@ -14,47 +18,152 @@ import { type Api, makeRuntime } from "../transport.ts"
  * `task priority` are the catalogues those tasks point at — sub-nouns, because
  * they belong to tasks and to nothing else.
  */
-const withApi = async <T>(f: (api: Api) => Promise<T>): Promise<T> => {
-  const api = makeRuntime(requireSession())
+const withApi = async <T>(f: (api: Api, session: Session) => Promise<T>): Promise<T> => {
+  const session = requireSession()
+  const api = makeRuntime(session)
   try {
-    return await f(api)
+    return await f(api, session)
   } finally {
     await api.dispose()
   }
 }
 
-const findStatus = (statuses: ReadonlyArray<TaskStatus>, name: string): TaskStatus => {
-  const n = name.trim().toLowerCase()
-  const exact =
-    statuses.find((s) => s.id === name) ?? statuses.find((s) => s.name.toLowerCase() === n)
+/**
+ * A catalogue entry by id, name (case-insensitive), or a unique name prefix.
+ * Statuses, priorities and labels are all picked this way, so "high" finds
+ * "High" everywhere and an ambiguous prefix is refused with the choices listed.
+ */
+export const pickByName = <T extends { readonly id: string; readonly name: string }>(
+  items: ReadonlyArray<T>,
+  input: string,
+  noun: string,
+  plural: string,
+): T => {
+  const n = input.trim().toLowerCase()
+  const exact = items.find((i) => i.id === input) ?? items.find((i) => i.name.toLowerCase() === n)
   if (exact) return exact
-  const partial = statuses.filter((s) => s.name.toLowerCase().startsWith(n))
+  const partial = items.filter((i) => i.name.toLowerCase().startsWith(n))
   if (partial.length === 1 && partial[0]) return partial[0]
+  const names = items.map((i) => i.name).join(", ")
   throw new CliError(
     partial.length > 1
-      ? `"${name}" matches ${partial.length} statuses.`
-      : `No status named "${name}".`,
+      ? `"${input}" matches ${partial.length} ${plural}.`
+      : `No ${noun} named "${input}".`,
     partial.length > 1 ? EXIT.usage : EXIT.notFound,
-    `Statuses: ${statuses.map((s) => s.name).join(", ")}`,
+    names
+      ? `${plural[0]?.toUpperCase()}${plural.slice(1)}: ${names}`
+      : `There are no ${plural} yet.`,
   )
 }
 
-const taskRow = (t: Task, statuses: ReadonlyArray<TaskStatus>): Record<string, unknown> => ({
+const findStatus = (statuses: ReadonlyArray<TaskStatus>, name: string): TaskStatus =>
+  pickByName(statuses, name, "status", "statuses")
+
+/** `--flag none` (or empty) clears. */
+const isClear = (v: string): boolean => v === "none" || v === ""
+
+/**
+ * `--description` is markdown, or `@path` to read it from a file (`@@` = a
+ * literal leading @) — the same rule as `--field name=@file`. `none` clears.
+ * Trailing newlines are dropped, like `$(cat file)`.
+ */
+export const readDescription = (
+  raw: string,
+  readFile: (path: string) => string = (p) => readFileSync(p, "utf8"),
+): RichTextEnvelope | null => {
+  if (isClear(raw)) return null
+  let text = raw
+  if (raw.startsWith("@@")) text = raw.slice(1)
+  else if (raw.startsWith("@")) {
+    const path = raw.slice(1)
+    try {
+      text = readFile(path)
+    } catch {
+      throw new CliError(
+        `Cannot read ${path} (--description).`,
+        EXIT.notFound,
+        'A value starting with @ is read from that file. For a literal leading @, double it: "@@".',
+      )
+    }
+  }
+  text = text.replace(/(?:\r?\n)+$/, "")
+  if (text.trim() === "") return null
+  return markdownToRichText(text) as RichTextEnvelope
+}
+
+/**
+ * `--assignee` takes a user id, an email, a name, or `me`. Assignees are stored
+ * as user ids, so anything else filtered verbatim silently matches nobody (the
+ * server filter is an exact match — pinned in engine/test/tasks.test.ts). When
+ * filtering, an unknown value is passed through (a former member can still hold
+ * tasks) WITH a warning, so an empty result says why; assigning refuses it.
+ */
+const resolveAssignee = async (
+  session: Session,
+  input: string,
+  mode: "assign" | "filter",
+): Promise<string> => {
+  if (input.trim().toLowerCase() === "me") return await sessionUserId(session)
+  const member = matchMember(await orgMembers(session), input)
+  if (member) return member.userId
+  if (mode === "filter") {
+    note(`No member matches "${input}" — filtering by it as a raw user id.`)
+    return input
+  }
+  throw new CliError(
+    `No member matches "${input}".`,
+    EXIT.notFound,
+    "Pass a user id, email, name, or `me`. `kahuna organization member list` shows user ids.",
+  )
+}
+
+/** Live (non-archived) labels by name; a repeated `--label` gives several. */
+const resolveLabels = (labels: ReadonlyArray<Label>, inputs: ReadonlyArray<string>): string[] => [
+  ...new Set(inputs.map((l) => pickByName(labels, l, "label", "labels").id)),
+]
+
+const listFlag = (v: unknown): ReadonlyArray<string> =>
+  Array.isArray(v) ? (v as string[]) : typeof v === "string" ? [v] : []
+
+const taskRow = (
+  t: Task,
+  statuses: ReadonlyArray<TaskStatus>,
+  priorities: ReadonlyArray<TaskPriority>,
+  labels: ReadonlyArray<Label>,
+): Record<string, unknown> => ({
   id: t.id,
   title: t.title,
   status: statuses.find((s) => s.id === t.statusId)?.name ?? "",
+  priority: priorities.find((p) => p.id === t.priorityId)?.name ?? "",
+  labels: t.labelIds
+    .map((id) => labels.find((l) => l.id === id)?.name)
+    .filter(Boolean)
+    .join(", "),
   assignee: t.assignee ?? "",
   due: t.dueAt ?? "",
   snoozed: t.snoozedUntil ?? "",
   record: t.subjectId ?? "",
+  description: t.description?.text ?? "",
 })
+
+const TASK_COLUMNS = [
+  "id",
+  "title",
+  "status",
+  "priority",
+  "labels",
+  "assignee",
+  "due",
+  "snoozed",
+  "record",
+]
 
 export const taskCommands: ReadonlyArray<Command> = [
   {
     path: "task list",
     summary: "List tasks — yours, a record's, or everyone's",
     usage:
-      "task list [--record <id>] [--assignee <user>] [--status <name>] [--archived] [--limit n]",
+      "task list [--record <id>] [--assignee <user|email|name|me>] [--status <name>] [--archived] [--limit n]",
     options: {
       record: { type: "string" },
       assignee: { type: "string" },
@@ -63,24 +172,36 @@ export const taskCommands: ReadonlyArray<Command> = [
       limit: { type: "string" },
     },
     run: async (ctx) => {
-      await withApi(async (api) => {
-        const statuses = await api.call((c) => c.listTaskStatuses({}))
+      await withApi(async (api, session) => {
+        const statuses = await api.call((c) => c.listTaskStatuses({ includeArchived: true }))
         const statusId = ctx.flags.status
           ? findStatus(statuses, ctx.flags.status as string).id
           : undefined
+        const assignee =
+          ctx.flags.assignee !== undefined
+            ? await resolveAssignee(session, ctx.flags.assignee as string, "filter")
+            : undefined
         const tasks = await api.call((c) =>
           c.listTasks({
             subjectId: ctx.flags.record as string | undefined,
-            assignee: ctx.flags.assignee as string | undefined,
+            assignee,
             statusId,
             includeArchived: Boolean(ctx.flags.archived),
             limit: ctx.flags.limit ? Number(ctx.flags.limit) : undefined,
           }),
         )
+        // Archived catalogue entries included: a task can still point at one,
+        // and a blank cell would read as "no priority".
+        const priorities = await api.call((c) => c.listTaskPriorities({ includeArchived: true }))
+        const labels = tasks.some((t) => t.labelIds.length > 0)
+          ? await api.call((c) => c.listLabels({ includeArchived: true }))
+          : []
         printRows(
           ctx.format,
-          tasks.map((t) => taskRow(t, statuses)),
-          ["id", "title", "status", "assignee", "due", "snoozed", "record"],
+          tasks.map((t) => taskRow(t, statuses, priorities, labels)),
+          // The description is a paragraph — it would wreck a table's widths.
+          // JSON and CSV carry it.
+          ctx.format === "table" ? TASK_COLUMNS : [...TASK_COLUMNS, "description"],
         )
       })
     },
@@ -89,21 +210,49 @@ export const taskCommands: ReadonlyArray<Command> = [
     path: "task create",
     summary: "Create a task, optionally on a record",
     usage:
-      "task create <title> [--record <id>] [--status <name>] [--assignee <user>] [--due <date>]",
+      "task create <title> [--record <id>] [--status <name>] [--priority <name>] [--label <name>]... [--assignee <user|email|name|me>] [--due <date>] [--description <markdown|@file>]",
     options: {
       record: { type: "string" },
       status: { type: "string" },
+      priority: { type: "string" },
+      label: { type: "string", multiple: true },
       assignee: { type: "string" },
       due: { type: "string" },
+      description: { type: "string" },
     },
     run: async (ctx) => {
       const title = ctx.args.join(" ")
       if (!title) throw new CliError("A title is required.", EXIT.usage)
-      await withApi(async (api) => {
+      await withApi(async (api, session) => {
+        // Everything is resolved BEFORE --dry-run returns, so a dry run catches
+        // a misspelt priority or an unknown assignee.
         const statuses = await api.call((c) => c.listTaskStatuses({}))
         const statusId = ctx.flags.status
           ? findStatus(statuses, ctx.flags.status as string).id
           : undefined
+        const priorityFlag = ctx.flags.priority as string | undefined
+        const priorityId =
+          priorityFlag === undefined || isClear(priorityFlag)
+            ? null
+            : pickByName(
+                await api.call((c) => c.listTaskPriorities({})),
+                priorityFlag,
+                "priority",
+                "priorities",
+              ).id
+        const labelInputs = listFlag(ctx.flags.label)
+        const labelIds =
+          labelInputs.length > 0
+            ? resolveLabels(await api.call((c) => c.listLabels({})), labelInputs)
+            : []
+        const assigneeFlag = ctx.flags.assignee as string | undefined
+        const assignee =
+          assigneeFlag === undefined || isClear(assigneeFlag)
+            ? null
+            : await resolveAssignee(session, assigneeFlag, "assign")
+        const descriptionFlag = ctx.flags.description as string | undefined
+        const description = descriptionFlag === undefined ? null : readDescription(descriptionFlag)
+
         if (ctx.flags["dry-run"]) {
           note(`Would create task "${title}".`)
           return
@@ -114,8 +263,11 @@ export const taskCommands: ReadonlyArray<Command> = [
             // which is a real thing here, not a missing value.
             subjectId: (ctx.flags.record as string | undefined) ?? null,
             title,
+            description,
             statusId,
-            assignee: (ctx.flags.assignee as string | undefined) ?? null,
+            priorityId,
+            labelIds,
+            assignee,
             dueAt: (ctx.flags.due as string | undefined) ?? null,
           }),
         )
@@ -125,12 +277,19 @@ export const taskCommands: ReadonlyArray<Command> = [
   },
   {
     path: "task update",
-    summary: "Change a task's title, status, assignee, due date or snooze",
+    summary:
+      "Change a task's title, description, status, priority, labels, assignee, due or snooze",
     usage:
-      "task update <id> [--title <t>] [--status <name>] [--assignee <user|none>] [--due <date|none>] [--snooze <date|none>]",
+      "task update <id> [--title <t>] [--description <markdown|@file|none>] [--status <name>] [--priority <name|none>] [--label <name|none>]... [--add-label <name>]... [--remove-label <name>]... [--assignee <user|email|name|me|none>] [--due <date|none>] [--snooze <date|none>]",
+    help: "--label REPLACES the task's labels (`--label none` clears them); --add-label / --remove-label edit the set.",
     options: {
       title: { type: "string" },
+      description: { type: "string" },
       status: { type: "string" },
+      priority: { type: "string" },
+      label: { type: "string", multiple: true },
+      "add-label": { type: "string", multiple: true },
+      "remove-label": { type: "string", multiple: true },
       assignee: { type: "string" },
       due: { type: "string" },
       snooze: { type: "string" },
@@ -138,9 +297,67 @@ export const taskCommands: ReadonlyArray<Command> = [
     run: async (ctx) => {
       const [id] = ctx.args
       if (!id) throw new CliError("Which task?", EXIT.usage)
-      await withApi(async (api) => {
-        const statuses = await api.call((c) => c.listTaskStatuses({}))
+      await withApi(async (api, session) => {
         const current = await currentTask(api, id)
+
+        // Resolve every name up front — a typo must fail before the first write,
+        // not after the title has already changed.
+        const statusId =
+          ctx.flags.status !== undefined
+            ? findStatus(await api.call((c) => c.listTaskStatuses({})), ctx.flags.status as string)
+                .id
+            : undefined
+        const priorityFlag = ctx.flags.priority as string | undefined
+        const priorityId =
+          priorityFlag === undefined
+            ? undefined
+            : isClear(priorityFlag)
+              ? null
+              : pickByName(
+                  await api.call((c) => c.listTaskPriorities({})),
+                  priorityFlag,
+                  "priority",
+                  "priorities",
+                ).id
+        const setLabels = listFlag(ctx.flags.label)
+        const addLabels = listFlag(ctx.flags["add-label"])
+        const removeLabels = listFlag(ctx.flags["remove-label"])
+        if (setLabels.length > 0 && addLabels.length + removeLabels.length > 0) {
+          throw new CliError(
+            "--label replaces the labels; it cannot be combined with --add-label/--remove-label.",
+            EXIT.usage,
+          )
+        }
+        const clearLabels = setLabels.length === 1 && isClear(setLabels[0] ?? "")
+        const labelsTouched = setLabels.length + addLabels.length + removeLabels.length > 0
+        const catalogue =
+          labelsTouched && !clearLabels ? await api.call((c) => c.listLabels({})) : []
+        const setIds = clearLabels ? [] : resolveLabels(catalogue, setLabels)
+        const addIds = resolveLabels(catalogue, addLabels)
+        // Removing tolerates an archived label — it may still be on the task.
+        const removeIds =
+          removeLabels.length > 0
+            ? resolveLabels(
+                await api.call((c) => c.listLabels({ includeArchived: true })),
+                removeLabels,
+              )
+            : []
+        const nextLabels = (t: Task): ReadonlyArray<string> | undefined => {
+          if (!labelsTouched) return undefined
+          if (setLabels.length > 0) return setIds
+          const drop = new Set(removeIds)
+          return [...new Set([...t.labelIds, ...addIds])].filter((l) => !drop.has(l))
+        }
+        const descriptionFlag = ctx.flags.description as string | undefined
+        const description =
+          descriptionFlag === undefined ? undefined : readDescription(descriptionFlag)
+        const assigneeFlag = ctx.flags.assignee as string | undefined
+        const assignee =
+          assigneeFlag === undefined
+            ? undefined
+            : isClear(assigneeFlag)
+              ? null
+              : await resolveAssignee(session, assigneeFlag, "assign")
 
         if (ctx.flags["dry-run"]) {
           note(`Would update task "${current.title}".`)
@@ -153,7 +370,13 @@ export const taskCommands: ReadonlyArray<Command> = [
         // withVersion does; batching them would fail on the second call.
         const read = async () => await currentTask(api, id)
 
-        if (ctx.flags.title !== undefined || ctx.flags.due !== undefined) {
+        if (
+          ctx.flags.title !== undefined ||
+          ctx.flags.due !== undefined ||
+          description !== undefined ||
+          priorityId !== undefined ||
+          labelsTouched
+        ) {
           await withVersion(read, (t) =>
             api.call((c) =>
               c.updateTask({
@@ -161,18 +384,19 @@ export const taskCommands: ReadonlyArray<Command> = [
                 expectedVersion: t.version,
                 title: ctx.flags.title as string | undefined,
                 dueAt: nullable(ctx.flags.due as string | undefined),
+                description,
+                priorityId,
+                labelIds: nextLabels(t),
               }),
             ),
           )
         }
-        if (ctx.flags.status !== undefined) {
-          const statusId = findStatus(statuses, ctx.flags.status as string).id
+        if (statusId !== undefined) {
           await withVersion(read, (t) =>
             api.call((c) => c.setTaskStatus({ id, expectedVersion: t.version, statusId })),
           )
         }
-        if (ctx.flags.assignee !== undefined) {
-          const assignee = nullable(ctx.flags.assignee as string | undefined) ?? null
+        if (assignee !== undefined) {
           await withVersion(read, (t) =>
             api.call((c) => c.assignTask({ id, expectedVersion: t.version, assignee })),
           )
