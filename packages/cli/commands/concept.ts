@@ -35,7 +35,7 @@ const KINDS: ReadonlyArray<FieldKind> = [
 ]
 
 /** Flags shared by `concept field add` and `concept field update` for the
- *  parts of `FieldConfig` beyond options/required/unique: relation shape,
+ *  parts of `FieldConfig` beyond options/requirement/unique: relation shape,
  *  multi-value, text/number format, and enum presentation/workflow. Kept in
  *  one place so both commands validate and merge identically. */
 const FIELD_CONFIG_OPTIONS = {
@@ -54,7 +54,7 @@ const FIELD_CONFIG_OPTIONS = {
  *  survive untouched (the empty object on `add`, the existing field's config
  *  spread onto a fresh object on `update`) — this only ever adds or replaces
  *  the specific keys a flag was given for, same merge discipline as the
- *  options/required/unique flags each caller applies around this call.
+ *  options/requirement/unique flags each caller applies around this call.
  *  `optionColors`/`transitions` are themselves maps, so a repeated flag here
  *  merges into the existing map rather than replacing it wholesale — the same
  *  reasoning one level down. */
@@ -99,6 +99,59 @@ const applyFieldConfigFlags = (
     config.transitions = transitions
   }
 }
+
+type Requirement = "required" | "flagged" | "optional"
+const REQUIREMENTS: ReadonlyArray<Requirement> = ["required", "flagged", "optional"]
+
+/** Flags that set `config.requirement`: `--requirement <level>` or one of the
+ *  shorthands. Shared by `field add` and `field update`. */
+const REQUIREMENT_OPTIONS = {
+  requirement: { type: "string" as const },
+  required: { type: "boolean" as const },
+  flagged: { type: "boolean" as const },
+  optional: { type: "boolean" as const },
+}
+
+/** The requirement the flags ask for, or undefined when none was given.
+ *  Validated BEFORE any API call so a typo or a contradiction (`--required
+ *  --flagged`) is a usage error, never a half-applied update. */
+export const requirementFromFlags = (
+  flags: Record<string, string | boolean | Array<string | boolean> | undefined>,
+): Requirement | undefined => {
+  const asked = new Set<Requirement>()
+  const level = flags.requirement as string | undefined
+  if (level !== undefined) {
+    if (!REQUIREMENTS.includes(level as Requirement)) {
+      throw new CliError(`--requirement takes ${REQUIREMENTS.join(", ")}.`, EXIT.usage)
+    }
+    asked.add(level as Requirement)
+  }
+  for (const r of REQUIREMENTS) if (flags[r]) asked.add(r)
+  if (asked.size > 1) {
+    throw new CliError(
+      `Conflicting requirement flags: ${[...asked].join(", ")}.`,
+      EXIT.usage,
+      "Pass one of --required, --flagged, --optional (or --requirement <level>).",
+    )
+  }
+  return [...asked][0]
+}
+
+/** Writes a requirement onto `config` IN PLACE. `optional` REMOVES the key
+ *  rather than storing it — absent means optional, which is what the settings
+ *  UI writes too, so the two never disagree about an "unset" field. */
+export const applyRequirement = (
+  config: Record<string, unknown>,
+  requirement: Requirement | undefined,
+): void => {
+  if (requirement === undefined) return
+  if (requirement === "optional") delete config.requirement
+  else config.requirement = requirement
+}
+
+/** The requirement column: blank for optional, so the levels that matter stand out. */
+export const requirementLabel = (config: { readonly requirement?: string }): string =>
+  config.requirement === "required" || config.requirement === "flagged" ? config.requirement : ""
 
 export const conceptCommands: ReadonlyArray<Command> = [
   {
@@ -159,12 +212,12 @@ export const conceptCommands: ReadonlyArray<Command> = [
           fields.map((f) => ({
             field: f.name,
             kind: f.kind,
-            required: f.config.requirement === "required" ? "yes" : "",
+            requirement: requirementLabel(f.config),
             unique: f.config.unique ? "yes" : "",
             target: f.config.target ?? "",
             id: f.id,
           })),
-          ["field", "kind", "required", "unique", "target", "id"],
+          ["field", "kind", "requirement", "unique", "target", "id"],
         )
       })
     },
@@ -332,13 +385,13 @@ export const conceptCommands: ReadonlyArray<Command> = [
             name: f.name,
             kind: f.kind,
             position: f.position,
-            required: f.config.requirement === "required" ? "yes" : "",
+            requirement: requirementLabel(f.config),
             unique: f.config.unique ? "yes" : "",
             target: f.config.target ?? "",
             archived: f.archivedAt ? "yes" : "",
             id: f.id,
           })),
-          ["name", "kind", "position", "required", "unique", "target", "archived", "id"],
+          ["name", "kind", "position", "requirement", "unique", "target", "archived", "id"],
         )
       })
     },
@@ -347,13 +400,13 @@ export const conceptCommands: ReadonlyArray<Command> = [
     path: "concept field add",
     summary: "Add a field to a concept",
     usage:
-      "concept field add <concept> --name <n> --kind <kind> [--options a,b,c] [--target <concept>] [--cardinality one|many] [--inverse-name <n>] [--inverse-plural-name <n>] [--multiple] [--format <fmt>] [--option-color <opt>=<hex>]... [--transition <from>=<to,to2>]... [--required] [--unique]",
+      "concept field add <concept> --name <n> --kind <kind> [--options a,b,c] [--target <concept>] [--cardinality one|many] [--inverse-name <n>] [--inverse-plural-name <n>] [--multiple] [--format <fmt>] [--option-color <opt>=<hex>]... [--transition <from>=<to,to2>]... [--required | --flagged | --optional | --requirement required|flagged|optional] [--unique]",
     options: {
       name: { type: "string" },
       kind: { type: "string" },
       options: { type: "string" },
       target: { type: "string" },
-      required: { type: "boolean" },
+      ...REQUIREMENT_OPTIONS,
       unique: { type: "boolean" },
       icon: { type: "string" },
       ...FIELD_CONFIG_OPTIONS,
@@ -372,6 +425,7 @@ export const conceptCommands: ReadonlyArray<Command> = [
           `Kinds: ${KINDS.join(", ")}`,
         )
       }
+      const requirement = requirementFromFlags(ctx.flags)
       await withApi(async (api) => {
         const concepts = await api.call((c) => c.listConcepts({}))
         const concept = findConcept(concepts, target)
@@ -383,7 +437,7 @@ export const conceptCommands: ReadonlyArray<Command> = [
             .map((o) => o.trim())
             .filter(Boolean)
         }
-        if (ctx.flags.required) config.requirement = "required"
+        applyRequirement(config, requirement)
         if (ctx.flags.unique) config.unique = true
         applyFieldConfigFlags(config, ctx.flags)
         if (kind === "relation") {
@@ -421,11 +475,11 @@ export const conceptCommands: ReadonlyArray<Command> = [
     path: "concept field update",
     summary: "Rename a field or change its config",
     usage:
-      "concept field update <concept> <field> [--name <n>] [--options a,b,c] [--cardinality one|many] [--inverse-name <n>] [--inverse-plural-name <n>] [--multiple] [--format <fmt>] [--option-color <opt>=<hex>]... [--transition <from>=<to,to2>]... [--required] [--unique]",
+      "concept field update <concept> <field> [--name <n>] [--options a,b,c] [--cardinality one|many] [--inverse-name <n>] [--inverse-plural-name <n>] [--multiple] [--format <fmt>] [--option-color <opt>=<hex>]... [--transition <from>=<to,to2>]... [--required | --flagged | --optional | --requirement required|flagged|optional] [--unique]",
     options: {
       name: { type: "string" },
       options: { type: "string" },
-      required: { type: "boolean" },
+      ...REQUIREMENT_OPTIONS,
       unique: { type: "boolean" },
       icon: { type: "string" },
       ...FIELD_CONFIG_OPTIONS,
@@ -433,6 +487,7 @@ export const conceptCommands: ReadonlyArray<Command> = [
     run: async (ctx) => {
       const [target, fieldName] = ctx.args
       if (!target || !fieldName) throw new CliError("Need <concept> <field>.", EXIT.usage)
+      const requirement = requirementFromFlags(ctx.flags)
       await withApi(async (api) => {
         const { concept, fields } = await conceptContext(api, target)
         const field = findField(fields, fieldName)
@@ -446,7 +501,7 @@ export const conceptCommands: ReadonlyArray<Command> = [
             .map((o) => o.trim())
             .filter(Boolean)
         }
-        if (ctx.flags.required) config.requirement = "required"
+        applyRequirement(config, requirement)
         if (ctx.flags.unique) config.unique = true
         applyFieldConfigFlags(config, ctx.flags)
 
