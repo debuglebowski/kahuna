@@ -31,7 +31,7 @@ import { type AccessRole, api } from "../../lib/api"
 import { Feedback } from "./parts"
 import { PermissionPane } from "./permissions/PermissionPane"
 import { type ItemSource, PANES } from "./permissions/panes"
-import { SettingsHeading } from "./SettingsLayout"
+import { SettingsHeading, useIsAdmin } from "./SettingsLayout"
 
 /** Engine errors reach the client as a code + prose; surface the prose when it is
  *  meant for a human (the floor guard's messages are). */
@@ -438,6 +438,9 @@ function DeactivateDialog({
 }) {
   const qc = useQueryClient()
   const [replacement, setReplacement] = useState("")
+  // Moving people between roles is the IdP's call when it manages them.
+  const { rolesManagedByIdp } = useIsAdmin()
+  const canMove = !(rolesManagedByIdp && role.kind === "user")
   const holders = useQuery({
     queryKey: ["roleHolders", role.id],
     queryFn: () => api.roleHolders(role.id),
@@ -482,27 +485,29 @@ function DeactivateDialog({
               </span>{" "}
               {count === 1 ? "holds" : "hold"} this role and will lose its access.
             </p>
-            <Field
-              label="Give them another role first"
-              hint="Optional. They keep this one too, so turning it back on changes nothing."
-            >
-              <Select
-                value={replacement || NONE}
-                onValueChange={(v) => setReplacement(v === NONE ? "" : v)}
+            {canMove && (
+              <Field
+                label="Give them another role first"
+                hint="Optional. They keep this one too, so turning it back on changes nothing."
               >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={NONE}>Nothing — they lose this access</SelectItem>
-                  {options.map((r) => (
-                    <SelectItem key={r.id} value={r.id}>
-                      {r.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Field>
+                <Select
+                  value={replacement || NONE}
+                  onValueChange={(v) => setReplacement(v === NONE ? "" : v)}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={NONE}>Nothing — they lose this access</SelectItem>
+                    {options.map((r) => (
+                      <SelectItem key={r.id} value={r.id}>
+                        {r.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
+            )}
           </>
         )}
         <Feedback error={run.error ? roleMsg(run.error) : undefined} />

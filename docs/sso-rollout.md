@@ -24,7 +24,8 @@ Also enforced:
 - Removing the provider forces password back on and SSO off.
 - SSO accepts only identities whose email domain is one the provider was
   registered for (`SSO_DOMAIN_NOT_ALLOWED`). New SSO users join as plain
-  `member`; roles are never taken from the IdP.
+  `member`; roles are taken from the IdP only if the operator turns that on
+  (see "Roles from the identity provider").
 - Turning password off does **not** end existing sessions. Cookies issued
   earlier stay valid until they expire or are revoked.
 
@@ -113,6 +114,95 @@ sign in), you need operator access to the server:
 Take a backup before editing the database by hand. Operator scripts and manual
 SQL do not appear in the application security log; record them in your change
 log.
+
+## Roles from the identity provider (optional)
+
+Off by default. When the operator turns it on, the identity provider decides
+which roles each person holds: Kahuna reads a claim from the verified ID token
+at every sign-in and sets the person's roles from it. Roles are still defined
+(name, rules) in Settings → Roles; the IdP decides who holds them.
+
+It applies to the provider from deployment config only (`SSO_*` above), so it
+can't be turned on from inside the app, and it refuses to boot without that
+provider. It works with any IdP that can put the roles in a claim of the ID
+token: Entra ID, Okta, Keycloak and others.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `SSO_ROLES_FROM_IDP` | `false` | `true` turns the mode on. |
+| `SSO_ROLE_CLAIM` | `roles` | The claim that holds the roles. A top-level name, or a dotted path into a nested claim (Keycloak: `realm_access.roles`). A claim name containing dots, such as the SAML role attribute `http://schemas.microsoft.com/ws/2008/06/identity/claims/role`, is matched as a whole name first. |
+| `SSO_ROLE_MAP` | (required) | Comma-separated `<claim value>=<role>`. The role is a Kahuna role's key (`admin`, `member`), id, or name (not case-sensitive). The reserved role `owner` makes the person an org owner. Claim values are matched exactly, case-sensitive. Several values may map to one role, and one value to several. |
+| `SSO_ROLE_UNMAPPED` | `deny` | What happens when the claim holds no mapped value: `deny` refuses the sign-in, or name one role to give instead. Cannot be `owner`. |
+
+A malformed value (an unknown `SSO_ROLES_FROM_IDP` value, an empty or broken
+map) stops the server from starting.
+
+### What happens at sign-in
+
+- The person ends up holding exactly the people roles their claim maps to.
+  Roles the claim no longer carries are removed, including roles given in the
+  app before the mode was turned on. Auto-assign roles are not handed out.
+- If any mapping targets `owner`, owner vs member follows the claim too
+  (someone without the owner value is made a plain member). With no `owner`
+  mapping, owners are left as they are.
+- No mapped value: the sign-in is refused (`SSO_NO_MAPPED_ROLE`). The person's
+  roles are removed anyway and their open sessions are ended, so removing every
+  role at the IdP takes effect on their next sign-in attempt.
+- A mapped value naming a role that doesn't exist counts as unmapped, and is
+  logged (`access.role.from_idp`, `failure`, `ROLE_NOT_FOUND`).
+- Kahuna does not re-check the IdP between sign-ins. A role removed at the IdP
+  is removed in Kahuna the next time that person signs in through it; until
+  then an open session keeps the previous roles, for as long as the session
+  lasts.
+
+Not governed by the IdP: automation roles, each member's personal overrides,
+and the rules inside roles. Password sign-ins don't change roles; turn password
+sign-in off (rollout step 5) so everyone goes through the IdP.
+
+### What is refused in the app
+
+With the mode on, these are refused with `ROLES_MANAGED_BY_IDP` and the message
+"Roles are managed by your identity provider." — in the UI (the controls are
+hidden), over the API and from the CLI:
+
+- giving or removing a person's role (`assignRole`, `unassignRole`);
+- reordering a person's roles (`reorderMemberRoles`);
+- moving holders of a people role to another role (`reassignRoleHolders`);
+- making or removing an owner (`POST /api/org/members/:id/role`), only when
+  `owner` is mapped.
+
+Each refusal writes an `access.role_change.refused` security log line, and each
+role taken from the claim an `access.role.from_idp` line
+(`docs/security-logging.md`).
+
+### Example: Entra ID
+
+1. In the app registration for Kahuna, **App roles → Create app role**, once
+   per role: display name `Kahuna admin`, allowed member types **Users/Groups**,
+   value `Kahuna.Admin`. Repeat for `Kahuna.Member`, and `Kahuna.Owner` if you
+   want owners managed too.
+2. In **Enterprise applications → Kahuna → Users and groups**, assign users or
+   groups to those roles. Optionally set **Properties → Assignment required** to
+   Yes, so people with no role can't get a token at all.
+3. Entra puts assigned app roles in the ID token's `roles` claim by default; no
+   optional claim is needed. (Keep the `amr` optional claim from the MFA setup.)
+4. Configure Kahuna:
+
+   ```
+   SSO_ROLES_FROM_IDP=true
+   SSO_ROLE_CLAIM=roles
+   SSO_ROLE_MAP=Kahuna.Owner=owner,Kahuna.Admin=admin,Kahuna.Member=member
+   SSO_ROLE_UNMAPPED=deny
+   ```
+
+5. Restart, sign in through SSO as a test user with `Kahuna.Member`, and check
+   their roles in Settings → Members and the `access.role.from_idp` log line.
+   Then remove the role in Entra, sign in again, and confirm the refusal
+   (`auth.signin` denied `SSO_NO_MAPPED_ROLE`).
+
+Other IdPs: Okta — add a `roles` (or `groups`) claim to the ID token in the
+authorization server and point `SSO_ROLE_CLAIM` at it. Keycloak — add a realm
+role mapper with "Add to ID token", or use `SSO_ROLE_CLAIM=realm_access.roles`.
 
 ## Owners and MFA (optional hardening)
 

@@ -41,6 +41,8 @@ export interface FakeIdentity {
   readonly emailVerified?: boolean | null
   /** Authentication methods (`amr`) put in the ID token. Absent when unset. */
   readonly amr?: readonly string[]
+  /** Any further ID token claims (`roles`, `groups`, …). */
+  readonly claims?: Readonly<Record<string, unknown>>
 }
 
 export interface FakeIdp {
@@ -193,6 +195,7 @@ export const startFakeIdp = async (
           ...verified(),
           name: identity.name,
           ...(identity.amr ? { amr: identity.amr } : {}),
+          ...identity.claims,
           ...(grant.nonce ? { nonce: grant.nonce } : {}),
         }),
       })

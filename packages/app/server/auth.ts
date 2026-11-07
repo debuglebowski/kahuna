@@ -19,10 +19,19 @@ import {
   bindDeploymentIdp,
   DEPLOYMENT_IDP_PROVIDER_ID,
   deploymentIdp,
+  deploymentOrgId,
   idTokenHasMfa,
   joinDeploymentOrg,
   SSO_MFA_REQUIRED,
 } from "./deploymentIdp"
+import {
+  applyRoles,
+  grantsNothing,
+  idpRoleConfig,
+  resolveClaims,
+  revokeForRefusedSignIn,
+  SSO_NO_MAPPED_ROLE,
+} from "./idpRoles"
 import { syncMembershipRole } from "./membership"
 import { runEngineOrThrow, systemScope } from "./runtime"
 import { clientIp, securityEvent, subjectRef } from "./securityLog"
@@ -139,6 +148,69 @@ const trustedOrigins = isProd
   ? envOrigins
   : [...envOrigins, "http://localhost:*", "http://127.0.0.1:*"]
 
+/**
+ * ROLES FROM THE IDP, the refusal half (idpRoles.ts). Runs in `validateUserInfo`, so
+ * BEFORE the plugin creates, links or signs anyone in: a claim that maps to no role
+ * leaves no session behind. What the person held is still taken away — removing the
+ * last role at the IdP must not leave the previous set usable from an open session.
+ */
+const refuseUnmappedRoles = async (
+  email: string,
+  claims: Readonly<Record<string, unknown>> | undefined,
+  ctx: { readonly headers?: Headers } | undefined,
+): Promise<{ error: string; errorDescription: string } | undefined> => {
+  const cfg = idpRoleConfig()
+  if (!cfg) return
+  const orgId = await deploymentOrgId()
+  if (!orgId) return
+  if (!grantsNothing(await resolveClaims(cfg, orgId, claims))) return
+  const sub = typeof claims?.sub === "string" ? claims.sub : ""
+  await revokeForRefusedSignIn(cfg, orgId, { sub, email })
+  securityEvent({
+    event: "auth.signin",
+    outcome: "denied",
+    orgId,
+    reason: SSO_NO_MAPPED_ROLE,
+    subjectRef: email ? subjectRef(email) : undefined,
+    ip: clientIp(ctx?.headers),
+    targetKind: "sso_provider",
+    targetId: DEPLOYMENT_IDP_PROVIDER_ID,
+    route: "GET /api/auth/sso/callback",
+    detail: { method: "sso" },
+  })
+  return {
+    error: SSO_NO_MAPPED_ROLE,
+    errorDescription: "Your identity provider grants you no role in this app.",
+  }
+}
+
+/**
+ * ROLES FROM THE IDP, the sync half: every sign-in through the deployment IdP sets
+ * the person's roles from the claim. The ID token is the one the plugin verified in
+ * this same callback (signature, audience, issuer) before handing it here, so its
+ * payload is read without verifying again. Throws — failing the sign-in — rather
+ * than leaving someone on a stale role set.
+ */
+const syncRolesFromIdp = async (userId: string, idToken: string | undefined): Promise<void> => {
+  const cfg = idpRoleConfig()
+  if (!cfg) return
+  const orgId = await deploymentOrgId()
+  if (!orgId) return
+  const payload = idToken?.split(".")[1]
+  if (!payload) throw new APIError("FORBIDDEN", { code: SSO_NO_MAPPED_ROLE })
+  const claims = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as Record<
+    string,
+    unknown
+  >
+  const resolved = await resolveClaims(cfg, orgId, claims)
+  // `validateUserInfo` already refused this; a role deleted in between lands here.
+  if (grantsNothing(resolved)) throw new APIError("FORBIDDEN", { code: SSO_NO_MAPPED_ROLE })
+  await applyRoles(cfg, orgId, userId, resolved)
+}
+
+// Parse the roles-from-IdP config now, so a malformed one fails the boot.
+idpRoleConfig()
+
 export const auth = betterAuth({
   database: withSsoSecretEncryption(drizzleAdapter(db, { provider: "pg", schema })),
   // Sign-IN only. Self-serve sign-up is closed because this deploys internally:
@@ -175,11 +247,12 @@ export const auth = betterAuth({
     // The plugin turns the rejection into a redirect carrying `?error=<code>`,
     // which the sign-in page shows. Providers registered in Settings are not
     // gated: their claims are whatever that IdP chose to send.
-    validateUserInfo: ({ user, source }, ctx) => {
+    validateUserInfo: async ({ user, source }, ctx) => {
       if (source.method !== "sso-oidc" || source.sso?.providerId !== DEPLOYMENT_IDP_PROVIDER_ID)
         return
-      if (idTokenHasMfa(source.sso.profile)) return
       const email = typeof user.email === "string" ? user.email : ""
+      if (idTokenHasMfa(source.sso.profile))
+        return refuseUnmappedRoles(email, source.sso.profile, ctx)
       securityEvent({
         event: "auth.signin",
         outcome: "denied",
@@ -329,7 +402,7 @@ export const auth = betterAuth({
             // org reads as having nobody who can configure it (which is what the
             // irreducible-floor check counts). `seedKahuna` created the presets;
             // this points the owner at theirs.
-            await syncMembershipRole(organization.id, user.id, "owner")
+            await syncMembershipRole(organization.id, user.id, "owner", { founding: true })
           } catch (error) {
             console.error(`Failed to seed org ${organization.id}:`, error)
           }
@@ -381,8 +454,9 @@ export const auth = betterAuth({
       organizationProvisioning: {
         disabled: false,
         // Everyone arrives as a plain member; promotion is a deliberate act in
-        // Settings → Members. No IdP-group → role mapping, so a change on the
-        // IdP side can never silently grant someone admin here.
+        // Settings → Members. Roles come from the IdP ONLY when the operator turns
+        // that on for the deployment IdP (`SSO_ROLES_FROM_IDP`, idpRoles.ts) —
+        // never for a provider an owner registered in Settings.
         defaultRole: "member",
         // Used for its SIDE EFFECT as much as its return value. Membership and
         // ACCESS are two tables (see membership.ts): the SSO plugin writes the
@@ -420,7 +494,7 @@ export const auth = betterAuth({
       // cookie was set). Left in place on purpose: deleting it would risk
       // deleting a real member whose IdP identity merely failed the check.
       provisionUserOnEveryLogin: true,
-      provisionUser: async ({ user, provider }) => {
+      provisionUser: async ({ user, provider, token }) => {
         const domain = emailDomain(user.email)
         if (!domain || !domainMatches(domain, provider.domain)) {
           securityEvent({
@@ -439,7 +513,10 @@ export const auth = betterAuth({
         }
         // The deployment IdP carries no organizationId, so the plugin's own
         // provisioning (and `getRole` above) skips it. See deploymentIdp.ts.
-        if (provider.providerId === deploymentIdp?.providerId) await joinDeploymentOrg(user.id)
+        if (provider.providerId === deploymentIdp?.providerId) {
+          await joinDeploymentOrg(user.id)
+          await syncRolesFromIdp(user.id, token?.idToken)
+        }
       },
     }),
   ],

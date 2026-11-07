@@ -33,6 +33,8 @@ import { authClient } from "../lib/auth-client"
 const SSO_ERRORS: Record<string, string> = {
   SSO_MFA_REQUIRED:
     "Your sign-in didn't use multi-factor authentication. Sign in again with MFA through your identity provider.",
+  SSO_NO_MAPPED_ROLE:
+    "Your identity provider grants you no role in this app. Ask your administrator for access.",
 }
 
 /** Read `?error=` once, then drop it from the URL so a reload doesn't repeat it. */

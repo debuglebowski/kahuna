@@ -1,5 +1,6 @@
 import { Effect } from "effect"
 import { AccessRoleService } from "#engine"
+import { idpRoleConfig } from "./idpRoles"
 import { runEngineOrThrow, systemScope } from "./runtime"
 
 /**
@@ -44,7 +45,13 @@ export const syncMembershipRole = async (
   orgId: string,
   userId: string,
   role: string,
+  opts?: { readonly founding?: boolean },
 ): Promise<void> => {
+  // ROLES FROM THE IDP (idpRoles.ts): the IdP is the only source, so nobody lands
+  // anywhere by auto-assign — they get their roles at their first IdP sign-in. The
+  // founding owner of a fresh org is the exception: bootstrap runs before anyone can
+  // sign in through the IdP, and their first such sign-in replaces this set anyway.
+  if (idpRoleConfig() && !opts?.founding) return
   await runEngineOrThrow(
     systemScope(orgId, "system:membership-sync"),
     Effect.gen(function* () {

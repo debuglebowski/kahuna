@@ -47,7 +47,7 @@ cannot forge a second line. The emitter never throws.
 
 | Event | Outcomes | Notes |
 |---|---|---|
-| `auth.signin` | success, failure, denied | `detail.method` is `password` or `sso`. SSO is logged at the callback, where the session is minted. `denied` reasons: `PASSWORD_SIGN_IN_DISABLED`, `SSO_DOMAIN_NOT_ALLOWED`. |
+| `auth.signin` | success, failure, denied | `detail.method` is `password` or `sso`. SSO is logged at the callback, where the session is minted. `denied` reasons: `PASSWORD_SIGN_IN_DISABLED`, `SSO_DOMAIN_NOT_ALLOWED`, `SSO_MFA_REQUIRED`, `SSO_NO_MAPPED_ROLE` (roles from the IdP: no mapped role). |
 | `auth.sso.initiated` | success, failure, denied | Redirect to the IdP started. `denied`: `SSO_DISABLED`. |
 | `auth.signout` | success | |
 | `auth.password.*` | success, failure | `change_password`, `set_password`, `reset_password`, `request_password_reset`. |
@@ -73,6 +73,8 @@ cannot forge a second line. The emitter never throws.
 | `access.role.created`, `.updated`, `.deleted`, `.assigned`, `.unassigned` | `targetId` is the user for assignments, else the role. |
 | `access.rule.added`, `.updated`, `.removed`, `access.role_rules.replaced` | `targetId` is the rule or role. |
 | `access.member_roles.reordered`, `access.personal_role.ensured`, `access.role_holders.reassigned` | |
+| `access.role.from_idp` | Roles from the identity provider (`SSO_ROLES_FROM_IDP`). One line per role taken from the claim at a sign-in, and one per role removed. `actor` is `system:idp-roles`, `targetId` the user. `detail.change` is `granted`, `kept` or `removed`; `detail.roleId` the role, `detail.claim` the claim value, `detail.fallback` when `SSO_ROLE_UNMAPPED` supplied it, `detail.membership` for owner/member. `failure` with `ROLE_NOT_FOUND`: a mapping names no role (`detail.targets`). |
+| `access.role_change.refused` | denied, `ROLES_MANAGED_BY_IDP`: a role change in the app while roles come from the IdP. `detail.change` names the call (`assignRole`, `unassignRole`, `reorderMemberRoles`, `reassignRoleHolders`, `setMemberRole`). |
 | `member.left`, `invitation.*`, `org.updated`, `org.deleted` | When called directly on `/api/auth/organization/*`. |
 | `org.created`, `org.updated`, `org.purged` | Provisioning, rename or logo change, deletion. |
 

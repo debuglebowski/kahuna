@@ -181,6 +181,11 @@ export function useIsAdmin() {
     // manage permissions specifically (roles, their order, personal overrides),
     // not org-wide schema/settings. Gates the member access page (P5).
     canConfigureRoles: q.data?.canConfigureRoles ?? false,
+    // Operator config: who holds which role comes from the identity provider at
+    // sign-in, and the server refuses to change it here. The UI hides those
+    // controls rather than offer ones that 409.
+    rolesManagedByIdp: q.data?.rolesManagedByIdp ?? false,
+    ownerManagedByIdp: q.data?.ownerManagedByIdp ?? false,
     isPending: q.isPending,
   }
 }

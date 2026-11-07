@@ -37,6 +37,7 @@ import {
   upsertGoogleCalendarEvent,
 } from "./google"
 import { attachmentSecurityHeaders } from "./headers"
+import { idpRoleConfig, refusal } from "./idpRoles"
 import { integrationSettingsStatus, updateIntegrationSettings } from "./integrationSettings"
 import {
   closeLinearIssueForRequest,
@@ -466,6 +467,20 @@ export const handleApi = async (req: Request): Promise<Response | null> => {
   if (seg[1] === "org" && seg[2] === "members" && seg[3] && seg[4] === "role" && m === "POST") {
     const org = await resolveOwner(req)
     if (!org.ok) return Response.json({ error: org.code }, { status: org.status })
+
+    // ROLES FROM THE IDP with a claim mapped to `owner`: the tier follows the IdP.
+    if (idpRoleConfig()?.ownerManaged) {
+      const refused = refusal({
+        what: "setMemberRole",
+        orgId: org.orgId,
+        actor: org.actor,
+        targetId: seg[3],
+        route: routeOf(req),
+        ip: clientIp(req.headers),
+      })
+      if (refused)
+        return Response.json({ error: refused.code, message: refused.message }, { status: 409 })
+    }
 
     const body = (await req.json().catch(() => null)) as { role?: string } | null
     const next = body?.role

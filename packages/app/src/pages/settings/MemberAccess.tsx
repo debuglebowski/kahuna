@@ -38,7 +38,8 @@ function RoleRow({
 }: {
   role: AccessRole
   sortable: boolean
-  onRemove: () => void
+  /** Absent when the role can't be removed here (roles from the IdP). */
+  onRemove?: () => void
   removing: boolean
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -69,15 +70,17 @@ function RoleRow({
       </button>
       <span className="flex-1 truncate text-sm font-medium text-foreground">{role.name}</span>
       {role.key === null && <Badge tone="blue">Custom</Badge>}
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        aria-label={`Remove ${role.name}`}
-        onClick={onRemove}
-        disabled={removing}
-      >
-        <X size={14} />
-      </Button>
+      {onRemove && (
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label={`Remove ${role.name}`}
+          onClick={onRemove}
+          disabled={removing}
+        >
+          <X size={14} />
+        </Button>
+      )}
     </div>
   )
 }
@@ -97,6 +100,7 @@ function RolesSection({ userId }: { userId: string }) {
   const all = useQuery({ queryKey: ["roles"], queryFn: () => api.listRoles() })
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }))
   const [picking, setPicking] = useState("")
+  const { rolesManagedByIdp: fromIdp } = useIsAdmin()
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["rolesOf", userId] })
 
@@ -136,8 +140,9 @@ function RolesSection({ userId }: { userId: string }) {
     <div className="space-y-2">
       <span className="text-sm font-medium">Roles</span>
       <p className="text-xs text-muted-foreground">
-        Held in this order — the first one wins outright over a later one that disagrees. Drag to
-        reorder.
+        {fromIdp
+          ? "Roles are managed by your identity provider: they are set from it at every sign-in and can't be changed here."
+          : "Held in this order — the first one wins outright over a later one that disagrees. Drag to reorder."}
       </p>
       {held.isPending ? (
         <Spinner />
@@ -153,8 +158,8 @@ function RolesSection({ userId }: { userId: string }) {
                 <RoleRow
                   key={r.id}
                   role={r}
-                  sortable={rows.length > 1}
-                  onRemove={() => unassign.mutate(r.id)}
+                  sortable={!fromIdp && rows.length > 1}
+                  onRemove={fromIdp ? undefined : () => unassign.mutate(r.id)}
                   removing={unassign.isPending && unassign.variables === r.id}
                 />
               ))}
@@ -164,7 +169,7 @@ function RolesSection({ userId }: { userId: string }) {
       )}
       {unassign.error && <Feedback error={unassign.error} />}
 
-      {holdable.length > 0 ? (
+      {!fromIdp && holdable.length > 0 ? (
         <div className="flex items-center gap-2 pt-1">
           <Select value={picking} onValueChange={setPicking}>
             <SelectTrigger className="flex-1">

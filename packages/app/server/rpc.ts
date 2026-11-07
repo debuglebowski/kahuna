@@ -48,6 +48,7 @@ import {
 } from "#engine"
 import { auth } from "./auth"
 import { pool } from "./db"
+import { idpRoleConfig, refusal } from "./idpRoles"
 import { canConfigure } from "./policy"
 import { instrumentRpcHandlers } from "./rpcAudit"
 import { rpcProtocolRefusal, stampRpcProtocol } from "./rpcProtocol"
@@ -327,6 +328,46 @@ const adminSqlOn = <A>(
 // already match the wire schema; this just informs the handler's return type.
 const as = <A>(eff: Effect.Effect<unknown, unknown, OrgContext | EngineServices>) =>
   mapErr(eff) as Effect.Effect<A, RpcError, OrgContext | EngineServices>
+
+/**
+ * ROLES FROM THE IDP (idpRoles.ts): with the mode on, who holds which people role is
+ * the IdP's call, so the app refuses to change it — after the permission gate, so a
+ * caller who could not have made the change anyway still reads FORBIDDEN. Automation
+ * actors and automation roles are not the IdP's business and pass.
+ */
+const refuseIfIdpManaged = (
+  what: string,
+  target: { readonly userId?: string; readonly roleId?: string },
+): Effect.Effect<void, RpcError, OrgContext | EngineServices> =>
+  Effect.gen(function* () {
+    if (!idpRoleConfig()) return
+    const scope = yield* OrgContext
+    if (target.roleId) {
+      const roles = yield* as<ReadonlyArray<AccessRole>>(uc.listRoles())
+      if (roles.find((r) => r.id === target.roleId)?.kind === "automation") return
+    }
+    const refused = refusal({
+      what,
+      orgId: scope.orgId,
+      actor: scope.actor,
+      targetId: target.userId,
+    })
+    if (refused)
+      return yield* Effect.fail(
+        new RpcError({ code: refused.code, message: refused.message, status: 409 }),
+      )
+  })
+
+/** `adminOn("configure", role)` for a change to who holds which role. */
+const roleHolding = <A>(
+  what: string,
+  target: { readonly userId?: string; readonly roleId?: string },
+  eff: Effect.Effect<unknown, unknown, OrgContext | EngineServices>,
+) =>
+  requireAction("configure", { type: "role" }).pipe(
+    Effect.andThen(refuseIfIdpManaged(what, target)),
+    Effect.andThen(as<A>(eff)),
+  )
 
 /**
  * Enforce that every `user`-kind field value is a real member of the org. The
@@ -1057,6 +1098,8 @@ const HandlersLive = ServerRpcs.toLayer(
           isOwner: scope.role === "owner",
           canConfigure: has("org"),
           canConfigureRoles: has("role"),
+          rolesManagedByIdp: idpRoleConfig() !== null,
+          ownerManagedByIdp: idpRoleConfig()?.ownerManaged ?? false,
         }
       }),
     roleHolders: ({ roleId }) =>
@@ -1066,9 +1109,9 @@ const HandlersLive = ServerRpcs.toLayer(
         uc.roleHolders(roleId),
       ),
     reassignRoleHolders: ({ fromRoleId, toRoleId }) =>
-      adminOn<{ readonly moved: number }>(
-        "configure",
-        { type: "role" },
+      roleHolding<{ readonly moved: number }>(
+        "reassignRoleHolders",
+        { roleId: fromRoleId },
         uc.reassignRoleHolders({ fromRoleId, toRoleId }),
       ),
     createRole: ({ name, description, kind, startFrom }) =>
@@ -1086,21 +1129,21 @@ const HandlersLive = ServerRpcs.toLayer(
     deleteRole: ({ id }) =>
       adminOn<{ readonly id: string }>("configure", { type: "role" }, uc.deleteRole(id)),
     assignRole: ({ roleId, userId }) =>
-      adminOn<{ readonly ok: boolean }>(
-        "configure",
-        { type: "role" },
+      roleHolding<{ readonly ok: boolean }>(
+        "assignRole",
+        { userId },
         uc.assignRole(roleId, userId),
       ),
     unassignRole: ({ roleId, userId }) =>
-      adminOn<{ readonly ok: boolean }>(
-        "configure",
-        { type: "role" },
+      roleHolding<{ readonly ok: boolean }>(
+        "unassignRole",
+        { userId },
         uc.unassignRole(roleId, userId),
       ),
     reorderMemberRoles: ({ userId, roleIds }) =>
-      adminOn<{ readonly ok: boolean }>(
-        "configure",
-        { type: "role" },
+      roleHolding<{ readonly ok: boolean }>(
+        "reorderMemberRoles",
+        { userId },
         uc.reorderMemberRoles(userId, roleIds),
       ),
     ensurePersonalRole: ({ userId }) =>

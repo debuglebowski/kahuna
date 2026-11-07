@@ -61,7 +61,11 @@ const callbackErrorCode = (ctx: AfterHookContext): string | undefined => {
  * (auth.ts) — with more context than this hook has. Logging them again here would
  * record one refusal as two events.
  */
-const LOGGED_AS_DENIED = new Set(["SSO_MFA_REQUIRED", "SSO_DOMAIN_NOT_ALLOWED"])
+const LOGGED_AS_DENIED = new Set([
+  "SSO_MFA_REQUIRED",
+  "SSO_DOMAIN_NOT_ALLOWED",
+  "SSO_NO_MAPPED_ROLE", // roles from the IdP (idpRoles.ts)
+])
 
 const activeOrg = (ctx: AfterHookContext): string | undefined =>
   str(asRecord(asRecord(ctx.context.newSession)?.session)?.activeOrganizationId) ??

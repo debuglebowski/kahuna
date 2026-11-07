@@ -93,7 +93,7 @@ export function MemberDirectory({
   // to whichever is mounted, so a click can't throw the user out of settings.
   const base = useSectionBase("members")
   const { members, deactivatedSet, isPending, error } = useMembers()
-  const { admin, isOwner } = useIsAdmin()
+  const { admin, isOwner, ownerManagedByIdp } = useIsAdmin()
   const [filter, setFilter] = useState("")
   const [showDeactivated, setShowDeactivated] = useState(false)
   // Pending admin action; ConfirmDialog stays mounted while the mutation runs.
@@ -357,7 +357,8 @@ export function MemberDirectory({
                             // Owner-only: `/api/org/members/:id/role` refuses anyone
                             // else, so an admin seeing an enabled item would be an
                             // affordance that 403s.
-                            disabled={lockOwner || !isOwner}
+                            // …and nobody's, when the IdP decides who is owner.
+                            disabled={lockOwner || !isOwner || ownerManagedByIdp}
                             onSelect={() => {
                               setEditing({ userId: m.userId, label, role: m.role })
                               setDraftRole(m.role)
