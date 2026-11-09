@@ -899,6 +899,47 @@ describe("the freshness deadline (≤ 3600 s), at every entry point", () => {
     expect(s.frames.join("")).not.toContain("id: 9200002")
   })
 
+  it("SSE: a signed partial demotion (admin → member) stops privileged metadata at once", async () => {
+    await modeOn()
+    const p = newPerson()
+    const a = await signInAs(p, { roles: ["Kahuna.Admin"] })
+    const made = await rpc<{ id: string }>(a.cookie, (c) =>
+      c.createConcept({
+        name: `Secret-${randomUUID().slice(0, 8)}`,
+        access: [
+          { roleId: roleIds.admin, view: true },
+          { roleId: roleIds.member, view: false },
+        ],
+      }),
+    )
+    if (!made.ok) throw new Error("concept creation failed")
+    const secretId = made.value.id
+    // Native policy: Member explicitly cannot read this concept.
+    await pool.query(
+      `INSERT INTO access_rules (org_id, role_id, effect, actions, resource_type, resource_id)
+       VALUES ($1, $2, 'deny', ARRAY['view'], 'concept', $3)`,
+      [orgId, roleIds.member, secretId],
+    )
+    await pool.query("UPDATE access_policy_versions SET version = version + 1 WHERE org_id = $1", [
+      orgId,
+    ])
+    const secret = (id: number) => ({ ...envelope(id), conceptId: secretId, concept: "Secret" })
+    const s = await openStream(a.cookie)
+    for (let i = 0; i < 40 && !s.frames.join("").includes("id: 9300001"); i++) {
+      mod.stream.dispatch(secret(9_300_001) as never)
+      await tick()
+    }
+    expect(s.frames.join("")).toContain("id: 9300001")
+    await nextSecond()
+    const member = await signInAs(p, { roles: ["Kahuna.Member"] })
+    expect(await held(a.userId)).toEqual(["member"])
+    const visible = await rpc<Array<{ id: string }>>(member.cookie, (c) => c.listConcepts({}))
+    if (visible.ok) expect(visible.value.map((c) => c.id)).not.toContain(secretId)
+    mod.stream.dispatch(secret(9_300_002) as never)
+    await s.closed
+    expect(s.frames.join("")).not.toContain("id: 9300002")
+  })
+
   it("drops an approved CLI hand-over when the person is revoked", async () => {
     await modeOn()
     const p = newPerson()

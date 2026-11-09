@@ -1059,7 +1059,8 @@ export const revalidate = async (
 /**
  * What an open stream's right to emit rests on, read from the DATABASE: the
  * session still exists and is unexpired, the persisted mode/epoch/config identity,
- * and whether the session is bound to that epoch. Captured when the stream opens
+ * whether the session is bound to that epoch, and (managed) the person's evidence
+ * revision and grants. Captured when the stream opens
  * and compared before every emission (stream.ts): a revocation, activation, config
  * change or denial made by ANY server changes it, so the stream stops without
  * waiting for an in-process notice. Applies to streams opened with the mode off
@@ -1073,17 +1074,26 @@ export const streamFenceKey = async (sessionId: string): Promise<string | null> 
       epoch: number | null
       fingerprint: string | null
       bound: boolean
+      identity: string | null
     }>(
       `SELECT EXISTS (SELECT 1 FROM bauth_session WHERE id = $1 AND expires_at > now()) AS live,
               a.enabled, a.epoch, a.fingerprint,
               EXISTS (SELECT 1 FROM idp_role_sessions s
-                      WHERE s.session_id = $1 AND s.epoch = a.epoch) AS bound
+                      WHERE s.session_id = $1 AND s.epoch = a.epoch) AS bound,
+              (SELECT i.revision::text || ':' || i.grants::text
+               FROM idp_role_sessions s
+               JOIN idp_role_identities i ON i.user_id = s.user_id AND i.epoch = s.epoch
+               WHERE s.session_id = $1 AND s.epoch = a.epoch) AS identity
        FROM (SELECT 1) AS one LEFT JOIN idp_role_activation a ON a.id = 1`,
       [sessionId],
     )
     const r = rows[0]
     if (!r?.live) return null
-    return JSON.stringify([r.enabled === true, r.epoch, r.fingerprint, r.bound])
+    // `identity` = the managed person's evidence revision + grants: every grant
+    // change (a demotion by a newer sign-in, a revalidation, a denial) bumps it, so
+    // an open stream never emits under roles the person no longer holds. Null with
+    // the mode off, where nothing about it changes.
+    return JSON.stringify([r.enabled === true, r.epoch, r.fingerprint, r.bound, r.identity])
   } catch {
     return null
   }
