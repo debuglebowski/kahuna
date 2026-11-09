@@ -100,7 +100,11 @@ export function Authentication() {
   if (cfg.isPending) return <Spinner />
   if (cfg.error) return <p className="text-sm text-destructive">{(cfg.error as Error).message}</p>
 
-  const canEdit = cfg.data?.canEdit ?? false
+  // Roles from the IdP: the deployment forces SSO only. Show the EFFECTIVE state,
+  // read-only; the stored toggles (kept in state, saved untouched) apply again if
+  // the operator turns the mode off.
+  const managed = cfg.data?.idpRolesManaged ?? false
+  const canEdit = (cfg.data?.canEdit ?? false) && !managed
   const provider = cfg.data?.provider ?? null
   // A provider declared in deployment config is read-only here (server refuses too).
   const editProvider = canEdit && !provider?.managed
@@ -133,10 +137,16 @@ export function Authentication() {
           }
         />
         <div className="space-y-4 p-6">
+          {managed && (
+            <p className="rounded-md border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
+              Set by your deployment: roles come from your identity provider, so everyone signs in
+              with single sign-on. Password sign-in is off, owners included.
+            </p>
+          )}
           <Label className="flex items-start gap-3 font-normal">
             <Checkbox
               className="mt-0.5"
-              checked={passwordEnabled}
+              checked={managed ? false : passwordEnabled}
               disabled={!canEdit}
               onCheckedChange={(c) => setPasswordEnabled(c === true)}
             />
@@ -154,7 +164,7 @@ export function Authentication() {
           <Label className="flex items-start gap-3 font-normal">
             <Checkbox
               className="mt-0.5"
-              checked={ssoEnabled}
+              checked={managed ? true : ssoEnabled}
               disabled={!canEdit || !provider}
               onCheckedChange={(c) => setSsoEnabled(c === true)}
             />
@@ -171,7 +181,7 @@ export function Authentication() {
           <Label className="flex items-start gap-3 font-normal">
             <Checkbox
               className="mt-0.5"
-              checked={ownerFallback}
+              checked={managed ? false : ownerFallback}
               disabled={!canEdit}
               onCheckedChange={(c) => setOwnerFallback(c === true)}
             />

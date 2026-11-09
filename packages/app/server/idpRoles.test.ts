@@ -615,6 +615,35 @@ describe("in-app role changes while managed", () => {
     expect(access.ok && access.value.rolesManagedByIdp).toBe(true)
   })
 
+  it("Settings → Authentication shows the effective SSO-only state; stored toggles kept", async () => {
+    const sso = await import("./sso")
+    const read = async (cookie: string) =>
+      (await sso
+        .authConfigStatus(new Request(`${ORIGIN}/api/auth-config/sso`, { headers: { cookie } }))
+        .then((r) => r.json())) as {
+        methods: { passwordEnabled: boolean; ownerPasswordFallback: boolean }
+        idpRolesManaged: boolean
+      }
+    const ownerCookie = await mod.client.cookieFor(owner.email)
+    const off = await read(ownerCookie)
+    expect(off.idpRolesManaged).toBe(false)
+    expect(await sso.publicAuthMethodsFor(orgId)).toMatchObject({ passwordEnabled: true })
+
+    await modeOn()
+    const admin = await signInAs(newPerson(), { roles: ["Kahuna.Owner", "Kahuna.Admin"] })
+    const on = await read(admin.cookie)
+    expect(on.idpRolesManaged).toBe(true)
+    // The stored setting is untouched (it applies again with the mode off)…
+    expect(on.methods).toMatchObject({ passwordEnabled: true, ownerPasswordFallback: true })
+    // …while the sign-in page is told what is actually accepted.
+    expect(await sso.publicAuthMethodsFor(orgId)).toEqual({
+      passwordEnabled: false,
+      ownerPasswordFallback: false,
+      ssoEnabled: true,
+      ssoProviderId: "deployment-idp",
+    })
+  })
+
   it("refuses password sign-in for everyone, owners included, with no fallback", async () => {
     await modeOn()
     const res = await mod.auth.handler(

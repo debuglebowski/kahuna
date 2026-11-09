@@ -232,6 +232,11 @@ export interface AuthConfig {
   readonly callbackUrl: string
   /** The caller is the org owner. Admins get this read-only. */
   readonly canEdit: boolean
+  /**
+   * Roles come from the identity provider (deployment config): sign-in is SSO only,
+   * whatever `methods` (the stored setting, used again with the mode off) says.
+   */
+  readonly idpRolesManaged?: boolean
 }
 
 /**

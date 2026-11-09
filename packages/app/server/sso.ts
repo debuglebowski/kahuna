@@ -4,6 +4,7 @@ import { auth } from "./auth"
 import { type AuthMethods, readAuthMethods, writeAuthMethods } from "./authMethods"
 import { db } from "./db"
 import { deploymentIdp } from "./deploymentIdp"
+import { idpManaged } from "./idpRoles"
 import { clientIp, routeOf, securityEvent } from "./securityLog"
 import { resolveAdmin, resolveOwner } from "./session"
 
@@ -157,6 +158,15 @@ export interface PublicAuthMethods extends AuthMethods {
  */
 export const publicAuthMethodsFor = async (orgId: string): Promise<PublicAuthMethods> => {
   const methods = await readAuthMethods(orgId)
+  // ROLES FROM THE IDP (idpRoles.ts): SSO through the deployment's provider is the
+  // only way in, whatever the stored toggles say (they are kept for mode off).
+  if (deploymentIdp && (await idpManaged()))
+    return {
+      passwordEnabled: false,
+      ownerPasswordFallback: false,
+      ssoEnabled: true,
+      ssoProviderId: deploymentIdp.providerId,
+    }
   // Guard the UI against a half-configured org: SSO on with the provider row
   // since deleted would render an SSO button that cannot resolve a provider.
   const provider = methods.ssoEnabled ? await providerPayload(orgId) : null
@@ -188,7 +198,8 @@ export const publicAuthMethodsFor = async (orgId: string): Promise<PublicAuthMet
 export const publicAuthMethods = async (): Promise<Response> => {
   const orgs = await db.select({ id: organization.id }).from(organization).limit(2)
   if (orgs.length !== 1 || !orgs[0]) {
-    return json({ passwordEnabled: true, ssoEnabled: true, ssoProviderId: null })
+    const managed = await idpManaged()
+    return json({ passwordEnabled: !managed, ssoEnabled: true, ssoProviderId: null })
   }
   return json(await publicAuthMethodsFor(orgs[0].id))
 }
@@ -205,6 +216,9 @@ export const authConfigStatus = async (req: Request): Promise<Response> => {
     // The page hides every control for a non-owner rather than letting them
     // submit and collect a 403.
     canEdit: org.role === "owner",
+    // Roles from the IdP: the deployment forces SSO only. `methods` stays the
+    // STORED setting, which applies again if the mode is turned off.
+    idpRolesManaged: await idpManaged(),
   })
 }
 

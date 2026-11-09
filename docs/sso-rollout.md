@@ -164,6 +164,8 @@ the mode off is recorded too, so turning it back on is a new activation.
 
 - **SSO only.** Password sign-in is refused for everyone, owners included; the owner
   password fallback does not apply. Recovery is server administration (below).
+  Settings → Authentication shows this effective state read-only, with a note; the
+  stored toggles are kept and apply again if the mode is turned off.
 - **No mapped role** (missing or malformed claim, or no mapped value): the sign-in is
   refused (`SSO_NO_MAPPED_ROLE`), the person's roles and owner tier are removed, and
   every session they hold — browser and CLI — is ended. A refusal older than the
