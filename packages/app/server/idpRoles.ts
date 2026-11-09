@@ -98,10 +98,17 @@ export const setIdpRoleConfig = (next?: RoleConfig | null): void => {
 }
 
 /** Unix seconds, wall clock. Swappable in tests to reach a deadline. */
-let clock = (): number => Math.floor(Date.now() / 1000)
-export const nowSec = (): number => clock()
+/** Wall clock in MILLISECONDS; seconds are derived from it, never the reverse. */
+let clockMs = (): number => Date.now()
+export const nowMs = (): number => clockMs()
+export const nowSec = (): number => Math.floor(clockMs() / 1000)
+/** Test seam: a whole-second clock (Unix s). Pass nothing to restore. */
 export const setClock = (next?: () => number): void => {
-  clock = next ?? (() => Math.floor(Date.now() / 1000))
+  clockMs = next ? () => next() * 1000 : () => Date.now()
+}
+/** Test seam: a millisecond clock, for sub-second deadlines. */
+export const setClockMs = (next?: () => number): void => {
+  clockMs = next ?? (() => Date.now())
 }
 
 interface RoleRow {

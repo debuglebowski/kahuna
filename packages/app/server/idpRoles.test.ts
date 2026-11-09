@@ -823,14 +823,22 @@ describe("the freshness deadline (≤ 3600 s), at every entry point", () => {
         return new Promise(() => {}) // never answers
       },
     })
-    setNow(v0 + 3599) // one real second before the deadline
-    const s = await openStream(a.cookie)
-    const started = Date.now()
-    // Only the stream's own deadline timer runs; time is re-read from the clock.
-    setTimeout(() => setNow(v0 + 3600), 1000)
-    await s.closed
-    expect(Date.now() - started).toBeLessThan(5000)
-    expect(refreshCalled).toBe(false)
+    // A millisecond clock that runs with real time, starting 0.7 s before the
+    // deadline (…3599.3): the stream must close within the remaining 0.7 s, not
+    // linger to …3600.999 as a floored-seconds timer would.
+    const t0 = Date.now()
+    const start = (v0 + 3600) * 1000 - 700
+    mod.idp.setClockMs(() => start + (Date.now() - t0))
+    try {
+      const s = await openStream(a.cookie)
+      await s.closed
+      const closedAt = start + (Date.now() - t0)
+      expect(closedAt).toBeGreaterThanOrEqual((v0 + 3600) * 1000)
+      expect(closedAt - (v0 + 3600) * 1000).toBeLessThan(250)
+      expect(refreshCalled).toBe(false)
+    } finally {
+      mod.idp.setClockMs()
+    }
   })
 
   it("drops an approved CLI hand-over when the person is revoked", async () => {

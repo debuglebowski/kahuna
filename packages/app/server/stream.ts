@@ -7,7 +7,7 @@ import {
   type SubjectKind,
   scopeCanReadConcept,
 } from "#engine"
-import { idpSessionGate, nowSec, onHumanRevoked } from "./idpRoles"
+import { idpSessionGate, nowMs, nowSec, onHumanRevoked } from "./idpRoles"
 import { AppRuntime, resolvePolicy } from "./runtime"
 import { resolveOrg, roleOf } from "./session"
 
@@ -370,7 +370,9 @@ export const streamHandler = async (req: Request): Promise<Response> => {
       }
       if (deadline !== undefined) {
         const arm = (): void => {
-          const ms = Math.max(0, (deadline - nowSec()) * 1000)
+          // Milliseconds, not floored seconds: opened at …3599.9 it closes at
+          // …3600.0, not a second late.
+          const ms = Math.max(0, deadline * 1000 - nowMs())
           // Re-arm rather than trust one long timer: the clock is re-read on fire.
           deadlineTimer = setTimeout(
             () => (expired() ? client?.close() : arm()),
