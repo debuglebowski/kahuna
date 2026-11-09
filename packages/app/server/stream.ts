@@ -7,7 +7,7 @@ import {
   type SubjectKind,
   scopeCanReadConcept,
 } from "#engine"
-import { idpSessionGate, nowMs, nowSec, onHumanRevoked } from "./idpRoles"
+import { idpSessionGate, nowMs, nowSec, onHumanRevoked, streamFenceKey } from "./idpRoles"
 import { AppRuntime, resolvePolicy } from "./runtime"
 import { resolveOrg, roleOf } from "./session"
 
@@ -311,6 +311,14 @@ export const streamHandler = async (req: Request): Promise<Response> => {
   const deadline = org.idpDeadline
   const expired = (): boolean => deadline !== undefined && nowSec() >= deadline
 
+  // CROSS-SERVER FENCE: what this stream's right to emit rests on, as persisted
+  // (session alive, mode/epoch/config identity, epoch binding). Re-read before
+  // every emission batch; any difference — a revocation, activation or denial on
+  // ANY server, or this stream having been opened with the mode off — closes the
+  // stream before a frame is written. In-process notices only make it faster.
+  const fenceKey = await streamFenceKey(org.sessionId ?? "")
+  if (fenceKey === null) return Response.json({ error: "UNAUTHENTICATED" }, { status: 401 })
+
   // The concept-visibility snapshot this connection filters through. Starts CLOSED
   // (nothing passes) and opens once resolved, so no frame can slip out during setup.
   let maySee: (env: EventEnvelope) => boolean = () => false
@@ -346,13 +354,37 @@ export const streamHandler = async (req: Request): Promise<Response> => {
       let replaying = true
       let maxReplayId = 0
       const buffered: EventEnvelope[] = []
+      // Frames are written in order through one serialized flush, each batch only
+      // after the persisted fence still matches (see `fenceKey`).
+      const queued: EventEnvelope[] = []
+      let flushing = false
+      const stillAllowed = async (): Promise<boolean> =>
+        !expired() && (await streamFenceKey(org.sessionId ?? "")) === fenceKey
+      const flush = (): void => {
+        if (flushing) return
+        flushing = true
+        void (async () => {
+          while (queued.length > 0) {
+            const batch = queued.splice(0)
+            if (!(await stillAllowed())) {
+              client?.close()
+              return
+            }
+            for (const env of batch) write(sseFrame(env))
+          }
+        })().finally(() => {
+          flushing = false
+          if (queued.length > 0) flush()
+        })
+      }
       const send = (env: EventEnvelope) => {
         if (replaying) {
           buffered.push(env)
           return
         }
         if (env.id <= maxReplayId) return // already covered by replay
-        write(sseFrame(env))
+        queued.push(env)
+        flush()
       }
       client = {
         // Read through the mutable binding, not a captured value, so a refresh
@@ -418,6 +450,10 @@ export const streamHandler = async (req: Request): Promise<Response> => {
         const envs = await AppRuntime.runPromise(replayEventsSince(orgId, since)).catch(
           () => [] as EventEnvelope[],
         )
+        if (!(await stillAllowed())) {
+          client?.close()
+          return
+        }
         for (const env of envs) {
           // `maxReplayId` advances for every event the replay COVERED, filtered or
           // not: it is a dedupe watermark, not a delivery log. Advancing it only for
@@ -430,8 +466,9 @@ export const streamHandler = async (req: Request): Promise<Response> => {
       }
 
       replaying = false
-      for (const env of buffered) if (env.id > maxReplayId) write(sseFrame(env))
+      for (const env of buffered) if (env.id > maxReplayId) queued.push(env)
       buffered.length = 0
+      flush()
 
       heartbeat = setInterval(() => write(": ping\n\n"), 25_000)
     },

@@ -841,6 +841,64 @@ describe("the freshness deadline (≤ 3600 s), at every entry point", () => {
     }
   })
 
+  /** Wait until the open stream delivers a frame for `id` (setup is async). */
+  const deliver = async (s: Awaited<ReturnType<typeof openStream>>, id: number) => {
+    for (let i = 0; i < 40 && !s.frames.join("").includes(`id: ${id}`); i++) {
+      mod.stream.dispatch(envelope(id) as never)
+      await tick()
+    }
+    expect(s.frames.join("")).toContain(`id: ${id}`)
+  }
+
+  /**
+   * ANOTHER SERVER acts on the shared database: these are raw writes, so this
+   * process gets no in-process notice. The already-open stream must still emit
+   * nothing more — on its very next dispatch, not at its 30 s poll.
+   */
+  const otherServer = {
+    deny: (userId: string) =>
+      pool.query(
+        "DELETE FROM bauth_session WHERE id IN (SELECT session_id FROM idp_role_sessions WHERE user_id = $1)",
+        [userId],
+      ),
+    reactivate: () =>
+      pool.query(
+        "UPDATE idp_role_activation SET enabled = true, epoch = epoch + 1, fingerprint = 'other', changed_at = now() WHERE id = 1",
+      ),
+  }
+
+  for (const [label, act] of [
+    ["denies the person", "deny"],
+    ["re-activates the mode", "reactivate"],
+  ] as const)
+    it(`SSE: another server ${label}; the open stream emits nothing more, at once`, async () => {
+      await modeOn()
+      const a = await signInAs(newPerson(), { roles: ["Kahuna.Admin"] })
+      const s = await openStream(a.cookie)
+      await deliver(s, 9_100_001)
+      if (act === "deny") await otherServer.deny(a.userId)
+      else await otherServer.reactivate()
+      const started = Date.now()
+      mod.stream.dispatch(envelope(9_100_002) as never)
+      await s.closed
+      expect(Date.now() - started).toBeLessThan(2000)
+      expect(s.frames.join("")).not.toContain("id: 9100002")
+    })
+
+  it("SSE: a stream opened with the mode OFF stops when another server activates it", async () => {
+    await modeOff()
+    const ownerCookie = await mod.client.cookieFor(owner.email)
+    const s = await openStream(ownerCookie)
+    await deliver(s, 9_200_001)
+    // This process still believes the mode is off; another server turned it on.
+    await otherServer.reactivate()
+    const started = Date.now()
+    mod.stream.dispatch(envelope(9_200_002) as never)
+    await s.closed
+    expect(Date.now() - started).toBeLessThan(2000)
+    expect(s.frames.join("")).not.toContain("id: 9200002")
+  })
+
   it("drops an approved CLI hand-over when the person is revoked", async () => {
     await modeOn()
     const p = newPerson()
