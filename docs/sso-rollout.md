@@ -25,7 +25,7 @@ Also enforced:
 - SSO accepts only identities whose email domain is one the provider was
   registered for (`SSO_DOMAIN_NOT_ALLOWED`). New SSO users join as plain
   `member`; roles are taken from the IdP only if the operator turns that on
-  (see "Roles from the identity provider").
+  (see "Roles from the identity provider"), which also makes SSO the only way in.
 - Turning password off does **not** end existing sessions. Cookies issued
   earlier stay valid until they expire or are revoked.
 
@@ -117,92 +117,151 @@ log.
 
 ## Roles from the identity provider (optional)
 
-Off by default. When the operator turns it on, the identity provider decides
-which roles each person holds: Kahuna reads a claim from the verified ID token
-at every sign-in and sets the person's roles from it. Roles are still defined
-(name, rules) in Settings → Roles; the IdP decides who holds them.
+Off by default. When the operator turns it on, the identity provider decides who
+holds which role: Kahuna takes roles from a claim in the verified ID token at every
+sign-in, and again at least once an hour after that. It uses the shared
+`@normain/idp-role-contract` 0.1.0 (vendored, `vendor/normain-idp-role-contract-0.1.0.tgz`,
+SHA-256 `f54ba7da94b0330ac83f13349ac8330bed82ef7489c4576c80567e7bf0ae9fe0`), the same
+release Cloudable and SlayZone pin.
 
-It applies to the provider from deployment config only (`SSO_*` above), so it
-can't be turned on from inside the app, and it refuses to boot without that
-provider. It works with any IdP that can put the roles in a claim of the ID
-token: Entra ID, Okta, Keycloak and others.
+It applies only to the provider from deployment config (`SSO_*` above). It works
+with any OIDC IdP that puts roles in an ID token claim and issues refresh tokens
+(Entra ID, Okta, Keycloak, Auth0, …).
+
+### Configuration
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `SSO_ROLES_FROM_IDP` | `false` | `true` turns the mode on. |
-| `SSO_ROLE_CLAIM` | `roles` | The claim that holds the roles. A top-level name, or a dotted path into a nested claim (Keycloak: `realm_access.roles`). A claim name containing dots, such as the SAML role attribute `http://schemas.microsoft.com/ws/2008/06/identity/claims/role`, is matched as a whole name first. |
-| `SSO_ROLE_MAP` | (required) | Comma-separated `<claim value>=<role>`. The role is a Kahuna role's key (`admin`, `member`), id, or name (not case-sensitive). The reserved role `owner` makes the person an org owner. Claim values are matched exactly, case-sensitive. Several values may map to one role, and one value to several. |
-| `SSO_ROLE_UNMAPPED` | `deny` | What happens when the claim holds no mapped value: `deny` refuses the sign-in, or name one role to give instead. Cannot be `owner`. |
+| `IDP_ROLES_ENABLED` | `false` | `true` turns the mode on. Needs the four `SSO_*` variables. |
+| `IDP_ROLE_CLAIM` | (required when on) | The claim holding the roles. A claim name, or a dotted path into a nested claim (`realm_access.roles`). An exact claim name is matched before a path, so a name containing dots works. |
+| `IDP_ROLE_MAPPING` | (required when on) | A JSON object: claim value → array of Kahuna targets, e.g. `{"Kahuna.Admin":["admin"],"Kahuna.Member":["member"]}`. A target is `owner`, a role's key (`admin`, `member`) or a role's id. Role names are not accepted (they can be renamed). Values match exactly, case-sensitive. An empty array grants nothing. |
+| `IDP_RECHECK_INTERVAL_SECONDS` | `3600` | How old role evidence may get. 1–3600; more than 3600 is refused. |
 
-A malformed value (an unknown `SSO_ROLES_FROM_IDP` value, an empty or broken
-map) stops the server from starting.
+The server refuses to start on: a malformed value, mode on with no mapping, a
+target that names no role, the mode without `SSO_*`, or any of the names this
+feature used during development (see Migration). With the mode off, malformed
+`IDP_*` values are still refused.
 
-### What happens at sign-in
+Startup also records the **activation** in the database (`idp_role_activation`):
+turning the mode on, or changing its configuration (claim, mapping, interval,
+issuer or client id), starts a new epoch and ends every human session and CLI
+credential once. Restarting with the same configuration changes nothing. Turning
+the mode off is recorded too, so turning it back on is a new activation.
 
-- The person ends up holding exactly the people roles their claim maps to.
-  Roles the claim no longer carries are removed, including roles given in the
-  app before the mode was turned on. Auto-assign roles are not handed out.
-- If any mapping targets `owner`, owner vs member follows the claim too
-  (someone without the owner value is made a plain member). With no `owner`
-  mapping, owners are left as they are.
-- No mapped value: the sign-in is refused (`SSO_NO_MAPPED_ROLE`). The person's
-  roles are removed anyway and their open sessions are ended, so removing every
-  role at the IdP takes effect on their next sign-in attempt.
-- A mapped value naming a role that doesn't exist counts as unmapped, and is
-  logged (`access.role.from_idp`, `failure`, `ROLE_NOT_FOUND`).
-- Kahuna does not re-check the IdP between sign-ins. A role removed at the IdP
-  is removed in Kahuna the next time that person signs in through it; until
-  then an open session keeps the previous roles, for as long as the session
-  lasts.
+### What the IdP controls
 
-Not governed by the IdP: automation roles, each member's personal overrides,
-and the rules inside roles. Password sign-ins don't change roles; turn password
-sign-in off (rollout step 5) so everyone goes through the IdP.
+- **People roles.** At each verified sign-in and each hourly revalidation the person
+  holds exactly the roles the claim maps to; any other people role is removed.
+  Several mapped values grant all their roles. Auto-assign is not used.
+- **Owner.** Owner vs member always follows the claim while the mode is on: with no
+  value mapped to `owner`, nobody is an owner, and existing owners become members at
+  their next verification.
+- **Not controlled:** role definitions and their rules, each member's personal
+  overrides, automation roles and automations, and anything else in the app. Do not
+  read "the IdP manages roles" as "the IdP controls every permission".
+
+### Sign-in, freshness and removal
+
+- **SSO only.** Password sign-in is refused for everyone, owners included; the owner
+  password fallback does not apply. Recovery is server administration (below).
+- **No mapped role** (missing or malformed claim, or no mapped value): the sign-in is
+  refused (`SSO_NO_MAPPED_ROLE`), the person's roles and owner tier are removed, and
+  every session they hold — browser and CLI — is ended. A refusal older than the
+  evidence already recorded changes nothing; a newer one also blocks any older
+  mapped assertion delivered later.
+- **Hourly.** Every authenticated request (web, RPC, CLI, live updates, BetterAuth's
+  own endpoints) checks the stored evidence time — the signed `iat` of the last
+  verified ID token. At `iat + interval` Kahuna spends the stored refresh token and
+  verifies the new ID token (signature, issuer, audience, subject, time). Roles are
+  updated from it. If the refresh fails, returns no ID token, or the claim maps to
+  nothing, the person must sign in again: their sessions end and their managed roles
+  are cleared. An open live-update stream is closed at the deadline.
+- **Evidence must postdate the activation.** An ID token signed before the current
+  activation — a sign-in that was in progress when the mode was turned on or its
+  config changed, or a cached/replayed token — is refused, and so is one older than
+  a refusal already recorded for that person. `iat` has one-second resolution, so a
+  token signed in the activation's own second is refused too; signing in again a
+  second later works.
+- A failed hourly refresh records no new cutoff (it is not signed evidence of lost
+  roles): a sign-in that was already under way and is newer than the last verified
+  evidence still completes.
+- One refresh at a time per person, across servers. Kahuna keeps the refresh token
+  itself (encrypted) and clears the plugin's copy; BetterAuth's `/refresh-token`,
+  `/get-access-token` and `/account-info` are refused in managed mode.
 
 ### What is refused in the app
 
-With the mode on, these are refused with `ROLES_MANAGED_BY_IDP` and the message
-"Roles are managed by your identity provider." — in the UI (the controls are
-hidden), over the API and from the CLI:
+HTTP 409 `ROLES_MANAGED_BY_IDP`, "Roles are managed by your identity provider.",
+from the UI (controls hidden), the API and the CLI:
 
-- giving or removing a person's role (`assignRole`, `unassignRole`);
-- reordering a person's roles (`reorderMemberRoles`);
-- moving holders of a people role to another role (`reassignRoleHolders`);
-- making or removing an owner (`POST /api/org/members/:id/role`), only when
-  `owner` is mapped.
+- giving, removing or reordering a person's roles; moving holders between people roles;
+- making or removing an owner (`POST /api/org/members/:id/role`, and BetterAuth's
+  `/organization/update-member-role`, `/add-member`, `/create-invitation`,
+  `/accept-invitation`).
 
-Each refusal writes an `access.role_change.refused` security log line, and each
-role taken from the claim an `access.role.from_idp` line
-(`docs/security-logging.md`).
+### Audit
+
+One security log line per role decision and refusal, in the shared contract's shape:
+`event` (`idp_roles.granted`, `.denied`, `.revalidated`, `.local_change_refused`,
+`.activation`), `service` (`kahuna`), `actor`, `subject` (user id), `source`,
+`previousGrants`, `newGrants`, `reason`. No tokens or claims are logged. See
+`docs/security-logging.md`.
+
+### Rolling out and running several servers
+
+Every server checks the database's activation on every request and refuses
+(`503 IDP_ROLES_CONFIG_MISMATCH`) when its own configuration differs — including a
+server still running with the mode off after another turned it on. Roll out the same
+`IDP_*` values to every server together, and expect requests that reach a not-yet-updated
+server during the rollout to be refused rather than served under the old rules.
+Sign-ins handled by such a server are not honoured afterwards.
+
+### Recovery
+
+There is no in-app way around the IdP while the mode is on. To regain access:
+fix the role assignment at the IdP, or, on the server, set `IDP_ROLES_ENABLED=false`
+and restart (password sign-in and in-app roles return; turning the mode on again
+ends every session once more). `scripts/reset-password.ts` still works for that.
 
 ### Example: Entra ID
 
-1. In the app registration for Kahuna, **App roles → Create app role**, once
-   per role: display name `Kahuna admin`, allowed member types **Users/Groups**,
-   value `Kahuna.Admin`. Repeat for `Kahuna.Member`, and `Kahuna.Owner` if you
-   want owners managed too.
-2. In **Enterprise applications → Kahuna → Users and groups**, assign users or
-   groups to those roles. Optionally set **Properties → Assignment required** to
-   Yes, so people with no role can't get a token at all.
-3. Entra puts assigned app roles in the ID token's `roles` claim by default; no
-   optional claim is needed. (Keep the `amr` optional claim from the MFA setup.)
-4. Configure Kahuna:
+1. App registration → **App roles**: create `Kahuna.Admin`, `Kahuna.Member` (and
+   `Kahuna.Owner` if owners should come from Entra), allowed member types
+   Users/Groups.
+2. Enterprise applications → Kahuna → **Users and groups**: assign people or groups to
+   them. Optionally set **Assignment required**.
+3. Entra puts assigned app roles in the ID token's `roles` claim. Keep the `amr`
+   optional claim from the MFA setup. Kahuna asks for `offline_access` in this mode,
+   so Entra issues the refresh token the hourly check spends.
+4. Configure:
 
    ```
-   SSO_ROLES_FROM_IDP=true
-   SSO_ROLE_CLAIM=roles
-   SSO_ROLE_MAP=Kahuna.Owner=owner,Kahuna.Admin=admin,Kahuna.Member=member
-   SSO_ROLE_UNMAPPED=deny
+   IDP_ROLES_ENABLED=true
+   IDP_ROLE_CLAIM=roles
+   IDP_ROLE_MAPPING={"Kahuna.Owner":["owner"],"Kahuna.Admin":["admin"],"Kahuna.Member":["member"]}
+   IDP_RECHECK_INTERVAL_SECONDS=3600
    ```
 
-5. Restart, sign in through SSO as a test user with `Kahuna.Member`, and check
-   their roles in Settings → Members and the `access.role.from_idp` log line.
-   Then remove the role in Entra, sign in again, and confirm the refusal
-   (`auth.signin` denied `SSO_NO_MAPPED_ROLE`).
+5. Restart and sign in through SSO. Check Settings → Members and the
+   `idp_roles.granted` log line. Remove the role in Entra: within an hour the next
+   request ends the session (`idp_roles.denied`).
 
-Other IdPs: Okta — add a `roles` (or `groups`) claim to the ID token in the
-authorization server and point `SSO_ROLE_CLAIM` at it. Keycloak — add a realm
-role mapper with "Add to ID token", or use `SSO_ROLE_CLAIM=realm_access.roles`.
+Okta: add a `groups` (or roles) claim to the ID token. Keycloak: a realm-role mapper
+with "Add to ID token", or `IDP_ROLE_CLAIM=realm_access.roles`.
+
+### Migration from the development names
+
+The names below were never released; the server refuses to start while any is set.
+
+| Old | New |
+|---|---|
+| `SSO_ROLES_FROM_IDP=true` | `IDP_ROLES_ENABLED=true` |
+| `SSO_ROLE_CLAIM` (default `roles`) | `IDP_ROLE_CLAIM` (no default) |
+| `SSO_ROLE_MAP=A=admin,B=member` | `IDP_ROLE_MAPPING={"A":["admin"],"B":["member"]}` |
+| `SSO_ROLE_UNMAPPED=deny\|<role>` | removed — always deny, no fallback role |
+| owner managed only when mapped | owner always managed |
+| roles at sign-in only | at sign-in and at most every 3600 s |
+
 
 ## Owners and MFA (optional hardening)
 

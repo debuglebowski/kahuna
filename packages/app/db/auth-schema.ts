@@ -1,5 +1,6 @@
 import { relations } from "drizzle-orm"
 import {
+  bigint,
   bigserial,
   boolean,
   index,
@@ -1214,4 +1215,70 @@ export const clayAuditLog = pgTable(
     // Retention purge scans by age alone, which the (org_id, created_at) index can't serve.
     index("clay_audit_log_created_idx").on(table.createdAt),
   ],
+)
+
+/**
+ * ROLES FROM THE IDENTITY PROVIDER (server/idpRoles.ts). Deployment-level, not
+ * per org: the mode is operator config, and a deployment holds one org.
+ *
+ * The persisted ACTIVATION EPOCH. One row (`id = 1`). `epoch` increases each time
+ * the mode goes from off to on; that transition ends every human session once,
+ * idempotently, across restarts and replicas (boot locks this row). `fingerprint`
+ * is a hash of the active config: a change while on forces each person through a
+ * fresh revalidation rather than ending sessions again.
+ */
+export const idpRoleActivation = pgTable("idp_role_activation", {
+  id: integer("id").primaryKey().default(1),
+  enabled: boolean("enabled").notNull().default(false),
+  epoch: integer("epoch").notNull().default(0),
+  fingerprint: text("fingerprint"),
+  changedAt: timestamp("changed_at", { withTimezone: true }).notNull().defaultNow(),
+})
+
+/**
+ * Per HUMAN identity: the last verified role evidence. `verified_at` (Unix seconds,
+ * the verified ID token's `iat`) is what every authenticated entry point checks
+ * against the deadline; `refresh_token` (encrypted) is what revalidation spends.
+ * `epoch` binds the row to one activation; `revision` fences concurrent writers.
+ */
+export const idpRoleIdentities = pgTable(
+  "idp_role_identities",
+  {
+    userId: text("user_id")
+      .primaryKey()
+      .references(() => user.id, { onDelete: "cascade" }),
+    subject: text("subject").notNull(),
+    epoch: integer("epoch").notNull(),
+    revision: integer("revision").notNull().default(0),
+    verifiedAt: bigint("verified_at", { mode: "number" }),
+    // Signed `iat` of the newest REFUSED sign-in (no mapped role). A mapped sign-in
+    // must be newer, so an older assertion delivered late cannot undo a removal.
+    deniedAt: bigint("denied_at", { mode: "number" }),
+    grants: jsonb("grants").$type<string[]>().notNull().default([]),
+    refreshToken: text("refresh_token"),
+    fingerprint: text("fingerprint"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("idp_role_identities_subject_idx").on(t.subject)],
+)
+
+/**
+ * The SESSION EPOCH: in managed mode a session is usable only if a verified IdP
+ * sign-in minted it in the current epoch — a row here. Anything else (a session
+ * from before activation, a password session from a replica still running with
+ * the mode off) is refused. Cascades away with the session.
+ */
+export const idpRoleSessions = pgTable(
+  "idp_role_sessions",
+  {
+    sessionId: text("session_id")
+      .primaryKey()
+      .references(() => session.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    epoch: integer("epoch").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("idp_role_sessions_user_idx").on(t.userId)],
 )

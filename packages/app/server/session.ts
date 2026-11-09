@@ -4,6 +4,7 @@ import { member } from "#db"
 import type { EngineServices, OrgContext } from "#engine"
 import { auth } from "./auth"
 import { db, pool } from "./db"
+import { idpSessionGate } from "./idpRoles"
 import { canConfigure, type Role } from "./policy"
 import { resolvePolicy, runEngine, sessionScope, type UseCaseResult } from "./runtime"
 import { clientIp, routeOf, securityEvent } from "./securityLog"
@@ -52,7 +53,16 @@ export const logDenied = (
   })
 
 export type OrgResolution =
-  | { readonly ok: true; readonly orgId: string; readonly actor: string; readonly role: Role }
+  | {
+      readonly ok: true
+      readonly orgId: string
+      readonly actor: string
+      readonly role: Role
+      /** The BetterAuth session this was resolved from (SSE re-gates on it). */
+      readonly sessionId?: string
+      /** Roles from the IdP: Unix s at which this resolution's role evidence expires. */
+      readonly idpDeadline?: number
+    }
   | { readonly ok: false; readonly status: number; readonly code: string }
 
 /**
@@ -144,6 +154,10 @@ export const resolveOrg = async (request: Request): Promise<OrgResolution> => {
   const session = await auth.api.getSession({ headers: request.headers })
   if (!session?.user) return { ok: false, status: 401, code: "UNAUTHENTICATED" }
 
+  // ROLES FROM THE IDP: current, ≤ interval-old role evidence (idpRoles.ts).
+  const gate = await idpSessionGate(session.session.id, session.user.id)
+  if (!gate.ok) return { ok: false, status: gate.status, code: gate.code }
+
   const orgId =
     session.session.activeOrganizationId ?? (await adoptFirstOrg(request, session.user.id))
   if (!orgId) return { ok: false, status: 409, code: "NO_ACTIVE_ORG" }
@@ -159,7 +173,14 @@ export const resolveOrg = async (request: Request): Promise<OrgResolution> => {
     return { ok: false, status: 403, code: "DEACTIVATED" }
   }
 
-  return { ok: true, orgId, actor: session.user.id, role }
+  return {
+    ok: true,
+    orgId,
+    actor: session.user.id,
+    role,
+    sessionId: session.session.id,
+    idpDeadline: gate.deadline,
+  }
 }
 
 /**

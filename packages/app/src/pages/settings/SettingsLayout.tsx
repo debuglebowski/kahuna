@@ -185,7 +185,6 @@ export function useIsAdmin() {
     // sign-in, and the server refuses to change it here. The UI hides those
     // controls rather than offer ones that 409.
     rolesManagedByIdp: q.data?.rolesManagedByIdp ?? false,
-    ownerManagedByIdp: q.data?.ownerManagedByIdp ?? false,
     isPending: q.isPending,
   }
 }

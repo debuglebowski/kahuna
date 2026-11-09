@@ -11,7 +11,7 @@
     },
     "packages/app": {
       "name": "@kahunalabs/app",
-      "version": "0.0.16",
+      "version": "0.0.19",
       "dependencies": {
         "@azure/identity": "^4.14.1",
         "@azure/storage-blob": "^12.34.0",
@@ -23,6 +23,7 @@
         "@effect/sql-pg": "4.0.5",
         "@fontsource-variable/geist": "^5.3.0",
         "@kahunalabs/contract": "workspace:*",
+        "@normain/idp-role-contract": "file:../../vendor/normain-idp-role-contract-0.1.0.tgz",
         "@tanstack/db": "0.15.1",
         "@tanstack/query-db-collection": "1.4.7",
         "@tanstack/react-db": "0.5.11",
@@ -44,6 +45,7 @@
         "drizzle-orm": "0.45.4",
         "effect": "4.0.5",
         "elkjs": "^0.12.0",
+        "jose": "6.2.3",
         "libavoid-js": "0.4.5",
         "lucide-react": "1.61.0",
         "pg": "8.23.1",
@@ -74,7 +76,7 @@
     },
     "packages/cli": {
       "name": "@kahunalabs/cli",
-      "version": "0.0.16",
+      "version": "0.0.19",
       "bin": {
         "kahuna": "dist/index.js",
       },
@@ -88,7 +90,7 @@
     },
     "packages/contract": {
       "name": "@kahunalabs/contract",
-      "version": "0.0.16",
+      "version": "0.0.19",
       "peerDependencies": {
         "effect": "4.0.5",
       },
@@ -294,6 +296,8 @@
     "@noble/hashes": ["@noble/hashes@2.2.0", "", {}, "sha512-IYqDGiTXab6FniAgnSdZwgWbomxpy9FtYvLKs7wCUs2a8RkITG+DFGO1DM9cr+E3/RgADRpFjrKVaJ1z6sjtEg=="],
 
     "@nodable/entities": ["@nodable/entities@3.0.0", "", {}, "sha512-8L9xFeTYKhm49xfIypoe2W5wV1m/3Z58kT+7kR9A8OyFxcPduI4VmxaUMQyKYrRjUoLLSXv6EKKID5Tvj9cUVw=="],
+
+    "@normain/idp-role-contract": ["@normain/idp-role-contract@../../vendor/normain-idp-role-contract-0.1.0.tgz", {}],
 
     "@oxc-project/types": ["@oxc-project/types@0.156.0", "", {}, "sha512-1Duyg48TdJNdyhEB8Xn1L36bT9Pv6GUtlKjHxOys8xkaF/rQq3XJE+bAurSK/AgIz5mGFsb77cn9Pb20+WCScw=="],
 

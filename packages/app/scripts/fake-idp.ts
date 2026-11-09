@@ -45,12 +45,25 @@ export interface FakeIdentity {
   readonly claims?: Readonly<Record<string, unknown>>
 }
 
+/**
+ * How the token endpoint answers a `refresh_token` grant: a fresh ID token (and a
+ * rotated refresh token), no ID token at all, or an error.
+ */
+export type RefreshMode = "ok" | "no_id_token" | "error"
+
 export interface FakeIdp {
   readonly issuer: string
   readonly certPath: string
   readonly tokenRequests: readonly TokenRequest[]
-  /** Identity returned for the next sign-in. */
+  /** Refresh grants received, in order (the refresh token presented). */
+  readonly refreshRequests: readonly string[]
+  /** Refresh tokens issued, in order (code exchange and rotation). */
+  readonly issuedRefreshTokens: readonly string[]
+  /** Identity returned for the next sign-in, and for refreshes from now on. */
   setIdentity(identity: FakeIdentity): void
+  setRefreshMode(mode: RefreshMode): void
+  /** Unix seconds used for `iat`/`exp`. Defaults to the wall clock. */
+  setClock(now?: () => number): void
   close(): Promise<void>
 }
 
@@ -104,6 +117,11 @@ export const startFakeIdp = async (
 
   let identity: FakeIdentity = { sub: "fake-user", email: "user@example.test", name: "Fake User" }
   const tokenRequests: TokenRequest[] = []
+  const refreshRequests: string[] = []
+  const refreshTokens = new Set<string>()
+  const issuedRefreshTokens: string[] = []
+  let refreshMode: RefreshMode = "ok"
+  let clock = (): number => Math.floor(Date.now() / 1000)
   // code -> { nonce, clientId }
   const codes = new Map<string, { nonce?: string; clientId: string }>()
 
@@ -174,18 +192,9 @@ export const startFakeIdp = async (
         clientId = decodeURIComponent(id ?? "")
         clientSecret = decodeURIComponent(rest.join(":"))
       }
-      const code = form.get("code") ?? ""
-      const grant = codes.get(code)
-      if (!grant) return json(res, { error: "invalid_grant" }, 400)
-      codes.delete(code)
-      tokenRequests.push({ clientId, clientSecret, code })
-
-      const now = Math.floor(Date.now() / 1000)
-      return json(res, {
-        access_token: `at-${randomBytes(8).toString("hex")}`,
-        token_type: "Bearer",
-        expires_in: 3600,
-        id_token: sign({
+      const idToken = (nonce?: string) => {
+        const now = clock()
+        return sign({
           iss: issuer,
           aud: clientId,
           sub: identity.sub,
@@ -196,8 +205,43 @@ export const startFakeIdp = async (
           name: identity.name,
           ...(identity.amr ? { amr: identity.amr } : {}),
           ...identity.claims,
-          ...(grant.nonce ? { nonce: grant.nonce } : {}),
-        }),
+          ...(nonce ? { nonce } : {}),
+        })
+      }
+      const newRefresh = () => {
+        const rt = `rt-${randomBytes(12).toString("hex")}`
+        refreshTokens.add(rt)
+        issuedRefreshTokens.push(rt)
+        return rt
+      }
+
+      if (form.get("grant_type") === "refresh_token") {
+        const presented = form.get("refresh_token") ?? ""
+        refreshRequests.push(presented)
+        // Single use, as Entra rotates them: a replayed token is refused.
+        if (!refreshTokens.delete(presented) || refreshMode === "error")
+          return json(res, { error: "invalid_grant" }, 400)
+        return json(res, {
+          access_token: `at-${randomBytes(8).toString("hex")}`,
+          token_type: "Bearer",
+          expires_in: 3600,
+          refresh_token: newRefresh(),
+          ...(refreshMode === "ok" ? { id_token: idToken() } : {}),
+        })
+      }
+
+      const code = form.get("code") ?? ""
+      const grant = codes.get(code)
+      if (!grant) return json(res, { error: "invalid_grant" }, 400)
+      codes.delete(code)
+      tokenRequests.push({ clientId, clientSecret, code })
+
+      return json(res, {
+        access_token: `at-${randomBytes(8).toString("hex")}`,
+        token_type: "Bearer",
+        expires_in: 3600,
+        refresh_token: newRefresh(),
+        id_token: idToken(grant.nonce),
       })
     }
 
@@ -228,8 +272,16 @@ export const startFakeIdp = async (
     issuer,
     certPath,
     tokenRequests,
+    refreshRequests,
+    issuedRefreshTokens,
     setIdentity: (next) => {
       identity = { name: "Fake User", ...next }
+    },
+    setRefreshMode: (mode) => {
+      refreshMode = mode
+    },
+    setClock: (now) => {
+      clock = now ?? (() => Math.floor(Date.now() / 1000))
     },
     close: () =>
       new Promise<void>((resolve) => {

@@ -169,7 +169,7 @@ describe("migrations", () => {
     // `access_defaults` arrived in 0008 and was dropped again in 0020 — the "All"
     // row of a permissions pane is a real blanket rule, which is what the template
     // was standing in for.)
-    expect(first.tableCount).toBe(68)
+    expect(first.tableCount).toBe(71)
     expect(first.hasAuthTable).toBe(true)
     expect(first.hasEngineTable).toBe(true)
     expect(first.ledgerRows).toBe(EXPECTED_LEDGER_ROWS)

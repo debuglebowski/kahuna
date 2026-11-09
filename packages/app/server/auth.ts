@@ -1,7 +1,7 @@
 import { sso } from "@better-auth/sso"
 import { betterAuth } from "better-auth"
 import { drizzleAdapter } from "better-auth/adapters/drizzle"
-import { APIError, createAuthMiddleware } from "better-auth/api"
+import { APIError, createAuthMiddleware, getSessionFromCtx } from "better-auth/api"
 import { organization } from "better-auth/plugins"
 import { asc, eq } from "drizzle-orm"
 import * as schema from "#db"
@@ -19,18 +19,22 @@ import {
   bindDeploymentIdp,
   DEPLOYMENT_IDP_PROVIDER_ID,
   deploymentIdp,
-  deploymentOrgId,
   idTokenHasMfa,
   joinDeploymentOrg,
   SSO_MFA_REQUIRED,
 } from "./deploymentIdp"
 import {
-  applyRoles,
-  grantsNothing,
+  bindSession,
+  denyLogin,
+  establishLogin,
+  idpManaged,
   idpRoleConfig,
-  resolveClaims,
-  revokeForRefusedSignIn,
+  idpSessionGate,
+  loginDenial,
+  refusal,
+  refusePassword,
   SSO_NO_MAPPED_ROLE,
+  verifyIdToken,
 } from "./idpRoles"
 import { syncMembershipRole } from "./membership"
 import { runEngineOrThrow, systemScope } from "./runtime"
@@ -150,26 +154,21 @@ const trustedOrigins = isProd
 
 /**
  * ROLES FROM THE IDP, the refusal half (idpRoles.ts). Runs in `validateUserInfo`, so
- * BEFORE the plugin creates, links or signs anyone in: a claim that maps to no role
- * leaves no session behind. What the person held is still taken away — removing the
- * last role at the IdP must not leave the previous set usable from an open session.
+ * BEFORE the plugin creates, links or signs anyone in: a verified claim that maps to
+ * no role leaves no session behind. What the person held is still taken away —
+ * removing the last role at the IdP must not leave it usable from an open session.
  */
 const refuseUnmappedRoles = async (
   email: string,
   claims: Readonly<Record<string, unknown>> | undefined,
   ctx: { readonly headers?: Headers } | undefined,
 ): Promise<{ error: string; errorDescription: string } | undefined> => {
-  const cfg = idpRoleConfig()
-  if (!cfg) return
-  const orgId = await deploymentOrgId()
-  if (!orgId) return
-  if (!grantsNothing(await resolveClaims(cfg, orgId, claims))) return
-  const sub = typeof claims?.sub === "string" ? claims.sub : ""
-  await revokeForRefusedSignIn(cfg, orgId, { sub, email })
+  const reason = loginDenial(claims)
+  if (!reason) return
+  await denyLogin(claims, reason, email ? subjectRef(email) : "unknown")
   securityEvent({
     event: "auth.signin",
     outcome: "denied",
-    orgId,
     reason: SSO_NO_MAPPED_ROLE,
     subjectRef: email ? subjectRef(email) : undefined,
     ip: clientIp(ctx?.headers),
@@ -185,31 +184,56 @@ const refuseUnmappedRoles = async (
 }
 
 /**
- * ROLES FROM THE IDP, the sync half: every sign-in through the deployment IdP sets
- * the person's roles from the claim. The ID token is the one the plugin verified in
- * this same callback (signature, audience, issuer) before handing it here, so its
- * payload is read without verifying again. Throws — failing the sign-in — rather
- * than leaving someone on a stale role set.
+ * ROLES FROM THE IDP, the sign-in half: verify the ID token the plugin just received
+ * (signature, issuer, audience — idpRoles.ts `verifyIdToken`, not a decode), then
+ * reconcile roles and persist the evidence and refresh token. Throws, failing the
+ * sign-in, on anything short of fresh mapped evidence.
  */
-const syncRolesFromIdp = async (userId: string, idToken: string | undefined): Promise<void> => {
-  const cfg = idpRoleConfig()
-  if (!cfg) return
-  const orgId = await deploymentOrgId()
-  if (!orgId) return
-  const payload = idToken?.split(".")[1]
-  if (!payload) throw new APIError("FORBIDDEN", { code: SSO_NO_MAPPED_ROLE })
-  const claims = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as Record<
-    string,
-    unknown
-  >
-  const resolved = await resolveClaims(cfg, orgId, claims)
-  // `validateUserInfo` already refused this; a role deleted in between lands here.
-  if (grantsNothing(resolved)) throw new APIError("FORBIDDEN", { code: SSO_NO_MAPPED_ROLE })
-  await applyRoles(cfg, orgId, userId, resolved)
+const establishIdpRoles = async (
+  userId: string,
+  idToken: string | undefined,
+  refreshToken: string | undefined,
+): Promise<void> => {
+  if (!idpRoleConfig()) {
+    // Off here but on in the database (a replica not yet rolled): refuse rather
+    // than mint a session this deployment would not honour.
+    if (await idpManaged()) throw new APIError("FORBIDDEN", { code: SSO_NO_MAPPED_ROLE })
+    return
+  }
+  try {
+    if (!idToken) throw new Error("no ID token")
+    await establishLogin(userId, await verifyIdToken(idToken), refreshToken)
+  } catch {
+    throw new APIError("FORBIDDEN", {
+      code: SSO_NO_MAPPED_ROLE,
+      message: "Your identity provider grants you no role in this app.",
+    })
+  }
 }
 
-// Parse the roles-from-IdP config now, so a malformed one fails the boot.
-idpRoleConfig()
+/** BetterAuth endpoints that must work WITHOUT a managed session. */
+const IDP_GATE_EXEMPT = (path: string): boolean =>
+  path === "/sign-in/sso" ||
+  path === "/sign-in/email" ||
+  path === "/sign-out" ||
+  path.startsWith("/sso/callback") ||
+  path === "/ok" ||
+  path === "/error"
+
+/**
+ * BetterAuth's generic provider-token routes. They would spend or expose IdP tokens
+ * outside the per-person serialization `revalidate` relies on; in managed mode the
+ * adapter is the ONE refresh authority (idpRoles.ts `clearAccountTokens`).
+ */
+const PROVIDER_TOKEN_PATHS = new Set(["/refresh-token", "/get-access-token", "/account-info"])
+
+/** BetterAuth org endpoints that change the owner tier. */
+const MEMBERSHIP_ROLE_PATHS = new Set([
+  "/organization/update-member-role",
+  "/organization/add-member",
+  "/organization/create-invitation",
+  "/organization/accept-invitation",
+])
 
 export const auth = betterAuth({
   database: withSsoSecretEncryption(drizzleAdapter(db, { provider: "pg", schema })),
@@ -306,6 +330,22 @@ export const auth = betterAuth({
     before: createAuthMiddleware(async (ctx) => {
       if (ctx.path === "/sign-in/email") {
         const email = typeof ctx.body?.email === "string" ? ctx.body.email : ""
+        // ROLES FROM THE IDP: SSO only, no owner fallback. Recovery is server
+        // administration (docs/sso-rollout.md).
+        if (await refusePassword(email ? subjectRef(email) : "unknown")) {
+          securityEvent({
+            event: "auth.signin",
+            outcome: "denied",
+            reason: "PASSWORD_SIGN_IN_DISABLED",
+            subjectRef: email ? subjectRef(email) : undefined,
+            ip: clientIp(ctx.headers),
+            detail: { method: "password", idpRoles: true },
+          })
+          throw new APIError("FORBIDDEN", {
+            code: "PASSWORD_SIGN_IN_DISABLED",
+            message: "Sign in through your identity provider.",
+          })
+        }
         if (!(await passwordSignInAllowed(email))) {
           securityEvent({
             event: "auth.signin",
@@ -321,6 +361,35 @@ export const auth = betterAuth({
           })
         }
         return
+      }
+
+      // ROLES FROM THE IDP: BetterAuth's own endpoints are reached without our
+      // routes, so they get the same session gate and the same refusal of
+      // membership-tier changes as rpc.ts / router.ts.
+      if (PROVIDER_TOKEN_PATHS.has(ctx.path) && (await idpManaged()))
+        throw new APIError("FORBIDDEN", {
+          code: "IDP_TOKENS_MANAGED",
+          message: "Identity provider tokens are managed by the server.",
+        })
+
+      // HTTP only: server-side `auth.api.*` calls (session.ts, rpc.ts) apply the
+      // gate themselves and must get the session back to do it.
+      if (ctx.request && !IDP_GATE_EXEMPT(ctx.path)) {
+        if (MEMBERSHIP_ROLE_PATHS.has(ctx.path)) {
+          const caller = await getSessionFromCtx(ctx).catch(() => null)
+          const refused = await refusal({ what: ctx.path, actor: caller?.user.id ?? "unknown" })
+          if (refused)
+            throw new APIError("CONFLICT", { code: refused.code, message: refused.message })
+        }
+        const current = await getSessionFromCtx(ctx).catch(() => null)
+        if (current) {
+          const gate = await idpSessionGate(current.session.id, current.user.id)
+          if (!gate.ok)
+            throw new APIError(gate.status === 503 ? "SERVICE_UNAVAILABLE" : "UNAUTHORIZED", {
+              code: gate.code,
+              message: gate.message,
+            })
+        }
       }
 
       // The deployment IdP's endpoints and org are bound late; both the redirect
@@ -362,6 +431,16 @@ export const auth = betterAuth({
     // it never alters the response. See authAudit.ts / docs/security-logging.md.
     after: createAuthMiddleware(async (ctx) => {
       auditAuthResponse(ctx)
+      // ROLES FROM THE IDP: bind the session a verified deployment-IdP sign-in just
+      // minted to the current epoch. Without this row the gate refuses it.
+      // (`ctx.path` is the route pattern, `/sso/callback/:providerId`.)
+      if (
+        ctx.path.startsWith("/sso/callback") &&
+        ctx.params?.providerId === DEPLOYMENT_IDP_PROVIDER_ID
+      ) {
+        const minted = ctx.context.newSession
+        if (minted) await bindSession(minted.session.id, minted.user.id)
+      }
     }),
   },
   databaseHooks: {
@@ -402,7 +481,7 @@ export const auth = betterAuth({
             // org reads as having nobody who can configure it (which is what the
             // irreducible-floor check counts). `seedKahuna` created the presets;
             // this points the owner at theirs.
-            await syncMembershipRole(organization.id, user.id, "owner", { founding: true })
+            await syncMembershipRole(organization.id, user.id, "owner")
           } catch (error) {
             console.error(`Failed to seed org ${organization.id}:`, error)
           }
@@ -455,7 +534,7 @@ export const auth = betterAuth({
         disabled: false,
         // Everyone arrives as a plain member; promotion is a deliberate act in
         // Settings → Members. Roles come from the IdP ONLY when the operator turns
-        // that on for the deployment IdP (`SSO_ROLES_FROM_IDP`, idpRoles.ts) —
+        // that on for the deployment IdP (`IDP_ROLES_ENABLED`, idpRoles.ts) —
         // never for a provider an owner registered in Settings.
         defaultRole: "member",
         // Used for its SIDE EFFECT as much as its return value. Membership and
@@ -515,7 +594,7 @@ export const auth = betterAuth({
         // provisioning (and `getRole` above) skips it. See deploymentIdp.ts.
         if (provider.providerId === deploymentIdp?.providerId) {
           await joinDeploymentOrg(user.id)
-          await syncRolesFromIdp(user.id, token?.idToken)
+          await establishIdpRoles(user.id, token?.idToken, token?.refreshToken)
         }
       },
     }),

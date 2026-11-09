@@ -2901,11 +2901,10 @@ export class KahunaRpcs extends RpcGroup.make(
        *  role, ordering their roles, and editing their personal overrides are all
        *  "may manage permissions", not "may administer the org". */
       canConfigureRoles: Schema.Boolean,
-      /** Roles come from the identity provider's claim at sign-in (operator
-       *  config): who holds which people role cannot be changed in the app. */
+      /** Roles come from the identity provider (operator config,
+       *  `IDP_ROLES_ENABLED`): who holds which people role, and owner vs member,
+       *  cannot be changed in the app. */
       rolesManagedByIdp: Schema.Boolean,
-      /** …and so does owner vs member, when the operator mapped a claim to it. */
-      ownerManagedByIdp: Schema.Boolean,
     }),
     error: RpcError,
   }),

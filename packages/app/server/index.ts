@@ -7,6 +7,7 @@ import { withClientIpHeader } from "./clientIp"
 import { startDecayTick } from "./decay-tick"
 import { startGoogleWatchRenewal } from "./google"
 import { withApiSecurityHeaders, withAppSecurityHeaders } from "./headers"
+import { initIdpRoles } from "./idpRoles"
 import { assertEncryptionKey } from "./integrations/crypto"
 import { startRetentionTick } from "./retention-tick"
 import { handleApi, isBetterAuthPath, isBlockedSsoPath } from "./router"
@@ -18,6 +19,14 @@ import { CURRENT_VERSION, startUpdateCheck } from "./version"
 
 // Refuse to boot without the credential-encryption key (integrations + SSO secret).
 assertEncryptionKey()
+
+// Roles from the identity provider (idpRoles.ts): parse IDP_* against the org's
+// roles and record the activation epoch BEFORE anything listens. Malformed config,
+// an unknown target, or a leftover legacy SSO_ROLE* name fails the boot.
+await initIdpRoles().catch((e) => {
+  console.error("IdP role configuration:", e instanceof Error ? e.message : e)
+  process.exit(1)
+})
 
 const port = Number(process.env.PORT ?? 3100)
 const DIST = path.resolve(import.meta.dirname, "../dist")

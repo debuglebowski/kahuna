@@ -48,7 +48,7 @@ import {
 } from "#engine"
 import { auth } from "./auth"
 import { pool } from "./db"
-import { idpRoleConfig, refusal } from "./idpRoles"
+import { idpManaged, idpSessionGate, refusal } from "./idpRoles"
 import { canConfigure } from "./policy"
 import { instrumentRpcHandlers } from "./rpcAudit"
 import { rpcProtocolRefusal, stampRpcProtocol } from "./rpcProtocol"
@@ -96,6 +96,13 @@ const authenticate = (options: {
         new RpcError({ code: "UNAUTHENTICATED", message: "Not signed in", status: 401 }),
       )
     }
+    // ROLES FROM THE IDP: the session must carry current, ≤ interval-old role
+    // evidence (idpRoles.ts). A no-op with the mode off.
+    const gate = yield* Effect.promise(() => idpSessionGate(session.session.id, session.user.id))
+    if (!gate.ok)
+      return yield* Effect.fail(
+        new RpcError({ code: gate.code, message: gate.message, status: gate.status }),
+      )
     const orgId = session.session.activeOrganizationId
     if (!orgId) {
       return yield* Effect.fail(
@@ -340,21 +347,18 @@ const refuseIfIdpManaged = (
   target: { readonly userId?: string; readonly roleId?: string },
 ): Effect.Effect<void, RpcError, OrgContext | EngineServices> =>
   Effect.gen(function* () {
-    if (!idpRoleConfig()) return
+    if (!(yield* Effect.promise(idpManaged))) return
     const scope = yield* OrgContext
     if (target.roleId) {
       const roles = yield* as<ReadonlyArray<AccessRole>>(uc.listRoles())
       if (roles.find((r) => r.id === target.roleId)?.kind === "automation") return
     }
-    const refused = refusal({
-      what,
-      orgId: scope.orgId,
-      actor: scope.actor,
-      targetId: target.userId,
-    })
+    const refused = yield* Effect.promise(() =>
+      refusal({ what, actor: scope.actor, targetId: target.userId }),
+    )
     if (refused)
       return yield* Effect.fail(
-        new RpcError({ code: refused.code, message: refused.message, status: 409 }),
+        new RpcError({ code: refused.code, message: refused.message, status: refused.status }),
       )
   })
 
@@ -1098,8 +1102,7 @@ const HandlersLive = ServerRpcs.toLayer(
           isOwner: scope.role === "owner",
           canConfigure: has("org"),
           canConfigureRoles: has("role"),
-          rolesManagedByIdp: idpRoleConfig() !== null,
-          ownerManagedByIdp: idpRoleConfig()?.ownerManaged ?? false,
+          rolesManagedByIdp: yield* Effect.promise(idpManaged),
         }
       }),
     roleHolders: ({ roleId }) =>

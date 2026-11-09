@@ -95,8 +95,13 @@ export const parseDeploymentIdp = (
       clientSecret,
       pkce: true,
       discoveryEndpoint: `${issuer.replace(/\/$/, "")}/.well-known/openid-configuration`,
-      // No offline_access: nothing here calls the IdP after sign-in.
-      scopes: ["openid", "email", "profile"],
+      // offline_access only with roles from the IdP (idpRoles.ts): its hourly
+      // revalidation spends a refresh token. Otherwise nothing calls the IdP after
+      // sign-in, so none is asked for.
+      scopes:
+        env.IDP_ROLES_ENABLED === "true"
+          ? ["openid", "email", "profile", "offline_access"]
+          : ["openid", "email", "profile"],
     },
   }
 }

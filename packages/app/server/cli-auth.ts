@@ -1,4 +1,5 @@
 import { randomBytes, timingSafeEqual } from "node:crypto"
+import { idpSessionGate, onHumanRevoked } from "./idpRoles"
 import { clientIp, routeOf, securityEvent } from "./securityLog"
 import { resolveOrg } from "./session"
 
@@ -31,6 +32,8 @@ interface Pending {
   /** Set only once approved. */
   cookie?: string
   userId?: string
+  /** The approving session, re-checked at hand-over (roles from the IdP). */
+  sessionId?: string
   readonly expiresAt: number
   /** Wrong-code attempts against this entry, to bound guessing. */
   attempts: number
@@ -38,6 +41,13 @@ interface Pending {
 
 /** Keyed by DEVICE code — the long secret only the CLI ever holds. */
 const pending = new Map<string, Pending>()
+
+// ROLES FROM THE IDP: revoking a person (or everyone, at activation) also drops any
+// approved-but-not-yet-collected hand-over, so a revoked cookie is never delivered.
+onHumanRevoked((userId) => {
+  for (const [code, entry] of pending)
+    if (userId === null || entry.userId === userId) pending.delete(code)
+})
 
 const TTL_MS = 10 * 60_000
 const MAX_PENDING = 1000
@@ -223,6 +233,7 @@ export const approveDevice = async (request: Request): Promise<Response> => {
   entry.status = "approved"
   entry.cookie = cookie
   entry.userId = org.actor
+  entry.sessionId = org.sessionId
 
   // The CLI is about to receive this person's session cookie: an access grant.
   securityEvent({
@@ -265,6 +276,12 @@ export const pollDevice = async (request: Request): Promise<Response> => {
 
   // Approved: hand it over ONCE, then forget it.
   pending.delete(deviceCode)
+  // ROLES FROM THE IDP: the cookie must still be a usable managed session NOW, not
+  // just when it was approved up to ten minutes ago.
+  if (entry.userId) {
+    const gate = await idpSessionGate(entry.sessionId ?? "", entry.userId)
+    if (!gate.ok) return Response.json({ status: "expired", error: gate.code }, { status: 400 })
+  }
   return Response.json({ status: "approved", cookie: entry.cookie, userId: entry.userId })
 }
 

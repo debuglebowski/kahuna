@@ -42,6 +42,7 @@ WORKDIR /srv/kahuna
 # tree cannot go stale; the cost is that a source edit re-runs an install that
 # takes about two seconds.
 COPY package.json bun.lock ./
+COPY vendor ./vendor
 COPY packages ./packages
 
 RUN bun install --frozen-lockfile
@@ -58,6 +59,7 @@ WORKDIR /srv/kahuna
 
 # Same reasoning as the build stage: the tree, not a list.
 COPY package.json bun.lock ./
+COPY vendor ./vendor
 COPY packages ./packages
 
 RUN bun install --frozen-lockfile --production

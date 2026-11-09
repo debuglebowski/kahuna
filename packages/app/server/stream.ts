@@ -7,6 +7,7 @@ import {
   type SubjectKind,
   scopeCanReadConcept,
 } from "#engine"
+import { idpSessionGate, nowSec, onHumanRevoked } from "./idpRoles"
 import { AppRuntime, resolvePolicy } from "./runtime"
 import { resolveOrg, roleOf } from "./session"
 
@@ -39,6 +40,14 @@ interface Client {
 }
 
 const clients = new Map<string, Set<Client>>()
+
+/** Open streams per person, so a revocation can end them at once (idpRoles.ts). */
+const byUser = new Map<string, Set<Client>>()
+onHumanRevoked((userId) => {
+  const targets =
+    userId === null ? [...byUser.values()].flatMap((s) => [...s]) : [...(byUser.get(userId) ?? [])]
+  for (const c of targets) c.close()
+})
 
 const register = (orgId: string, c: Client): void => {
   let set = clients.get(orgId)
@@ -290,7 +299,17 @@ export const streamHandler = async (req: Request): Promise<Response> => {
   const encoder = new TextEncoder()
   let heartbeat: ReturnType<typeof setInterval> | undefined
   let refresher: ReturnType<typeof setInterval> | undefined
+  let deadlineTimer: ReturnType<typeof setTimeout> | undefined
   let client: Client | undefined
+
+  // ROLES FROM THE IDP: the role evidence this stream was opened on expires at
+  // `deadline` (Unix s, the persisted signed time + interval). The stream does not
+  // outlive it — not by a tick, not by a refresh in flight: it is CLOSED at the
+  // deadline, before anything is revalidated, and every frame is checked against it
+  // too. The client's reconnect goes through `resolveOrg`, which revalidates (or
+  // refuses) like any request. Undefined when roles are not managed.
+  const deadline = org.idpDeadline
+  const expired = (): boolean => deadline !== undefined && nowSec() >= deadline
 
   // The concept-visibility snapshot this connection filters through. Starts CLOSED
   // (nothing passes) and opens once resolved, so no frame can slip out during setup.
@@ -299,12 +318,21 @@ export const streamHandler = async (req: Request): Promise<Response> => {
   const teardown = () => {
     if (heartbeat) clearInterval(heartbeat)
     if (refresher) clearInterval(refresher)
-    if (client) unregister(orgId, client)
+    if (deadlineTimer) clearTimeout(deadlineTimer)
+    if (client) {
+      unregister(orgId, client)
+      byUser.get(org.actor)?.delete(client)
+    }
   }
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       const write = (s: string) => {
+        // Per-frame deadline check: nothing is emitted once the evidence expired.
+        if (expired()) {
+          client?.close()
+          return
+        }
         try {
           controller.enqueue(encoder.encode(s))
         } catch {
@@ -340,7 +368,21 @@ export const streamHandler = async (req: Request): Promise<Response> => {
           }
         },
       }
+      if (deadline !== undefined) {
+        const arm = (): void => {
+          const ms = Math.max(0, (deadline - nowSec()) * 1000)
+          // Re-arm rather than trust one long timer: the clock is re-read on fire.
+          deadlineTimer = setTimeout(
+            () => (expired() ? client?.close() : arm()),
+            Math.min(ms, 60_000),
+          )
+        }
+        arm()
+      }
       register(orgId, client)
+      const mine = byUser.get(org.actor) ?? new Set<Client>()
+      mine.add(client)
+      byUser.set(org.actor, mine)
       write(": connected\n\n")
 
       // Resolve visibility BEFORE the replay: `replayEventsSince` selects the concept
@@ -348,6 +390,18 @@ export const streamHandler = async (req: Request): Promise<Response> => {
       // the live path is careful not to.
       maySee = await visibilityFor(orgId, org.actor).catch(() => () => false)
       refresher = setInterval(() => {
+        // ROLES FROM THE IDP: revocations made elsewhere (another replica, an
+        // activation) end the stream within a tick. The deadline itself is not left
+        // to this: see `deadline` above.
+        if (expired()) {
+          client?.close()
+          return
+        }
+        void idpSessionGate(org.sessionId ?? "", org.actor)
+          .then((gate) => {
+            if (!gate.ok) client?.close()
+          })
+          .catch(() => client?.close())
         void visibilityFor(orgId, org.actor)
           .then((next) => {
             maySee = next

@@ -141,7 +141,7 @@ function RolesSection({ userId }: { userId: string }) {
       <span className="text-sm font-medium">Roles</span>
       <p className="text-xs text-muted-foreground">
         {fromIdp
-          ? "Roles are managed by your identity provider: they are set from it at every sign-in and can't be changed here."
+          ? "Roles are managed by your identity provider: they are set from it at sign-in and at least hourly, and can't be changed here."
           : "Held in this order — the first one wins outright over a later one that disagrees. Drag to reorder."}
       </p>
       {held.isPending ? (
